@@ -7,7 +7,7 @@ import { isLog, isPlanks, TOOL_STONE, count } from '../core/recipes.js';
 import { FOODS, RAW, isNight, TORCH_GOAL, fittingsPlanks } from '../core/settle.js';
 import { planFuel, burnsFor, charcoalInput } from '../core/fuel.js';
 import { blueprint, clearance, footing, furnishings, inside } from '../core/house.js';
-import { cheapestPlaceable } from '../core/costs.js';
+import { cheapestPlaceable, plankReserve } from '../core/costs.js';
 import { siteWork, siteScore } from '../core/site.js';
 import { depositPlan, takePlan } from '../core/storage.js';
 import { invCounts, hold, take, give, container as packOf } from './inventory.js';
@@ -500,7 +500,8 @@ export class Homestead {
     let stone = 0, planks = 0;
     const missing = (p) => { const id = this.S.blockAt(p); return id !== null && SOFT.test(id); }; // unloaded: unknown
     for (const b of blueprint(site, dir)) if (missing(b)) b.material === 'stone' ? stone++ : planks++;
-    for (const p of footing(site, dir)) if (missing(p)) stone++; // filler under the floor
+    // Filler under the floor: the hole, and the one under it if it's two deep (both get filled).
+    for (const p of footing(site, dir)) if (missing(p)) { stone++; if (missing({ ...p, y: p.y - 1 })) stone++; }
     const inv = invCounts(this.sim);
     const haveStone = count(inv, (id) => TOOL_STONE.has(id)), havePlanks = count(inv, isPlanks) + count(inv, isLog) * 4;
     // Either material can stand in for the other in the walls, so compare the totals too.
@@ -509,7 +510,8 @@ export class Homestead {
     const walls = shortStone + shortPlanks <= spare ? { stone: 0, planks: 0 } : { stone: shortStone, planks: shortPlanks };
     if (!fittings) return this[cacheKey] = walls;
     // The door, bed, table and chest are wood and nothing else: whatever wood the walls leave over.
-    const fitShort = Math.max(0, fittingsPlanks(inv) - Math.max(0, havePlanks - planks));
+    // Plus a log's worth spare: a plank that doesn't place, a block knocked out while building.
+    const fitShort = Math.max(0, fittingsPlanks(inv) + 4 - Math.max(0, havePlanks - planks));
     return this[cacheKey] = { stone: walls.stone, planks: walls.planks + fitShort };
   }
 
@@ -585,7 +587,8 @@ export class Homestead {
         if (!SOFT.test(S.blockAt(q) ?? 'air')) continue;
         if (q.y < p.y && !SOFT.test(S.blockAt(p) ?? 'air')) continue;
         const inv = invCounts(this.sim);
-        const filler = cheapestPlaceable(inv, { cobblestone: 23 }) ?? this.materialFor('stone');
+        // Dirt or odd stone first, then cobblestone (counted for this); never planks (the walls').
+        const filler = cheapestPlaceable(inv, plankReserve(inv)) ?? this.materialFor('stone');
         if (!S.inReach(q)) await S.goNear(gen, q, 2);
         if (filler) await this.placeAt(gen, q, filler);
       }
@@ -1089,7 +1092,7 @@ export class Homestead {
     if (canDigIn(f.x, f.y, f.z)) {
       for (const c of [{ x: f.x, y: f.y - 1, z: f.z }, { x: f.x, y: f.y - 2, z: f.z }, { x: f.x, y: f.y - 3, z: f.z }]) await S.mine(gen, c, { collect: true, allowBelow: true });
       await S.wait(gen, 10);
-      const block = cheapestPlaceable(invCounts(this.sim));
+      const block = cheapestPlaceable(invCounts(this.sim), plankReserve(invCounts(this.sim))); // planks only if nothing else
       const lid = { x: f.x, y: f.y - 1, z: f.z };
       if (block) safe = await this.placeAt(gen, lid, block);
       if (safe) S.markPlaced(lid);
@@ -1103,7 +1106,7 @@ export class Homestead {
       let placed = 0;
       for (const c of cells) {
         if (!SOFT.test(S.blockAt(c) ?? 'air')) { placed++; continue; }
-        const block = cheapestPlaceable(invCounts(this.sim));
+        const block = cheapestPlaceable(invCounts(this.sim), plankReserve(invCounts(this.sim))); // planks only if nothing else
         if (!block) break;
         if (await this.placeAt(gen, c, block)) { placed++; S.markPlaced(c); }
       }

@@ -116,6 +116,17 @@ export function cheapestPlaceable(inv, reserve = {}) {
   return ids.find((id) => inv[id] > (reserve[id] ?? 0)) ?? ids[0] ?? null;
 }
 
+/**
+ * Planks are never a throwaway block (a pillar, a bridge, a hole filled): they're the house, its
+ * door, bed, table and chest, and the handles of every tool. Counted by the plan, so spending them
+ * on a pillar up a tree meant running out halfway through the house. A reserve of all of them.
+ */
+export function plankReserve(inv) {
+  const r = {};
+  for (const [id, n] of Object.entries(inv)) if (id.endsWith('_planks')) r[id] = n;
+  return r;
+}
+
 /** Placeable blocks we can spend without touching the reserve. */
 export function spendableBlocks(inv, reserve = {}) {
   let n = 0;

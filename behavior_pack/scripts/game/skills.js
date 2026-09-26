@@ -6,7 +6,7 @@ import { EYE_HEIGHT } from '../core/motor.js';
 import { smoothPath, Cell, isWalkMove } from '../core/pathfinder.js';
 import { dist3D } from '../core/mathutil.js';
 import { toolFor, planCrafts, applyCraft, isLog, STONE_TARGETS, SHOVEL_BLOCKS, PICKAXE_BLOCKS, TOOL_STONE, count } from '../core/recipes.js';
-import { chooseTool, breakSeconds, cheapestPlaceable, spendableBlocks, blockSourceCost, itemValue } from '../core/costs.js';
+import { chooseTool, breakSeconds, cheapestPlaceable, spendableBlocks, blockSourceCost, itemValue, plankReserve } from '../core/costs.js';
 import { invCounts, hold, take, give, container, findSlot } from './inventory.js';
 import { chooseSource, chooseSourceSticky, sourceKey, trustFor, trunksOf, EXPLORE_S, DIG_DOWN_S } from '../core/sourcing.js';
 import { makeClassifier, castRay, canSee } from './world.js';
@@ -1781,14 +1781,19 @@ export class Skills {
     }
     let di = prev?.di ?? mem.mineDir ?? this.stoniestDir();
     let steps = prev?.n ?? 0, blocked = 0;
+    // Only ever saved on the mine's level: a spot down in a hole is never where the next trip starts.
     const record = () => {
       mem.mineDir = di;
-      if (q) q.mine = { y: this.feet().y, at: this.feet(), di, n: steps };
+      if (q) q.mine = { y: level, at: this.feet().y === level ? this.feet() : lastGood, di, n: steps };
       this.a.memory.save();
     };
+    // The level the mine is dug at: every step of it, main tunnel and branches, stays on it.
+    const level = prev?.y ?? this.feet().y;
+    let lastGood = this.feet();
     while (more() && blocked < 4) {
       this.check(gen);
       await this.dumpJunk(gen);
+      if (this.feet().y !== level && !(await this.backOntoLevel(gen, lastGood))) break;
       const [dx, dz] = dirs[di];
       if (!(await this.tunnelStep(gen, dx, dz))) {
         di = (di + 1) % 4; // something in the way (water, lava, a drop, the house): turn
@@ -1797,8 +1802,9 @@ export class Skills {
       }
       blocked = 0;
       steps++;
+      lastGood = this.feet();
       record();
-      await this.oreAround(gen, this.feet());
+      await this.oreAround(gen, lastGood);
       if (steps % 3 === 0) {
         for (const side of [1, -1]) {
           if (!more()) break;
@@ -1809,13 +1815,38 @@ export class Skills {
     record();
   }
 
+  /**
+   * Back onto the mine's level at `at` (our last spot in the tunnel) if we've dropped into a hole
+   * (walking over ore drops, a vein followed down). False if we can't get back there.
+   */
+  async backOntoLevel(gen, at) {
+    const f = this.feet();
+    if (f.y === at.y) return true;
+    this.log(`mine: off the level (Y ${f.y}, the mine's at ${at.y}): back up to it`);
+    await this.goNear(gen, { x: at.x + 0.5, y: at.y, z: at.z + 0.5 }, 0.6, 2);
+    return this.feet().y === at.y;
+  }
+
+  /** Put a cheap block in the floor cell (dirt, cobblestone: never planks). */
+  async fillFloor(gen, cell) {
+    const inv = invCounts(this.sim);
+    const block = cheapestPlaceable(inv, this.blockReserve(inv));
+    if (!block || !this.inReach(cell)) return false;
+    const ok = await this.a.homestead.placeAt(gen, cell, block);
+    this.restHands();
+    if (ok) { this.markPlaced(cell); this.log(`mine: filled a hole in the floor at ${cell.x} ${cell.y} ${cell.z}`); }
+    return ok;
+  }
+
   /** One branch off the main tunnel, `len` long, then back to where it started. */
   async branch(gen, dx, dz, len, more) {
     const start = { ...this.feet() };
-    let n = 0;
+    let n = 0, at = start;
     for (; n < len && more(); n++) {
+      if (!(await this.backOntoLevel(gen, at))) break;
       if (!(await this.tunnelStep(gen, dx, dz))) break;
-      await this.mineExposedOre(gen);
+      at = this.feet();
+      await this.oreAround(gen, at);
     }
     if (n) await this.goNear(gen, { x: start.x + 0.5, y: start.y, z: start.z + 0.5 }, 0.6, 2);
     return n;
@@ -1833,7 +1864,13 @@ export class Skills {
     const home = this.a.homestead?.house;
     if (home && Math.hypot(feet.x - home.x, feet.z - home.z) < 8 && f.y > home.y - 12) return false;
     const safe = (c) => !this.touchesLiquid(c) && !this.isLiquid(c) && this.isDiggable([c]) && !FALLING.test(this.blockAt({ ...c, y: c.y + 1 }) ?? '');
-    if (!safe(feet) || !safe(head) || OPEN.test(floorId) || /water|lava/.test(floorId)) return false;
+    if (!safe(feet) || !safe(head) || /water|lava/.test(floorId)) return false;
+    if (OPEN.test(floorId)) {
+      // A hole in the floor ahead (ore we mined out of it, a small cave): fill it and keep the
+      // tunnel level. Stepping down into it is how the mine crept below the iron layer.
+      const floor = { ...feet, y: f.y - 1 };
+      if (!(await this.fillFloor(gen, floor))) return false;
+    }
     for (const c of [head, feet]) {
       const id = this.blockAt(c) ?? 'air';
       if (OPEN.test(id)) continue;
@@ -2332,7 +2369,10 @@ export class Skills {
   blockReserve(inv = invCounts(this.sim)) {
     const better = (kind) => ['stone', 'iron', 'diamond', 'netherite'].some((t) => (inv[`${t}_${kind}`] ?? 0) > 0);
     const furnace = (inv.furnace ?? 0) > 0 || !!this.a.homestead?.house?.furnace || this.a.memory.list('furnace', this.dim.id, this.sim.location).length > 0;
-    return { cobblestone: (better('pickaxe') ? 0 : 3) + (better('sword') ? 0 : 2) + (better('axe') ? 0 : 3) + (better('shovel') ? 0 : 1) + (furnace ? 0 : 8) };
+    // The house's cobblestone too, until it's built (walls, corners and filler under the floor).
+    const H = this.a.homestead;
+    const house = H?.house ? 0 : 27;
+    return { ...plankReserve(inv), cobblestone: (better('pickaxe') ? 0 : 3) + (better('sword') ? 0 : 2) + (better('axe') ? 0 : 3) + (better('shovel') ? 0 : 1) + (furnace ? 0 : 8) + house };
   }
 
   /** Placeable blocks we can spend (all of them if `all`, else without touching the reserve). */

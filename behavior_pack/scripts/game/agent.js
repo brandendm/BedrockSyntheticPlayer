@@ -186,7 +186,8 @@ export class Agent {
     // Dusk: drop whatever daytime job is running so the plan can send us home.
     if (t % 100 === 50) {
       const night = isNight(world.getTimeOfDay());
-      if (night && !this.wasNight && this.task?.kind === 'auto' && !['go_home', 'shelter', 'build_house'].includes(this.autoStep)) this.startAuto();
+      const mining = ['get_iron', 'get_stone'].includes(this.autoStep) && this.minedUnderground();
+      if (night && !this.wasNight && this.task?.kind === 'auto' && !mining && !['go_home', 'shelter', 'build_house'].includes(this.autoStep)) this.startAuto();
       this.wasNight = night;
     }
     if (this.mode === 'none' && !this.task && !this.suspended && this.autoEnabled && !this.autoDone && t >= this.nextAutoTry) {
@@ -996,27 +997,47 @@ export class Agent {
   }
 
   /** The next step of the goal ladder, from what we have right now (inventory is the truth). */
-  planStep(inv, tableDist, tableDy, { opportunities = true } = {}) {
+  planStep(inv, tableDist, tableDy, { opportunities = true, dayTime = false } = {}) {
+    // Down the mine when night falls: a lit tunnel is as safe as the house, and climbing out to walk
+    // home in the dark (then all the way back down in the morning) wastes the night. Keep mining if
+    // that's what the day's plan says to do; anything else (home, the farm, the furnace) waits for the
+    // usual night plan.
+    if (!dayTime && isNight(world.getTimeOfDay()) && this.minedUnderground()) {
+      const day = this.planStep(inv, tableDist, tableDy, { opportunities: false, dayTime: true });
+      if (['get_iron', 'get_stone'].includes(day.step)) {
+        this.sayOnce('mine-night', "It's night, but I'm down the mine: carrying on here.", 600000);
+        return day;
+      }
+    }
+    const night = !dayTime && isNight(world.getTimeOfDay());
     /** @type {any} */
     let step = nextStep({ inv, tableDist, tableDy, exposedStoneKnown: this.knownSurfaceStone });
-    if (step.step === 'done') step = settleStep(this.settleFacts(inv, tableDist));
+    if (step.step === 'done') step = settleStep({ ...this.settleFacts(inv, tableDist), ...(dayTime ? { time: 6000 } : {}) });
     // Moved in: a farm, iron, iron gear (core/advance.js).
     if (step.step === 'done' && this.homestead.house) step = advanceStep(this.advanceFacts(inv, tableDist));
     // A wandering trader in sight and no lead yet: his two leads (for walking animals and
     // villagers home, into boats) drop when he's gone. Any time of day but night, from the start.
-    if (!isNight(world.getTimeOfDay()) && !inv.lead && !['go_home', 'shelter', 'repair_house'].includes(step.step)) {
+    if (!night && !inv.lead && !['go_home', 'shelter', 'repair_house'].includes(step.step)) {
       const t = this.homestead.animals(new Set(['wandering_trader']), 32)[0];
       if (t) return { step: 'hunt', what: 'trader', near: Math.round(t.d) };
     }
-    else if (isNight(world.getTimeOfDay())) {
+    else if (night) {
       // Night before we're set up: home if we have one, otherwise dig in unless we're armed and healthy.
       const armed = Object.keys(inv).some((id) => /_sword$/.test(id)) && this.health() >= 12;
       if (this.homestead.house) step = { step: 'go_home' };
       else if (!armed) step = { step: 'shelter' };
     }
     // The ladder's step against everything else still needed that's cheap right now.
-    if (opportunities && !isNight(world.getTimeOfDay())) step = chooseStep(step, this.focusFacts(inv));
+    if (opportunities && !night) step = chooseStep(step, this.focusFacts(inv));
     return step;
+  }
+
+  /** Underground in our quarry or its mine (not just any cave), with a pickaxe to keep going. */
+  minedUnderground() {
+    try {
+      const S = this.skills;
+      return Object.keys(invCounts(this.sim)).some((id) => /_pickaxe$/.test(id)) && S.isUnderground() && S.nearQuarry(this.sim.location, 48);
+    } catch { return false; }
   }
 
   /** What core/focus.js weighs: what the goals still need and how far the nearest of each is. */

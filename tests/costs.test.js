@@ -37,3 +37,11 @@ test('getting blocks to build with: dirt by fist beats stone with a pickaxe at t
   assert.equal(blockSourceCost('stone', {}, 1), Infinity); // punched stone drops nothing
   assert.ok(blockSourceCost('dirt', {}, 10) > blockSourceCost('dirt', {}, 1));
 });
+
+test('planks are never a throwaway block: dirt or cobblestone first, planks only if nothing else', async () => {
+  const { cheapestPlaceable, plankReserve, spendableBlocks } = await import('../behavior_pack/scripts/core/costs.js');
+  const inv = { oak_planks: 40, cobblestone: 5 };
+  assert.equal(cheapestPlaceable(inv, plankReserve(inv)), 'cobblestone');
+  assert.equal(spendableBlocks({ oak_planks: 40 }, plankReserve({ oak_planks: 40 })), 0);
+  assert.equal(cheapestPlaceable({ oak_planks: 3 }, plankReserve({ oak_planks: 3 })), 'oak_planks'); // nothing else at all
+});
