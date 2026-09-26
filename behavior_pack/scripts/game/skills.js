@@ -1336,6 +1336,8 @@ export class Skills {
       const before = have();
       if (!(await this.mine(gen, target))) { fails++; this.a.memory.markUnreachable(target, 120000); }
       else if (have() === before) await this.pickUp(gen, (id) => TOOL_STONE.has(id), target, 5); // the drop rolled off
+      // Coal or iron showing near the stone we're working: take it (torches, fuel, the iron gear).
+      if (n % 4 === 0) await this.oreInView(gen, 8, { maxWalk: 12 });
       const f = this.feet();
       const near = await this.visibleStone(6);
       this.check(gen);
@@ -1638,9 +1640,12 @@ export class Skills {
     }
   }
 
-  /** Mine ore showing around us (in reach, in view), then step back to where we were standing. */
+  /**
+   * Mine ore showing around us (in reach, in view), and coal or iron in view a few steps further
+   * (torches, fuel, the iron gear), then step back to where we were standing.
+   */
   async oreAround(gen, stand) {
-    const n = await this.mineExposedOre(gen);
+    const n = (await this.mineExposedOre(gen)) + (await this.oreInView(gen, 8, { maxWalk: 12 }));
     if (!n) return 0;
     const p = this.sim.location;
     if (Math.hypot(stand.x + 0.5 - p.x, stand.z + 0.5 - p.z) > 0.6 || Math.floor(p.y) !== stand.y) {
@@ -1805,6 +1810,7 @@ export class Skills {
       lastGood = this.feet();
       record();
       await this.oreAround(gen, lastGood);
+      if (this.caveHere()) await this.exploreCave(gen, lastGood, level, more);
       if (steps % 3 === 0) {
         for (const side of [1, -1]) {
           if (!more()) break;
@@ -1838,6 +1844,101 @@ export class Skills {
     return ok;
   }
 
+  /** What's worth a detour underground: iron (the gear) and coal (torches, fuel). */
+  static isWanted(id) { return /^(deepslate_)?(iron|coal)_ore$/.test(id); }
+
+  /**
+   * Iron and coal ore we can see within `radius` (not just in reach): walk over and mine the vein,
+   * iron first then nearest, if the walk there is short. Returns how many veins we mined.
+   */
+  async oreInView(gen, radius, { maxWalk = 16, minY = -Infinity, limit = 6 } = {}) {
+    const f = this.feet();
+    const found = (await this.scan((id) => Skills.isWanted(id), { radius, below: Math.min(radius, 8), above: Math.min(radius, 8), limit: 16 }))
+      .filter((b) => b.y >= minY && !this.isProtected(b) && !this.a.memory.isUnreachable(b) && this.sees(b) && chooseTool(b.id, invCounts(this.sim), { needDrop: true }));
+    found.sort((a, b) => (/iron/.test(b.id) ? 1 : 0) - (/iron/.test(a.id) ? 1 : 0) || dist3D(f, a) - dist3D(f, b));
+    let n = 0;
+    for (const b of found.slice(0, limit)) {
+      this.check(gen);
+      if (!Skills.isWanted(this.blockAt(b) ?? '')) continue; // part of a vein we've just mined
+      if (!this.inReach(b)) {
+        const res = await this.a.plan(this.sim.location, center(b), REACH - 0.7, 2500);
+        this.check(gen);
+        if (!res.complete || res.path.length > maxWalk) { this.a.memory.markUnreachable(b, 300000); continue; }
+      }
+      if (await this.mineVein(gen, b)) n++;
+      else this.a.memory.markUnreachable(b, 300000);
+    }
+    return n;
+  }
+
+  /**
+   * Did that tunnel step open into a cave? Open air round us that isn't our own tunnels or stairs
+   * (their floors are protected): a handful of cells of it.
+   */
+  caveHere() {
+    const f = this.feet();
+    let n = 0;
+    for (let dx = -3; dx <= 3; dx++) for (let dz = -3; dz <= 3; dz++) {
+      if (Math.abs(dx) + Math.abs(dz) < 2) continue;
+      for (const dy of [0, 1, 2]) {
+        const c = { x: f.x + dx, y: f.y + dy, z: f.z + dz };
+        if ((this.blockAt(c) ?? 'stone') !== 'air') continue;
+        let ours = false;
+        for (let k = 1; k <= 3 && !ours; k++) ours = this.isProtected({ x: c.x, y: c.y - k, z: c.z });
+        if (!ours) n++;
+      }
+    }
+    return n >= 6;
+  }
+
+  /**
+   * Broke into a cave from the mine: have a look round it for iron (and coal) before carrying on
+   * with the mine. Walks the cave floor near the mine's level, a leg at a time to parts not seen
+   * yet, mining what it can see; lights it as it goes; then back to `back` in the mine. Each cave is
+   * explored once (remembered in the world), and time-boxed.
+   */
+  async exploreCave(gen, back, level, more) {
+    const mem = this.a.memory.data;
+    const key = `${back.x >> 4},${back.y >> 4},${back.z >> 4}`;
+    const done = mem.cavesDone ?? (mem.cavesDone = []);
+    if (done.includes(key)) return 0;
+    // A real cave, not just the hole a vein of ore left: floor to walk to 6+ blocks off that isn't ours.
+    const f0 = this.feet();
+    const probe = await this.a.plan(this.sim.location, this.sim.location, 0, 1500, (x, y, z, w) => w.standable(x, y, z) &&
+      !this.isProtected({ x, y: y - 1, z }) && Math.hypot(x - f0.x, z - f0.z) >= 6 && y >= level - 6 && y <= level + 6);
+    this.check(gen);
+    if (!probe.complete) return 0;
+    done.push(key);
+    if (done.length > 60) done.shift();
+    this.a.memory.save();
+    this.a.say('Broke into a cave: having a look round it for iron before I carry on with the mine.');
+    const t0 = system.currentTick, origin = this.feet(), seen = new Set();
+    let ore = 0, legs = 0;
+    const cell = (x, y, z) => `${x >> 2},${y >> 2},${z >> 2}`;
+    while (legs < 8 && system.currentTick - t0 < 90 * 20 && more()) {
+      this.check(gen);
+      ore += await this.oreInView(gen, 16, { maxWalk: 30, minY: level - 8 });
+      await this.lightQuarry(gen, null);
+      const f = this.feet();
+      seen.add(cell(f.x, f.y, f.z));
+      // The next part of the cave: floor we haven't stood near, within 24 of where we came in, not
+      // far above or below the mine (no following it down to lava).
+      const res = await this.a.plan(this.sim.location, this.sim.location, 0, 3000, (x, y, z, w) => w.standable(x, y, z) &&
+        !this.isProtected({ x, y: y - 1, z }) && Math.hypot(x - f.x, z - f.z) >= 6 && Math.hypot(x - origin.x, z - origin.z) <= 24 &&
+        y >= level - 6 && y <= level + 6 && !seen.has(cell(x, y, z)));
+      this.check(gen);
+      if (!res.complete || res.path.length < 2) break;
+      for (const p of res.path) seen.add(cell(p.x, p.y, p.z));
+      await this.a.motor.followPath(smoothPath(makeClassifier(this.dim), res.path));
+      this.check(gen);
+      legs++;
+    }
+    this.log(`cave: ${legs} legs, ${ore} veins; back to the mine at ${back.x} ${back.y} ${back.z}`);
+    await this.goNear(gen, { x: back.x + 0.5, y: back.y, z: back.z + 0.5 }, 0.6, 3);
+    if (ore) this.a.say(`Done with the cave (${ore} vein${ore > 1 ? 's' : ''} of ore); back to the branch mine.`);
+    return ore;
+  }
+
   /** One branch off the main tunnel, `len` long, then back to where it started. */
   async branch(gen, dx, dz, len, more) {
     const start = { ...this.feet() };
@@ -1847,6 +1948,7 @@ export class Skills {
       if (!(await this.tunnelStep(gen, dx, dz))) break;
       at = this.feet();
       await this.oreAround(gen, at);
+      if (this.caveHere()) await this.exploreCave(gen, at, start.y, more);
     }
     if (n) await this.goNear(gen, { x: start.x + 0.5, y: start.y, z: start.z + 0.5 }, 0.6, 2);
     return n;

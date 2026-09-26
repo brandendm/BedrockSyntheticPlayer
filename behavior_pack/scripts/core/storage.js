@@ -27,7 +27,8 @@ export function keepCount(id, inv = {}) {
   if (isLog(id)) return 16;
   if (isPlanks(id)) return 32;
   if (id === 'stick') return 16;
-  if (id === 'charcoal' || id === 'coal') return 16;
+  if (id === 'coal') return 32;              // torches down the mine; the rest is the furnace's fuel store
+  if (id === 'charcoal') return 16;
   if (/_sapling$|^mangrove_propagule$/.test(id)) return 4;
   return 0;
 }
