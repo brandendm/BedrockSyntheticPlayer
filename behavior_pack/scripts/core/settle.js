@@ -3,7 +3,7 @@
 //   1. a furnace (8 cobblestone)
 //   2. a bed: 3 wool of one colour from sheep (plus any easy meat from animals close by)
 //   3. torches: logs smelted into charcoal (planks as fuel), charcoal + sticks
-//   4. a house (core/house.js): cobblestone, planks, a door, torches; bed, table, furnace inside
+//   4. a house (core/house.js): cobblestone, planks, a door, torches; bed, table, furnace, chest inside
 //
 // Smelting runs on its own: load the furnace, go do the next thing, come back when it's done.
 // Night overrides everything: from dusk the bot goes home (or builds the house now if it has
@@ -59,7 +59,8 @@ export function settleStep(f) {
   // Night first.
   if (isNight(f.time)) {
     if (f.house) return { step: 'go_home', sleep: true };
-    const need = houseShortfall(inv);
+    // Walls, roof and a door are enough for a night in: the rest of the fittings can wait for day.
+    const need = houseShortfall(inv, null, { fittings: false });
     if (!need) return { step: 'build_house' };
     return { step: 'shelter' };
   }
@@ -151,6 +152,13 @@ export function settleStep(f) {
       return craftStep(inv, ['furnace'], f.tableDist);
     }
   }
+  // A chest by the door: somewhere to put things (and room in the pack for the next trip).
+  if (f.house.chest === false) {
+    if (has(inv, 'chest')) return { step: 'furnish' };
+    return craftStep(inv, ['chest'], f.tableDist);
+  }
+  // Pack nearly full: put things away before anything else takes us out again.
+  if (f.packFull && f.house.chest && !f.chestFull) return { step: 'store' };
   if (f.house.lit === false && torches > 0) return { step: 'furnish' };
   // Cook raw meat while we're at it.
   // Only with something to burn (else it loops failing, sets the furnace job aside and wanders).
@@ -175,16 +183,30 @@ export function settleStep(f) {
   return { step: 'done' };
 }
 
-/** What's still missing for the house: { stone, logs } or null if we have it all (door counted as 6 planks). */
-export function houseShortfall(inv, exact = null) {
-  // exact: what the house we started still needs, counted block by block at the site.
+/**
+ * Planks the house's fittings take, for each one not made yet: the door (6), the bed (3), a
+ * crafting table for inside (4) and the chest (8). Counted with the walls, so one wood trip covers
+ * the lot (getting exactly the walls' worth meant a trip back for two logs, then another for one).
+ */
+export function fittingsPlanks(inv, house = null) {
+  let n = 0;
+  if (!has(inv, 'wooden_door') && !house?.door) n += 6;
+  if (!has(inv, 'bed') && !house?.bed) n += 3;
+  if (!has(inv, 'crafting_table') && !house?.table) n += 4;
+  if (!has(inv, 'chest') && !house?.chest) n += 8;
+  return n;
+}
+
+/** What's still missing for the house and its fittings: { stone, logs } or null if we have it all. */
+export function houseShortfall(inv, exact = null, { fittings = true } = {}) {
+  // exact: what the house we started still needs, counted block by block at the site (with the
+  // fittings' planks: homestead.houseNeeds counts them against the same pile).
   if (exact) {
-    const logs = Math.max(0, Math.ceil((exact.planks + (has(inv, 'wooden_door') ? 0 : 6)) / 4));
     if (!exact.stone && !exact.planks) return null;
-    return { stone: exact.stone, logs: exact.planks ? logs : 0 };
+    return { stone: exact.stone, logs: Math.ceil(exact.planks / 4) };
   }
   const stoneShort = Math.max(0, HOUSE.stone + 4 - stone(inv)); // a few spare for levelling the site
-  const planksNeeded = HOUSE.planks + (has(inv, 'wooden_door') ? 0 : 6) + (has(inv, 'bed') || wool(inv) < 3 ? 0 : 3);
+  const planksNeeded = HOUSE.planks + (fittings ? fittingsPlanks(inv) : has(inv, 'wooden_door') ? 0 : 6);
   const planksShort = Math.max(0, planksNeeded - count(inv, isPlanks));
   const logsShort = Math.max(0, Math.ceil(planksShort / 4) - count(inv, isLog));
   if (!stoneShort && !logsShort) return null;

@@ -60,7 +60,8 @@ export function advanceStep(f) {
 
   // Ripe wheat on the farm: harvest and replant (quick, and the seeds and bread keep coming).
   // Most of what's planted is ripe, or there are empty tiles and seeds to sow them with.
-  if (f.farm && (f.farm.ripe >= Math.max(2, Math.ceil((f.farm.planted ?? f.farm.tiles) * 0.6)) || (f.farm.planted < f.farm.tiles && (inv.wheat_seeds ?? 0) >= 4))) return { step: 'tend_farm' };
+  // Or it needs seeing to: a tree over it, torches missing, no pool by it yet.
+  if (f.farm && (f.farm.upkeep || f.farm.ripe >= Math.max(2, Math.ceil((f.farm.planted ?? f.farm.tiles) * 0.6)) || (f.farm.planted < f.farm.tiles && (inv.wheat_seeds ?? 0) >= 4))) return { step: 'tend_farm' };
 
   // 1. The farm (unless it just failed: iron meanwhile, the farm gets another go in 10 minutes).
   if (!f.farm && !f.farmBlocked) {
@@ -115,6 +116,24 @@ function smeltOre(f, raw, want) {
   if (f.smelt?.ready) return { step: 'collect_smelt' };
   if (f.smelt) return { step: 'wait_smelt' };
   return { step: 'smelt', input: 'ore', n: Math.max(want, raw), fuelPlanks: 0 };
+}
+
+/**
+ * Wood and stone the moved-in goals will still take, besides iron: a hoe for the farm, spare
+ * pickaxes for the mine, handles for the iron tools, planks for the shield. Counted up front so a
+ * wood or stone trip brings enough for all of it: { planks, stone } (planks net of sticks carried).
+ */
+export function upkeepNeeds(inv, worn = []) {
+  let sticks = 0, planks = 0, stone = 0;
+  if (!has(inv, 'wooden_hoe') && !has(inv, 'stone_hoe') && !has(inv, 'iron_hoe')) { sticks += 2; stone += 2; }
+  const want = has(inv, 'iron_pickaxe') || has(inv, 'diamond_pickaxe') ? 2 : 3;
+  const spare = Math.max(0, want - pickaxes(inv));
+  sticks += spare * 2; stone += spare * 3;
+  for (const [id, n] of /** @type {Array<[string, number]>} */ ([['iron_pickaxe', 2], ['iron_sword', 1], ['iron_axe', 2], ['iron_shovel', 2]])) if (!made(inv, worn, id)) sticks += n;
+  if (!made(inv, worn, 'shield')) planks += 6;
+  sticks = Math.max(0, sticks - (inv.stick ?? 0));
+  planks += Math.ceil(sticks / 4) * 2;
+  return { planks, stone };
 }
 
 /** For the dashboard: the three new goals and where each stands. */

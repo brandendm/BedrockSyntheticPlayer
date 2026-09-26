@@ -88,19 +88,26 @@ With no orders (and after finishing any order) it works through a goal ladder.
 
 **Stone tools** (`core/recipes.js`):
 1. Chops 3 logs (4 if a shovel pays off), then crafts a crafting table, a wooden pickaxe and a wooden sword.
-2. Looks for stone it can see. If there isn't any, it digs a one-wide staircase down: fists on dirt unless a wooden shovel is quicker, never the pickaxe on dirt, never straight down, never next to water or lava. Once the stairs are two steps into solid stone it stops going deeper and tunnels along that level (1x2, taking the stone walls beside its feet too, about 4 cobblestone per step), turning every 10 blocks so the tunnel stays compact and never heading under the house; if the tunnel runs into a cave, gravel or water it goes down a step and tunnels again.
+2. Looks for stone it can see. If there isn't any, it digs a one-wide staircase down: fists on dirt unless a wooden shovel is quicker, never the pickaxe on dirt, never straight down, never next to water or lava. Once the stairs are two steps into solid stone it stops going deeper and tunnels along that level (1x2, taking the stone walls beside its feet too, about 4 cobblestone per step), turning every 10 blocks so the tunnel stays compact and never heading under the house. Then it goes back to the foot of the stairs and carries the same staircase on down.
+   - **One quarry:** the staircase is the quarry, kept step by step in the world file (`quarry` in memory). Every trip for stone or iron walks down those same stairs and carries on from the bottom, the way it was heading. It never starts a second hole beside it or inside it. Blocked below (a cave, water, a drop), it cuts a few blocks along the level, and that cut becomes part of the stairs. It gives up on the quarry only when it can't get down it three times running, or nothing more comes out of it three times running. A quarry more than 32 blocks from the house is retired, and a new one is started 14-24 blocks from the house.
+   - The stairs stop at Y 16 (the iron layer). Down there, stone comes from the branch mine.
+   - Ore showing in the walls on the way (iron, coal and the rest) gets mined, and then it steps back onto the stairs.
+   - Going back up, it walks its own stairs step by step (no path search), one jump per step.
 3. Mines 8 cobblestone, then crafts a stone pickaxe and a stone sword.
 
 **Settling in** (`core/settle.js`, done by `game/homestead.js`):
 1. **Furnace:** 8 more cobblestone.
 2. **Bed:** 3 wool of one colour from sheep it can see or remembers seeing, then a bed. It kills any easy food animal close by while it's low on food. If no sheep turn up, it comes back to the bed later.
 3. **Torches:** it loads logs into the furnace with planks as fuel, goes off to do the next thing while they cook, and comes back for the charcoal. Charcoal plus sticks makes 8 torches.
-4. **House** (`core/house.js`): a 5x5 cabin with cobblestone corners and bottom row, plank walls, a flat plank roof, a door, two small high windows, a torch inside and one each side of the door. The bed, crafting table and furnace go inside.
-   - Materials: about 23 cobblestone and 12 logs.
+4. **House** (`core/house.js`): a 5x5 cabin with cobblestone corners and bottom row, plank walls, a flat plank roof, a door, two small high windows, a torch inside and one each side of the door. The bed, crafting table, furnace and a chest go inside (the chest in the front corner by the door).
+   - Materials: about 27 cobblestone and 17 logs. That covers the walls and roof plus the door, bed, table and chest, gathered in one trip rather than going back for a couple of logs at a time.
+   - Plants where the door torches go (a peony, a rose bush, tall grass, a bush): broken first. Anything built is left alone.
    - Where: it picks the flattest clear spot within 16 blocks, never over trees, water or anything built.
    - How: it builds from the middle of the room, so it's done in about a minute.
-   - Upgrades planned: glass in the windows, a chest, a trim.
+   - Upgrades planned: glass in the windows, a trim.
 5. **Food:** it eats when hunger drops to 14 (or when hurt and not full). It picks whatever wastes least, cooked before raw, and never eats raw chicken unless it's starving. Raw meat gets cooked when the furnace is free.
+
+**The chest** (`core/storage.js`): it keeps its tools, armor, iron, wool (until it has a bed) and what it's about to place in its pack. It also keeps a working amount of everyday things: 32 torches, 16 of each food, 64 cobblestone, 16 logs, 32 planks, 16 sticks, 16 coal or charcoal, and 16 seeds. Everything else goes in the chest: mob drops, odd stone, spare ores, surplus. It puts things away every night before bed, and whenever the pack gets down to 4 free slots. A mining trip ends early to come home and put things away rather than leave ore behind. When the first chest is full it makes a second one against the back wall. When a job needs cobblestone or logs it has stored, it takes them out of the chest instead of fetching more.
 
 **Nights:** at dusk it drops what it's doing and goes home, shuts the door and sleeps in its bed. In the morning it comes back out. With no house yet, it builds one if it has the materials. Otherwise it digs in (3 blocks down in soft, dry ground, with a block over its head) or walls itself in with blocks, and climbs out in the morning.
 
@@ -126,7 +133,7 @@ With no orders (and after finishing any order) it works through a goal ladder.
 
 **Around or through:** when the walking route to somewhere within 32 blocks winds well past the straight line (a mangrove swamp, a hedge of leaves, a dirt bank), it also prices a route that breaks through. Break time uses its best tool, in the same units as walking. It takes the break-through route if that's at least 15% quicker, and says so. Mangrove roots are solid ground it can stand on and cut through (axe; muddy roots with a shovel), not something to walk into.
 
-**Steps and gaps:** step-ups are taken square-on. The bot lines its body up with the step block before jumping, so a 1-high step beside a 2-high wall doesn't turn into jumping into the seam between them. It counts a step as climbed only once it's standing on it, and takes it again if it bumps off. It jumps 1-block gaps (walking, from the edge, lined up) instead of climbing down and back out, but only over a gap it would survive falling into (ground or water within 3 blocks, no lava). If it isn't lined up by the edge, it backs up and tries again rather than walking off.
+**Steps and gaps:** step-ups are taken square-on. The bot lines its body up with the step block before jumping, so a 1-high step beside a 2-high wall doesn't turn into jumping into the seam between them. It counts a step as climbed only once it's standing on it, and takes it again if it bumps off. It jumps 1-block gaps (walking, from the edge, lined up) instead of climbing down and back out, but only over a gap it would survive falling into (ground or water within 3 blocks, no lava). If it isn't lined up by the edge, it backs up and tries again rather than walking off. Up a staircase (its quarry stairs, say) it's one jump per step. A step that really doesn't take after three jumps gets a step back while it keeps facing the stairs, the way a player presses S; it never turns round.
 
 **Ladders and vines:** the pathfinder climbs them up and down, and steps off onto the ledge at the top. The bot climbs by holding forward into the wall, like a player.
 
@@ -171,6 +178,11 @@ It's tested from 9 different underground spots: with a stone pickaxe it gets out
 - **Crafting tables:** it remembers every table it places or sees. When it needs one, it compares walking time to the nearest remembered table against the cost of a new one (placing it plus the wood). It walks if the table is close, and makes a new one if the old one is far away, gone, or can't be reached.
 - **Trees:** it remembers where trees were, so the next wood run goes back there instead of wandering.
 
+**After moving in** (`core/advance.js`, `game/farm.js`): a wheat farm by the house, then iron.
+- **Farm:** it's made around water within 24 blocks of the house. If there isn't any, it digs a 2x2 pool beside a flat patch and pours a bucket into each of two opposite corners, which fills all four for good. The farm's water comes from that pool, and so does every later bucket. Trees on or right by the farm are chopped down (logs kept, no sapling put back, and no saplings replanted within 10 blocks of it). Leaves hanging low over the tiles are cleared. A torch goes in the middle of each side, one block past the tiles, so every tile gets light 9 or more and the wheat grows at night. Farms made before this get the same treatment the next time it tends them.
+- **Iron:** down the quarry stairs to Y 16, then a branch mine: a 2-high main tunnel, with an 8-long branch to each side every 3 blocks. Where the main tunnel has got to is kept with the quarry, so the next trip walks to its end and carries on. If it ends up well below Y 16 (fell into a cave, followed a vein down), it climbs back up to the iron layer before mining.
+- **Dying:** it keeps the spot where it died until it has actually been back and picked its things up. A fight, a swim or nightfall on the way no longer makes it forget.
+
 **Water:** it swims at the surface, crosses rivers when that's shorter than walking around, climbs out onto banks, and never fights while swimming. If it ends up in water with no destination, it swims to the nearest land. It avoids waterfalls and water hanging over a drop.
 
 **Chunks:** simulated players don't load chunks. The bot keeps a ticking area following it so it can roam beyond where you are.
@@ -193,7 +205,7 @@ Defaults are in `brain/config.example.json`. Copy it to `brain/config.json` to o
 
 ```powershell
 npm run fuzz; node tools/fuzz_steps.mjs  # random worlds; the second uses a real-width body with Minecraft jump physics
-npm test                         # pathfinder (incl. ladders), motor, threats, recipes, sourcing, costs, settle-in plan, house, focus, biomes (76 tests)
+npm test                         # pathfinder (incl. ladders), motor, threats, recipes, sourcing, costs, settle-in plan, house, focus, biomes (129 tests)
 npm run fuzz                     # 200 random worlds: plan + walk + replan
 python -m unittest discover -s brain/tests -t .   # brain (21 tests)
 npm install; npm run typecheck # checks pack code against the real Script API typings

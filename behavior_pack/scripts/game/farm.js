@@ -8,6 +8,8 @@ import { system, Direction } from '@minecraft/server';
 import { invCounts, hold } from './inventory.js';
 import { dist3D } from '../core/mathutil.js';
 import { trace } from './bridge.js';
+import { isLog } from '../core/recipes.js';
+import { PLANT } from './homestead.js';
 
 const strip = (id) => id.replace('minecraft:', '');
 const TILLABLE = /^(grass_block|dirt|coarse_dirt|dirt_with_roots)$/;
@@ -99,54 +101,94 @@ export class Farm {
   }
 
   /**
-   * Make the farm. water 'near': around the water we found by the house. 'bucket': fill the bucket
-   * wherever there's water, dig a hole in the middle of a flat 5x5 by the house, pour it in.
+   * Make the farm. water 'near': around the water we found by the house. 'bucket': a 2x2 pool of
+   * water that never runs out beside a flat patch by the house, and the farm's water from it.
+   * Either way: trees on or over it come down first (logs kept), and torches go round it.
    */
   async make(gen, mode, tiles = 24) {
     const S = this.S;
     let w = mode === 'near' ? this.data.farmWater : null;
     if (mode === 'bucket') w = await this.bucketWater(gen);
     if (!w) { S.log('farm: no water to farm by'); return false; }
+    // Trees in the way: they block the harvest and the light. Down they come (the logs are ours).
+    await this.clearTrees(gen, w);
     await this.gatherSeeds(gen, Math.min(tiles, 12));
     const cells = this.landAround(w).slice(0, tiles);
     if (!cells.length) { S.log('farm: no tillable ground around the water'); return false; }
-    this.data.farm = { water: w, tiles: cells.map(key), made: Date.now() };
+    this.data.farm = { water: w, tiles: cells.map(key), made: Date.now(), mode, cleared: true, pool: this.data.farmPool ?? null };
     this.a.memory.save();
     this.a.say(`Starting a wheat farm: ${cells.length} tiles by the ${mode === 'near' ? 'water' : 'water I brought'}.`);
+    await this.lightFarm(gen);
     await this.tend(gen);
     return true;
   }
 
-  /** Fill the bucket at the nearest water, dig a hole by the house, pour it in. Returns the water cell. */
+  // ---------- water: fetching it, and a pool that never runs out ----------
+
+  /** Fill the bucket at the nearest water (up to 80 blocks round the house, or water seen further). */
+  async fetchWater(gen, avoid = []) {
+    const S = this.S, h = this.a.homestead?.house;
+    // Never the farm's own water (that's what keeps it wet), nor a pool we're still filling (moving
+    // its one source from corner to corner gets nowhere).
+    const skip = new Set([...avoid, ...(this.farm ? [this.farm.water] : [])].map(key));
+    const ok = (b) => !skip.has(key(b));
+    if (invCounts(this.sim).water_bucket) return true;
+    if (!invCounts(this.sim).bucket) return false;
+    if (S.isUnderground()) await S.toSurface(gen);
+    // Our own pool first: that's what it's for.
+    const pool = (this.farm?.pool ?? this.data.farmPool ?? []).map(unkey).find((c) => ok(c) && /water/.test(S.blockAt(c) ?? ''));
+    // One wide look around the house (the fast block query makes 80 blocks cheap, and it only
+    // runs once per farm), nearest to the house first.
+    let src = pool ?? (await this.waterNear(h ?? this.sim.location, 80, 16)).filter(ok)[0]; // down to the sea or a lake below a hilltop house
+    if (!src) {
+      // Water we've seen further off (the lookout's chunk map): walk over and look there.
+      const far = this.seenWater(h ?? this.sim.location, 200);
+      if (far) {
+        S.log(`farm: no water within 80; heading for water seen ${Math.round(far.d)} away`);
+        await S.travelToward(gen, far, Math.ceil(far.d / 40) + 2);
+        S.check(gen);
+        src = (await this.waterNear(this.sim.location, 32)).filter(ok)[0];
+      }
+    }
+    if (!src) { S.log('farm: no water within reach to fill the bucket'); this.a.sayOnce('farm-water', "I need water for a farm and there's none close: I'll keep an eye out.", 300000); return false; }
+    if (!S.inReach(src) && !(await S.goNear(gen, { x: src.x + 0.5, y: src.y + 1, z: src.z + 0.5 }, 2.5, 3))) return false;
+    const got = await this.scoop(gen, src);
+    S.log(`farm: bucket ${got ? 'filled' : 'not filled'} at ${src.x} ${src.y} ${src.z}`);
+    return got;
+  }
+
+  /** Scoop the water source at `src` into our bucket. */
+  async scoop(gen, src) {
+    const slot = hold(this.sim, 'bucket');
+    if (slot < 0) return false;
+    await this.a.motor.lookAt({ x: src.x + 0.5, y: src.y + 0.9, z: src.z + 0.5 }, 1, 8);
+    try { this.sim.useItemInSlotOnBlock(slot, src, Direction.Up); } catch {}
+    await this.S.wait(gen, 4);
+    if (!invCounts(this.sim).water_bucket) { try { this.sim.useItemInSlot(slot); } catch {} await this.S.wait(gen, 4); }
+    return !!invCounts(this.sim).water_bucket;
+  }
+
+  /** Pour our water bucket into the (empty, dug-out) cell. */
+  async pour(gen, cell) {
+    const S = this.S;
+    if (!S.inReach(cell)) await S.goNear(gen, { x: cell.x + 0.5, y: cell.y + 1, z: cell.z + 0.5 }, 2.5, 2);
+    const slot = hold(this.sim, 'water_bucket');
+    if (slot < 0) return false;
+    await this.a.motor.lookAt({ x: cell.x + 0.5, y: cell.y + 0.1, z: cell.z + 0.5 }, 1, 8);
+    try { this.sim.useItemInSlotOnBlock(slot, { x: cell.x, y: cell.y - 1, z: cell.z }, Direction.Up); } catch {}
+    await S.wait(gen, 4);
+    S.restHands();
+    return /water/.test(S.blockAt(cell) ?? '');
+  }
+
+  /**
+   * Water by the house with one bucket: a 2x2 pool beside a flat patch (two buckets poured in
+   * opposite corners fill all four for good: water you can always come back for, to widen the farm
+   * or start another), then the farm's middle block dug out and filled from the pool.
+   */
   async bucketWater(gen) {
     const S = this.S, h = this.a.homestead?.house;
     if (!h) return null;
-    if (!invCounts(this.sim).water_bucket) {
-      if (S.isUnderground()) await S.toSurface(gen);
-      // One wide look around the house (the fast block query makes 80 blocks cheap, and it only
-      // runs once per farm), nearest to the house first.
-      let src = (await this.waterNear(h, 80, 16))[0]; // down to the sea or a lake below a hilltop house
-      if (!src) {
-        // Water we've seen further off (the lookout's chunk map): walk over and look there.
-        const far = this.seenWater(h, 200);
-        if (far) {
-          S.log(`farm: no water within 80; heading for water seen ${Math.round(far.d)} away`);
-          await S.travelToward(gen, far, Math.ceil(far.d / 40) + 2);
-          S.check(gen);
-          src = (await this.waterNear(this.sim.location, 32))[0];
-        }
-      }
-      if (!src) { S.log('farm: no water within reach to fill the bucket'); this.a.sayOnce('farm-water', "I need water for a farm and there's none close: I'll keep an eye out.", 300000); return null; }
-      if (!(await S.goNear(gen, { x: src.x + 0.5, y: src.y + 1, z: src.z + 0.5 }, 2.5, 3))) return null;
-      const slot = hold(this.sim, 'bucket');
-      if (slot < 0) return null;
-      await this.a.motor.lookAt({ x: src.x + 0.5, y: src.y + 0.9, z: src.z + 0.5 }, 1, 8);
-      try { this.sim.useItemInSlotOnBlock(slot, src, Direction.Up); } catch {}
-      await S.wait(gen, 4);
-      if (!invCounts(this.sim).water_bucket) { try { this.sim.useItemInSlot(slot); } catch {} await S.wait(gen, 4); }
-      S.log(`farm: bucket ${invCounts(this.sim).water_bucket ? 'filled' : 'not filled'} at ${src.x} ${src.y} ${src.z}`);
-      if (!invCounts(this.sim).water_bucket) return null;
-    }
     // The best spots by the house (most tillable ground level with them), a few tries.
     const spots = this.flatSpots(h);
     if (!spots.length) { S.log('farm: no spot near the house with 12+ tillable tiles level with it'); return null; }
@@ -154,17 +196,215 @@ export class Farm {
       S.check(gen);
       if (!(await S.goNear(gen, { x: spot.x + 1.5, y: spot.y + 1, z: spot.z + 0.5 }, 1.5, 3)) && !S.inReach(spot)) { S.log(`farm: couldn't get to ${spot.x} ${spot.y} ${spot.z}`); continue; }
       if (!(await S.mine(gen, spot, { collect: false }))) { S.log(`farm: couldn't dig the water hole at ${spot.x} ${spot.y} ${spot.z} (${S.blockAt(spot)})`); continue; }
-      const slot = hold(this.sim, 'water_bucket');
-      const below = { x: spot.x, y: spot.y - 1, z: spot.z };
-      await this.a.motor.lookAt({ x: spot.x + 0.5, y: spot.y + 0.1, z: spot.z + 0.5 }, 1, 8);
-      try { this.sim.useItemInSlotOnBlock(slot, below, Direction.Up); } catch {}
-      await S.wait(gen, 4);
-      const ok = /water/.test(S.blockAt(spot) ?? '');
+      // The pool that never runs out, right beside it (two trips for water, once).
+      const pool = await this.makePool(gen, spot);
+      if (!invCounts(this.sim).water_bucket) {
+        const src = pool?.find((c) => /water/.test(S.blockAt(c) ?? ''));
+        if (src) { if (!S.inReach(src)) await S.goNear(gen, { x: src.x + 0.5, y: src.y + 1, z: src.z + 0.5 }, 2.5, 2); await this.scoop(gen, src); }
+        if (!invCounts(this.sim).water_bucket && !(await this.fetchWater(gen))) return null;
+      }
+      const ok = await this.pour(gen, spot);
       S.log(`farm: water ${ok ? 'poured' : 'not poured'} at ${spot.x} ${spot.y} ${spot.z}`);
-      S.restHands();
       if (ok) return spot;
     }
     return null;
+  }
+
+  /**
+   * A 2x2 spot for the pool, 6-8 blocks from the farm's water (clear of its tiles): ground level
+   * with it, solid under and all round (so the water stays in), nothing built.
+   */
+  poolSpot(w) {
+    const S = this.S, h = this.a.homestead?.house;
+    const solid = (c) => { const id = S.blockAt(c) ?? 'air'; return !CLEAR.test(id) && !/water|lava|leaves|log|farmland/.test(id); };
+    let best = null;
+    for (let dx = -8; dx <= 7; dx++) for (let dz = -8; dz <= 7; dz++) {
+      const cells = [[0, 0], [1, 0], [0, 1], [1, 1]].map(([a, b]) => ({ x: w.x + dx + a, y: w.y, z: w.z + dz + b }));
+      if (cells.some((c) => Math.max(Math.abs(c.x - w.x), Math.abs(c.z - w.z)) < 6)) continue; // off the farm
+      if (cells.some((c) => Math.max(Math.abs(c.x - w.x), Math.abs(c.z - w.z)) > 8)) continue;
+      if (h && cells.some((c) => Math.abs(c.x - h.x) <= 4 && Math.abs(c.z - h.z) <= 4)) continue; // not by the walls
+      if (!cells.every((c) => TILLABLE.test(S.blockAt(c) ?? '') && CLEAR.test(S.blockAt({ ...c, y: c.y + 1 }) ?? 'stone') && solid({ ...c, y: c.y - 1 }) && !S.isProtected(c))) continue;
+      const ring = [];
+      for (let a = -1; a <= 2; a++) for (let b = -1; b <= 2; b++) if (a < 0 || a > 1 || b < 0 || b > 1) ring.push({ x: w.x + dx + a, y: w.y, z: w.z + dz + b });
+      if (!ring.every(solid)) continue;
+      const d = Math.hypot(dx + 0.5, dz + 0.5) + (h ? Math.hypot(w.x + dx - h.x, w.z + dz - h.z) * 0.1 : 0);
+      if (!best || d < best.d) best = { d, cells };
+    }
+    return best?.cells ?? null;
+  }
+
+  /** Dig the pool and fill it: a bucket in one corner, another in the opposite one. Returns its cells. */
+  async makePool(gen, w) {
+    const S = this.S;
+    if (this.data.farmPool?.length) return this.data.farmPool.map(unkey);
+    const cells = this.poolSpot(w);
+    if (!cells) { S.log('farm: no spot for a pool next to the farm'); return null; }
+    this.a.sayOnce('pool', 'Digging a little pool by the farm: water that never runs out.', 120000);
+    for (const c of cells) {
+      if (!S.inReach(c)) await S.goNear(gen, { x: c.x + 0.5, y: c.y + 1, z: c.z + 0.5 }, 2.5, 2);
+      if (!(await S.mine(gen, c, { collect: true }))) { S.log(`farm: couldn't dig the pool at ${c.x} ${c.y} ${c.z}`); return null; }
+    }
+    for (const c of [cells[0], cells[3]]) {
+      let source = false;
+      try { source = /water/.test(S.blockAt(c) ?? '') && (this.dim.getBlock(c)?.permutation.getState('liquid_depth') ?? 1) === 0; } catch {}
+      if (source) continue;
+      if (!(await this.fetchWater(gen, [...cells, w]))) { S.log('farm: no water to fill the pool'); return null; }
+      await S.goNear(gen, { x: c.x + 0.5, y: c.y + 1, z: c.z + 0.5 }, 2.5, 3);
+      await this.pour(gen, c);
+    }
+    await S.wait(gen, 20);
+    const full = cells.every((c) => /water/.test(S.blockAt(c) ?? ''));
+    S.log(`farm: pool at ${cells[0].x} ${cells[0].y} ${cells[0].z} ${full ? 'full' : 'not full yet'}`);
+    if (!full) return null;
+    this.data.farmPool = cells.map(key);
+    if (this.farm) this.farm.pool = this.data.farmPool;
+    this.a.memory.save();
+    this.a.say('Pool by the farm is full: water whenever I need it.');
+    return cells;
+  }
+
+  /** Is the water we farm by already a pool or lake that refills (3+ sources close together)? */
+  waterLasts(w) {
+    let n = 0;
+    for (let dx = -2; dx <= 2; dx++) for (let dz = -2; dz <= 2; dz++) {
+      try {
+        const b = this.dim.getBlock({ x: w.x + dx, y: w.y, z: w.z + dz });
+        if (b && /water/.test(b.typeId) && (b.permutation.getState('liquid_depth') ?? 0) === 0) n++;
+      } catch {}
+    }
+    return n >= 3;
+  }
+
+  // ---------- keeping the farm right: no trees over it, lit at night ----------
+
+  /**
+   * Trees standing on or right by the farm (trunks within 7 of its water, rooted near its level):
+   * chopped down, logs kept, no sapling put back. Their leaves hanging low over the tiles go too;
+   * the rest of the canopy decays by itself once the trunk's gone.
+   */
+  async clearTrees(gen, w) {
+    const S = this.S;
+    const cols = new Map();
+    for (let dx = -7; dx <= 7; dx++) for (let dz = -7; dz <= 7; dz++) {
+      for (let dy = -1; dy <= 3; dy++) {
+        const p = { x: w.x + dx, y: w.y + dy, z: w.z + dz };
+        if (!isLog(S.blockAt(p) ?? '')) continue;
+        const k = `${p.x},${p.z}`;
+        if (!cols.has(k)) cols.set(k, p);
+        break; // the lowest log in this column is the trunk's foot
+      }
+    }
+    // Only real trees (leaves round the top of the trunk): never a log wall someone built.
+    const isTree = (p) => {
+      let top = p.y;
+      while (top < p.y + 30 && isLog(S.blockAt({ x: p.x, y: top + 1, z: p.z }) ?? '')) top++;
+      for (let dx = -2; dx <= 2; dx++) for (let dz = -2; dz <= 2; dz++) for (let dy = -1; dy <= 2; dy++) {
+        if (/leaves$/.test(S.blockAt({ x: p.x + dx, y: top + dy, z: p.z + dz }) ?? '')) return true;
+      }
+      return false;
+    };
+    const trunks = [...cols.values()].filter((p) => !S.isProtected(p) && isTree(p)).sort((a, b) => dist3D(a, this.sim.location) - dist3D(b, this.sim.location));
+    if (!trunks.length) return 0;
+    this.a.sayOnce('farm-trees', `${trunks.length > 1 ? `${trunks.length} trees are` : 'A tree is'} in the way of the farm (shade, and in the way at harvest): chopping ${trunks.length > 1 ? 'them' : 'it'} down.`, 120000);
+    let n = 0;
+    for (const t of trunks) {
+      S.check(gen);
+      if (!isLog(S.blockAt(t) ?? '')) continue;
+      const r = await S.chopTree(gen, t, { replant: false });
+      if (r.chopped) n++;
+    }
+    // Low leaves over the tiles (within 3 of the ground): in the way when harvesting.
+    for (let dx = -4; dx <= 4; dx++) for (let dz = -4; dz <= 4; dz++) {
+      for (let dy = 1; dy <= 3; dy++) {
+        const p = { x: w.x + dx, y: w.y + dy, z: w.z + dz };
+        if (!/leaves$/.test(S.blockAt(p) ?? '')) continue;
+        if (!S.inReach(p)) await S.goNear(gen, { x: p.x + 0.5, y: w.y + 1, z: p.z + 0.5 }, 2.5, 1);
+        if (S.inReach(p)) await S.mine(gen, p, { collect: false });
+      }
+    }
+    S.log(`farm: chopped ${n} tree${n === 1 ? '' : 's'} by the farm`);
+    return n;
+  }
+
+  /**
+   * Torches round the farm, so the wheat grows at night too (crops need light 9+). One in the middle
+   * of each side, a block beyond the last tile: light 14 falls off a level a block, so every tile of
+   * the 9x9 is within 5 of one of them (9 or more).
+   */
+  torchSpots(w) {
+    const S = this.S, out = [];
+    for (const [ox, oz] of [[5, 0], [-5, 0], [0, 5], [0, -5]]) {
+      // The spot itself, else one along the side: ground within a block of the farm's level,
+      // room for the torch (a plant there is fine: it gets broken), not a tile, not water.
+      const alts = ox ? [[ox, 0], [ox, 1], [ox, -1]] : [[0, oz], [1, oz], [-1, oz]];
+      let spot = null;
+      for (const [ax, az] of alts) {
+        for (const dy of [0, 1, -1]) {
+          const g = { x: w.x + ax, y: w.y + dy, z: w.z + az };
+          const gid = S.blockAt(g) ?? 'air', cell = { ...g, y: g.y + 1 }, cid = S.blockAt(cell) ?? 'stone';
+          if (CLEAR.test(gid) || /water|lava|farmland|leaves|glass|fence|wall|torch/.test(gid)) continue;
+          if (cid !== 'air' && !PLANT.test(cid) && !/torch/.test(cid)) continue;
+          spot = { cell, on: g };
+          break;
+        }
+        if (spot) break;
+      }
+      if (spot) out.push(spot);
+    }
+    return out;
+  }
+
+  /** Put up the farm's torches (making some from coal or charcoal if we're out). True if all are up. */
+  async lightFarm(gen) {
+    const S = this.S, f = this.farm;
+    if (!f) return false;
+    const spots = this.torchSpots(f.water);
+    const todo = spots.filter((s) => !/torch/.test(S.blockAt(s.cell) ?? ''));
+    if (!todo.length) { f.lit = true; this.a.memory.save(); return true; }
+    if ((invCounts(this.sim).torch ?? 0) < todo.length) {
+      const inv = invCounts(this.sim);
+      if ((inv.charcoal ?? 0) + (inv.coal ?? 0) > 0) await S.craft(gen, ['torch'], false, true);
+    }
+    let ok = 0;
+    for (const s of todo) {
+      if (!invCounts(this.sim).torch) break;
+      if (!(await this.a.homestead.clearForTorch(gen, s.cell))) continue;
+      if (!S.inReach(s.cell)) await S.goNear(gen, { x: s.cell.x + 0.5, y: s.cell.y, z: s.cell.z + 0.5 }, 2.5, 2);
+      if (await this.a.homestead.placeAt(gen, s.cell, 'torch', s.on)) ok++;
+    }
+    S.restHands();
+    f.lit = ok === todo.length && spots.length === 4;
+    f.litTriedAt = Date.now();
+    this.a.memory.save();
+    if (ok) this.a.say(`Put ${ok} torch${ok > 1 ? 'es' : ''} round the farm, so the wheat grows at night too.`);
+    else this.a.sayOnce('farm-dark', 'The farm needs torches and I have none: I\'ll light it when I have some.', 600000);
+    return f.lit;
+  }
+
+  /** Anything the farm is missing: trees over it, torches round it, a pool by it (bucket farms). */
+  needsUpkeep() {
+    const f = this.farm;
+    if (!f || Date.now() - (f.upkeepAt ?? 0) < 600000) return false; // at most every 10 minutes
+    if (!f.cleared) return true;
+    const torchesMissing = this.torchSpots(f.water).some((s) => !/torch/.test(this.S.blockAt(s.cell) ?? ''));
+    const inv = invCounts(this.sim);
+    if (torchesMissing && ((inv.torch ?? 0) > 0 || (inv.charcoal ?? 0) + (inv.coal ?? 0) > 0)) return true;
+    if (!f.pool && (f.poolTries ?? 0) < 2 && !this.waterLasts(f.water) && (inv.bucket || inv.water_bucket)) return true;
+    return false;
+  }
+
+  async upkeep(gen) {
+    const f = this.farm;
+    if (!f) return;
+    f.upkeepAt = Date.now();
+    this.a.memory.save();
+    if (!f.cleared) { await this.clearTrees(gen, f.water); f.cleared = true; this.a.memory.save(); }
+    await this.lightFarm(gen);
+    if (!f.pool && (f.poolTries ?? 0) < 2 && !this.waterLasts(f.water) && (invCounts(this.sim).bucket || invCounts(this.sim).water_bucket)) {
+      f.poolTries = (f.poolTries ?? 0) + 1;
+      this.a.memory.save();
+      await this.makePool(gen, f.water);
+    }
   }
 
   /**
@@ -202,12 +442,21 @@ export class Farm {
       const grass = (await S.scan((id) => GRASS.test(id), { radius: 32, below: 4, above: 4, limit: 24 }))
         .filter((b) => !this.a.memory.isUnreachable(b));
       if (!grass.length) break;
-      for (const g of grass.slice(0, 12)) {
+      // Always the nearest tuft to where we're standing now (anything in reach first, no walk),
+      // not the order the scan found them in from where we started: that zig-zagged across the
+      // field, walking past grass right beside us.
+      const left = grass.slice(0, 24);
+      for (let k = 0; k < 12 && left.length; k++) {
         S.check(gen);
+        const here = this.sim.location;
+        const cost = (b) => (S.inReach(b) ? 0 : Math.hypot(b.x + 0.5 - here.x, b.z + 0.5 - here.z) + Math.abs(b.y - here.y) * 1.5);
+        let bi = 0;
+        for (let i = 1; i < left.length; i++) if (cost(left[i]) < cost(left[bi])) bi = i;
+        const g = left.splice(bi, 1)[0];
         if (!GRASS.test(S.blockAt(g) ?? '')) continue;
         if (!S.inReach(g) && !(await S.goNear(gen, g, 2.5, 1))) { this.a.memory.markUnreachable(g, 300000); continue; }
         if (await S.mine(gen, g, { collect: false })) broke++;
-        if (broke % 6 === 0) await S.sweep(gen, this.sim.location, 6, (id) => id === 'wheat_seeds', 4);
+        if (broke && broke % 6 === 0) await S.sweep(gen, this.sim.location, 6, (id) => id === 'wheat_seeds', 4);
         if (seeds() >= want) break;
       }
       await S.sweep(gen, this.sim.location, 8, (id) => id === 'wheat_seeds', 6);
@@ -231,13 +480,15 @@ export class Farm {
         try { if ((b.permutation.getState('growth') ?? 0) >= 7) ripe++; } catch {}
       }
     }
-    return loaded ? { tiles: f.tiles.length, planted, ripe } : { tiles: f.tiles.length, planted: this.lastPlanted ?? 0, ripe: 0 };
+    const upkeep = loaded && this.needsUpkeep();
+    return loaded ? { tiles: f.tiles.length, planted, ripe, upkeep } : { tiles: f.tiles.length, planted: this.lastPlanted ?? 0, ripe: 0, upkeep: false };
   }
 
   /** Harvest ripe wheat, re-till trampled tiles, plant seeds on every empty tile. */
   async tend(gen) {
     const S = this.S, f = this.farm;
     if (!f) return;
+    if (this.needsUpkeep()) await this.upkeep(gen);
     const tiles = f.tiles.map(unkey);
     let harvested = 0, tilled = 0, planted = 0;
     for (const t of tiles) {

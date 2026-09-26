@@ -93,3 +93,27 @@ export function chooseSourceSticky(candidates, need, prevKey, ratio = 2) {
   const prevCost = costWithRest(prev, need, candidates);
   return prevCost <= best.cost * ratio ? { ...prev, cost: prevCost } : best;
 }
+
+/**
+ * Log blocks in sight grouped into trees (one per trunk column), each at its lowest log, nearest
+ * first by the walk to its foot: flat distance, plus climbing up to it (1.5 a block) or down (0.5).
+ * The nearest log block in a straight line is often a branch overhead or a log in the canopy of a
+ * tree further off; the trunk you can walk up to first is the one a player chops.
+ * logs: [{x, y, z, id}], from: feet {x, y, z} (block coordinates).
+ */
+export function trunksOf(logs, from) {
+  const cols = new Map();
+  for (const b of logs) {
+    const k = `${b.x},${b.z}`;
+    const c = cols.get(k);
+    if (!c) cols.set(k, { x: b.x, y: b.y, z: b.z, id: b.id, n: 1 });
+    else {
+      c.n++;
+      if (b.y < c.y) { c.y = b.y; c.id = b.id; }
+    }
+  }
+  return [...cols.values()]
+    .map((t) => ({ ...t, cost: Math.hypot(t.x - from.x, t.z - from.z) + Math.max(0, t.y - from.y) * 1.5 + Math.max(0, from.y - t.y) * 0.5 }))
+    .sort((a, b) => a.cost - b.cost);
+}
+

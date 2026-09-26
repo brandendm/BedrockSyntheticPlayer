@@ -57,3 +57,17 @@ test('a small far tree does not beat a big near memory: the shortfall is priced 
   const forest = { kind: 'memory', dist: 12, units: 20, perUnitS: 3.5, trust: 1, entry: { pos: { x: 12, y: 64, z: 0 } } };
   assert.equal(chooseSource([small, forest], 10).kind, 'memory');
 });
+
+test('trees: the trunk we can walk to first, not the nearest log block in a straight line', async () => {
+  const { trunksOf } = await import('../behavior_pack/scripts/core/sourcing.js');
+  const f = { x: 0, y: 64, z: 0 };
+  // Tree A: trunk 6 blocks away on our level. Tree B: 5 blocks away, but its logs start 5 up a cliff.
+  const logs = [
+    { x: 0, y: 69, z: 5, id: 'oak_log' }, { x: 0, y: 70, z: 5, id: 'oak_log' },
+    { x: 6, y: 64, z: 0, id: 'oak_log' }, { x: 6, y: 65, z: 0, id: 'oak_log' }, { x: 6, y: 66, z: 0, id: 'oak_log' },
+    { x: 7, y: 68, z: 1, id: 'oak_log' }, // a branch of A
+  ];
+  const t = trunksOf(logs, f);
+  assert.deepEqual([t[0].x, t[0].y, t[0].z, t[0].n], [6, 64, 0, 3]);
+  assert.ok(t.findIndex((x) => x.z === 5) > 0);
+});

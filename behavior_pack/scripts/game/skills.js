@@ -8,7 +8,7 @@ import { dist3D } from '../core/mathutil.js';
 import { toolFor, planCrafts, applyCraft, isLog, STONE_TARGETS, SHOVEL_BLOCKS, PICKAXE_BLOCKS, TOOL_STONE, count } from '../core/recipes.js';
 import { chooseTool, breakSeconds, cheapestPlaceable, spendableBlocks, blockSourceCost, itemValue } from '../core/costs.js';
 import { invCounts, hold, take, give, container, findSlot } from './inventory.js';
-import { chooseSource, chooseSourceSticky, sourceKey, trustFor, EXPLORE_S, DIG_DOWN_S } from '../core/sourcing.js';
+import { chooseSource, chooseSourceSticky, sourceKey, trustFor, trunksOf, EXPLORE_S, DIG_DOWN_S } from '../core/sourcing.js';
 import { makeClassifier, castRay, canSee } from './world.js';
 import { CONFIG } from '../config.js';
 import { wantScore, biomeName } from '../core/biomes.js';
@@ -689,8 +689,10 @@ export class Skills {
     const home = this.a.homestead?.house ?? this.a.homestead?.project;
     const avoid = [];
     if (home) avoid.push({ x: home.x, z: home.z, r: 8, why: 'too close to the house' });
+    const farmW = mem.data.farm?.water;
+    if (farmW) avoid.push({ x: farmW.x, z: farmW.z, r: 10, why: 'would shade the farm' });
     for (const cat of ['crafting_table', 'furnace']) for (const e of mem.list(cat, this.dim.id, stump).filter((e) => e.dist < 12)) avoid.push({ x: e.pos.x, z: e.pos.z, r: 3, why: `next to our ${cat.replace('_', ' ')}` });
-    for (const k of mem.data.stairs ?? []) {
+    for (const k of [...(mem.data.stairs ?? []), ...(mem.data.quarry?.steps ?? [])]) {
       const [x, , z] = k.split(',').map(Number);
       if (Math.abs(x - stump.x) < 6 && Math.abs(z - stump.z) < 6) avoid.push({ x, z, r: 2.5, why: 'on the quarry stairs' });
     }
@@ -982,12 +984,17 @@ export class Skills {
       this.check(gen);
       for (const l of logs) this.a.memory.remember('log', this.dim.id, l, 4);
       const need = target - have();
-      // Stick with the tree we were already heading for if it's still there.
-      const committedTree = this.logCommit?.startsWith('visible:') ? logs.find((l) => `visible:${l.x},${l.z}` === this.logCommit) : null;
-      const vis = committedTree ?? logs[0];
+      // Trees, not log blocks: the nearest trunk by the walk to its foot (a climb up to it costs
+      // extra), not the nearest log block in a straight line (a branch overhead, a log up in the
+      // canopy of a tree further off). Stick with the tree we were on only while it's about as
+      // close as the nearest one.
+      const trees = trunksOf(logs, f);
+      const committedTree = this.logCommit?.startsWith('visible:') ? trees.find((t) => `visible:${t.x},${t.z}` === this.logCommit) : null;
+      const vis = committedTree && committedTree.cost <= trees[0].cost + 4 ? committedTree : trees[0];
+      if (vis && trees.length > 1) this.log(`logs: nearest tree ${vis.cost.toFixed(1)} away (${vis.x} ${vis.y} ${vis.z}), next ${trees[1].cost.toFixed(1)}`);
       const best = chooseSourceSticky(this.sourceCandidates({
         cat: 'log', itemPred: isLog, perUnitS: 3.5,
-        visible: vis ? { ...vis, units: logs.length } : null,
+        visible: vis ? { ...vis, units: vis.n } : null,
         extra: [{ kind: 'explore', dist: 0, units: Infinity, perUnitS: 3.5, fixedS: EXPLORE_S }],
       }), need, this.logCommit);
       this.logCommit = sourceKey(best);
@@ -999,54 +1006,69 @@ export class Skills {
         continue;
       }
       // Chop the nearest trunk bottom-up while it lasts.
-      const trunk = best.target;
-      const column = [];
-      for (let y = trunk.y - 3; y <= trunk.y + 10; y++) if (isLog(this.blockAt({ x: trunk.x, y, z: trunk.z }) ?? '')) column.push({ x: trunk.x, y, z: trunk.z });
-      // A tree up on a ledge: get up to its base first (walking, or digging and building up).
-      if (column[0] && column[0].y - this.feet().y > 2) {
-        await this.goNear(gen, { x: column[0].x + 0.5, y: column[0].y, z: column[0].z + 0.5 }, 2.5, 2);
-        if (column[0].y - this.feet().y > 4) {
-          this.a.memory.markUnreachable(trunk, 300000); // can't get to it: other trees first
-          fails++;
-          continue;
-        }
-      }
-      let chopped = 0;
-      const before = have();
-      const logId = column[0] ? this.blockAt(column[0]) : null;
-      for (const b of column) {
-        if (have() >= target + extra) break; // the job's logs, plus the rest of this tree for later jobs
-        if (have() >= target) this.a.bonusUntil = system.currentTick + 100;
-        if (!isLog(this.blockAt(b) ?? '')) continue;
-        // The rest of the trunk is out of reach: build up beside it (a cheap block under us, leaves
-        // above cut away) instead of leaving the top of the tree and walking off to another one.
-        if (b.y - this.feet().y > 4 && !(await this.climbForLog(gen, b))) break;
-        if (await this.mine(gen, b)) chopped++;
-      }
-      if (chopped) this.memVisits.clear(); // trips paid off: nothing to hold against those memories
-      await this.descendPillar(gen); // built up to reach the top logs: come back down the same way
-      await this.grabLitter(gen); // free fuel within reach: the sweep below picks it up with the logs
-      await this.sweep(gen, trunk, 7, null, 8); // every log that fell, and saplings/apples while we're here
-      // Every log we broke should be in the inventory now. Missing some: they're on the ground
-      // (or up in the leaves): look harder before moving on to another tree.
-      const got = have() - before;
-      if (got < chopped) {
-        this.log(`logs: broke ${chopped}, have ${got} more: looking for the rest`);
-        // The first sweep may have written them off (up on the leaves, out of the path search's
-        // reach): these are ours, try again, and knock down any sitting on leaves first.
-        for (const e of this.logItemsNear(trunk, 10)) this.unreachableItems.delete(e.id);
-        await this.dropStranded(gen, trunk);
-        await this.sweep(gen, trunk, 10, isLog, 15);
-        const left = this.logItemsNear(trunk, 12);
-        if (left.length) this.log(`logs: ${left.length} still on the ground: ${left.map((e) => { const l = e.location; return `${l.x.toFixed(1)} ${l.y.toFixed(1)} ${l.z.toFixed(1)} on ${this.blockAt({ x: Math.floor(l.x), y: Math.floor(l.y - 0.1), z: Math.floor(l.z) })}`; }).join('; ')}`);
-      }
-      if (!column.some((b) => isLog(this.blockAt(b) ?? ''))) {
-        this.a.memory.forgetNear('log', this.dim.id, trunk, 3);
-        // The whole trunk's down: put a sapling back on the stump, like a good forester.
-        if (chopped && logId && column[0]) await this.replant(gen, column[0], logId).catch((e) => this.log(`replant: ${e}`));
-      }
+      const r = await this.chopTree(gen, best.target, { stop: () => have() >= target + extra, bonus: () => have() >= target });
+      if (r.unreachable) { fails++; continue; }
+      const chopped = r.chopped;
       if (!chopped && ++fails >= 3) { await this.explore(gen, 'reachable trees'); fails = 0; }
     }
+  }
+
+  /**
+   * Chop one tree: its trunk column bottom-up (building up beside it for the top logs), then pick
+   * up every log that fell, and put a sapling back on the stump (unless `replant` is off).
+   * stop(): enough logs, leave the rest standing; bonus(): the job's share is in (taking extra).
+   * Returns { chopped, unreachable }.
+   * @param {any} gen
+   * @param {{x: number, y: number, z: number}} trunk
+   * @param {{stop?: () => boolean, bonus?: () => boolean, replant?: boolean}} [opts]
+   */
+  async chopTree(gen, trunk, { stop = () => false, bonus = () => false, replant = true } = {}) {
+    const have = () => count(invCounts(this.sim), isLog);
+    const column = [];
+    for (let y = trunk.y - 3; y <= trunk.y + 10; y++) if (isLog(this.blockAt({ x: trunk.x, y, z: trunk.z }) ?? '')) column.push({ x: trunk.x, y, z: trunk.z });
+    // A tree up on a ledge: get up to its base first (walking, or digging and building up).
+    if (column[0] && column[0].y - this.feet().y > 2) {
+      await this.goNear(gen, { x: column[0].x + 0.5, y: column[0].y, z: column[0].z + 0.5 }, 2.5, 2);
+      if (column[0].y - this.feet().y > 4) {
+        this.a.memory.markUnreachable(trunk, 300000); // can't get to it: other trees first
+        return { chopped: 0, unreachable: true };
+      }
+    }
+    let chopped = 0;
+    const before = have();
+    const logId = column[0] ? this.blockAt(column[0]) : null;
+    for (const b of column) {
+      if (stop()) break; // the job's logs, plus the rest of this tree for later jobs
+      if (bonus()) this.a.bonusUntil = system.currentTick + 100;
+      if (!isLog(this.blockAt(b) ?? '')) continue;
+      // The rest of the trunk is out of reach: build up beside it (a cheap block under us, leaves
+      // above cut away) instead of leaving the top of the tree and walking off to another one.
+      if (b.y - this.feet().y > 4 && !(await this.climbForLog(gen, b))) break;
+      if (await this.mine(gen, b)) chopped++;
+    }
+    if (chopped) this.memVisits.clear(); // trips paid off: nothing to hold against those memories
+    await this.descendPillar(gen); // built up to reach the top logs: come back down the same way
+    await this.grabLitter(gen); // free fuel within reach: the sweep below picks it up with the logs
+    await this.sweep(gen, trunk, 7, null, 8); // every log that fell, and saplings/apples while we're here
+    // Every log we broke should be in the inventory now. Missing some: they're on the ground
+    // (or up in the leaves): look harder before moving on to another tree.
+    const got = have() - before;
+    if (got < chopped) {
+      this.log(`logs: broke ${chopped}, have ${got} more: looking for the rest`);
+      // The first sweep may have written them off (up on the leaves, out of the path search's
+      // reach): these are ours, try again, and knock down any sitting on leaves first.
+      for (const e of this.logItemsNear(trunk, 10)) this.unreachableItems.delete(e.id);
+      await this.dropStranded(gen, trunk);
+      await this.sweep(gen, trunk, 10, isLog, 15);
+      const left = this.logItemsNear(trunk, 12);
+      if (left.length) this.log(`logs: ${left.length} still on the ground: ${left.map((e) => { const l = e.location; return `${l.x.toFixed(1)} ${l.y.toFixed(1)} ${l.z.toFixed(1)} on ${this.blockAt({ x: Math.floor(l.x), y: Math.floor(l.y - 0.1), z: Math.floor(l.z) })}`; }).join('; ')}`);
+    }
+    if (!column.some((b) => isLog(this.blockAt(b) ?? ''))) {
+      this.a.memory.forgetNear('log', this.dim.id, trunk, 3);
+      // The whole trunk's down: put a sapling back on the stump, like a good forester.
+      if (replant && chopped && logId && column[0]) await this.replant(gen, column[0], logId).catch((e) => this.log(`replant: ${e}`));
+    }
+    return { chopped, unreachable: false };
   }
 
   // ---------- crafting ----------
@@ -1189,35 +1211,20 @@ export class Skills {
       this.log(`stone: need ${goal - have()}, ${seen.length} in sight, best ${best.kind} (${best.cost.toFixed(0)} s)`);
 
       if (best.kind === 'dig') {
-        // With a house, the quarry belongs near it (a short walk from home, at night too): only a
-        // quarry within 32 blocks of the house counts, and a new one starts 14-24 blocks out.
-        const house = this.a.homestead?.house;
-        const homeD = house ? Math.hypot(this.sim.location.x - house.x, this.sim.location.z - house.z) : 0;
-        const q = house ? this.quarryBottom(house, QUARRY_R) : this.quarryBottom(this.sim.location, 48);
-        if (q && !this.a.memory.isUnreachable(q)) {
-          await this.workQuarry(gen, q, more);
+        // One quarry, by the house: back down its shaft whenever we need stone, never a new hole
+        // while it's still usable (core of the "new quarry every trip" problem).
+        if (this.homeQuarry()) {
+          await this.workQuarry(gen, more);
           if (have() >= goal) return true;
           continue;
         }
-        if (house && homeD > 24 && homeD < 200) {
-          this.a.sayOnce('quarry-home', 'Heading back to dig my quarry near the house.', 120000);
-          this.log(`quarry: ${Math.round(homeD)} from the house, going back to start one near it`);
-          await this.travelToward(gen, { x: house.x, y: house.y, z: house.z }, Math.ceil(homeD / 40) + 2);
-          this.check(gen);
-        }
-        // Never dig our staircase under the house (or the spot we're building it on).
-        const home = house ?? this.a.homestead?.project;
-        const hd = home ? Math.hypot(this.sim.location.x - home.x, this.sim.location.z - home.z) : Infinity;
-        if (home && (hd < 12 || (house && hd > 24))) {
-          const res = await this.a.plan(this.sim.location, this.sim.location, 0, 4000, (x, y, z, w) => { const d = Math.hypot(x - home.x, z - home.z); return w.standable(x, y, z) && d >= 14 && (!house || d <= 24); });
-          this.check(gen);
-          if (res.complete && res.path.length >= 2) await this.a.motor.followPath(smoothPath(makeClassifier(this.dim), res.path));
-          this.check(gen);
-        }
+        await this.toQuarrySite(gen);
         this.a.sayOnce('stone-dig', 'No stone in sight, digging down to it.', 60000);
         await this.digStairs(gen, more);
         if (have() >= goal) return true;
-        await this.relocate(gen); // this spot's no good (water, a drop): try a few blocks over
+        // A fresh start that got nowhere (water, a drop right at the top): try a few blocks over.
+        // A quarry that's under way is carried on from its bottom next round instead.
+        if ((this.quarry?.steps.length ?? 0) < 3) { this.abandonQuarry('a bad spot to start'); await this.relocate(gen); }
         continue;
       }
       if (best.kind === 'item') {
@@ -1225,20 +1232,17 @@ export class Skills {
         continue;
       }
       if (best.kind === 'memory') {
-        // Our own quarry (stairs down into solid stone): go down to the bottom and carry on from
-        // there, not from the entrance (where there's no stone ahead, so it gave up and dug anew).
-        const q = this.quarryBottom(best.entry.pos, 24);
-        const house = this.a.homestead?.house;
-        if (q && house && Math.hypot(q.x - house.x, q.z - house.z) > QUARRY_R) {
-          // An old quarry from before the house, far from it now: retire it, dig one near home.
-          this.log(`quarry at ${q.x} ${q.y} ${q.z} is ${Math.round(Math.hypot(q.x - house.x, q.z - house.z))} from the house: retiring it`);
-          this.a.memory.markUnreachable(best.entry.pos, 3600000);
-          this.a.memory.markUnreachable(q, 3600000);
+        // Stone we remember in our own quarry: go down its shaft and carry on from the bottom,
+        // not from wherever the memory was made (that's how extra holes got started in it).
+        if (this.homeQuarry() && this.nearQuarry(best.entry.pos, 24)) {
+          await this.workQuarry(gen, more);
+          if (have() >= goal) break;
           continue;
         }
-        if (q && !this.a.memory.isUnreachable(q)) {
-          await this.workQuarry(gen, q, more);
-          if (have() >= goal) break;
+        // Stone remembered in an old quarry (from before the house, far from it now): not worth
+        // the walk; the home quarry (or a new one by the house) will do.
+        if (this.a.homestead?.house && this.quarry && this.nearQuarry(best.entry.pos, 24) && !this.homeQuarry()) {
+          this.a.memory.markUnreachable(best.entry.pos, 3600000);
           continue;
         }
         if (!(await this.visitMemory(gen, best.entry))) continue;
@@ -1325,7 +1329,7 @@ export class Skills {
    */
   async mineStoneFrom(gen, first, goal) {
     const have = () => count(invCounts(this.sim), (id) => TOOL_STONE.has(id));
-    const more = typeof goal === 'function' ? goal : () => more(); // goal: a count, or "keep going?"
+    const more = typeof goal === 'function' ? goal : () => count(invCounts(this.sim), (id) => TOOL_STONE.has(id)) < goal; // goal: a count, or "keep going?"
     let target = first, fails = 0;
     for (let n = 0; target && more() && fails < 4 && n < 64; n++) {
       this.check(gen);
@@ -1346,28 +1350,49 @@ export class Skills {
   }
 
   /**
-   * One-wide staircase down until stone. Once the stairs are in solid stone (two steps of nothing
-   * but stone), stop going deeper and tunnel along that level instead: each step forward gives the
-   * two tunnel blocks plus the stone walls beside our feet, with no more depth (lava, caves) or
-   * walking back up. If the tunnel runs out (a cave, gravel, water), go down a step and carry on.
-   * Never digs straight down, never opens a block next to water or lava, never steps over a drop.
+   * The quarry's staircase, one wide, one step down per block. It's always the same shaft: if we
+   * have a quarry, we carry on from the bottom of it in the direction it was going; if not, this
+   * starts one here. Once two steps are in solid stone (and we're after stone, not a depth), it
+   * tunnels along that level from the bottom, then comes back to the bottom and goes on down.
+   * Ore showing in the walls on the way gets mined (then back onto the stairs). Never digs straight
+   * down, never opens a block next to water or lava, never steps over a drop; blocked on every
+   * side, it cuts a few blocks along the level (still part of the shaft) and carries on down.
    */
   async digStairs(gen, goal, { toY = null, maxSteps = 40 } = {}) {
-    const have = () => count(invCounts(this.sim), (id) => TOOL_STONE.has(id));
-    const more = typeof goal === 'function' ? goal : () => more(); // goal: a count, or "keep going?"
+    const more = typeof goal === 'function' ? goal : () => count(invCounts(this.sim), (id) => TOOL_STONE.has(id)) < goal; // goal: a count, or "keep going?"
     const dirs = [[1, 0], [0, 1], [-1, 0], [0, -1]];
-    let di = Math.floor(Math.random() * 4);
+    // Carry on our quarry from its bottom; don't start a second hole beside it.
+    if (this.homeQuarry() && !(await this.toShaftBottom(gen))) return false;
+    let q = this.homeQuarry();
+    if (!q) {
+      // A new quarry starts where we stand: the ground under us is the top step (the way out).
+      const f = this.feet();
+      this.abandonQuarry('starting a new one by the house'); // an old one far from home, if any
+      this.extendShaft({ x: f.x, y: f.y - 1, z: f.z }, this.stoniestDir());
+      q = this.quarry;
+      this.log(`quarry: new shaft at ${f.x} ${f.y} ${f.z}`);
+    }
+    let di = q.dir ?? Math.floor(Math.random() * 4);
     let turns = 0, stoneSteps = 0;
     for (let step = 0; step < maxSteps && more(); step++) {
       this.check(gen);
       // Going to a set depth (the iron layer): keep stepping down until we're there.
       if (toY != null && this.feet().y <= toY) return true;
+      // After stone, not a depth: the shaft stops at the iron layer (it's the branch mine's level, and
+      // deeper means lava and deepslate). There, the stone comes from tunnels off the bottom.
+      if (toY == null && this.feet().y <= Skills.IRON_Y) {
+        // As deep as the quarry goes: the stone comes from the branch mine off the bottom, carried
+        // on from where it left off (not a new tunnel from the stairs each time).
+        await this.branchMine(gen, more);
+        return !more();
+      }
       if (stoneSteps >= 2 && toY == null) {
         this.a.sayOnce('tunnel', 'Down in the stone now: tunnelling along for the rest of the cobblestone.', 120000);
-        const t = await this.tunnel(gen, goal, di);
+        const t = await this.tunnel(gen, goal, (di + 1) % 4);
         if (!more()) return true;
-        di = t.di;
-        stoneSteps = 0; // that level's used up here: one more step down, then tunnel again
+        stoneSteps = 0; // that level's used up here: back to the stairs, one more step down, then tunnel again
+        if (!(await this.toShaftBottom(gen))) return false;
+        this.log(`quarry: tunnelled ${t.mined}, back at the bottom of the stairs`);
       }
       const f = this.feet();
       const [dx, dz] = dirs[di];
@@ -1375,14 +1400,23 @@ export class Skills {
       const cells = [{ x: fx, y: f.y + 1, z: fz }, { x: fx, y: f.y, z: fz }, { x: fx, y: f.y - 1, z: fz }];
       const floor = { x: fx, y: f.y - 2, z: fz };
       const unsafe = cells.some((c) => this.touchesLiquid(c)) || this.isLiquid(floor) ||
-        !this.isDiggable(cells) || this.blockAt(floor) === 'air';
+        !this.isDiggable(cells) || OPEN.test(this.blockAt(floor) ?? 'air') || this.isProtected(floor);
       if (unsafe) {
         if (++turns > 4) {
-          // No safe step down from here (water, a drop, our own stairs all round): if we're in
-          // stone already, tunnel along this level instead of giving up and starting a new hole.
-          if (this.inStone()) {
-            const t = await this.tunnel(gen, goal, di);
-            if (t.mined > 0) { turns = 0; di = t.di; if (!more()) return true; continue; }
+          // No safe step down from here (water, a cave, a drop all round): cut a few blocks along
+          // this level and go on down from there. The cut is part of the shaft, so the next trip
+          // walks the same way instead of starting a new hole.
+          if (this.inStone() || this.isUnderground()) {
+            let moved = 0;
+            for (let k = 0; k < 4 && moved < 3; k++) {
+              const d = (di + k) % 4;
+              while (moved < 3 && (await this.tunnelStep(gen, dirs[d][0], dirs[d][1]))) {
+                moved++;
+                const g = this.feet();
+                this.extendShaft({ x: g.x, y: g.y - 1, z: g.z }, d);
+              }
+            }
+            if (moved) { this.log(`stairs: blocked below at Y ${f.y}, cut ${moved} along`); turns = 0; continue; }
           }
           this.a.sayOnce('dig-unsafe', "Can't dig down safely here.", 30000);
           this.log(`stairs: no safe step down at ${f.x} ${f.y} ${f.z} (water, lava, a drop or loose blocks on every side)`);
@@ -1391,6 +1425,7 @@ export class Skills {
         di = (di + 1) % 4;
         continue;
       }
+      turns = 0;
       // Sand and gravel keep falling into the gap from above: mine until the column stays clear
       // (a beach or a desert has several blocks of it over the stone).
       for (const c of cells) {
@@ -1414,11 +1449,12 @@ export class Skills {
         this.log(`stairs: step down from ${f.x} ${f.y} ${f.z} toward ${fx} ${f.y - 1} ${fz} didn't land (${r.status}); now at ${g.x} ${g.y} ${g.z}; cells ${cells.map((c) => this.blockAt(c)).join('/')}, floor ${this.blockAt(floor)}, above us ${this.blockAt({ x: f.x, y: f.y + 2, z: f.z })}`);
         return false;
       }
-      this.protect({ x: fx, y: f.y - 2, z: fz }); // the step we stand on: the way back up
+      this.extendShaft({ x: fx, y: f.y - 2, z: fz }, di); // the step we stand on: the way back up
       await this.lightQuarry(gen, { x: f.x, y: f.y, z: f.z }); // the step behind us
+      // Ore in the walls we just opened (iron on the way down to the iron layer, coal for torches).
+      await this.oreAround(gen, { x: fx, y: f.y - 1, z: fz });
       stoneSteps = cells.every((c) => STONEISH.test(this.blockAt({ ...c, x: c.x + dx, z: c.z + dz }) ?? '')) ? stoneSteps + 1 : 0;
-      // Reached stone: this staircase is our quarry now. Remember where it is (walkable: we just
-      // dug the way down), so the next time we need stone we come back here instead of a new hole.
+      // Reached stone: remember it's here (the quarry), so stone memories point back to it.
       if (cells.some((c) => /^(stone|deepslate)$/.test(this.blockAt({ ...c, x: c.x + dx, z: c.z + dz }) ?? ''))) {
         this.a.memory.remember('stone', this.dim.id, this.feet(), 24);
       }
@@ -1426,10 +1462,192 @@ export class Skills {
     return !more();
   }
 
+  // ---------- the quarry: one shaft down, near the house ----------
+
+  /** Our quarry in this dimension: { d, steps: ['x,y,z' treads, top first], dir, fails, mine }. */
+  get quarry() {
+    const q = this.a.memory.data.quarry;
+    return q && q.d === this.dim.id && q.steps?.length ? q : null;
+  }
+
+  /** Where we stand on tread i (one above the block). */
+  shaftStand(q, i) {
+    const [x, y, z] = q.steps[i].split(',').map(Number);
+    return { x, y: y + 1, z };
+  }
+
+  shaftBottom(q = this.quarry) { return q ? this.shaftStand(q, q.steps.length - 1) : null; }
+  shaftTop(q = this.quarry) { return q ? this.shaftStand(q, 0) : null; }
+
+  /** The quarry to use: near the house if there is one, and not given up on. */
+  homeQuarry() {
+    const q = this.quarry;
+    if (!q) return null;
+    const house = this.a.homestead?.house;
+    const top = this.shaftTop(q);
+    if (house && Math.hypot(top.x - house.x, top.z - house.z) > QUARRY_R) return null;
+    return q;
+  }
+
+  /** Is p in or around our quarry (its shaft or the mine off its bottom), within r? */
+  nearQuarry(p, r = 24) {
+    const q = this.quarry;
+    if (!q) return false;
+    const pts = [this.shaftTop(q), this.shaftBottom(q), ...(q.mine?.at ? [q.mine.at] : [])];
+    return pts.some((s) => Math.hypot(s.x - p.x, s.z - p.z) <= r && Math.abs(s.y - p.y) <= r);
+  }
+
+  /** A new tread at the bottom of the shaft (starts the quarry if there isn't one). */
+  extendShaft(tread, di) {
+    const mem = this.a.memory;
+    let q = this.quarry;
+    if (!q) q = mem.data.quarry = { d: this.dim.id, steps: [], dir: di, fails: 0, started: Date.now() };
+    const k = `${tread.x},${tread.y},${tread.z}`;
+    if (q.steps[q.steps.length - 1] !== k) q.steps.push(k);
+    if (q.steps.length > 240) q.steps.splice(1, q.steps.length - 240); // keep the top: it's the way in
+    q.dir = di;
+    this._protected = null;
+    mem.save();
+  }
+
+  /** Give up on the quarry (we'll start another by the house next time we need one). */
+  abandonQuarry(why) {
+    if (!this.a.memory.data.quarry) return;
+    this.log(`quarry: giving up on it (${why})`);
+    // Its steps stay protected: never dig out the stairs of an old quarry either.
+    for (const k of this.a.memory.data.quarry.steps ?? []) { const [x, y, z] = k.split(',').map(Number); this.protect({ x, y, z }); }
+    this.a.memory.data.quarry = null;
+    this._protected = null;
+    this.a.memory.save();
+  }
+
+  /** Index of the shaft tread we're standing on (or next to), or -1. */
+  shaftIndexHere(q = this.quarry) {
+    if (!q) return -1;
+    const p = this.sim.location;
+    let best = -1, bd = 1.6;
+    for (let i = 0; i < q.steps.length; i++) {
+      const s = this.shaftStand(q, i);
+      const d = Math.hypot(s.x + 0.5 - p.x, s.z + 0.5 - p.z) + Math.abs(s.y - Math.floor(p.y));
+      if (d < bd) { bd = d; best = i; }
+    }
+    return best;
+  }
+
+  /**
+   * Walk the shaft's treads from where we are to tread `to` (down or up). The stairs are ours and
+   * known, so no path search: straight down the steps we cut, the way a player walks their mine.
+   */
+  async walkShaft(gen, to) {
+    const q = this.quarry;
+    if (!q) return false;
+    let from = this.shaftIndexHere(q);
+    if (from < 0) {
+      // Not on the stairs: to the top (or the nearer end) first.
+      const top = this.shaftTop(q), bottom = this.shaftBottom(q);
+      const here = this.sim.location;
+      const useBottom = to === q.steps.length - 1 && dist3D(here, bottom) < dist3D(here, top);
+      const end = useBottom ? bottom : top;
+      if (!(await this.goNear(gen, { x: end.x + 0.5, y: end.y, z: end.z + 0.5 }, 0.8, 3))) return false;
+      from = useBottom ? q.steps.length - 1 : 0;
+    }
+    if (from === to) return true;
+    const idx = [];
+    for (let i = from; from < to ? i <= to : i >= to; i += from < to ? 1 : -1) idx.push(i);
+    for (let a = 0; a < idx.length; a += 40) {
+      const wps = idx.slice(Math.max(0, a - 1), a + 40).map((i) => { const s = this.shaftStand(q, i); return { x: s.x + 0.5, y: s.y, z: s.z + 0.5 }; });
+      const r = await this.a.motor.followPath(wps);
+      this.check(gen);
+      if (r.status !== 'arrived') {
+        // Something's changed (a block fell in, a mob): let the path search take it from here.
+        const t = this.shaftStand(q, to);
+        return this.goNear(gen, { x: t.x + 0.5, y: t.y, z: t.z + 0.5 }, 0.8, 3);
+      }
+    }
+    return true;
+  }
+
+  /**
+   * Down to the bottom of our quarry. A quarry we can't get down (three tries in a row) is given
+   * up on; one bad trip isn't reason enough to dig a new one.
+   */
+  async toShaftBottom(gen) {
+    const q = this.homeQuarry();
+    if (!q) return false;
+    const b = this.shaftBottom(q);
+    if (Math.hypot(b.x + 0.5 - this.sim.location.x, b.z + 0.5 - this.sim.location.z) < 0.9 && Math.abs(b.y - this.feet().y) <= 1) return true;
+    this.a.sayOnce('quarry-back', 'Back to my quarry: down to the bottom and carrying on from there.', 60000);
+    const ok = (await this.walkShaft(gen, q.steps.length - 1)) || (await this.goNear(gen, { x: b.x + 0.5, y: b.y, z: b.z + 0.5 }, 0.8, 2));
+    if (ok) { q.fails = 0; return true; }
+    q.fails = (q.fails ?? 0) + 1;
+    this.log(`quarry: couldn't get down to ${b.x} ${b.y} ${b.z} (${q.fails} time${q.fails > 1 ? 's' : ''})`);
+    if (q.fails >= 3) this.abandonQuarry("can't get down it");
+    this.a.memory.save();
+    return false;
+  }
+
+  /** Up our shaft to the top, if we're in it or in the mine off its bottom. */
+  async leaveQuarry(gen) {
+    const q = this.quarry;
+    if (!q || !this.nearQuarry(this.sim.location, 48)) return false;
+    // Tried from about here a moment ago and there was no way to the stairs: don't search again
+    // every round of the climb-out loop.
+    const f = this.feet(), lf = this.leaveFail;
+    if (lf && Date.now() - lf.at < 60000 && Math.abs(lf.x - f.x) + Math.abs(lf.y - f.y) + Math.abs(lf.z - f.z) < 4) return false;
+    if (this.shaftIndexHere(q) < 0) {
+      // In the mine off the bottom (or a tunnel): back to the foot of the stairs first.
+      const b = this.shaftBottom(q);
+      const res = await this.a.plan(this.sim.location, { x: b.x + 0.5, y: b.y, z: b.z + 0.5 }, 0.8, 12000);
+      this.check(gen);
+      if (!res.complete) { this.leaveFail = { ...f, at: Date.now() }; return false; }
+      if (res.path.length >= 2) await this.a.motor.followPath(smoothPath(makeClassifier(this.dim), res.path));
+      this.check(gen);
+      if (this.shaftIndexHere(q) < 0) return false;
+    }
+    this.log('quarry: walking up the stairs');
+    return this.walkShaft(gen, 0);
+  }
+
+  /** Where a new quarry goes: 14-24 blocks from the house (never under it), walking there first. */
+  async toQuarrySite(gen) {
+    const house = this.a.homestead?.house;
+    const homeD = house ? Math.hypot(this.sim.location.x - house.x, this.sim.location.z - house.z) : 0;
+    if (house && homeD > 24 && homeD < 200) {
+      this.a.sayOnce('quarry-home', 'Heading back to dig my quarry near the house.', 120000);
+      this.log(`quarry: ${Math.round(homeD)} from the house, going back to start one near it`);
+      await this.travelToward(gen, { x: house.x, y: house.y, z: house.z }, Math.ceil(homeD / 40) + 2);
+      this.check(gen);
+    }
+    // Never dig our staircase under the house (or the spot we're building it on).
+    const home = house ?? this.a.homestead?.project;
+    const hd = home ? Math.hypot(this.sim.location.x - home.x, this.sim.location.z - home.z) : Infinity;
+    if (home && (hd < 12 || (house && hd > 24))) {
+      const res = await this.a.plan(this.sim.location, this.sim.location, 0, 4000, (x, y, z, w) => { const d = Math.hypot(x - home.x, z - home.z); return w.standable(x, y, z) && d >= 14 && (!house || d <= 24); });
+      this.check(gen);
+      if (res.complete && res.path.length >= 2) await this.a.motor.followPath(smoothPath(makeClassifier(this.dim), res.path));
+      this.check(gen);
+    }
+  }
+
+  /** Mine ore showing around us (in reach, in view), then step back to where we were standing. */
+  async oreAround(gen, stand) {
+    const n = await this.mineExposedOre(gen);
+    if (!n) return 0;
+    const p = this.sim.location;
+    if (Math.hypot(stand.x + 0.5 - p.x, stand.z + 0.5 - p.z) > 0.6 || Math.floor(p.y) !== stand.y) {
+      await this.goNear(gen, { x: stand.x + 0.5, y: stand.y, z: stand.z + 0.5 }, 0.5, 2);
+    }
+    return n;
+  }
+
+
   // ---------- iron: down to the iron layer, branch mine, mine the veins ----------
 
   /** Ore we mine when we come across it (with a pickaxe that gets a drop from it). */
   static isOre(id) { return /_ore$/.test(id) && !/^(nether_gold|quartz)/.test(id); }
+
+  /** The iron band peaks here (minecraft.wiki: Y -24..56, most at 16). */
+  static IRON_Y = 16;
 
   /** Raw iron (and unsmelted iron ore blocks) we carry. */
   rawIron() { const inv = invCounts(this.sim); return (inv.raw_iron ?? 0) + (inv.iron_ore ?? 0) + (inv.deepslate_iron_ore ?? 0); }
@@ -1445,7 +1663,10 @@ export class Skills {
     const goal = this.rawIron() + need;
     const pick = () => Object.keys(invCounts(this.sim)).some((id) => /^(stone|iron|diamond|netherite)_pickaxe$/.test(id));
     // Out of pickaxes: stop (digging stone by hand is ten times slower); the ladder makes more.
-    const more = () => this.rawIron() < goal && system.currentTick - t0 < maxS * 20 && pick();
+    // Pack full of things worth keeping (junk stone is tossed as we go): home to the chest first,
+    // rather than leave ore lying in the tunnel.
+    const roomy = () => { const c = container(this.sim); return !c || c.emptySlotsCount > 1 || !this.a.homestead?.chests().length || Date.now() - (this.a.memory.data.chestFullAt ?? 0) < 600000; };
+    const more = () => this.rawIron() < goal && system.currentTick - t0 < maxS * 20 && pick() && roomy();
     if (!pick()) { this.log('iron: no pickaxe'); return false; }
     // 1. Iron in sight.
     const seen = (await this.scan((id) => /iron_ore$/.test(id), { radius: 16, below: 6, above: 8, limit: 8 }))
@@ -1458,49 +1679,29 @@ export class Skills {
       }
       if (!more()) return this.rawIron() >= goal;
     }
-    // 2. Down to the iron layer, from our quarry by the house (or a new staircase near it).
-    const IRON_Y = 16;
+    // 2. Down to the iron layer: our quarry's shaft (carried on down if it doesn't reach yet), or
+    //    a new one near the house. Straight back to the branch mine if we've started one.
+    const IRON_Y = Skills.IRON_Y;
+    const going = () => system.currentTick - t0 < maxS * 20 && pick();
     if (this.feet().y > IRON_Y + 1) {
-      const house = this.a.homestead?.house;
-      const q = house ? this.quarryBottom(house, QUARRY_R) : this.quarryBottom(this.sim.location, 48);
-      if (q && !this.a.memory.isUnreachable(q) && q.y < this.feet().y) {
-        this.a.sayOnce('iron-down', `Down the quarry to about Y ${IRON_Y} for iron.`, 120000);
-        if (!(await this.goNear(gen, { x: q.x + 0.5, y: q.y, z: q.z + 0.5 }, 1.2, 3))) {
-          this.log(`iron: couldn't get down our quarry at ${q.x} ${q.y} ${q.z}: writing it off, digging fresh here`);
-          this.a.memory.markUnreachable(q, 3600000);
-        }
-      } else if (house) {
-        const hd = Math.hypot(this.sim.location.x - house.x, this.sim.location.z - house.z);
-        if (hd > 24) await this.travelToward(gen, { x: house.x, y: house.y, z: house.z }, Math.ceil(hd / 40) + 2);
-        const res = await this.a.plan(this.sim.location, this.sim.location, 0, 4000, (x, y, z, w) => { const d = Math.hypot(x - house.x, z - house.z); return w.standable(x, y, z) && d >= 14 && d <= 24; });
-        this.check(gen);
-        if (res.complete && res.path.length >= 2) await this.a.motor.followPath(smoothPath(makeClassifier(this.dim), res.path));
-      }
+      if (this.homeQuarry()) this.a.sayOnce('iron-down', `Down the quarry to about Y ${IRON_Y} for iron.`, 120000);
+      else await this.toQuarrySite(gen);
       this.check(gen);
       this.a.sayOnce('iron-stairs', `Digging down to Y ${IRON_Y}, where the iron is.`, 120000);
-      const going = () => system.currentTick - t0 < maxS * 20 && pick();
-      for (let tries = 0; tries < 6 && this.feet().y > IRON_Y + 1 && going(); tries++) {
+      for (let tries = 0; tries < 4 && this.feet().y > IRON_Y + 1 && going(); tries++) {
+        // digStairs goes to the bottom of the quarry first and carries the same shaft on down.
         await this.digStairs(gen, going, { toY: IRON_Y, maxSteps: 120 });
         this.check(gen);
         if (this.feet().y <= IRON_Y + 1 || !going()) break;
-        if (this.isUnderground()) {
-          // Down in the rock and blocked (a cave, water, a drop): tunnel a few blocks along this
-          // level, then carry on down from there, rather than walk back up to the surface.
-          const d0 = this.stoniestDir(), dirs = [[1, 0], [0, 1], [-1, 0], [0, -1]];
-          let moved = 0;
-          for (let turn = 0; turn < 4 && moved < 3; turn++) {
-            const [dx, dz] = dirs[(d0 + turn) % 4];
-            while (moved < 4 && (await this.tunnelStep(gen, dx, dz))) moved++;
-          }
-          this.log(`iron: stairs blocked at Y ${this.feet().y}: tunnelled ${moved} along, going on down`);
-          if (!moved) await this.relocate(gen);
-        } else {
-          this.log(`iron: stairs stopped at Y ${this.feet().y}, trying a few blocks over`);
-          await this.relocate(gen); // water, sand, gravel near the top: start again next to it
-        }
+        // Stopped near the top of a new shaft (water, sand): start it again a few blocks over.
+        // A shaft that's under way is never abandoned for a new hole: it's carried on next trip.
+        if ((this.quarry?.steps.length ?? 0) < 3) { this.abandonQuarry('a bad spot to start'); await this.relocate(gen); } else break;
       }
       if (this.feet().y > IRON_Y + 1) return false;
     }
+    // Fell into a cave on the way (or walked down one after ore): the iron band peaks at Y 16,
+    // and a branch mine far below it finds less and is harder to get out of. Back up first.
+    if (this.feet().y < IRON_Y - 4 && !(await this.backToLevel(gen, IRON_Y))) return false;
     // 3. Branch mine.
     this.a.sayOnce('iron-branch', 'At the iron layer: branch mining.', 120000);
     await this.branchMine(gen, more);
@@ -1508,16 +1709,57 @@ export class Skills {
   }
 
   /**
-   * A branch mine: a 2-high main tunnel, and every 3rd block a branch 8 long to each side (two
-   * solid blocks between branches, so every block in between shows a face and none is dug twice).
-   * Ore on the walls gets mined as we pass, whole veins. The direction is kept in memory so the
-   * next trip carries on from the end.
+   * Too deep (a fall into a cave, a vein followed down): back up to about level y. Our own shaft or
+   * any walking route first; otherwise a staircase up, cut into the rock.
+   */
+  async backToLevel(gen, y) {
+    const q = this.homeQuarry();
+    this.log(`too deep: at Y ${this.feet().y}, getting back up to about Y ${y}`);
+    this.a.sayOnce('too-deep', `I'm down at Y ${this.feet().y}, below the iron layer: climbing back up to it.`, 120000);
+    if (q) {
+      const b = this.shaftBottom(q);
+      if (b.y >= y - 2 && (await this.goNear(gen, { x: b.x + 0.5, y: b.y, z: b.z + 0.5 }, 0.8, 2))) return true;
+    }
+    // Anywhere we can walk to at about that level.
+    const res = await this.a.plan(this.sim.location, this.sim.location, 0, 6000, (x, yy, z, w) => w.standable(x, yy, z) && yy >= y - 2 && yy <= y + 2);
+    this.check(gen);
+    if (res.complete && res.path.length >= 2) {
+      await this.a.motor.followPath(smoothPath(makeClassifier(this.dim), res.path));
+      this.check(gen);
+      if (this.feet().y >= y - 4) return true;
+    }
+    const byHand = !toolFor('stone', invCounts(this.sim));
+    for (let i = 0; i < 40 && this.feet().y < y - 1; i++) {
+      if (!(await this.stairStep(gen, byHand))) {
+        if (!(await this.tunnelSideways(gen, byHand))) break;
+      }
+    }
+    return this.feet().y >= y - 4;
+  }
+
+  /**
+   * A branch mine off the bottom of the quarry: a 2-high main tunnel, and every 3rd block a branch
+   * 8 long to each side (two solid blocks between branches, so every block in between shows a face
+   * and none is dug twice). Ore on the walls gets mined as we pass, whole veins. Where the main
+   * tunnel has got to, and which way it runs, is kept with the quarry: the next trip walks to the
+   * end of it and carries on, instead of starting over from wherever it happens to be.
    */
   async branchMine(gen, more) {
     const dirs = [[1, 0], [0, 1], [-1, 0], [0, -1]];
+    const q = this.homeQuarry();
     const mem = this.a.memory.data;
-    let di = mem.mineDir ?? this.stoniestDir();
-    let steps = 0, blocked = 0;
+    let prev = q?.mine && Math.abs(q.mine.y - this.feet().y) <= 2 ? q.mine : null;
+    if (prev) {
+      const at = prev.at;
+      if (!(await this.goNear(gen, { x: at.x + 0.5, y: at.y, z: at.z + 0.5 }, 0.8, 2))) { this.log(`mine: couldn't get back to the end of the main tunnel at ${at.x} ${at.y} ${at.z}; carrying on from here`); prev = null; }
+    }
+    let di = prev?.di ?? mem.mineDir ?? this.stoniestDir();
+    let steps = prev?.n ?? 0, blocked = 0;
+    const record = () => {
+      mem.mineDir = di;
+      if (q) q.mine = { y: this.feet().y, at: this.feet(), di, n: steps };
+      this.a.memory.save();
+    };
     while (more() && blocked < 4) {
       this.check(gen);
       await this.dumpJunk(gen);
@@ -1528,9 +1770,9 @@ export class Skills {
         continue;
       }
       blocked = 0;
-      mem.mineDir = di;
       steps++;
-      await this.mineExposedOre(gen);
+      record();
+      await this.oreAround(gen, this.feet());
       if (steps % 3 === 0) {
         for (const side of [1, -1]) {
           if (!more()) break;
@@ -1538,7 +1780,7 @@ export class Skills {
         }
       }
     }
-    this.a.memory.save();
+    record();
   }
 
   /** One branch off the main tunnel, `len` long, then back to where it started. */
@@ -1583,8 +1825,10 @@ export class Skills {
   /** Ore showing on the walls around us (in reach and in view): mine it, whole veins. */
   async mineExposedOre(gen) {
     const ores = (await this.scan((id) => Skills.isOre(id), { radius: 4, below: 2, above: 3, limit: 12 }))
-      .filter((b) => this.inReach(b) && this.sees(b) && chooseTool(b.id, invCounts(this.sim), { needDrop: true }));
-    for (const b of ores) if (Skills.isOre(this.blockAt(b) ?? '')) await this.mineVein(gen, b);
+      .filter((b) => this.inReach(b) && this.sees(b) && !this.isProtected(b) && chooseTool(b.id, invCounts(this.sim), { needDrop: true }));
+    let n = 0;
+    for (const b of ores) if (Skills.isOre(this.blockAt(b) ?? '') && (await this.mineVein(gen, b))) n++;
+    return n;
   }
 
   /**
@@ -1642,20 +1886,6 @@ export class Skills {
     return tossed;
   }
 
-  /**
-   * The deepest step of one of our staircases (or tunnel floors) near `near`: where the quarry
-   * carries on from. Protected blocks are the treads we stand on; we stand one above.
-   */
-  quarryBottom(near, radius) {
-    let best = null;
-    for (const k of this.a.memory.data.stairs ?? []) {
-      const [x, y, z] = k.split(',').map(Number);
-      if (Math.hypot(x - near.x, z - near.z) > radius || Math.abs(y - near.y) > 48) continue;
-      if (!best || y < best.y || (y === best.y && Math.hypot(x - near.x, z - near.z) > Math.hypot(best.x - near.x, best.z - near.z))) best = { x, y, z };
-    }
-    return best ? { x: best.x, y: best.y + 1, z: best.z } : null;
-  }
-
   /** Which way from here has the most stone at feet and head height, a few blocks deep. */
   stoniestDir() {
     const f = this.feet();
@@ -1670,28 +1900,25 @@ export class Skills {
   }
 
   /**
-   * Back to a quarry: walk down our own stairs to the bottom, tunnel on from there toward the
-   * most stone, and if that level's used up, keep the staircase going down from the bottom.
+   * Back to the quarry: down our own stairs to the bottom, tunnel on from there toward the most
+   * stone, and if that level's used up, carry the same staircase on down from the bottom.
    */
-  async workQuarry(gen, bottom, more) {
-    this.a.sayOnce('quarry-back', 'Back to my quarry: down to the bottom and carrying on from there.', 60000);
-    if (!(await this.goNear(gen, { x: bottom.x + 0.5, y: bottom.y, z: bottom.z + 0.5 }, 1.2, 3))) {
-      this.log(`quarry: couldn't get down to ${bottom.x} ${bottom.y} ${bottom.z}`);
-      this.a.memory.markUnreachable(bottom, 600000);
-      return false;
-    }
+  async workQuarry(gen, more) {
+    if (!(await this.toShaftBottom(gen))) return false;
     const have = () => count(invCounts(this.sim), (id) => TOOL_STONE.has(id));
     const h0 = have();
-    const t = await this.tunnel(gen, more, this.stoniestDir());
-    this.log(`quarry: tunnelled ${t.mined} from the bottom at ${bottom.x} ${bottom.y} ${bottom.z}`);
+    const b = this.feet();
+    // At the iron layer the shaft stops and the branch mine (via digStairs) takes over.
+    const t = b.y > Skills.IRON_Y ? await this.tunnel(gen, more, this.stoniestDir()) : { mined: 0 };
+    this.log(`quarry: tunnelled ${t.mined} from the bottom at ${b.x} ${b.y} ${b.z}`);
     if (!more()) return true;
-    await this.digStairs(gen, more); // this level's done here: on down from the bottom
+    await this.digStairs(gen, more); // this level's done here: back to the stairs and on down
     if (have() === h0) {
-      // Nothing more to be had here (water, lava, the way down blocked): write this quarry off for
-      // a while and dig a fresh hole, rather than trying it again and again.
-      this.log(`quarry at ${bottom.x} ${bottom.y} ${bottom.z}: nothing more from here, writing it off for now`);
-      this.a.memory.markUnreachable(bottom, 600000);
-    }
+      const q = this.quarry;
+      if (q) { q.dry = (q.dry ?? 0) + 1; this.a.memory.save(); }
+      this.log(`quarry: nothing more from the bottom this time (${q?.dry ?? 0} in a row)`);
+      if ((q?.dry ?? 0) >= 3) this.abandonQuarry('nothing more to be had from it');
+    } else if (this.quarry) this.quarry.dry = 0;
     return !more();
   }
 
@@ -1703,7 +1930,7 @@ export class Skills {
    */
   async tunnel(gen, goal, di) {
     const have = () => count(invCounts(this.sim), (id) => TOOL_STONE.has(id));
-    const more = typeof goal === 'function' ? goal : () => more(); // goal: a count, or "keep going?"
+    const more = typeof goal === 'function' ? goal : () => count(invCounts(this.sim), (id) => TOOL_STONE.has(id)) < goal; // goal: a count, or "keep going?"
     const dirs = [[1, 0], [0, 1], [-1, 0], [0, -1]];
     const home = this.a.homestead?.house ?? this.a.homestead?.project;
     const safe = (c) => !this.touchesLiquid(c) && !this.isLiquid(c) && this.isDiggable([c]) && !FALLING.test(this.blockAt({ ...c, y: c.y + 1 }) ?? '');
@@ -1739,6 +1966,7 @@ export class Skills {
       if (r.status !== 'arrived') return { di, mined };
       this.protect({ x: feet.x, y: f.y - 1, z: feet.z }); // tunnel floor
       await this.lightQuarry(gen, { x: f.x, y: f.y, z: f.z });
+      await this.oreAround(gen, feet); // coal and iron in the tunnel walls: worth the moment
       run++;
     }
     this.a.memory.remember('stone', this.dim.id, this.feet(), 24); // the tunnel: come back to it next time
@@ -1761,7 +1989,8 @@ export class Skills {
   }
 
   isProtected(p) {
-    if (!this._protected) this._protected = new Set(this.a.memory.data.stairs ?? []);
+    // The treads of our staircases and tunnel floors, and every step of the quarry's shaft.
+    if (!this._protected) this._protected = new Set([...(this.a.memory.data.stairs ?? []), ...(this.a.memory.data.quarry?.steps ?? [])]);
     return this._protected.has(`${Math.floor(p.x)},${Math.floor(p.y)},${Math.floor(p.z)}`);
   }
 
@@ -2088,6 +2317,11 @@ export class Skills {
 
   /** Walk to open sky if there's any route. Returns true if we got out. */
   async walkOut(gen) {
+    // In our quarry: up our own stairs (known, no search, no new holes dug to get out).
+    if (await this.leaveQuarry(gen)) {
+      this.check(gen);
+      if (!(await this.needsEscape(gen))) return true;
+    }
     // The way we came in: the last place we stood on the surface, if we can walk back to it.
     const back = this.a.lastSurface?.();
     if (back && dist3D(this.sim.location, back) < 120) {

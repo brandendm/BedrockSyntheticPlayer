@@ -56,8 +56,11 @@ test('house: materials, reach from the middle, walls before roof, nothing in the
 });
 
 test('house shortfall and new recipes', () => {
-  assert.deepEqual(houseShortfall({}), { stone: 27, logs: 13 });
-  assert.equal(houseShortfall({ cobblestone: 27, oak_planks: 52 }), null);
+  // Walls and roof (46 planks) plus the fittings: door 6, bed 3, table 4, chest 8, in one trip.
+  assert.deepEqual(houseShortfall({}), { stone: 27, logs: 17 });
+  assert.deepEqual(houseShortfall({ cobblestone: 27, oak_planks: 52 }), { stone: 0, logs: 4 });
+  assert.equal(houseShortfall({ cobblestone: 27, oak_planks: 67 }), null);
+  assert.equal(houseShortfall({ cobblestone: 27, oak_planks: 52 }, null, { fittings: false }), null); // enough for a night in
   assert.deepEqual(houseShortfall({}, { stone: 5, planks: 0 }), { stone: 5, logs: 0 }); // a started house: exact counts
   assert.equal(planCrafts({ white_wool: 2, black_wool: 1, oak_planks: 3 }, ['bed']).missing, 'bed'); // one colour only
   assert.equal(applyCraft({ white_wool: 3, black_wool: 1, oak_planks: 3 }, 'bed').inv.black_wool, 1);

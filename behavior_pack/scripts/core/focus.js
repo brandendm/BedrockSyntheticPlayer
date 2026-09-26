@@ -11,10 +11,11 @@
 // building/furnishing the house we started, crafting (it's instant), and the crafting table.
 import { count, has, isLog, isPlanks, isWool, TOOL_STONE } from './recipes.js';
 import { materials } from './house.js';
-import { FOOD_GOAL, TORCH_GOAL, foodCount } from './settle.js';
+import { FOOD_GOAL, TORCH_GOAL, foodCount, fittingsPlanks } from './settle.js';
+import { upkeepNeeds } from './advance.js';
 
 const HOUSE = materials();
-export const PRIORITY = new Set(['repair_house', 'go_home', 'shelter', 'collect_smelt', 'build_house', 'plan_house', 'furnish', 'craft', 'place_table', 'goto_table', 'wait_smelt', 'smelt', 'done']);
+export const PRIORITY = new Set(['repair_house', 'go_home', 'shelter', 'collect_smelt', 'build_house', 'plan_house', 'furnish', 'store', 'craft', 'place_table', 'goto_table', 'wait_smelt', 'smelt', 'done']);
 /** How close a resource must be to be worth a detour, in blocks. */
 export const RADIUS = { sheep: 24, food: 16, log: 20, stone: 16 };
 const WORK = { sheep: 8, food: 6, log: 14, stone: 10 }; // rough effort on top of walking there (log: ~4 logs chopped)
@@ -42,10 +43,13 @@ export function needs(f) {
   const housePlanks = built ? 0 : f.project && f.shortfall ? f.shortfall.planks + planks : HOUSE.planks;
   const bed = has(inv, 'bed') || !!f.house?.bed;
   const torches = inv.torch ?? 0;
-  const planksNeed = housePlanks + (built || has(inv, 'wooden_door') ? 0 : 6) + (bed ? 0 : 3) + (built && !f.house.table ? 4 : 0);
+  // The fittings (door, bed, table, chest) not made yet, and once moved in, the kit for the farm
+  // and the mine (hoe, spare pickaxes, iron tool handles, shield): all wood, one trip.
+  const later = built ? upkeepNeeds(inv, f.worn ?? []) : { planks: 0, stone: 0 };
+  const planksNeed = housePlanks + fittingsPlanks(inv, f.house) + later.planks;
   const charcoalLogs = torches >= TORCH_GOAL || f.house?.lit ? 0 : Math.ceil((TORCH_GOAL - torches) / 4);
   return {
-    stone: Math.max(0, kit + furnace + houseStone - cobble),
+    stone: Math.max(0, kit + furnace + houseStone + later.stone - cobble),
     logs: Math.max(0, Math.ceil(Math.max(0, planksNeed - planks) / 4) + charcoalLogs - logs),
     wool: bed ? 0 : Math.max(0, 3 - wool),
     food: Math.max(0, FOOD_GOAL - foodCount(inv)),

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { MotorController } from '../behavior_pack/scripts/core/motor.js';
-import { findPath, smoothPath } from '../behavior_pack/scripts/core/pathfinder.js';
+import { findPath, smoothPath, Cell } from '../behavior_pack/scripts/core/pathfinder.js';
 import { angleDiff, makeRng, dist2D } from '../behavior_pack/scripts/core/mathutil.js';
 import { makeWorld, SimBody, runMotor } from './helpers.js';
 
@@ -167,4 +167,23 @@ test('never leaps over a deep drop or lava', () => {
   const lava = makeWorld({ ground: (x, z) => (x === 5 ? 62 : 64), danger: [[5, 62, 0], [5, 62, 1], [5, 62, -1]].flatMap(([x, y, z]) => [[x, y, z]]) });
   const r = findPath(lava.classify, { x: 0, y: 64, z: 0 }, { x: 10, y: 64, z: 0 });
   assert.ok(!r.path.some((p, i) => p.move?.type === 'leap' && Math.abs(p.z) <= 1 && r.path[i - 1] && Math.abs(r.path[i - 1].z) <= 1 && p.z === r.path[i - 1].z && [-1, 0, 1].includes(p.z)), 'no leap over the lava');
+});
+
+test('climbs a 1-wide, 3-high staircase out of a quarry without turning round', async () => {
+  // Stairs along -x: column x (1..10) has its floor one lower per block, 3 blocks of room.
+  const classify = (x, y, z) => {
+    if (x <= 0) return y < 64 ? Cell.SOLID : Cell.AIR;
+    if (z !== 0 || x > 10) return Cell.SOLID;
+    return y >= 64 - x && y < 67 - x ? Cell.AIR : Cell.SOLID;
+  };
+  const w = { classify };
+  const body = new SimBody(w, { x: 10.5, y: 54, z: 0.5 }, 90, { hw: 0.3 });
+  const motor = new MotorController(body, {}, makeRng(1));
+  const r = findPath(classify, body.pos, { x: -3, y: 64, z: 0 });
+  assert.equal(r.complete, true);
+  const { result } = await runMotor(motor, body, motor.followPath(smoothPath(classify, r.path)), 2000);
+  assert.equal(result?.status, 'arrived');
+  const worst = Math.max(...body.looks.slice(10).map((l) => Math.abs(angleDiff(l.yaw, 90))));
+  assert.ok(worst < 30, `turned ${worst.toFixed(0)} deg away from the way out`);
+  assert.equal(body.jumps, 10, 'one jump per step');
 });

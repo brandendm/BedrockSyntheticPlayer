@@ -4,18 +4,22 @@ import { system, world, Direction, ItemStack } from '@minecraft/server';
 import { dist3D } from '../core/mathutil.js';
 import { standOff } from '../core/threat.js';
 import { isLog, isPlanks, TOOL_STONE, count } from '../core/recipes.js';
-import { FOODS, RAW, isNight, TORCH_GOAL } from '../core/settle.js';
+import { FOODS, RAW, isNight, TORCH_GOAL, fittingsPlanks } from '../core/settle.js';
 import { planFuel, burnsFor, charcoalInput } from '../core/fuel.js';
 import { blueprint, clearance, footing, furnishings, inside } from '../core/house.js';
 import { cheapestPlaceable } from '../core/costs.js';
 import { siteWork, siteScore } from '../core/site.js';
-import { invCounts, hold, take, give } from './inventory.js';
+import { depositPlan, takePlan } from '../core/storage.js';
+import { invCounts, hold, take, give, container as packOf } from './inventory.js';
 import { canSee } from './world.js';
 
 const strip = (id) => id.replace('minecraft:', '');
 const center = (p) => ({ x: p.x + 0.5, y: p.y + 0.5, z: p.z + 0.5 });
 export const FOOD_ANIMALS = new Set(['cow', 'pig', 'sheep', 'chicken', 'rabbit', 'mooshroom']);
 const SOFT = /^(air|short_grass|tall_grass|fern|large_fern|dead_bush|deadbush|snow_layer|vine|.*_flower|dandelion|poppy|.*_tulip|azure_bluet|allium|blue_orchid|oxeye_daisy|cornflower|lily_of_the_valley|sweet_berry_bush|bush|leaf_litter|wildflowers|pink_petals|short_dry_grass|tall_dry_grass)$/;
+// Plants and other growth that can stand where a torch goes: two-high flowers and grass (their top
+// half is at torch height), bushes, saplings, leaves, vines. Broken to make room; never anything built.
+export const PLANT = /^(short_grass|tall_grass|fern|large_fern|peony|rose_bush|lilac|sunflower|pitcher_plant|torchflower|.*_flower|dandelion|poppy|.*_tulip|azure_bluet|allium|blue_orchid|oxeye_daisy|cornflower|lily_of_the_valley|wither_rose|.*_sapling|mangrove_propagule|sweet_berry_bush|bush|firefly_bush|dead_bush|deadbush|tall_dry_grass|short_dry_grass|.*leaves|vine|glow_lichen|hanging_roots|cave_vines.*|azalea|flowering_azalea|big_dripleaf|small_dripleaf_block|sugar_cane|bamboo|pink_petals|wildflowers|leaf_litter|snow_layer|moss_carpet|.*_mushroom)$/;
 const DIGGABLE_SITE = /^(dirt|grass_block|coarse_dirt|podzol|sand|red_sand|gravel|snow|stone|andesite|diorite|granite|tuff|clay|mud)$/;
 // face clicked on the neighbour, and where on that face, for a neighbour at each offset from the cell
 const FACES = [
@@ -485,21 +489,30 @@ export class Homestead {
     return { placed, total };
   }
 
-  /** Blocks still needed to finish the shell at this site: { stone, planks } (0/0 when we have them). */
-  houseNeeds(site, dir) {
+  /**
+   * Blocks still needed to finish the shell at this site: { stone, planks } (0/0 when we have them).
+   * With `fittings`, the planks for the door, bed, table and chest count too: one trip for all of it.
+   */
+  houseNeeds(site, dir, { fittings = false } = {}) {
+    const cacheKey = fittings ? 'lastNeedsFit' : 'lastNeeds';
     // Site out of range (not loaded): unknown, not "everything": keep the last count we made.
-    if (this.S.blockAt(site) === null) return this.lastNeeds ?? { stone: 0, planks: 0 };
+    if (this.S.blockAt(site) === null) return this[cacheKey] ?? { stone: 0, planks: 0 };
     let stone = 0, planks = 0;
     const missing = (p) => { const id = this.S.blockAt(p); return id !== null && SOFT.test(id); }; // unloaded: unknown
     for (const b of blueprint(site, dir)) if (missing(b)) b.material === 'stone' ? stone++ : planks++;
     for (const p of footing(site, dir)) if (missing(p)) stone++; // filler under the floor
     const inv = invCounts(this.sim);
     const haveStone = count(inv, (id) => TOOL_STONE.has(id)), havePlanks = count(inv, isPlanks) + count(inv, isLog) * 4;
-    // Either material can stand in for the other, so compare the totals too.
+    // Either material can stand in for the other in the walls, so compare the totals too.
     const shortStone = Math.max(0, stone - haveStone), shortPlanks = Math.max(0, planks - havePlanks);
     const spare = Math.max(0, haveStone - stone) + Math.max(0, havePlanks - planks);
-    return this.lastNeeds = shortStone + shortPlanks <= spare ? { stone: 0, planks: 0 } : { stone: shortStone, planks: shortPlanks };
+    const walls = shortStone + shortPlanks <= spare ? { stone: 0, planks: 0 } : { stone: shortStone, planks: shortPlanks };
+    if (!fittings) return this[cacheKey] = walls;
+    // The door, bed, table and chest are wood and nothing else: whatever wood the walls leave over.
+    const fitShort = Math.max(0, fittingsPlanks(inv) - Math.max(0, havePlanks - planks));
+    return this[cacheKey] = { stone: walls.stone, planks: walls.planks + fitShort };
   }
+
 
   /** Craft enough planks (from logs) for what's left of the house's plank blocks. */
   async plankUp(gen, site, dir) {
@@ -522,12 +535,12 @@ export class Homestead {
     if (!site) { this.a.sayOnce('nosite', 'No flat, clear spot for a house around here. Looking elsewhere.', 60000); await this.S.explore(gen, 'a flat spot'); return false; }
     this.a.memory.data.houseProject = { d: this.dim.id, x: site.x, y: site.y, z: site.z, dir: site.dir, started: Date.now() };
     this.a.memory.saveNow();
-    const need = this.houseNeeds(site, site.dir);
+    // Walls, roof and fittings (door, bed, table, chest) together: one trip for all of it.
+    const need = this.houseNeeds(site, site.dir, { fittings: true });
     this.shortfall = need;
-    const inv = invCounts(this.sim);
-    const logs = Math.ceil((need.planks + (inv.wooden_door ? 0 : 6)) / 4);
+    const logs = Math.ceil(need.planks / 4);
     this.a.say(need.stone || need.planks
-      ? `House spot picked at ${site.x} ${site.y} ${site.z}. Still need ${need.stone} cobblestone and ${need.planks} planks (${logs} logs)${inv.wooden_door ? '' : ' plus a door'}.`
+      ? `House spot picked at ${site.x} ${site.y} ${site.z}. Still need ${need.stone} cobblestone and ${need.planks} planks (${logs} logs), counting the door, bed, table and chest.`
       : `House spot picked at ${site.x} ${site.y} ${site.z}; I have everything for it.`);
     return true;
   }
@@ -595,7 +608,11 @@ export class Homestead {
     this.placeDoor();
     // Torches outside, either side of the door.
     await this.leaveHouse(gen);
-    for (const t of fur.torchesOutside) if (invCounts(this.sim).torch) await this.placeAt(gen, t.toward, 'torch', t.on);
+    for (const t of fur.torchesOutside) {
+      if (!invCounts(this.sim).torch) break;
+      if ((S.blockAt(t.toward) ?? 'air') !== 'air' && !(await this.clearForTorch(gen, t.toward))) continue;
+      await this.placeAt(gen, t.toward, 'torch', t.on);
+    }
     S.restHands();
     const st = this.houseState();
     const missing = ['door', 'bed', 'table', 'furnace'].filter((k) => !st[k]).concat(st.lit ? [] : ['torches']);
@@ -683,7 +700,7 @@ export class Homestead {
     if (!h) return null;
     // Out of range (chunks not loaded): every block reads as nothing. Keep what we last saw
     // rather than "discover" a missing door, bed and 47 missing walls from 90 blocks away.
-    if (!this.houseLoaded()) return this.lastHouseState ?? { damage: 0, door: true, bed: !!h.bed, bedMisplaced: false, table: !!h.table, furnace: !!h.furnace, lit: true, litOutside: true };
+    if (!this.houseLoaded()) return this.lastHouseState ?? { damage: 0, door: true, bed: !!h.bed, bedMisplaced: false, table: !!h.table, furnace: !!h.furnace, chest: !!h.chest, lit: true, litOutside: true };
     const fur = furnishings(h, h.dir), at = (p) => this.S.blockAt(p) ?? '';
     return this.lastHouseState = {
       damage: this.houseDamage().length,
@@ -693,6 +710,7 @@ export class Homestead {
       bedMisplaced: !(/bed/.test(at(fur.bed.foot)) && /bed/.test(at(fur.bed.head))) && this.bedBlocks().length > 0,
       table: at(fur.table) === 'crafting_table',
       furnace: /furnace/.test(at(fur.furnace)),
+      chest: /chest/.test(at(fur.chests[0])),
       lit: /torch/.test(at(fur.torchInside.toward)),
       litOutside: fur.torchesOutside.every((t) => /torch/.test(at(t.toward))),
     };
@@ -780,11 +798,32 @@ export class Homestead {
       S.restHands(); // the bed's gone from the inventory: don't keep showing it in hand
     }
     if (!/door/.test(S.blockAt(fur.door) ?? '')) this.placeDoor();
+    // The chest, in the front corner by the door.
+    if (!/chest/.test(S.blockAt(fur.chests[0]) ?? '') && invCounts(this.sim).chest) {
+      await S.goNear(gen, fur.stand, 0.4, 2);
+      if (await this.placeAt(gen, fur.chests[0], 'chest') || this.setChest(fur.chests[0], h)) { h.chest = true; this.a.say('Put a chest in the house.'); }
+    }
     if (invCounts(this.sim).torch && S.blockAt(fur.torchInside.toward) === 'air') {
       await S.goNear(gen, fur.stand, 0.4, 2);
       await this.placeAt(gen, fur.torchInside.toward, 'torch', fur.torchInside.on);
     }
     this.setHouse(h);
+  }
+
+  /**
+   * Make room for a torch in `cell`: a plant in it (the top half of a peony or tall grass, a bush,
+   * leaves hanging down) is broken first. Anything else there (a block someone built) is left.
+   */
+  async clearForTorch(gen, cell) {
+    const id = this.S.blockAt(cell) ?? 'air';
+    if (id === 'air') return true;
+    if (!PLANT.test(id)) return false;
+    this.S.log(`torch spot ${cell.x} ${cell.y} ${cell.z}: ${id} in the way, breaking it`);
+    await this.S.mine(gen, cell, { collect: !/leaves|grass|fern|vine|lichen|roots|snow_layer|litter|petals|wildflowers/.test(id) });
+    // The break ray can miss a thin plant: knock it out the way a punch would, with its drop.
+    if (this.S.blockAt(cell) === id && this.S.inReach(cell)) { try { this.dim.runCommand(`setblock ${cell.x} ${cell.y} ${cell.z} air destroy`); } catch {} }
+    await this.S.wait(gen, 2);
+    return (this.S.blockAt(cell) ?? 'air') === 'air' || SOFT.test(this.S.blockAt(cell) ?? 'air');
   }
 
   /** The torches either side of the door, placed from the doorstep (never from inside). */
@@ -799,7 +838,9 @@ export class Homestead {
     let ok = 0;
     for (const t of todo) {
       if (!invCounts(this.sim).torch) break;
-      if (!SOFT.test(S.blockAt(t.toward) ?? 'air')) { S.log(`outside torch: ${t.toward.x} ${t.toward.y} ${t.toward.z} is ${S.blockAt(t.toward)}`); continue; }
+      // A peony, a rose bush, tall grass or a bush by the door: its top half is right where the
+      // torch goes. Break it (plants only, never anything built) and put the torch up.
+      if ((S.blockAt(t.toward) ?? 'air') !== 'air' && !(await this.clearForTorch(gen, t.toward))) { S.log(`outside torch: ${t.toward.x} ${t.toward.y} ${t.toward.z} is ${S.blockAt(t.toward)}`); continue; }
       if (!S.usable(t.on)) await S.goNear(gen, t.toward, 1.5, 2);
       if (await this.placeAt(gen, t.toward, 'torch', t.on)) ok++;
       else S.log(`outside torch failed: ${S.whyNotUsable(t.on)}`);
@@ -807,6 +848,150 @@ export class Homestead {
     S.restHands();
     if (ok) this.a.say(`Put up ${ok} torch${ok > 1 ? 'es' : ''} by the door.`);
     return ok === todo.length;
+  }
+
+  // ---------- the chest ----------
+
+  /** The house's chests that are there (placed), in order. */
+  chests() {
+    const h = this.house;
+    if (!h) return [];
+    return furnishings(h, h.dir).chests.filter((p) => /chest/.test(this.S.blockAt(p) ?? ''));
+  }
+
+  /** What's in the chests, from the blocks when they're loaded (else what we saw last time). */
+  chestContents() {
+    const out = {};
+    let read = false;
+    for (const p of this.chests()) {
+      const c = this.container(p);
+      if (!c) continue;
+      read = true;
+      for (let i = 0; i < c.size; i++) {
+        const it = c.getItem(i);
+        if (it) out[strip(it.typeId)] = (out[strip(it.typeId)] ?? 0) + it.amount;
+      }
+    }
+    if (read) { this.a.memory.data.chestInv = out; this.a.memory.save(); }
+    return read ? out : this.a.memory.data.chestInv ?? {};
+  }
+
+  /**
+   * The simulated player's placement didn't take (a tight corner, like the bed): set the chest from
+   * the item instead, facing into the room.
+   */
+  setChest(cell, h) {
+    if (!invCounts(this.sim).chest || !SOFT.test(this.S.blockAt(cell) ?? 'air')) return false;
+    take(this.sim, 'chest', 1);
+    const back = { north: 'south', south: 'north', east: 'west', west: 'east' }[h.dir]; // away from the door: into the room
+    try { this.dim.runCommand(`setblock ${cell.x} ${cell.y} ${cell.z} chest ["minecraft:cardinal_direction"="${back}"]`); } catch {
+      try { this.dim.runCommand(`setblock ${cell.x} ${cell.y} ${cell.z} chest`); } catch {}
+    }
+    const ok = /chest/.test(this.S.blockAt(cell) ?? '');
+    if (!ok) give(this.sim, 'chest', 1);
+    this.S.log(`chest: ${ok ? 'set' : "couldn't set"} at ${cell.x} ${cell.y} ${cell.z}`);
+    return ok;
+  }
+
+  /** Free pack slots right now. */
+  freeSlots() {
+    try { return packOf(this.sim)?.emptySlotsCount ?? 36; } catch { return 36; }
+  }
+
+  /**
+   * Put away what we don't need to carry (core/storage.js): in the chest by the door, then the
+   * second one against the back wall (made and placed when the first is full). Whole stacks are
+   * moved as they are; part stacks are split.
+   */
+  async storeItems(gen) {
+    const h = this.house;
+    if (!h) return false;
+    const S = this.S;
+    const fur = furnishings(h, h.dir);
+    let plan = depositPlan(invCounts(this.sim));
+    if (!Object.keys(plan).length) return true;
+    if (!this.isHome()) await this.enterHouse(gen);
+    await S.goNear(gen, fur.stand, 0.4, 2);
+    let stored = 0;
+    for (let ci = 0; ci < fur.chests.length && Object.keys(plan).length; ci++) {
+      const pos = fur.chests[ci];
+      if (!/chest/.test(S.blockAt(pos) ?? '')) {
+        // The first chest's full: a second one (8 planks) against the back wall.
+        if (ci === 0) break;
+        if (!invCounts(this.sim).chest && !(await S.craft(gen, ['chest'], true, true))) break;
+        if (!(await this.placeAt(gen, pos, 'chest')) && !this.setChest(pos, h)) break;
+        this.a.say('First chest is full: put a second one in.');
+      }
+      if (!(await S.reach(gen, pos))) continue;
+      await this.a.motor.lookAt(center(pos), 8, 30); // opening it
+      S.check(gen);
+      const chest = this.container(pos), pack = packOf(this.sim);
+      if (!chest || !pack) continue;
+      for (let i = 0; i < pack.size; i++) {
+        const it = pack.getItem(i);
+        if (!it) continue;
+        const id = strip(it.typeId);
+        const want = plan[id] ?? 0;
+        if (want <= 0) continue;
+        if (want >= it.amount) {
+          const left = pack.transferItem(i, chest); // the whole stack, as it is
+          const moved = it.amount - (left?.amount ?? 0);
+          stored += moved;
+          plan[id] = want - moved;
+        } else {
+          const left = chest.addItem(new ItemStack(it.typeId, want));
+          const moved = want - (left?.amount ?? 0);
+          if (moved > 0) { take(this.sim, id, moved); stored += moved; }
+          plan[id] = want - moved;
+        }
+        if (plan[id] <= 0) delete plan[id];
+      }
+      await S.wait(gen, 6);
+    }
+    this.chestContents();
+    S.restHands();
+    const left = Object.values(plan).reduce((a, n) => a + n, 0);
+    // Both chests full: don't come back to try again for a while (the plan would ask every round).
+    this.a.memory.data.chestFullAt = left ? Date.now() : 0;
+    this.a.memory.save();
+    this.a.say(stored ? `Put ${stored} things away in the chest${left ? ` (${left} didn't fit)` : ''}.` : 'The chest is full.');
+    return stored > 0;
+  }
+
+  /**
+   * Take back from the chest what a job needs: want = [[predicate(id), count], ...]. Returns how
+   * many items we took. Only worth it when we're near the house (the caller checks).
+   */
+  async takeFromChest(gen, want) {
+    const S = this.S;
+    const plan = takePlan(this.chestContents(), want);
+    if (!Object.keys(plan).length) return 0;
+    if (!this.isHome()) await this.enterHouse(gen);
+    let took = 0;
+    for (const pos of this.chests()) {
+      if (!Object.keys(plan).length) break;
+      if (!(await S.reach(gen, pos))) continue;
+      await this.a.motor.lookAt(center(pos), 8, 30);
+      S.check(gen);
+      const chest = this.container(pos);
+      if (!chest) continue;
+      for (let i = 0; i < chest.size; i++) {
+        const it = chest.getItem(i);
+        if (!it) continue;
+        const id = strip(it.typeId);
+        const k = Math.min(plan[id] ?? 0, it.amount);
+        if (k <= 0) continue;
+        if (k === it.amount) chest.setItem(i, undefined);
+        else { it.amount -= k; chest.setItem(i, it); }
+        give(this.sim, id, k);
+        took += k;
+        plan[id] -= k;
+        if (plan[id] <= 0) delete plan[id];
+      }
+    }
+    this.chestContents();
+    if (took) this.a.say(`Took ${took} out of the chest.`);
+    return took;
   }
 
   // ---------- doors, home, nights ----------
@@ -862,6 +1047,8 @@ export class Homestead {
     this.a.sayOnce('gohome', 'Getting dark, heading home.', 300000);
     if (!(await this.enterHouse(gen))) return false;
     const fur = furnishings(h, h.dir);
+    // Home for the night anyway: put away what we don't need to carry before bed.
+    if (this.chests().length && Object.keys(depositPlan(invCounts(this.sim))).length) await this.storeItems(gen);
     if (h.bed) await this.S.goNear(gen, fur.bed.standAt, 0.5, 2);
     let tries = 0;
     while (isNight(world.getTimeOfDay())) {

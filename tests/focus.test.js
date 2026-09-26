@@ -14,8 +14,14 @@ test('needs: counts wool for the bed, logs and stone for the house, net of what 
   assert.equal(n2.wool, 0);
   assert.equal(n2.stone, 0);
   assert.equal(n2.logs, 0);
-  const built = needs(base({ house: { bed: true, table: true, furnace: true }, inv: { ...kit, torch: 8 } }));
+  // Moved in with the farm and mine kit (hoe, spare pickaxes, sticks for the iron tools, wood for the shield): nothing.
+  const outfit = { ...kit, stone_pickaxe: 3, stone_hoe: 1, stick: 7, oak_planks: 6, torch: 8 };
+  const built = needs(base({ house: { door: true, bed: true, table: true, furnace: true, chest: true }, inv: outfit }));
   assert.deepEqual([built.stone, built.logs, built.wool], [0, 0, 0]);
+  // Moved in without it: the chest, the hoe, spare pickaxes and handles are counted up front.
+  const bare = needs(base({ house: { door: true, bed: true, table: true, furnace: true, chest: false }, inv: { ...kit, torch: 8 } }));
+  assert.ok(bare.logs >= 5, `logs ${bare.logs}`); // chest 8 + shield 6 + sticks: ~6 logs
+  assert.equal(bare.stone, 8); // hoe 2 + two spare pickaxes 6
 });
 
 test('sheep in sight while out for stone with nothing known nearby: get the wool first', () => {

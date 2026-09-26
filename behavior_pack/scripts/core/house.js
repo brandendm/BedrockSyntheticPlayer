@@ -7,7 +7,8 @@
 //
 // About 23 cobblestone and 46 planks (12 logs), one door, three torches. Built from inside, so
 // every block is within reach of the middle of the room and the bot is never outside at night
-// while it works. Upgrades later: glass in the windows, a chest, a slab trim, a second room.
+// while it works. A chest goes in the front corner by the door (a second one against the back
+// wall under the torch if the first fills up). Upgrades later: glass in the windows, a slab trim.
 //
 // Local coordinates: lx across (-2..2), lz front-to-back (+2 is the front wall with the door),
 // h height above the floor (0..3, 3 = roof). World = origin + lx * right + lz * forward.
@@ -82,6 +83,10 @@ export function furnishings(origin, dir) {
     furnace: at(-1, 0),
     bed: { foot: at(1, -1), head: at(1, 0), standAt: at(1, 1) }, // foot at the back, head toward the front; homestead checks both cells after placing
     torchInside: { on: at(0, -2, 1), toward: at(0, -1, 1) },     // wall torch on the back wall
+    // Chests: the front corner left of the door, then the middle of the back wall (under the torch).
+    // Neither is in the way (door -> middle of the room -> bed side), and both are in reach from
+    // the middle of the room. Not side by side, so each stays a single chest of its own.
+    chests: [at(-1, 1), at(0, -1)],
     torchesOutside: [-1, 1].map((lx) => ({ on: at(lx, 2, 1), toward: at(lx, 3, 1) })),
   };
 }

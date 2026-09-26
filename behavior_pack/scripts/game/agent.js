@@ -6,13 +6,14 @@ import { MotorController, EYE_HEIGHT } from '../core/motor.js';
 import { searchJob, smoothPath, Cell } from '../core/pathfinder.js';
 import { dist3D, makeRng } from '../core/mathutil.js';
 import { decide, fleePoint, refugeScore, weaponDamage, MOBS, spacing, standOff, REACH_HIT, STOP_AT, HOLD_AT } from '../core/threat.js';
-import { nextStep, STONE_TARGETS, count, isLog } from '../core/recipes.js';
+import { nextStep, STONE_TARGETS, TOOL_STONE, count, isLog } from '../core/recipes.js';
 import { settleStep, foodCount, FOOD_GOAL, isNight } from '../core/settle.js';
 import { goalChain } from '../core/goals.js';
 import { advanceStep, advanceProgress } from '../core/advance.js';
 import { Farm } from './farm.js';
 import { chooseStep, needs as goalNeeds, stepKey } from '../core/focus.js';
 import { inside as houseInside } from '../core/house.js';
+import { FULL_SLOTS } from '../core/storage.js';
 import { Homestead, FOOD_ANIMALS } from './homestead.js';
 import { Lookout } from './lookout.js';
 import { Skills, Aborted, markVisited } from './skills.js';
@@ -37,6 +38,7 @@ const STEP_WORDS = {
   hunt: 'hunting', smelt: 'the furnace job', collect_smelt: 'collecting from the furnace', wait_smelt: 'waiting on the furnace',
   plan_house: 'picking a spot for the house', build_house: 'building the house', repair_house: 'repairing the house', furnish: 'moving things into the house', light_outside: 'putting torches up by the door',
   check_water: 'looking for water to farm by', make_farm: 'making a wheat farm', tend_farm: 'harvesting and replanting wheat', get_iron: 'mining for iron', equip: 'putting on armor',
+  store: 'putting things away in the chest',
   go_home: 'night: going home to sleep', shelter: 'night: holed up until morning', done: 'all goals done', blocked: 'stuck on a recipe',
 };
 
@@ -717,7 +719,7 @@ export class Agent {
         // Out of the house for daytime work; out of any hole before anything but digging.
         // (Using what's in the house: the furnace, the table, putting things in. Walking out first and
         // back in for those was the in-and-out loop.)
-        const inHouseJob = ['smelt', 'collect_smelt', 'furnish'].includes(step.step) || (['craft', 'goto_table'].includes(step.step) && H.house?.table);
+        const inHouseJob = ['smelt', 'collect_smelt', 'furnish', 'store'].includes(step.step) || (['craft', 'goto_table'].includes(step.step) && H.house?.table);
         if (!['go_home', 'build_house', 'repair_house', 'shelter', 'wait_smelt'].includes(step.step) && !inHouseJob && H.isHome()) await H.leaveHouse(gen);
         // (Mining is meant to be underground: iron trips and stone don't climb out between stints.)
         if (!['get_stone', 'get_iron', 'shelter', 'go_home'].includes(step.step) && (await S.needsEscape(gen))) {
@@ -753,10 +755,19 @@ export class Agent {
             if (moved >= 24) for (const [k, d] of this.deferred) if (['smelt', 'place_table', 'craft', 'plan_house', 'build_house', 'furnish'].includes(d.step) && !atHouse.has(d.step)) this.deferred.delete(k);
             break;
           }
-          case 'gather_logs':
-            if (!repeats && !step.opportunity) this.say(`Getting wood: ${step.count} logs for ${step.wanted.map((w) => w.replace(/_/g, ' ')).join(', ')}.`);
-            await S.gatherLogs(gen, step.count, Math.min(8, Math.max(0, this.focusFacts(inv).need.logs - Math.max(0, step.count - count(inv, isLog)))));
+          case 'gather_logs': {
+            // Logs we put away in the chest come first, if we're near the house anyway.
+            if (await this.fromChest(gen, isLog, step.count - count(inv, isLog))) break;
+            // Everything the goals still need in one trip, not just this step's share: the rest of
+            // the list (tools, fittings, sticks) is counted too, so we don't walk back for two logs.
+            const later = Math.max(0, this.focusFacts(inv).need.logs - Math.max(0, step.count - count(inv, isLog)));
+            const firm = Math.min(12, later);
+            const target = step.count + (step.opportunity ? 0 : firm);
+            if (!repeats && !step.opportunity) this.say(`Getting wood: ${target - count(inv, isLog)} logs for ${step.wanted.map((w) => w.replace(/_/g, ' ')).join(', ')}${firm && target > step.count ? ' and what comes after' : ''}.`);
+            this.stockTarget = { step: 'gather_logs', n: target };
+            try { await S.gatherLogs(gen, target, Math.min(8, Math.max(0, later - firm))); } finally { this.stockTarget = null; }
             break;
+          }
           case 'craft':
             if (step.items[0] === 'crafting_table' && !repeats) {
               this.say(known ? `Making a new crafting table; mine is ${Math.round(known.dist)} blocks away.` : 'Making a crafting table.');
@@ -777,6 +788,7 @@ export class Agent {
             break;
           }
           case 'get_stone':
+            if (await this.fromChest(gen, (id) => TOOL_STONE.has(id), step.need)) break;
             if (step.why && !repeats && !step.opportunity) this.say(`Getting ${step.need} more cobblestone for the ${step.why}.`);
             // The job's share first; then, while it's cheap (same tunnel), some for later jobs too.
             await S.getStone(gen, step.need, Math.min(32, Math.max(0, this.focusFacts(inv).need.stone - step.need)));
@@ -821,6 +833,7 @@ export class Agent {
           case 'repair_house': await H.repairHouse(gen); break;
           case 'plan_house': await H.planHouse(gen); break;
           case 'furnish': await H.furnish(gen); break;
+          case 'store': await H.storeItems(gen); break;
           case 'go_home': await H.nightAtHome(gen); break;
           case 'shelter': await H.shelter(gen); break;
           case 'blocked':
@@ -845,6 +858,18 @@ export class Agent {
   }
 
   /**
+   * Things a job needs that we put away in the house chest: take them out instead of fetching
+   * more, when we're within a short walk of the house (not from the bottom of the mine).
+   */
+  async fromChest(gen, pred, n) {
+    const H = this.homestead, h = H.house;
+    if (n <= 0 || !h || !h.chest || dist3D(this.sim.location, h) > 48 || this.skills.isUnderground()) return false;
+    const inChest = Object.entries(H.chestContents()).filter(([id]) => pred(id)).reduce((a, [, k]) => a + k, 0);
+    if (!inChest) return false;
+    return (await H.takeFromChest(gen, [[pred, n]])) > 0;
+  }
+
+  /**
    * Died recently: go back for our things before they despawn (5 minutes). Skipped at night when
    * it's far (walking back through the dark is how we died), and given up after one try.
    */
@@ -856,14 +881,25 @@ export class Agent {
     if (age > 280000) { this.deathSpot = null; this.saveState(); return; }
     if (dist < 4 && age < 10000) return; // still standing where we died (respawn pending)
     if (isNight(world.getTimeOfDay()) && dist > 40) return;
-    this.deathSpot = null;
+    // The spot is kept until we've actually been there and swept it: a fight, a swim or nightfall
+    // on the way (anything that restarts the job) comes back here next, instead of forgetting it.
+    d.tries = (d.tries ?? 0) + 1;
+    if (d.tries > 4) { this.say("Couldn't get back to my things; they're gone."); this.deathSpot = null; this.saveState(); return; }
     this.saveState();
-    this.say(`Going back for my things, ${Math.round(dist)} blocks away.`);
+    this.sayOnce('recover', d.tries > 1 ? `Back to getting my things, ${Math.round(dist)} blocks away.` : `Going back for my things, ${Math.round(dist)} blocks away.`, 20000);
     const S = this.skills;
     for (let leg = 0; leg < 6 && dist3D(this.sim.location, d) > 4; leg++) {
       if (!(await S.goNear(gen, d, 3, 2)) && dist3D(this.sim.location, d) > 40) break;
     }
-    await S.sweep(gen, d, 8, null, 25);
+    if (dist3D(this.sim.location, d) <= 12) {
+      await S.sweep(gen, d, 8, null, 25);
+      let left = 0;
+      try { left = this.dim.getEntities({ type: 'minecraft:item', location: d, maxDistance: 8 }).length; } catch {}
+      if (left) this.say(`Got most of my things back; ${left} stack${left > 1 ? 's' : ''} I couldn't reach.`);
+      else this.say('Got my things back.');
+    }
+    this.deathSpot = null;
+    this.saveState();
   }
 
   /** Where things are from here: [{ label, dist, dir, dy }], home first. */
@@ -904,7 +940,7 @@ export class Agent {
       tableKnown: !!table && table.dist < 48,
       furnaceKnown: !!furnace,
       house: H.house ? H.houseState() : null,
-      project: p ? { ...H.projectProgress(), needs: H.houseNeeds(p, p.dir) } : H.house ? { placed: 69, total: 69 } : null,
+      project: p ? { ...H.projectProgress(), needs: H.houseNeeds(p, p.dir, { fittings: true }) } : H.house ? { placed: 69, total: 69 } : null,
       // A side job doesn't move the dashboard's goal (it's for later): the ladder's goal stays current.
       step: this.task?.kind === 'auto' && !this.autoOpportunity ? this.autoStep : null,
       advance: H.house ? { ...advanceProgress({ inv: invCounts(this.sim), worn: this.worn() }), waterKnown: this.memory.data.waterNearHouse != null && (this.memory.data.waterNearHouse || advanceProgress({ inv: invCounts(this.sim), worn: this.worn() }).bucket) } : null,
@@ -998,6 +1034,7 @@ export class Agent {
       house: house ? H.houseState() : null,
       project: !!H.project,
       shortfall: H.project ? H.houseNeeds(H.project, H.project.dir) : null,
+      worn: this.worn(),
     };
     return {
       inv,
@@ -1051,6 +1088,8 @@ export class Agent {
   checkStillNeeded() {
     if (this.task?.kind !== 'auto' || !['gather_logs', 'get_stone', 'hunt'].includes(this.autoStep)) return;
     if (system.currentTick < (this.bonusUntil ?? 0)) return; // taking a few extra for later jobs: let it finish
+    // Getting wood for the whole list in one go: not done until that's in, whatever the ladder's step says.
+    if (this.stockTarget?.step === this.autoStep && count(invCounts(this.sim), isLog) < this.stockTarget.n) return;
     let step;
     try {
       const inv = invCounts(this.sim);
@@ -1139,7 +1178,9 @@ export class Agent {
       bedDeferred: (this.bedDeferredUntil ?? 0) > Date.now(),
       armed: SWORD_OK.test(Object.keys(inv).join(' ')),
       project: !!H.project,
-      shortfall: H.project ? H.houseNeeds(H.project, H.project.dir) : H.shortfall ?? null,
+      shortfall: H.project ? H.houseNeeds(H.project, H.project.dir, { fittings: true }) : H.shortfall ?? null,
+      packFull: H.freeSlots() <= FULL_SLOTS,
+      chestFull: Date.now() - (this.memory.data.chestFullAt ?? 0) < 600000,
     };
   }
 

@@ -100,12 +100,13 @@ export function goalChain(f) {
   // 7. Move in
   goals.push({
     goal: 'Move in',
-    done: built && !f.house.damage && !!f.house.bed && !!f.house.furnace && !!f.house.table && !!f.house.door && !!f.house.lit && f.house.litOutside !== false,
+    done: built && !f.house.damage && !!f.house.bed && !!f.house.furnace && !!f.house.table && f.house.chest !== false && !!f.house.door && !!f.house.lit && f.house.litOutside !== false,
     tasks: [
       check('House intact', built && !f.house.damage, ['repair_house', 'get_stone', 'gather_logs']),
       check('Door hung', f.house?.door, ['furnish', 'craft']),
       check('Crafting table inside', f.house?.table, ['furnish']),
       check('Furnace inside', f.house?.furnace, ['furnish']),
+      check('Chest inside', !!f.house && f.house.chest !== false, ['furnish', 'craft']),
       check('Bed inside', f.house?.bed, ['furnish', 'hunt']),
       check('Torch inside', f.house?.lit, ['furnish', 'wait_smelt']),
       check('Torches by the door', f.house?.litOutside !== false && !!f.house, ['light_outside']),
@@ -150,7 +151,7 @@ export function goalChain(f) {
   const first = goals.findIndex((g) => !g.done);
   // Only steps that belong to one goal can pull the display ahead (hunting sheep: the bed;
   // the furnace jobs: torches; house steps). Logs and stone feed half the goals: never.
-  const DISTINCT = new Set(['hunt', 'smelt', 'collect_smelt', 'wait_smelt', 'plan_house', 'build_house', 'repair_house', 'make_farm', 'get_iron', 'check_water', 'tend_farm']);
+  const DISTINCT = new Set(['hunt', 'smelt', 'collect_smelt', 'wait_smelt', 'plan_house', 'build_house', 'repair_house', 'make_farm', 'get_iron', 'check_water', 'tend_farm', 'store']);
   const mine = (g) => g.tasks.some((t) => !t.done && t.steps.includes(f.step));
   let current = first;
   if (first >= 0 && DISTINCT.has(f.step) && !mine(goals[first])) {

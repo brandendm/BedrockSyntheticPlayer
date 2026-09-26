@@ -299,6 +299,12 @@ export class MotorController {
 
     let speed = 0;
     let moveYaw;
+    if (step?.backpedal) {
+      // Stepping back to line up again: keep facing the step, walk backwards, slowly.
+      const faceYaw = yawTo(pos, step.face);
+      this._setSprint(false);
+      return { gaze: { ...step.face, y: step.face.y + EYE_HEIGHT - o.gazeDrop }, move: { yaw: steerYaw, speed: 0.5 }, headYaw: faceYaw };
+    }
     if (this.focus) {
       // Combat footwork: head stays on the target, feet go wherever the path says (strafe, backpedal).
       speed = 1;
@@ -378,6 +384,9 @@ export class MotorController {
     const wps = it.wps;
     const next = wps[it.idx], prev = wps[it.idx - 1];
     const up = pos.y >= next.y - 0.2 && this.body.isOnGround();
+    // Jumps are counted per step: a staircase is one step-up after another, and carrying the count
+    // over made every third stair look like a failed one (turn round, walk back, turn round again).
+    if (it.stepIdx !== it.idx) { it.stepIdx = it.idx; it.stepJumps = 0; it.backoff = 0; }
     if (!prev || up || !(next.y > prev.y + 0.5) || dist2D(prev, next) < 0.5) {
       it.stepJumps = 0;
       it.backoff = 0;
@@ -394,8 +403,9 @@ export class MotorController {
     const at = (a) => ({ x: next.x + dx * a, y: pos.y, z: next.z + dz * a });
     if ((it.stepJumps ?? 0) >= 3 && !it.backoff) { it.backoff = 10; it.stepJumps = 0; }
     if (it.backoff > 0) {
+      // Back off like a player does: step backwards facing the step (S key), never turn round.
       it.backoff--;
-      return { steer: at(-1.6), aligned: false };
+      return { steer: at(-1.6), aligned: false, backpedal: true, face: at(0.5) };
     }
     const lead = clamp(-along, 0.6, 1.2);
     const heading = Math.abs(angleDiff(this.lastOutput.moveYaw ?? this.yaw, yawTo(pos, at(0.5))));

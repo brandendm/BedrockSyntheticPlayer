@@ -49,6 +49,7 @@ export const RECIPES = {
   torch: { out: 4, table: false, inputs: [{ match: (id) => id === 'charcoal' || id === 'coal', n: 1 }, { match: 'stick', n: 1 }] },
   bed: { out: 1, table: true, inputs: [{ match: (id) => isWool(id), n: 3, sameId: true }, { match: isPlanks, n: 3 }] },
   wooden_door: { out: 3, table: true, inputs: [{ match: isPlanks, n: 6 }] },
+  chest: { out: 1, table: true, inputs: [{ match: isPlanks, n: 8 }] },
   // Farming.
   wooden_hoe: { out: 1, table: true, inputs: [{ match: isPlanks, n: 2 }, { match: 'stick', n: 2 }] },
   stone_hoe: { out: 1, table: true, inputs: [{ match: (id) => TOOL_STONE.has(id), n: 2 }, { match: 'stick', n: 2 }] },
