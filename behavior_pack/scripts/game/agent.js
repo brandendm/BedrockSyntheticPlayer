@@ -17,7 +17,7 @@ import { FULL_SLOTS } from '../core/storage.js';
 import { Homestead, FOOD_ANIMALS } from './homestead.js';
 import { Lookout } from './lookout.js';
 import { Skills, Aborted, markVisited } from './skills.js';
-import { invCounts, hold, container } from './inventory.js';
+import { invCounts, hold, container, usesLeft } from './inventory.js';
 import { WorldMemory } from './memory.js';
 import { SimBodyAdapter } from './body.js';
 import { makeClassifier, canSee, isWatery, OPENABLE } from './world.js';
@@ -415,7 +415,7 @@ export class Agent {
   idleGlances() {
     if (this.motor.busy || Math.random() > 0.15) return;
     // Working by itself and just between steps: eyes on the job, not on people.
-    if (this.autoEnabled && !this.autoDone && this.task?.kind !== 'follow') return;
+    if (this.task?.kind === 'auto') return;
     const pos = this.body.getPos();
     const eye = { x: pos.x, y: pos.y + EYE_HEIGHT, z: pos.z };
     // Players first (a nod now and then, not a stare: once per 20 s at most), then passive mobs,
@@ -843,9 +843,11 @@ export class Agent {
             break;
           case 'done':
             if ((await S.needsEscape(gen)) && !(await S.toSurface(gen))) { await S.wait(gen, 200); break; } // try again shortly
-            this.say(H.house ? 'Settled in: house with a door, bed, table, furnace and torches. Standing by for the next goal.' : 'Got stone tools. Standing by for the next goal.');
-            this.autoDone = true;
+            this.sayOnce('all-done', H.house ? 'Every goal done: I\'ll keep the place up (farm, chest, repairs, nights at home) and stand by.' : 'Got stone tools. Standing by for the next goal.', 3600000);
+            // Not finished for good: nights, the farm, repairs, a full pack still need seeing to.
+            // Idle for half a minute (free for orders and a look around), then plan again.
             this.newTask(null);
+            this.nextAutoTry = system.currentTick + 600;
             return;
         }
       }
@@ -1179,6 +1181,7 @@ export class Agent {
       farm: this.farm.state(),
       smelt: job ? { ready: system.currentTick >= job.readyAt, kind: job.kind, n: job.n ?? 0, dist: dist3D(this.sim.location, job.pos) } : null,
       furnaceDist: f ? f.dist : Infinity,
+      pickUses: usesLeft(this.sim, (id) => /^(stone|iron|diamond|netherite)_pickaxe$/.test(id)),
     };
   }
 
@@ -1198,6 +1201,8 @@ export class Agent {
       animals: H.animalsSeen(FOOD_ANIMALS, 16).length,
       bedDeferred: (this.bedDeferredUntil ?? 0) > Date.now(),
       armed: SWORD_OK.test(Object.keys(inv).join(' ')),
+      hungry: H.hunger() <= 10,
+      farmRipe: (this.farm.state()?.ripe ?? 0) >= 3,
       project: !!H.project,
       shortfall: H.project ? H.houseNeeds(H.project, H.project.dir, { fittings: true }) : H.shortfall ?? null,
       packFull: H.freeSlots() <= FULL_SLOTS,

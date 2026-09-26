@@ -66,3 +66,18 @@ export function give(sim, id, n) {
   const left = c?.addItem(new ItemStack(`minecraft:${id}`, n));
   if (left) sim.dimension.spawnItem(left, sim.location); // full inventory: drop it, like the game does
 }
+
+/** Uses left in all the tools matching `pred` we carry (their durability, minus the wear). */
+export function usesLeft(sim, pred) {
+  const c = container(sim);
+  let n = 0;
+  for (let i = 0; c && i < c.size; i++) {
+    const it = c.getItem(i);
+    if (!it || !pred(strip(it.typeId))) continue;
+    try {
+      const d = it.getComponent('minecraft:durability');
+      n += d ? d.maxDurability - d.damage : 1;
+    } catch { n += 1; }
+  }
+  return n;
+}

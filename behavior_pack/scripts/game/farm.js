@@ -515,7 +515,16 @@ export class Farm {
     const S = this.S, f = this.farm;
     if (!f) return;
     if (this.needsUpkeep()) await this.upkeep(gen);
-    const tiles = f.tiles.map(unkey);
+    // Tile to tile, nearest next from where we are: in the order they were found (by distance from
+    // the water) it zig-zagged across the field.
+    const left = f.tiles.map(unkey), tiles = [];
+    let at = S.feet();
+    while (left.length) {
+      let bi = 0;
+      for (let i = 1; i < left.length; i++) if (Math.hypot(left[i].x - at.x, left[i].z - at.z) < Math.hypot(left[bi].x - at.x, left[bi].z - at.z)) bi = i;
+      at = left.splice(bi, 1)[0];
+      tiles.push(at);
+    }
     let harvested = 0, tilled = 0, planted = 0;
     for (const t of tiles) {
       S.check(gen);

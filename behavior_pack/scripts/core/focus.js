@@ -93,7 +93,7 @@ export function chooseStep(main, f) {
     options.push({ kind: 'food', cost: seen.food + WORK.food, step: { step: 'hunt', what: 'food' } });
   }
   if (need.logs > 0 && near('log')) {
-    options.push({ kind: 'log', cost: seen.log + WORK.log, step: { step: 'gather_logs', count: count(inv, isLog) + Math.min(need.logs, 4), wanted: ['later'] } });
+    options.push({ kind: 'log', cost: seen.log + WORK.log, step: { step: 'gather_logs', count: count(inv, isLog) + Math.min(need.logs, 12), wanted: ['later'] } });
   }
   if (need.stone > 0 && f.canMineStone && near('stone')) {
     options.push({ kind: 'stone', cost: seen.stone + WORK.stone, step: { step: 'get_stone', need: Math.min(need.stone, 16), why: 'later' } });
@@ -106,7 +106,7 @@ export function chooseStep(main, f) {
       options.push({ kind: 'stone', cost: (seen.stone ?? DIG) + WORK.stone, step: { step: 'get_stone', need: Math.min(need.stone, 16), why: 'later' } });
     }
     if (need.logs > 0 && seen.log != null && !has('log')) {
-      options.push({ kind: 'log', cost: seen.log + WORK.log, step: { step: 'gather_logs', count: count(inv, isLog) + Math.min(need.logs, 4), wanted: ['later'] } });
+      options.push({ kind: 'log', cost: seen.log + WORK.log, step: { step: 'gather_logs', count: count(inv, isLog) + Math.min(need.logs, 12), wanted: ['later'] } });
     }
     if (need.wool > 0 && f.canHunt !== false && seen.sheep != null && !f.bedDeferred && !has('sheep')) {
       options.push({ kind: 'sheep', cost: seen.sheep + WORK.sheep, step: { step: 'hunt', what: 'sheep', need: need.wool } });

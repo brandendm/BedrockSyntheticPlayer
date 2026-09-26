@@ -181,6 +181,10 @@ It's tested from 9 different underground spots: with a stone pickaxe it gets out
 **After moving in** (`core/advance.js`, `game/farm.js`): a wheat farm by the house, then iron.
 - **Farm:** it's made around water within 24 blocks of the house. If there isn't any, it digs a 2x2 pool beside a flat patch and pours a bucket into each of two opposite corners, which fills all four for good. The farm's water comes from that pool, and so does every later bucket. Trees on or right by the farm are chopped down (logs kept, no sapling put back, and no saplings replanted within 10 blocks of it). Leaves hanging low over the tiles are cleared. A torch goes in the middle of each side, one block past the tiles, so every tile gets light 9 or more and the wheat grows at night. Farms made before this get the same treatment the next time it tends them.
 - **Iron:** down the quarry stairs to Y 16, then a branch mine: a 2-high main tunnel, with an 8-long branch to each side every 3 blocks. Where the main tunnel has got to is kept with the quarry, so the next trip walks to its end and carries on. If the mine breaks into a cave, it explores the cave first. It walks the cave floor within 24 blocks and 6 levels of the mine, mines the iron and coal it can see, and lights it as it goes, for up to 90 s. Then it goes back to where it was in the mine. Each cave is only explored once. If it ends up well below Y 16 (fell into a cave, followed a vein down), it climbs back up to the iron layer before mining.
+- **Iron** is smelted in batches as it comes up (at the surface with 3+ raw iron, the furnace gets loaded before it goes back down), so the iron pickaxe comes early. Finished ingots wait in the furnace until it's up anyway. Before a trip it makes spare stone pickaxes if the ones it has are worn (under 200 uses between them), and torches from its coal.
+- **Hungry with no food:** bread from wheat, the cooking in the furnace, ripe wheat, an animal nearby, or else it goes looking for animals. That comes before any other daytime job.
+- **Night far from home** (over 128 blocks): it digs in where it is rather than walking home in the dark.
+- **When every goal is done** it doesn't stop: every half minute it checks for anything to see to (nights at home, the farm, the chest, repairs), and it's free for orders in between.
 - **Dying:** it keeps the spot where it died until it has actually been back and picked its things up. A fight, a swim or nightfall on the way no longer makes it forget.
 
 **Water:** it swims at the surface, crosses rivers when that's shorter than walking around, climbs out onto banks, and never fights while swimming. If it ends up in water with no destination, it swims to the nearest land. It avoids waterfalls and water hanging over a drop.
@@ -205,8 +209,9 @@ Defaults are in `brain/config.example.json`. Copy it to `brain/config.json` to o
 
 ```powershell
 npm run fuzz; node tools/fuzz_steps.mjs  # random worlds; the second uses a real-width body with Minecraft jump physics
-npm test                         # pathfinder (incl. ladders), motor, threats, recipes, sourcing, costs, settle-in plan, house, focus, biomes (129 tests)
+npm test                         # pathfinder (incl. ladders), motor, threats, recipes, sourcing, costs, settle-in plan, house, focus, biomes (136 tests)
 npm run fuzz                     # 200 random worlds: plan + walk + replan
+npm run sim                      # the whole goal ladder played forward from nothing to done: no loops, no crafts it can't make, trips counted
 python -m unittest discover -s brain/tests -t .   # brain (21 tests)
 npm install; npm run typecheck # checks pack code against the real Script API typings
 ```

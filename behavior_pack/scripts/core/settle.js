@@ -15,7 +15,8 @@ import { planFuel, charcoalInput } from './fuel.js';
 export const DUSK = 11500;      // head home (sunset is 12000, mobs from ~13000)
 export const DAWN = 23200;      // safe to go out again
 export const TORCH_GOAL = 8;
-export const FOOD_GOAL = 6;     // pieces of food to carry before bothering with more hunting
+export const FOOD_GOAL = 6;
+export const FAR_FROM_HOME = 128; // blocks: further than this at dusk, dig in for the night instead of walking home     // pieces of food to carry before bothering with more hunting
 const HOUSE = materials();
 
 const stone = (inv) => count(inv, (id) => TOOL_STONE.has(id));
@@ -58,11 +59,24 @@ export function settleStep(f) {
 
   // Night first.
   if (isNight(f.time)) {
-    if (f.house) return { step: 'go_home', sleep: true };
+    // Home unless it's a long walk in the dark (mobs all the way): then dig in where we are.
+    if (f.house && (f.house.dist ?? 0) <= FAR_FROM_HOME) return { step: 'go_home', sleep: true };
+    if (f.house) return { step: 'shelter' };
     // Walls, roof and a door are enough for a night in: the rest of the fittings can wait for day.
     const need = houseShortfall(inv, null, { fittings: false });
     if (!need) return { step: 'build_house' };
     return { step: 'shelter' };
+  }
+
+  // Hungry with nothing to eat: food before anything else (bread from wheat, the furnace's cooking,
+  // ripe wheat, an animal close by, else go and find some). It only hunted animals it happened to
+  // see, so an empty pack in a place with none meant starving while it worked.
+  if (f.hungry && foodCount(inv) === 0) {
+    if ((inv.wheat ?? 0) >= 3) return craftStep(inv, ['bread'], f.tableDist);
+    if (f.smelt?.kind === 'food') return f.smelt.ready ? { step: 'collect_smelt' } : { step: 'wait_smelt' };
+    if (f.farmRipe) return { step: 'tend_farm' };
+    if (f.armed !== false && f.animals > 0) return { step: 'hunt', what: 'food' };
+    if (f.armed !== false) return { step: 'explore', want: 'food' };
   }
 
   // Still need wool and a sheep's right here: that first (it won't wait; the furnace will).
@@ -197,6 +211,13 @@ export function fittingsPlanks(inv, house = null) {
   return n;
 }
 
+/** Cobblestone the recipes for these items take in all. */
+export function stoneFor(items) {
+  let n = 0;
+  for (const it of items) for (const inp of RECIPES[it]?.inputs ?? []) if (typeof inp.match === 'function' && inp.match('cobblestone')) n += inp.n;
+  return n;
+}
+
 /** What's still missing for the house and its fittings: { stone, logs } or null if we have it all. */
 export function houseShortfall(inv, exact = null, { fittings = true } = {}) {
   // exact: what the house we started still needs, counted block by block at the site (with the
@@ -216,7 +237,13 @@ export function houseShortfall(inv, exact = null, { fittings = true } = {}) {
 export function craftStep(inv, items, tableDist) {
   const p = planCrafts(inv, items);
   if (p.logsShort > 0) return { step: 'gather_logs', count: count(inv, isLog) + p.logsShort, wanted: items };
-  if (p.missing) return { step: 'blocked', missing: p.missing };
+  if (p.missing) {
+    // Short of cobblestone (a hoe or a spare pickaxe after the house took the lot): go and get it,
+    // not 'blocked' (which went exploring for "supplies" and never came back with any).
+    const stoneNeed = stoneFor(items) - stone(inv);
+    if (stoneNeed > 0) return { step: 'get_stone', need: stoneNeed, why: items.join(', ').replace(/_/g, ' ') };
+    return { step: 'blocked', missing: p.missing };
+  }
   const needsTable = p.steps.some((s) => ['furnace', 'bed', 'wooden_door'].includes(s) || (RECIPES[s]?.table && !/^(wooden|stone)_(pickaxe|sword|axe|shovel)$/.test(s)));
   return (needsTable && tableStep(inv, tableDist, items)) || { step: 'craft', items, needsTable };
 }

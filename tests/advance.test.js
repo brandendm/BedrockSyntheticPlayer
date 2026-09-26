@@ -82,3 +82,22 @@ test('down the mine with one pickaxe left: keep mining, spares get made at the s
   assert.equal(advanceStep({ ...f, inv, underground: true }).step, 'get_iron');
   assert.deepEqual(advanceStep({ ...f, inv, underground: false }).items, ['stone_pickaxe']);
 });
+
+test('moved in: short of cobblestone for the hoe fetches some (never "blocked"), torches before the mine', async () => {
+  const { advanceStep } = await import('../behavior_pack/scripts/core/advance.js');
+  const kit = { stone_pickaxe: 1, stone_sword: 1, stone_axe: 1, stone_shovel: 1, oak_planks: 8 };
+  const s = advanceStep({ inv: kit, tableDist: 0, waterNearHouse: true, farm: null });
+  assert.equal(s.step, 'get_stone');
+  assert.equal(s.need, 2);
+  const t = advanceStep({ inv: { ...kit, stone_hoe: 1, stone_pickaxe: 3, coal: 2 }, tableDist: 0, waterNearHouse: true, farm: { tiles: 24, planted: 24, ripe: 0 } });
+  assert.deepEqual([t.step, t.items], ['craft', ['torch']]);
+});
+
+test('iron to smelt and nothing to burn: wood for fuel first, not a furnace job that fails', async () => {
+  const { advanceStep } = await import('../behavior_pack/scripts/core/advance.js');
+  const inv = { iron_pickaxe: 1, stone_pickaxe: 1, stone_sword: 1, stone_axe: 1, stone_shovel: 1, stone_hoe: 1, raw_iron: 36, torch: 10 };
+  const s = advanceStep({ inv, tableDist: 0, waterNearHouse: true, farm: { tiles: 24, planted: 24, ripe: 0 } });
+  assert.equal(s.step, 'gather_logs');
+  assert.deepEqual(s.wanted, ['furnace fuel']);
+  assert.equal(advanceStep({ inv: { ...inv, coal: 5 }, tableDist: 0, waterNearHouse: true, farm: { tiles: 24, planted: 24, ripe: 0 } }).step, 'smelt');
+});

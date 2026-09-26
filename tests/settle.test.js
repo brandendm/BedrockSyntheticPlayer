@@ -142,3 +142,21 @@ test('a finished furnace waits: no walk home mid-search unless near it or out of
   assert.equal(settleStep({ ...base, inv, smelt: { ...far, dist: 8 } }).step, 'collect_smelt');
   assert.equal(settleStep({ ...base, inv: { ...inv, cooked_mutton: 0 }, smelt: far }).step, 'collect_smelt');
 });
+
+test('hungry with nothing to eat: food first (bread, the furnace, the farm, an animal, else go looking)', () => {
+  const house = { dist: 3, door: true, bed: true, table: true, furnace: true, chest: true, lit: true, litOutside: true };
+  const b = { ...base, house, furnace: { inHouse: true }, hungry: true, armed: true };
+  const kit = { ...tools, stone_axe: 1, stone_shovel: 1, torch: 8 };
+  assert.deepEqual(settleStep({ ...b, inv: { ...kit, wheat: 3 } }).items, ['bread']);
+  assert.equal(settleStep({ ...b, smelt: { kind: 'food', ready: false }, inv: kit }).step, 'wait_smelt');
+  assert.equal(settleStep({ ...b, farmRipe: true, inv: kit }).step, 'tend_farm');
+  assert.equal(settleStep({ ...b, animals: 2, inv: kit }).what, 'food');
+  assert.deepEqual(settleStep({ ...b, inv: kit }), { step: 'explore', want: 'food' });
+  assert.notEqual(settleStep({ ...b, hungry: false, inv: kit }).step, 'explore');
+});
+
+test('night a long way from home: dig in there, not a walk home in the dark', () => {
+  const house = { door: true, bed: true, table: true, furnace: true, lit: true };
+  assert.equal(settleStep({ ...base, time: 14000, house: { ...house, dist: 40 }, inv: {} }).step, 'go_home');
+  assert.equal(settleStep({ ...base, time: 14000, house: { ...house, dist: 300 }, inv: {} }).step, 'shelter');
+});

@@ -9,7 +9,8 @@
 //   3. Smelt it (coal from the same mine burns 8 items a piece), craft: the pickaxe first (it mines
 //      everything faster), sword, bucket, axe, shovel, shield, then armor, chest plate first.
 //   4. Wear the armor; bread from the wheat when food runs low; harvest and replant ripe wheat.
-import { count, has, isPlanks } from './recipes.js';
+import { count, has, isPlanks, isLog } from './recipes.js';
+import { planFuel } from './fuel.js';
 import { craftStep, foodCount, FOOD_GOAL } from './settle.js';
 
 /** Ingots each iron item is made of. */
@@ -49,8 +50,10 @@ export function advanceStep(f) {
   const cooking = f.smelt?.kind === 'ore' ? f.smelt.n ?? 0 : 0; // iron in the furnace is ours already
   const haveBucket = made(inv, worn, 'bucket');
 
-  // A finished furnace near us: empty it (the iron is what everything below waits on).
-  if (f.smelt?.ready && ((f.smelt.dist ?? 0) <= 24 || f.smelt.kind === 'ore')) return { step: 'collect_smelt' };
+  // A finished furnace near us: empty it (the iron is what everything below waits on). Not from
+  // down the mine while there's still iron to dig: it keeps till we're up anyway.
+  const stillShort = IRON_GOAL - ironHave(inv, worn) - cooking > 0;
+  if (f.smelt?.ready && !(f.underground && stillShort) && ((f.smelt.dist ?? 0) <= 24 || f.smelt.kind === 'ore')) return { step: 'collect_smelt' };
 
   // Armor we made but aren't wearing: put it on (a moment, and it's the point of making it).
   if ([...ARMOR, 'shield'].some((id) => has(inv, id) && !worn.includes(id))) return { step: 'equip' };
@@ -85,7 +88,11 @@ export function advanceStep(f) {
     }
     break; // the next thing needs more ingots: go get them
   }
-  // Mining goes on while a batch smelts (in parallel); only what's still unaccounted for is short.
+  // Mining goes on while a batch smelts (in parallel): at the surface with raw iron and the furnace
+  // free, load it before going back down, so the iron pickaxe (and the rest) come as we go rather
+  // than all at the end.
+  if (!f.underground && raw >= 3 && !f.smelt && planFuel(inv, 'raw_iron', raw)) return smeltOre(f, raw, raw);
+  // Only what's still unaccounted for is short.
   const short = Math.max(0, IRON_GOAL - ironHave(inv, worn) - cooking);
   if (short > 0) return ironTrip(f, short, 'iron gear');
   if (raw > 0) return smeltOre(f, raw, raw);
@@ -106,8 +113,17 @@ function ironTrip(f, need, why) {
   const want = has(inv, 'iron_pickaxe') || has(inv, 'diamond_pickaxe') ? 2 : 3;
   // Spares are made before a trip, at the surface; down the mine one pickaxe is enough to carry on
   // (climbing out to craft a spare costs more than it saves).
-  const short = f.underground ? pickaxes(inv) < 1 : pickaxes(inv) < want;
+  // Wear counts, not just how many: two pickaxes with a handful of uses left between them are no
+  // spare at all. A trip is ~160 blocks of stairs to Y 16 plus the mine: 200 uses to set off with.
+  const wornOut = f.pickUses != null && f.pickUses < 200;
+  const short = f.underground ? pickaxes(inv) < 1 : pickaxes(inv) < want || wornOut;
   if (short && count(inv, (id) => id === 'cobblestone' || id === 'cobbled_deepslate') >= 3) return craftStep(inv, ['stone_pickaxe'], f.tableDist);
+  // Torches for the mine before going down (made from what coal we have, no table needed): a dark
+  // tunnel is where mobs spawn, and making them down there needs sticks we may not have left.
+  if (!f.underground && (inv.torch ?? 0) < 8 && (inv.coal ?? 0) + (inv.charcoal ?? 0) > 0) {
+    const t = craftStep(inv, ['torch'], f.tableDist);
+    if (t.step === 'craft') return t;
+  }
   return { step: 'get_iron', need, why };
 }
 
@@ -115,7 +131,13 @@ function ironTrip(f, need, why) {
 function smeltOre(f, raw, want) {
   if (f.smelt?.ready) return { step: 'collect_smelt' };
   if (f.smelt) return { step: 'wait_smelt' };
-  return { step: 'smelt', input: 'ore', n: Math.max(want, raw), fuelPlanks: 0 };
+  const n = Math.max(want, raw);
+  // Something to burn first: coal from the mine, else wood (a log makes 4 planks: 6 items). With
+  // neither, loading the furnace just failed and the step came straight back, over and over.
+  if (!planFuel(f.inv, 'raw_iron', Math.min(n, raw))) {
+    return { step: 'gather_logs', count: count(f.inv, isLog) + Math.max(1, Math.ceil(Math.min(n, raw) / 6)), wanted: ['furnace fuel'] };
+  }
+  return { step: 'smelt', input: 'ore', n, fuelPlanks: 0 };
 }
 
 /**
