@@ -14,6 +14,7 @@ import { PLANT } from './homestead.js';
 const strip = (id) => id.replace('minecraft:', '');
 const TILLABLE = /^(grass_block|dirt|coarse_dirt|dirt_with_roots)$/;
 const GRASS = /^(short_grass|tall_grass|fern|large_fern)$/;
+const isSeed = (id) => id === 'wheat_seeds';
 const CLEAR = /^(air|short_grass|tall_grass|fern|large_fern|leaf_litter|.*_flower|dandelion|poppy|snow_layer)$/;
 const key = (p) => `${p.x},${p.y},${p.z}`;
 const unkey = (k) => { const [x, y, z] = k.split(',').map(Number); return { x, y, z }; };
@@ -438,6 +439,7 @@ export class Farm {
     const t0 = system.currentTick;
     const seeds = () => invCounts(this.sim).wheat_seeds ?? 0;
     let broke = 0;
+    const brokeAt = [];
     while (seeds() < want && system.currentTick - t0 < 1800) {
       const grass = (await S.scan((id) => GRASS.test(id), { radius: 32, below: 4, above: 4, limit: 24 }))
         .filter((b) => !this.a.memory.isUnreachable(b));
@@ -455,14 +457,36 @@ export class Farm {
         const g = left.splice(bi, 1)[0];
         if (!GRASS.test(S.blockAt(g) ?? '')) continue;
         if (!S.inReach(g) && !(await S.goNear(gen, g, 2.5, 1))) { this.a.memory.markUnreachable(g, 300000); continue; }
-        if (await S.mine(gen, g, { collect: false })) broke++;
-        if (broke && broke % 6 === 0) await S.sweep(gen, this.sim.location, 6, (id) => id === 'wheat_seeds', 4);
+        if (!(await S.mine(gen, g, { collect: false }))) continue;
+        broke++;
+        brokeAt.push(g);
+        // A seed drops (1 in 8): pick it up right there, before moving on to the next tuft. (Sweeping
+        // every few tufts around wherever we'd got to left most of them behind.)
+        await this.pickUpSeedAt(gen, g);
         if (seeds() >= want) break;
       }
-      await S.sweep(gen, this.sim.location, 8, (id) => id === 'wheat_seeds', 6);
+      // Anything missed (a seed that bounced off, one that landed as we left): every spot we broke.
+      for (const b of brokeAt.splice(0)) if (this.seedItemsNear(b, 2.5).length) await S.sweep(gen, b, 2.5, isSeed, 4);
     }
     S.log(`farm: broke ${broke} grass, have ${seeds()} seeds`);
     return seeds();
+  }
+
+  /** Wheat seed item stacks on the ground within r of p. */
+  seedItemsNear(p, r) {
+    try {
+      return this.dim.getEntities({ type: 'minecraft:item', location: { x: p.x + 0.5, y: p.y + 0.5, z: p.z + 0.5 }, maxDistance: r })
+        .filter((e) => { try { return isSeed(strip(e.getComponent('minecraft:item')?.itemStack?.typeId ?? '')); } catch { return false; } });
+    } catch { return []; }
+  }
+
+  /** Grass just broken at g: wait a moment for a seed to drop, and if one did, walk over it. */
+  async pickUpSeedAt(gen, g) {
+    for (let t = 0; t < 8 && !this.seedItemsNear(g, 2).length; t += 2) await this.S.wait(gen, 2);
+    if (!this.seedItemsNear(g, 2).length) return false;
+    const before = invCounts(this.sim).wheat_seeds ?? 0;
+    await this.S.sweep(gen, { x: g.x + 0.5, y: g.y + 0.5, z: g.z + 0.5 }, 2.5, isSeed, 4);
+    return (invCounts(this.sim).wheat_seeds ?? 0) > before;
   }
 
   /** The farm's state: tiles, planted, ripe (from the blocks; zeros if it isn't loaded). */

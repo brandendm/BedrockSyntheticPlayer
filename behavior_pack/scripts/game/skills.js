@@ -1399,7 +1399,10 @@ export class Skills {
       const fx = f.x + dx, fz = f.z + dz;
       const cells = [{ x: fx, y: f.y + 1, z: fz }, { x: fx, y: f.y, z: fz }, { x: fx, y: f.y - 1, z: fz }];
       const floor = { x: fx, y: f.y - 2, z: fz };
-      const unsafe = cells.some((c) => this.touchesLiquid(c)) || this.isLiquid(floor) ||
+      // Our own tunnel floors and stairs count as in the way too (a stone tunnel can spiral back
+      // round in front of the stairs): mining them is refused, and trying the same step again and
+      // again was the bot standing at the bottom of the quarry doing nothing.
+      const unsafe = cells.some((c) => this.touchesLiquid(c) || this.isProtected(c)) || this.isLiquid(floor) ||
         !this.isDiggable(cells) || OPEN.test(this.blockAt(floor) ?? 'air') || this.isProtected(floor);
       if (unsafe) {
         if (++turns > 4) {
@@ -1425,19 +1428,25 @@ export class Skills {
         di = (di + 1) % 4;
         continue;
       }
-      turns = 0;
       // Sand and gravel keep falling into the gap from above: mine until the column stays clear
       // (a beach or a desert has several blocks of it over the stone).
+      let blocked = false;
       for (const c of cells) {
         for (let k = 0; k < 10 && !OPEN.test(this.blockAt(c) ?? 'air'); k++) {
           if (!(await this.mine(gen, c, { collect: false }))) {
             if (FALLING.test(this.blockAt(c) ?? '')) { await this.wait(gen, 8); continue; } // still settling
-            this.log(`stairs: couldn't mine ${this.blockAt(c)} at ${c.x} ${c.y} ${c.z}`);
-            return false;
+            this.log(`stairs: couldn't mine ${this.blockAt(c)} at ${c.x} ${c.y} ${c.z}: another way`);
+            blocked = true;
+            break;
           }
           if (FALLING.test(this.blockAt({ x: c.x, y: c.y + 1, z: c.z }) ?? '')) await this.wait(gen, 12);
         }
+        if (blocked) break;
       }
+      // Couldn't clear it: try the next way round (same as a step that isn't safe), never give up
+      // on the spot and come straight back to the same block.
+      if (blocked) { turns++; di = (di + 1) % 4; continue; }
+      turns = 0;
       const r = await this.a.motor.followPath([
         { x: f.x + 0.5, y: f.y, z: f.z + 0.5 },
         { x: fx + 0.5, y: f.y - 1, z: fz + 0.5 },
@@ -1690,9 +1699,26 @@ export class Skills {
       this.a.sayOnce('iron-stairs', `Digging down to Y ${IRON_Y}, where the iron is.`, 120000);
       for (let tries = 0; tries < 4 && this.feet().y > IRON_Y + 1 && going(); tries++) {
         // digStairs goes to the bottom of the quarry first and carries the same shaft on down.
+        const y0 = this.feet().y, steps0 = this.quarry?.steps.length ?? 0;
         await this.digStairs(gen, going, { toY: IRON_Y, maxSteps: 120 });
         this.check(gen);
         if (this.feet().y <= IRON_Y + 1 || !going()) break;
+        // Got nowhere at all (the bottom's boxed in: water, lava, our own tunnels all round): say so,
+        // and after a few such trips start a new quarry rather than stand at the bottom of this one.
+        const q = this.quarry;
+        if (q && this.feet().y >= y0 && q.steps.length === steps0) {
+          q.stuck = (q.stuck ?? 0) + 1;
+          this.a.memory.save();
+          this.log(`iron: the quarry's bottom is blocked (${q.stuck} time${q.stuck > 1 ? 's' : ''} in a row)`);
+          if (q.stuck >= 3) {
+            this.a.say("My quarry's blocked at the bottom every way I try: starting a new one.");
+            this.abandonQuarry('blocked at the bottom');
+            await this.toQuarrySite(gen);
+            continue;
+          }
+          this.a.sayOnce('quarry-blocked', "The bottom of my quarry's blocked; trying again a different way.", 60000);
+          break;
+        } else if (q) q.stuck = 0;
         // Stopped near the top of a new shaft (water, sand): start it again a few blocks over.
         // A shaft that's under way is never abandoned for a new hole: it's carried on next trip.
         if ((this.quarry?.steps.length ?? 0) < 3) { this.abandonQuarry('a bad spot to start'); await this.relocate(gen); } else break;
