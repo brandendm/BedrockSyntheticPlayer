@@ -293,7 +293,7 @@ export class Agent {
     // Only a cell we should have been able to walk into (open at feet level), and only once it's
     // happened twice: one stuck can be a mob in the way; twice in the same spot is the terrain.
     let open = false;
-    try { open = makeClassifier(this.dim)(x, y, z) === Cell.AIR; } catch {}
+    try { open = this.classifier()(x, y, z) === Cell.AIR; } catch {}
     if (!open) return;
     const k = `${x},${y},${z}`, now = Date.now();
     const seen = this.stuckOnce?.get(k);
@@ -577,7 +577,7 @@ export class Agent {
 
   async swimOut(gen) {
     const res = await new Promise((resolve) => {
-      const classify = makeClassifier(this.dim);
+      const classify = this.classifier();
       // Search from the surface above us: a sunk body has no swim moves until it's floating.
       const p = this.body.getPos();
       const from = { x: p.x, y: Math.floor(p.y), z: p.z };
@@ -594,7 +594,7 @@ export class Agent {
     if (gen !== this.taskGen) return;
     if (CONFIG.debug) console.warn(`[agent] in water: swimming to land, ${res.complete ? res.path.length + ' steps' : 'no land found'}`);
     if (res.complete && res.path.length >= 2) {
-      await this.motor.followPath(smoothPath(makeClassifier(this.dim), res.path), { urgent: true });
+      await this.motor.followPath(smoothPath(this.classifier(), res.path), { urgent: true });
     } else if (this.body.headUnderwater()) {
       // Trapped under water (flooded cave, under an overhang): swim through the water to the
       // nearest pocket of air.
@@ -1018,7 +1018,7 @@ export class Agent {
     // A wandering trader in sight and no lead yet: his two leads (for walking animals and
     // villagers home, into boats) drop when he's gone. Any time of day but night, from the start.
     if (!night && !inv.lead && !['go_home', 'shelter', 'repair_house'].includes(step.step)) {
-      const t = this.homestead.animals(new Set(['wandering_trader']), 32)[0];
+      const t = this.homestead.animalsSeen(new Set(['wandering_trader']), 32)[0];
       if (t) return { step: 'hunt', what: 'trader', near: Math.round(t.d) };
     }
     else if (night) {
@@ -1046,8 +1046,8 @@ export class Agent {
     const now = Date.now();
     for (const [k, d] of this.deferred) if (d.until <= now) this.deferred.delete(k);
     const mem = (cat) => this.memory.list(cat, dimId, pos)[0]?.dist ?? null;
-    const sheep = H.animals(new Set(['sheep']), 24)[0]?.d ?? mem('sheep');
-    const food = H.animals(FOOD_ANIMALS, 16)[0]?.d ?? null;
+    const sheep = H.animalsSeen(new Set(['sheep']), 24)[0]?.d ?? mem('sheep');
+    const food = H.animalsSeen(FOOD_ANIMALS, 16)[0]?.d ?? null;
     const house = H.house;
     const facts = {
       inv,
@@ -1186,7 +1186,7 @@ export class Agent {
     const H = this.homestead, pos = this.sim.location, dimId = this.dim.id;
     const f = this.memory.list('furnace', dimId, pos)[0];
     const house = H.house;
-    const sheepSeen = H.animals(new Set(['sheep'])).length > 0;
+    const sheepSeen = H.animalsSeen(new Set(['sheep'])).length > 0;
     const sheepKnown = this.memory.list('sheep', dimId, pos).some((m) => m.dist < 96);
     return {
       inv, tableDist, time: world.getTimeOfDay(),
@@ -1195,7 +1195,7 @@ export class Agent {
       house: house ? { dist: dist3D(pos, house), ...H.houseState() } : null,
       repairShort: house ? H.houseNeeds(house, house.dir) : null,
       sheep: sheepSeen || sheepKnown,
-      animals: H.animals(FOOD_ANIMALS, 16).length,
+      animals: H.animalsSeen(FOOD_ANIMALS, 16).length,
       bedDeferred: (this.bedDeferredUntil ?? 0) > Date.now(),
       armed: SWORD_OK.test(Object.keys(inv).join(' ')),
       project: !!H.project,
@@ -1304,7 +1304,7 @@ export class Agent {
     const gen = this.taskGen;
     const res = await this.plan(this.body.getPos(), goal, tolerance, maxNodes);
     if (gen !== this.taskGen || res.path.length < 2) return;
-    this.motor.followPath(smoothPath(makeClassifier(this.dim), res.path), { seamless: true, urgent });
+    this.motor.followPath(smoothPath(this.classifier(), res.path), { seamless: true, urgent });
   }
 
   // ---------- brain link ----------
@@ -1464,7 +1464,7 @@ export class Agent {
         this.emit('goto_failed', { target, at: p });
         return;
       }
-      const wps = smoothPath(makeClassifier(this.dim), res.path);
+      const wps = smoothPath(this.classifier(), res.path);
       const r = await this.motor.followPath(wps);
       if (gen !== this.taskGen || r.status === 'cancelled') return;
       if (r.status === 'stuck') {
@@ -1483,9 +1483,36 @@ export class Agent {
     this.emit('task_done', { task: 'goto', target });
   }
 
+  /**
+   * The block classifier every search and path smoothing uses, with what it read shared between
+   * them for a second: a goNear and its "through or around" search, a hunt re-routing every few
+   * ticks, a sweep planning to each item in turn all look at the same blocks. Reading a block is
+   * the slow part of a search in game. Cleared at once whenever we change a block ourselves
+   * (cellChanged), so a search right after mining or placing never sees the old block.
+   */
+  classifier() {
+    const now = system.currentTick;
+    if (!this.cells || this.cellsDim !== this.dim.id || now - this.cellsAt > 20) {
+      this.cells = new Map();
+      this.cellsAt = now;
+      this.cellsDim = this.dim.id;
+      this.cellsBase = makeClassifier(this.dim);
+    }
+    const m = this.cells, base = this.cellsBase;
+    return (x, y, z) => {
+      const k = `${x},${y},${z}`;
+      let c = m.get(k);
+      if (c === undefined) { c = base(x, y, z); m.set(k, c); }
+      return c;
+    };
+  }
+
+  /** We broke or placed a block (or poured water): forget what the searches read. */
+  cellChanged() { this.cells = null; this.cellGen = (this.cellGen ?? 0) + 1; }
+
   plan(from, to, tolerance, maxNodes = CONFIG.maxPathNodes, goalTest = null, extra = {}) {
     return new Promise((resolve) => {
-      const base = makeClassifier(this.dim);
+      const base = this.classifier();
       const now = Date.now(), bad = this.badCells;
       // Places we got physically stuck at recently count as walls, so we don't try them again.
       const classify = bad.size ? (x, y, z) => ((bad.get(`${x},${y},${z}`) ?? 0) > now ? Cell.DANGER : base(x, y, z)) : base;
@@ -1512,6 +1539,6 @@ export class Agent {
     }
     const res = await this.plan(this.body.getPos(), p.location, CONFIG.followDistance);
     if (gen !== this.taskGen || res.path.length < 2) return;
-    this.motor.followPath(smoothPath(makeClassifier(this.dim), res.path), { seamless: true });
+    this.motor.followPath(smoothPath(this.classifier(), res.path), { seamless: true });
   }
 }

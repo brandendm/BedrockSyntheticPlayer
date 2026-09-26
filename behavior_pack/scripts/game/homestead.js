@@ -39,6 +39,27 @@ export class Homestead {
     this.seenAt = new Map();
   }
 
+  /**
+   * A fact the planner asks for several times per decision (animals in sight, the house's state,
+   * what it still needs), worked out once: kept for a few ticks, and dropped as soon as we change a
+   * block ourselves or the pack changes (`sig`).
+   */
+  memo(key, ticks, fn, sig = '') {
+    const m = this._memo ?? (this._memo = new Map());
+    const now = system.currentTick, gen = this.a.cellGen ?? 0;
+    const hit = m.get(key);
+    if (hit && now - hit.at <= ticks && hit.gen === gen && hit.sig === sig) return hit.v;
+    const v = fn();
+    if (m.size > 64) m.clear();
+    m.set(key, { v, at: now, gen, sig });
+    return v;
+  }
+
+  /** animals(), for planning: the same answer for a few ticks (each call casts rays at every animal). */
+  animalsSeen(types, radius = 32) {
+    return this.memo(`animals:${[...types].join()}:${radius}`, 10, () => this.animals(types, radius));
+  }
+
   get S() { return this.a.skills; }
   get sim() { return this.a.sim; }
   get dim() { return this.a.sim.dimension; }
@@ -493,7 +514,13 @@ export class Homestead {
    * Blocks still needed to finish the shell at this site: { stone, planks } (0/0 when we have them).
    * With `fittings`, the planks for the door, bed, table and chest count too: one trip for all of it.
    */
-  houseNeeds(site, dir, { fittings = false } = {}) {
+  houseNeeds(site, dir, opts = {}) {
+    const inv = invCounts(this.sim);
+    const sig = Object.entries(inv).filter(([id]) => TOOL_STONE.has(id) || isPlanks(id) || isLog(id) || /^(wooden_door|bed|crafting_table|chest)$/.test(id)).map(([id, n]) => `${id}${n}`).join();
+    return this.memo(`needs:${site.x},${site.y},${site.z},${dir},${!!opts.fittings}`, 20, () => this.houseNeedsNow(site, dir, opts), sig);
+  }
+
+  houseNeedsNow(site, dir, { fittings = false } = {}) {
     const cacheKey = fittings ? 'lastNeedsFit' : 'lastNeeds';
     // Site out of range (not loaded): unknown, not "everything": keep the last count we made.
     if (this.S.blockAt(site) === null) return this[cacheKey] ?? { stone: 0, planks: 0 };
@@ -692,6 +719,7 @@ export class Homestead {
     try { this.dim.runCommand(`setblock ${fur.door.x} ${fur.door.y} ${fur.door.z} wooden_door ["minecraft:cardinal_direction"="${across}"]`); } catch {
       try { this.dim.runCommand(`setblock ${fur.door.x} ${fur.door.y} ${fur.door.z} wooden_door`); } catch {}
     }
+    this.a.cellChanged?.();
     const ok = /door/.test(this.S.blockAt(fur.door) ?? '');
     if (!ok) give(this.sim, 'wooden_door', 1);
     return ok;
@@ -699,6 +727,10 @@ export class Homestead {
 
   /** What the house really has, read from the blocks (not from flags that can go stale). */
   houseState() {
+    return this.memo('houseState', 20, () => this.houseStateNow());
+  }
+
+  houseStateNow() {
     const h = this.house;
     if (!h) return null;
     // Out of range (chunks not loaded): every block reads as nothing. Keep what we last saw
@@ -794,6 +826,7 @@ export class Homestead {
           }
         };
         try { this.dim.runCommand(`setblock ${fur.bed.head.x} ${fur.bed.head.y} ${fur.bed.head.z} bed ["direction"=${direction},"head_piece_bit"=true]`); } catch (e) { S.log(`bed setblock: ${e}`); }
+        this.a.cellChanged?.();
         h.bed = rightPlace();
         S.log(`bed: ${h.bed ? 'in' : 'setblock put it in the wrong place'} (foot ${S.blockAt(fur.bed.foot)}, head ${S.blockAt(fur.bed.head)})`);
         if (!h.bed) { clearBeds(); give(this.sim, 'bed', 1); }
@@ -890,6 +923,7 @@ export class Homestead {
     try { this.dim.runCommand(`setblock ${cell.x} ${cell.y} ${cell.z} chest ["minecraft:cardinal_direction"="${back}"]`); } catch {
       try { this.dim.runCommand(`setblock ${cell.x} ${cell.y} ${cell.z} chest`); } catch {}
     }
+    this.a.cellChanged?.();
     const ok = /chest/.test(this.S.blockAt(cell) ?? '');
     if (!ok) give(this.sim, 'chest', 1);
     this.S.log(`chest: ${ok ? 'set' : "couldn't set"} at ${cell.x} ${cell.y} ${cell.z}`);

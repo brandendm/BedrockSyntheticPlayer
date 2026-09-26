@@ -206,3 +206,24 @@ test('cost: breaking through a thin wall beats a long detour, not a short one', 
   const t2 = findPath(short.classify, { x: 0, y: 64, z: 0 }, { x: 10, y: 64, z: 0 }, { actions: roots });
   assert.ok(!(t2.cost < a2.cost * 0.85), 'a step round is still better than digging');
 });
+
+test('a goal sealed off (a pocket in the rock, a pen): gives up early, not after the whole budget', () => {
+  // A 3x3 room with walls and a roof, around x = 30; we're outside.
+  const solids = [];
+  for (let x = 28; x <= 32; x++) for (let z = -2; z <= 2; z++) for (let y = 64; y <= 68; y++) {
+    if (Math.abs(x - 30) < 2 && Math.abs(z) < 2 && y < 67) continue;
+    solids.push([x, y, z]);
+  }
+  const w = makeWorld({ solids });
+  const r = findPath(w.classify, { x: 0, y: 64, z: 0 }, { x: 30, y: 64, z: 0 }, { maxNodes: 20000 });
+  assert.equal(r.complete, false);
+  assert.equal(r.unreachable, true);
+  assert.ok(r.expanded <= 1000, `expanded ${r.expanded}`);
+});
+
+test('the early give-up never gives up on a goal we can drop down to (a 3-deep pit)', () => {
+  const pit = (x, z) => (Math.abs(x - 20) <= 1 && Math.abs(z) <= 1 ? 61 : 64);
+  const w = makeWorld({ ground: pit });
+  const r = findPath(w.classify, { x: 0, y: 64, z: 0 }, { x: 20, y: 61, z: 0 }, { maxNodes: 20000, probeAt: 5 });
+  assert.equal(r.complete, true);
+});

@@ -166,6 +166,7 @@ export class Farm {
     try { this.sim.useItemInSlotOnBlock(slot, src, Direction.Up); } catch {}
     await this.S.wait(gen, 4);
     if (!invCounts(this.sim).water_bucket) { try { this.sim.useItemInSlot(slot); } catch {} await this.S.wait(gen, 4); }
+    this.a.cellChanged?.();
     return !!invCounts(this.sim).water_bucket;
   }
 
@@ -179,6 +180,7 @@ export class Farm {
     try { this.sim.useItemInSlotOnBlock(slot, { x: cell.x, y: cell.y - 1, z: cell.z }, Direction.Up); } catch {}
     await S.wait(gen, 4);
     S.restHands();
+    this.a.cellChanged?.();
     return /water/.test(S.blockAt(cell) ?? '');
   }
 

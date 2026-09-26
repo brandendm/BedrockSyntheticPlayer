@@ -38,16 +38,24 @@ export const DEFAULT_COSTS = Object.freeze({
   leap: 0.9,        // extra for jumping a gap (on top of the 2 blocks walked)
 });
 
+/**
+ * Numeric key for a block near `o` (within 65k blocks sideways, any build height): a string key
+ * per lookup was a good part of every search's time (the engine's JS is far slower than Node's).
+ */
+export const cellKey = (o, x, y, z) => ((x - o.x + 65536) * 131072 + (z - o.z + 65536)) * 1024 + (y + 512);
+
 /** Memoises classify() for the duration of one search. */
 export class WorldView {
-  constructor(classify) {
+  constructor(classify, origin = { x: 0, y: 0, z: 0 }) {
     this.classify = classify;
+    this.o = { x: Math.floor(origin.x), y: 0, z: Math.floor(origin.z) };
     this.cache = new Map();
     /** @type {(x: number, y: number, z: number) => number} seconds to break a block (actions searches) */
     this.breakCost = () => Infinity;
   }
+  k(x, y, z) { return cellKey(this.o, x, y, z); }
   get(x, y, z) {
-    const k = `${x},${y},${z}`;
+    const k = cellKey(this.o, x, y, z);
     let c = this.cache.get(k);
     if (c === undefined) {
       c = this.classify(x, y, z);
@@ -295,12 +303,13 @@ export function* searchJob(classify, start, goal, opts = {}) {
     actions = null,    // optional: allow digging and pillaring (see actionNeighbors)
     heuristicFn = null, // optional (x, y, z) => estimated remaining cost (goalTest searches)
     wetPartial = false, // a partial path may end out in the water (crossing to land further than one search reaches)
+    probeAt = 1000,     // after this many nodes without reaching it, check the goal isn't sealed off (0: never)
   } = opts;
-  const w = new WorldView(classify);
+  const w = new WorldView(classify, start);
   if (actions) {
     const bc = new Map();
     w.breakCost = (x, y, z) => {
-      const k = `${x},${y},${z}`;
+      const k = w.k(x, y, z);
       let c = bc.get(k);
       if (c === undefined) { c = actions.breakCost(x, y, z); bc.set(k, c); }
       return c;
@@ -308,7 +317,7 @@ export function* searchJob(classify, start, goal, opts = {}) {
   }
   const s = { x: Math.floor(start.x), y: Math.floor(start.y), z: Math.floor(start.z) };
   const g = { x: Math.floor(goal.x), y: Math.floor(goal.y), z: Math.floor(goal.z) };
-  const key = (x, y, z) => `${x},${y},${z}`;
+  const key = (x, y, z) => w.k(x, y, z);
   const heuristic = heuristicFn ?? (goalTest ? () => 0 : octileHeuristic);
 
   const open = new MinHeap();
@@ -331,6 +340,12 @@ export function* searchJob(classify, start, goal, opts = {}) {
     if (cur.h < best.h && (wetPartial || !w.swimmable(cur.x, cur.y, cur.z))) best = cur;
 
     if (++expanded >= maxNodes) break;
+    // Taking a while: is the goal somewhere we can't get to at all (an item behind a wall, a cow
+    // in a pen, ore inside the rock)? Then say so now, instead of searching the whole budget first
+    // (8,000-30,000 nodes and tens of thousands of block reads for a "no").
+    if (expanded === probeAt && !goalTest && !actions && sealedOff(w, g, tolerance, s)) {
+      return { path: rebuild(best), complete: false, expanded, cost: best.g, unreachable: true };
+    }
     // Standing on a block the plan put down (pillar, bridge): the world view doesn't have it, so
     // lay it in while we look at this node (walking on from a bridge needs ground under it).
     const pk = cur.move?.place ? key(cur.x, cur.y - 1, cur.z) : null;
@@ -365,6 +380,47 @@ export function* searchJob(classify, start, goal, opts = {}) {
   return { path: rebuild(best), complete: false, expanded, cost: best.g };
 }
 
+/**
+ * Is the goal (every cell we could finish on, within `tolerance`) in a pocket the start isn't in?
+ * A flood fill out from the goal over a looser set of moves than the search's own (any occupiable
+ * cell next door or two along, up to 3 up or down, either way), so if even that can't get out of
+ * the pocket in `limit` cells, no real route gets in. Too big to tell (or it reaches the start):
+ * false, and the search carries on as usual.
+ */
+export function sealedOff(w, g, tolerance, s, limit = 400) {
+  const r = Math.min(3, Math.ceil(tolerance));
+  const seen = new Set(), queue = [];
+  for (let dx = -r; dx <= r; dx++) for (let dz = -r; dz <= r; dz++) for (let dy = -r; dy <= r; dy++) {
+    const x = g.x + dx, y = g.y + dy, z = g.z + dz;
+    if (Math.hypot(dx, dy, dz) > tolerance + 1e-9) continue;
+    if (!w.occupiable(x, y, z)) continue;
+    const k = w.k(x, y, z);
+    if (!seen.has(k)) { seen.add(k); queue.push([x, y, z]); }
+  }
+  // Nowhere to stand right there (a point in mid-air, a far travel target, an unloaded chunk):
+  // can't tell. The search's partial path toward it is what the caller is after.
+  if (!queue.length) return false;
+  const steps = [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1], [2, 0], [-2, 0], [0, 2], [0, -2], [0, 0]];
+  for (let i = 0; i < queue.length; i++) {
+    const [x, y, z] = queue[i];
+    if (x === s.x && y === s.y && z === s.z) return false;
+    for (const [dx, dz] of steps) {
+      // Two along is a leap over a gap: only through an open gap, never through a wall.
+      if ((Math.abs(dx) === 2 || Math.abs(dz) === 2) && !(w.open(x + dx / 2, y, z + dz / 2) && w.open(x + dx / 2, y + 1, z + dz / 2))) continue;
+      for (let dy = -3; dy <= 3; dy++) {
+        if (!dx && !dz && !dy) continue;
+        const nx = x + dx, ny = y + dy, nz = z + dz;
+        const k = w.k(nx, ny, nz);
+        if (seen.has(k) || !w.occupiable(nx, ny, nz)) continue;
+        seen.add(k);
+        queue.push([nx, ny, nz]);
+        if (queue.length > limit) return false;
+      }
+    }
+  }
+  return true;
+}
+
 function rebuild(n) {
   const out = [];
   for (; n; n = n.parent) out.push(n.move ? { x: n.x, y: n.y, z: n.z, move: n.move } : { x: n.x, y: n.y, z: n.z });
@@ -388,7 +444,7 @@ export function findPath(classify, start, goal, opts) {
  */
 export function smoothPath(classify, path, halfWidth = 0.3) {
   if (path.length <= 2) return path.map(center);
-  const w = new WorldView(classify);
+  const w = new WorldView(classify, path[0]);
   const out = [center(path[0])];
   let i = 0;
   while (i < path.length - 1) {

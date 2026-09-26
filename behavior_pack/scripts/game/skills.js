@@ -9,7 +9,7 @@ import { toolFor, planCrafts, applyCraft, isLog, STONE_TARGETS, SHOVEL_BLOCKS, P
 import { chooseTool, breakSeconds, cheapestPlaceable, spendableBlocks, blockSourceCost, itemValue, plankReserve } from '../core/costs.js';
 import { invCounts, hold, take, give, container, findSlot } from './inventory.js';
 import { chooseSource, chooseSourceSticky, sourceKey, trustFor, trunksOf, EXPLORE_S, DIG_DOWN_S } from '../core/sourcing.js';
-import { makeClassifier, castRay, canSee } from './world.js';
+import { castRay, canSee } from './world.js';
 import { CONFIG } from '../config.js';
 import { wantScore, biomeName } from '../core/biomes.js';
 import { trace } from './bridge.js';
@@ -241,7 +241,7 @@ export class Skills {
       try { ok = attempt ? this.sim.useItemInSlotOnBlock(slot, neighbor, face) : this.sim.useItemInSlotOnBlock(slot, neighbor, face, faceLoc); } catch {}
       await this.wait(gen, 2);
       const id = this.blockAt(cell) ?? 'air';
-      if (ok || !OPEN.test(id)) { await this.wait(gen, 1); if (!OPEN.test(this.blockAt(cell) ?? 'air')) return true; }
+      if (ok || !OPEN.test(id)) { this.a.cellChanged?.(); await this.wait(gen, 1); if (!OPEN.test(this.blockAt(cell) ?? 'air')) return true; }
     }
     return false;
   }
@@ -265,7 +265,7 @@ export class Skills {
       // through (break time with our best tool, in the same units as walking), cheapest wins.
       if (res.complete && res.path.length >= 2 && i === 0 && (await this.throughIfCheaper(gen, pos, tolerance, res))) return true;
       if (res.path.length >= 2) {
-        const r = await this.a.motor.followPath(smoothPath(makeClassifier(this.dim), res.path));
+        const r = await this.a.motor.followPath(smoothPath(this.a.classifier(), res.path));
         this.check(gen);
         if (this.spotted) return false; // saw what we were exploring for on the way: stop here
         if (r.status === 'arrived' && res.complete) return true;
@@ -380,6 +380,7 @@ export class Skills {
       }
     }
     await this.wait(gen, 6);
+    this.a.cellChanged?.();
     if (placed) this.markPlaced(f);
     this.restHands();
     return placed && this.feet().y > f.y;
@@ -409,7 +410,7 @@ export class Skills {
 
   /** Follow a path from an actions search: walk the plain parts, dig and pillar where it says. */
   async followActionPath(gen, path, { sweep = true } = {}) {
-    const cls = makeClassifier(this.dim);
+    const cls = this.a.classifier();
     let i = 1;
     while (i < path.length) {
       this.check(gen);
@@ -499,7 +500,7 @@ export class Skills {
       this.check(gen);
       // No spot with a clear view (leaves all round it): any spot in reach, then clear the view.
       if (!res.complete) { res = await this.a.plan(this.sim.location, p, 0, 8000, near); this.check(gen); }
-      if (res.path.length >= 2) await this.a.motor.followPath(smoothPath(makeClassifier(this.dim), res.path));
+      if (res.path.length >= 2) await this.a.motor.followPath(smoothPath(this.a.classifier(), res.path));
       this.check(gen);
       if (this.usable(p) || (res.complete && this.inReach(p))) break;
       if (!res.complete && !(await this.climbToward(gen, c))) break;
@@ -598,6 +599,7 @@ export class Skills {
     if (this.blockAt(p) === id && passable) {
       try { this.dim.runCommand(`setblock ${p.x} ${p.y} ${p.z} air destroy`); } catch {}
     }
+    this.a.cellChanged?.();
     if (this.blockAt(p) === id) return false;
     if (collect) await this.collect(gen, p);
     return true;
@@ -665,7 +667,7 @@ export class Skills {
         skip.add(itId);
         continue;
       }
-      if (res.path.length >= 2) await this.a.motor.followPath(smoothPath(makeClassifier(this.dim), res.path));
+      if (res.path.length >= 2) await this.a.motor.followPath(smoothPath(this.a.classifier(), res.path));
       this.check(gen);
       await this.wait(gen, 4);
       if (stillFar()) skip.add(itId);
@@ -1118,7 +1120,7 @@ export class Skills {
   /** Put a block item down next to us, on the ground. */
   async place(gen, itemId, retry = true) {
     const f = this.feet();
-    const cls = makeClassifier(this.dim);
+    const cls = this.a.classifier();
     // Any open cell with solid ground under it within a couple of blocks: same level first,
     // then on top of a neighbouring block or down a step (placing in a dug-out hole needs these).
     const spots = [];
@@ -1161,7 +1163,7 @@ export class Skills {
       this.check(gen);
       if (res.complete && res.path.length >= 2) {
         this.log(`place ${itemId}: no luck here, trying a few blocks over`);
-        await this.a.motor.followPath(smoothPath(makeClassifier(this.dim), res.path));
+        await this.a.motor.followPath(smoothPath(this.a.classifier(), res.path));
         this.check(gen);
         return this.place(gen, itemId, false);
       }
@@ -1611,7 +1613,7 @@ export class Skills {
       const res = await this.a.plan(this.sim.location, { x: b.x + 0.5, y: b.y, z: b.z + 0.5 }, 0.8, 12000);
       this.check(gen);
       if (!res.complete) { this.leaveFail = { ...f, at: Date.now() }; return false; }
-      if (res.path.length >= 2) await this.a.motor.followPath(smoothPath(makeClassifier(this.dim), res.path));
+      if (res.path.length >= 2) await this.a.motor.followPath(smoothPath(this.a.classifier(), res.path));
       this.check(gen);
       if (this.shaftIndexHere(q) < 0) return false;
     }
@@ -1635,7 +1637,7 @@ export class Skills {
     if (home && (hd < 12 || (house && hd > 24))) {
       const res = await this.a.plan(this.sim.location, this.sim.location, 0, 4000, (x, y, z, w) => { const d = Math.hypot(x - home.x, z - home.z); return w.standable(x, y, z) && d >= 14 && (!house || d <= 24); });
       this.check(gen);
-      if (res.complete && res.path.length >= 2) await this.a.motor.followPath(smoothPath(makeClassifier(this.dim), res.path));
+      if (res.complete && res.path.length >= 2) await this.a.motor.followPath(smoothPath(this.a.classifier(), res.path));
       this.check(gen);
     }
   }
@@ -1755,7 +1757,7 @@ export class Skills {
     const res = await this.a.plan(this.sim.location, this.sim.location, 0, 6000, (x, yy, z, w) => w.standable(x, yy, z) && yy >= y - 2 && yy <= y + 2);
     this.check(gen);
     if (res.complete && res.path.length >= 2) {
-      await this.a.motor.followPath(smoothPath(makeClassifier(this.dim), res.path));
+      await this.a.motor.followPath(smoothPath(this.a.classifier(), res.path));
       this.check(gen);
       if (this.feet().y >= y - 4) return true;
     }
@@ -1929,7 +1931,7 @@ export class Skills {
       this.check(gen);
       if (!res.complete || res.path.length < 2) break;
       for (const p of res.path) seen.add(cell(p.x, p.y, p.z));
-      await this.a.motor.followPath(smoothPath(makeClassifier(this.dim), res.path));
+      await this.a.motor.followPath(smoothPath(this.a.classifier(), res.path));
       this.check(gen);
       legs++;
     }
@@ -2286,10 +2288,16 @@ export class Skills {
    */
   async isTrapped(gen) {
     const f = this.feet();
+    // Asked before nearly every step: the same spot, nothing changed by us, a few seconds ago, is
+    // the same answer (a 600-node search each time was most of the pause between steps).
+    const k = `${f.x},${f.y},${f.z}`, c = this.trappedAt, gen0 = this.a.cellGen ?? 0;
+    if (c && c.k === k && c.gen === gen0 && system.currentTick - c.at < 100) return c.v;
     const res = await this.a.plan(this.sim.location, this.sim.location, 0, 600,
       (x, y, z, w) => w.standable(x, y, z) && Math.hypot(x - f.x, z - f.z) >= 8);
     this.check(gen);
-    return !res.complete && res.expanded < 600; // searched the whole enclosure, found no way out
+    const v = !res.complete && res.expanded < 600; // searched the whole enclosure, found no way out
+    this.trappedAt = { k, gen: gen0, at: system.currentTick, v };
+    return v;
   }
 
   async needsEscape(gen) {
@@ -2497,7 +2505,7 @@ export class Skills {
       this.check(gen);
       if (res.complete && res.path.length >= 2) {
         this.log(`walking back out the way I came (${res.path.length} steps)`);
-        await this.a.motor.followPath(smoothPath(makeClassifier(this.dim), res.path), { urgent: this.sim.isInWater });
+        await this.a.motor.followPath(smoothPath(this.a.classifier(), res.path), { urgent: this.sim.isInWater });
         this.check(gen);
         if (!(await this.needsEscape(gen))) return true;
       }
@@ -2510,7 +2518,7 @@ export class Skills {
     this.check(gen);
     this.log(`surface route: ${res.complete ? `${res.path.length} steps` : `none walkable (${res.expanded} cells searched)`}`);
     if (!res.complete) return false;
-    if (res.path.length >= 2) await this.a.motor.followPath(smoothPath(makeClassifier(this.dim), res.path), { urgent: this.sim.isInWater });
+    if (res.path.length >= 2) await this.a.motor.followPath(smoothPath(this.a.classifier(), res.path), { urgent: this.sim.isInWater });
     this.check(gen);
     return !(await this.needsEscape(gen));
   }
@@ -2892,7 +2900,7 @@ export class Skills {
     const res = await this.a.plan(this.sim.location, this.sim.location, 0, 600, goal);
     this.check(gen);
     if (!res.complete || res.path.length < 2) return false;
-    const r = await this.a.motor.followPath(smoothPath(makeClassifier(this.dim), res.path));
+    const r = await this.a.motor.followPath(smoothPath(this.a.classifier(), res.path));
     this.check(gen);
     return r.status === 'arrived';
   }
@@ -2954,7 +2962,7 @@ export class Skills {
     this.check(gen);
     this.log(`relocate: ${res.complete ? `${res.path.length} steps` : 'nowhere to go'}`);
     if (!res.complete || res.path.length < 2) return false;
-    const r = await this.a.motor.followPath(smoothPath(makeClassifier(this.dim), res.path));
+    const r = await this.a.motor.followPath(smoothPath(this.a.classifier(), res.path));
     this.check(gen);
     return r.status === 'arrived';
   }
@@ -2968,7 +2976,7 @@ export class Skills {
     this.check(gen);
     this.log(`wall: ${res.complete ? `${res.path.length} steps away` : 'none reachable'}`);
     if (!res.complete) return false;
-    if (res.path.length >= 2) await this.a.motor.followPath(smoothPath(makeClassifier(this.dim), res.path));
+    if (res.path.length >= 2) await this.a.motor.followPath(smoothPath(this.a.classifier(), res.path));
     this.check(gen);
     return true;
   }
@@ -3256,7 +3264,7 @@ export class Skills {
         path = path.slice(0, last + 1);
       }
       if (path.length < 2) return false;
-      await this.a.motor.followPath(smoothPath(makeClassifier(this.dim), path));
+      await this.a.motor.followPath(smoothPath(this.a.classifier(), path));
       this.check(gen);
       if (this.spotted) return true;
       if (dist3D(from, this.sim.location) < 4) return false; // not getting anywhere this way
@@ -3301,7 +3309,7 @@ export class Skills {
       const from = this.sim.location;
       const res = await this.a.plan(from, target, 4, 8000, null, { wetPartial: true });
       this.check(gen);
-      if (res.path.length >= 2) await this.a.motor.followPath(smoothPath(makeClassifier(this.dim), res.path));
+      if (res.path.length >= 2) await this.a.motor.followPath(smoothPath(this.a.classifier(), res.path));
       this.check(gen);
       const here = this.sim.location;
       const ashore = !this.sim.isInWater && !ours.has(chunkKey(here.x, here.z));
