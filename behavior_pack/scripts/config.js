@@ -1,0 +1,21 @@
+// In-game settings. The brain has its own config (brain/config.example.json).
+export const CONFIG = {
+  debug: false,               // toggled with `!bot debug`
+  brainUrl: 'http://127.0.0.1:8765',
+  brainTimeoutSec: 4,
+  brainBackoffTicks: 200,     // after a failed call, don't retry for 10 s (falls back to local commands)
+
+  botName: 'Scout',
+  commandPrefix: '!bot',
+  naturalChat: true,          // let the brain (Jev) pick up plain chat meant for the bot
+
+  perceiveEveryTicks: 10,     // local mob scan: free, runs in-game
+  hostileRadius: 16,
+  hostileEventCooldownTicks: 100, // min gap between hostile_near events sent to the brain
+
+  maxPathNodes: 20000,        // A* budget per segment; long trips are chained segments
+  maxSegments: 25,
+  maxReplans: 2,
+  followRepathTicks: 20,
+  followDistance: 3,
+};

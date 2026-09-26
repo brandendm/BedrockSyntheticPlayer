@@ -1,0 +1,339 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Scout Dashboard</title>
+<style>
+  :root {
+    --bg: #f4f5f7; --panel: #ffffff; --ink: #1c2230; --muted: #667085; --line: #e3e6ec;
+    --accent: #2f6fde; --accent-ink: #ffffff; --good: #1f9d55; --warn: #d98c14; --bad: #d64545;
+    --chip: #eef1f6; --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #11141a; --panel: #1a1e27; --ink: #e8ebf2; --muted: #98a2b3; --line: #2a303c;
+      --accent: #5b8ff0; --chip: #242a36;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #11141a; --panel: #1a1e27; --ink: #e8ebf2; --muted: #98a2b3; --line: #2a303c;
+    --accent: #5b8ff0; --chip: #242a36;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  header { display: flex; align-items: center; gap: 12px; padding: 14px 20px; border-bottom: 1px solid var(--line); background: var(--panel); position: sticky; top: 0; z-index: 2; flex-wrap: wrap; }
+  header h1 { font-size: 18px; margin: 0; }
+  .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--muted); display: inline-block; }
+  .dot.on { background: var(--good); } .dot.stale { background: var(--warn); } .dot.off { background: var(--bad); }
+  .muted { color: var(--muted); }
+  .spacer { flex: 1; }
+  main { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; padding: 16px 20px 40px; max-width: 1400px; margin: 0 auto; }
+  section { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; min-width: 0; }
+  section h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 0 0 10px; font-weight: 600; }
+  .wide { grid-column: 1 / -1; }
+  .kv { display: grid; grid-template-columns: auto 1fr; gap: 4px 14px; }
+  .kv b { font-weight: 600; }
+  .big { font-size: 20px; font-weight: 600; }
+  .bar { height: 10px; border-radius: 5px; background: var(--chip); overflow: hidden; margin: 4px 0 10px; }
+  .bar > i { display: block; height: 100%; border-radius: 5px; transition: width .3s; }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+  .chip { background: var(--chip); border-radius: 6px; padding: 3px 8px; font-size: 13px; white-space: nowrap; }
+  .chip.held { outline: 2px solid var(--accent); }
+  .chip b { font-variant-numeric: tabular-nums; }
+  ul.list { list-style: none; padding: 0; margin: 0; }
+  ul.list li { display: flex; justify-content: space-between; gap: 10px; padding: 5px 0; border-bottom: 1px solid var(--line); }
+  ul.list li:last-child { border-bottom: 0; }
+  .log { font-family: var(--mono); font-size: 12.5px; max-height: 340px; overflow: auto; }
+  .log div { padding: 3px 0; border-bottom: 1px dashed var(--line); overflow-wrap: anywhere; }
+  .log .t { color: var(--muted); margin-right: 8px; }
+  .log .cmd { color: var(--accent); }
+  .log .pass { color: var(--good); } .log .fail { color: var(--bad); }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; align-items: center; }
+  button, select, input { font: inherit; color: inherit; }
+  button { background: var(--chip); border: 1px solid var(--line); border-radius: 7px; padding: 7px 12px; cursor: pointer; }
+  button:hover { border-color: var(--accent); }
+  button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+  button.danger { color: var(--bad); }
+  select, input { background: var(--panel); border: 1px solid var(--line); border-radius: 7px; padding: 7px 10px; min-width: 0; }
+  input { flex: 1; min-width: 160px; }
+  .note { font-size: 12px; color: var(--muted); margin: 4px 0 0; }
+  .toast { position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%); background: var(--ink); color: var(--bg); padding: 8px 14px; border-radius: 8px; opacity: 0; transition: opacity .2s; pointer-events: none; }
+  .toast.show { opacity: .92; }
+  /* goal chain */
+  .chain { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 14px; }
+  .step { display: flex; align-items: center; gap: 6px; padding: 5px 10px; border-radius: 999px; background: var(--chip); color: var(--muted); font-size: 13px; }
+  .step.done { color: var(--good); }
+  .step.current { background: var(--accent); color: var(--accent-ink); font-weight: 600; }
+  .arrow { color: var(--muted); align-self: center; }
+  .goals { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; }
+  .goal { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; }
+  .goal.current { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
+  .goal.done { opacity: .6; }
+  .goal h3 { margin: 0 0 8px; font-size: 14px; display: flex; justify-content: space-between; gap: 8px; }
+  .goal h3 small { font-weight: 500; color: var(--muted); }
+  .task { display: grid; grid-template-columns: 18px 1fr auto; gap: 6px; align-items: center; padding: 3px 0; font-size: 13px; }
+  .task.now { font-weight: 600; }
+  .task.now .tname::after { content: '  ← working on this'; color: var(--accent); font-weight: 500; font-size: 12px; }
+  .task .ok { color: var(--good); } .task .no { color: var(--muted); }
+  .task .num { font-variant-numeric: tabular-nums; color: var(--muted); }
+  .task .mini { grid-column: 2 / 4; height: 5px; border-radius: 3px; background: var(--chip); overflow: hidden; margin-top: -2px; }
+  .task .mini i { display: block; height: 100%; background: var(--accent); }
+  .nowline { margin: 0 0 12px; font-size: 14px; }
+  @media (max-width: 520px) { header, main { padding-left: 16px; padding-right: 16px; } }
+</style>
+</head>
+<body>
+<header>
+  <span class="dot" id="dot"></span>
+  <h1 id="name">Scout</h1>
+  <span class="muted" id="conn">connecting…</span>
+  <span class="spacer"></span>
+  <span class="muted" id="clock"></span>
+  <button id="theme" title="Toggle light/dark">◐</button>
+</header>
+
+<main>
+  <section class="wide">
+    <h2>Goals</h2>
+    <p class="nowline" id="nowline">—</p>
+    <div class="chain" id="chain"></div>
+    <div class="goals" id="goals"></div>
+  </section>
+
+  <section>
+    <h2>Doing</h2>
+    <div class="big" id="doing">—</div>
+    <div class="kv" style="margin-top:8px">
+      <span class="muted">Mode</span><b id="mode">—</b>
+      <span class="muted">Auto</span><b id="auto">—</b>
+      <span class="muted">Held</span><b id="held">—</b>
+      <span class="muted">Furnace</span><b id="smelt">—</b>
+    </div>
+  </section>
+
+  <section>
+    <h2>Vitals</h2>
+    <div class="muted">Health <b id="hpv"></b></div><div class="bar"><i id="hp"></i></div>
+    <div class="muted">Hunger <b id="fdv"></b></div><div class="bar"><i id="fd"></i></div>
+    <div class="muted">Air <b id="airv"></b></div><div class="bar"><i id="air"></i></div>
+  </section>
+
+  <section>
+    <h2>Position</h2>
+    <div class="big" id="pos">—</div>
+    <div class="kv" style="margin-top:8px">
+      <span class="muted">Dimension</span><b id="dim">—</b>
+      <span class="muted">Surroundings</span><b id="under">—</b>
+      <span class="muted">Home</span><b id="home">—</b>
+    </div>
+  </section>
+
+  <section class="wide">
+    <h2>Control</h2>
+    <div class="row">
+      <label class="muted" for="player">Player</label>
+      <select id="player"><option value="">(none online)</option></select>
+      <button class="primary" data-cmd="@ come">Come to player</button>
+      <button id="followbtn">Follow player</button>
+      <button data-cmd="stop" title="Cancels the current order (follow, goto, come) and turns auto mode off">Stop (cancel order, auto off)</button>
+      <button data-cmd="auto">Auto on</button>
+      <button data-cmd="auto off">Auto off</button>
+      <button data-cmd="surface">Surface</button>
+      <button data-cmd="where">Say where things are</button>
+    </div>
+    <div class="row">
+      <button data-cmd="spawn" id="spawnbtn">Spawn bot</button>
+      <button class="danger" data-cmd="despawn">Despawn bot</button>
+      <select id="test">
+        <option value="all">all tests</option>
+        <option>roof</option><option>tower</option><option>hole</option><option>pit</option><option>trap</option>
+        <option>climb</option><option>ledge</option><option>ladder</option><option>husk</option><option>sheep</option>
+        <option>pen</option><option>smelt</option><option>shelter</option><option>house</option>
+      </select>
+      <button id="runtest">Run test</button>
+    </div>
+    <div class="row">
+      <input id="cmd" placeholder="Tell the bot anything: goto 120 64 -40, follow Steve, dig…">
+      <button class="primary" id="send">Send</button>
+    </div>
+    <h2 style="margin-top:14px">Admin (server commands)</h2>
+    <div class="row">
+      <button data-cmd="/time set day">Day</button>
+      <button data-cmd="/time set night">Night</button>
+      <button data-cmd="/weather clear">Clear weather</button>
+      <button data-cmd="/gamerule keepinventory true">Keep inventory</button>
+      <button data-cmd="/gamemode creative @P">Creative (player)</button>
+      <button data-cmd="/gamemode survival @P">Survival (player)</button>
+      <button data-cmd="/tp @P Scout">Teleport player to bot</button>
+      <button data-cmd="/tp Scout @P">Teleport bot to player</button>
+      <button data-cmd="/give Scout stone_pickaxe">Give bot a pickaxe</button>
+    </div>
+    <div class="row">
+      <input id="admin" placeholder="Any server command without the slash: time set 6000, give Steve diamond 5, difficulty easy…">
+      <button id="runadmin">Run</button>
+    </div>
+    <p class="note">@P means the player picked above. Commands run as the server, with full permissions.</p>
+  </section>
+
+  <section>
+    <h2>Inventory</h2>
+    <div class="chips" id="inv"><span class="muted">—</span></div>
+  </section>
+
+  <section>
+    <h2>Where things are</h2>
+    <ul class="list" id="where"><li class="muted">—</li></ul>
+  </section>
+
+  <section>
+    <h2>Recent</h2>
+    <div class="log" id="log"></div>
+  </section>
+</main>
+<div class="toast" id="toast"></div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const pretty = (s) => String(s ?? '').replace(/_/g, ' ');
+let players = [];
+
+try { const t = localStorage.getItem('theme'); if (t) document.documentElement.dataset.theme = t; } catch {}
+$('theme').onclick = () => {
+  const cur = document.documentElement.dataset.theme || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+  const next = cur === 'dark' ? 'light' : 'dark';
+  document.documentElement.dataset.theme = next;
+  try { localStorage.setItem('theme', next); } catch {}
+};
+
+function toast(msg) { const t = $('toast'); t.textContent = msg; t.classList.add('show'); clearTimeout(toast.h); toast.h = setTimeout(() => t.classList.remove('show'), 1800); }
+
+async function send(text) {
+  const p = $('player').value;
+  if (text.includes('@P')) { if (!p) return toast('Pick a player first'); text = text.replaceAll('@P', p); }
+  if (text.startsWith('@ ')) { if (!p) return toast('Pick a player first'); text = `@${p} ${text.slice(2)}`; }
+  try {
+    const r = await fetch('/api/command', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text }) });
+    toast(r.ok ? `Sent: ${text}` : 'Could not send');
+  } catch { toast('Brain not reachable'); }
+}
+
+document.querySelectorAll('[data-cmd]').forEach((b) => b.onclick = () => send(b.dataset.cmd));
+let following = false;
+$('followbtn').onclick = () => send(following ? 'stop' : '@ follow me');
+$('spawnbtn').onclick = () => send($('player').value ? '@ spawn' : 'spawn'); // next to the player if one's picked
+$('send').onclick = () => { const v = $('cmd').value.trim(); if (v) { send(v); $('cmd').value = ''; } };
+$('cmd').onkeydown = (e) => { if (e.key === 'Enter') $('send').click(); };
+$('runadmin').onclick = () => { const v = $('admin').value.trim().replace(/^\//, ''); if (v) { send('/' + v); $('admin').value = ''; } };
+$('admin').onkeydown = (e) => { if (e.key === 'Enter') $('runadmin').click(); };
+$('runtest').onclick = () => send(`test ${$('test').value}`);
+
+function bar(el, val, max, colorOk) {
+  const pct = Math.max(0, Math.min(100, (val / max) * 100));
+  el.style.width = pct + '%';
+  el.style.background = pct > 60 ? colorOk : pct > 30 ? 'var(--warn)' : 'var(--bad)';
+}
+
+function clock(time, day) {
+  // 0 ticks = 6:00, 1000 ticks per hour
+  const h = (Math.floor(time / 1000) + 6) % 24, m = Math.floor((time % 1000) * 0.06);
+  return `Day ${day} · ${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+}
+
+function render(d) {
+  const s = d.status;
+  const age = d.age_s;
+  const dot = $('dot');
+  if (!s || age == null) { dot.className = 'dot off'; $('conn').textContent = 'no game connected'; return; }
+  const stale = age > 5;
+  dot.className = 'dot ' + (!s.online ? 'off' : stale ? 'stale' : 'on');
+  $('conn').textContent = !s.online ? 'bot not spawned' : stale ? `no update for ${Math.round(age)}s` : 'live';
+  $('name').textContent = s.name || 'Scout';
+  if (!s.online) return;
+  $('clock').textContent = `${clock(s.time, s.day)}${s.night ? ' · night' : ''}${d.jev?.enabled ? ` · Jev $${d.jev.usd_today.toFixed(4)} today` : ''}`;
+  const doing = s.mode !== 'none' ? `${s.mode === 'fight' ? 'Fighting' : 'Running away'}` : s.stepLabel ? s.stepLabel[0].toUpperCase() + s.stepLabel.slice(1) : s.step ? pretty(s.step) : pretty(s.task);
+  $('doing').textContent = doing.charAt(0).toUpperCase() + doing.slice(1);
+  $('mode').textContent = s.mode === 'none' ? 'calm' : s.mode;
+  $('auto').textContent = s.auto ? (s.autoDone ? 'on (all goals done)' : 'on') : 'off';
+  $('held').textContent = s.held ? pretty(s.held) : 'empty hand';
+  $('smelt').textContent = s.smelting ? `cooking, ${s.smelting.secondsLeft}s left` : 'idle';
+  $('hpv').textContent = `${s.health}/20`; bar($('hp'), s.health, 20, 'var(--good)');
+  $('fdv').textContent = `${s.hunger}/20`; bar($('fd'), s.hunger, 20, 'var(--good)');
+  $('airv').textContent = `${s.air}%`; bar($('air'), s.air, 100, 'var(--accent)');
+  $('pos').textContent = `${s.pos.x}, ${s.pos.y}, ${s.pos.z}`;
+  $('dim').textContent = pretty(s.dim);
+  $('under').textContent = (s.underground ? 'underground' : 'surface') + (s.biome ? ` · ${s.biome}` : '');
+  $('home').textContent = s.house ? `${s.house.x}, ${s.house.y}, ${s.house.z}${s.house.bed ? ' (bed)' : ''}`
+    : s.project ? `building at ${s.project.x}, ${s.project.y}, ${s.project.z}: ${s.project.placed}/${s.project.total} blocks${s.project.needs && (s.project.needs.stone || s.project.needs.planks) ? ` (needs ${[s.project.needs.stone ? s.project.needs.stone + ' cobblestone' : '', s.project.needs.planks ? s.project.needs.planks + ' planks' : ''].filter(Boolean).join(', ')})` : ''}` : 'none yet';
+  // players
+  const names = s.players || [];
+  if (names.join() !== players.join()) {
+    const cur = $('player').value;
+    players = names;
+    $('player').innerHTML = names.length ? names.map((n) => `<option>${n}</option>`).join('') : '<option value="">(none online)</option>';
+    if (names.includes(cur)) $('player').value = cur;
+  }
+  $('inv').innerHTML = (s.inventory || []).length
+    ? s.inventory.map((it) => `<span class="chip${it.id === s.held ? ' held' : ''}">${pretty(it.id)} <b>${it.n}</b></span>`).join('')
+    : '<span class="muted">empty</span>';
+  renderGoals(s);
+  following = s.task === 'follow';
+  $('followbtn').textContent = following ? 'Stop following' : 'Follow player';
+  $('followbtn').classList.toggle('primary', following);
+  $('where').innerHTML = (s.where || []).length
+    ? s.where.map((w) => `<li><span>${pretty(w.label)}</span><span class="muted">${w.dir === 'here' ? 'here' : `${w.dist} ${w.dir}`}${Math.abs(w.dy) >= 4 ? (w.dy > 0 ? ` · ${w.dy} up` : ` · ${-w.dy} down`) : ''}</span></li>`).join('')
+    : '<li class="muted">nothing remembered yet</li>';
+  const log = $('log');
+  const nearBottom = log.scrollHeight - log.scrollTop - log.clientHeight < 30;
+  log.innerHTML = (d.events || []).map((e) => {
+    const t = (e.t || '').slice(11);
+    if (e.type === 'command') return `<div><span class="t">${t}</span><span class="cmd">› ${esc(e.text)}</span></div>`;
+    if (e.type === 'test_result') return `<div><span class="t">${t}</span><span class="${e.pass ? 'pass' : 'fail'}">test ${esc(e.name)}: ${e.pass ? 'PASS' : 'FAIL'} – ${esc(e.detail)}</span></div>`;
+    return `<div><span class="t">${t}</span>${esc(e.text ?? e.type)}</div>`;
+  }).join('');
+  if (nearBottom) log.scrollTop = log.scrollHeight;
+}
+const STEP_TEXT = {
+  gather_logs: 'getting wood', get_stone: 'getting cobblestone', craft: 'crafting', place_table: 'placing a crafting table',
+  goto_table: 'walking to the crafting table', hunt: 'hunting', smelt: 'loading the furnace', collect_smelt: 'collecting from the furnace',
+  wait_smelt: 'waiting on the furnace', plan_house: 'picking a spot for the house', build_house: 'building the house', repair_house: 'repairing the house',
+  furnish: 'moving things into the house', light_outside: 'putting torches up by the door', check_water: 'looking for water to farm by', make_farm: 'making a wheat farm', tend_farm: 'harvesting and replanting wheat', get_iron: 'mining for iron', equip: 'putting on armor', explore: 'looking further out for supplies', go_home: 'night: going home to sleep', shelter: 'night: holed up until morning', done: 'all goals done',
+};
+function renderGoals(s) {
+  const goals = s.goals || [];
+  const cur = goals.find((g) => g.status === 'current');
+  const OPP = { sheep: 'sheep were right there', food: 'animals were right there', log: 'a tree was right there', stone: 'stone was right there' };
+  const side = s.stepLabel ? '' : (s.opportunity ? ` <span class="muted">(side job: ${OPP[s.opportunity] || s.opportunity})</span>` : '') +
+    (s.setAside?.length ? ` <span class="muted">· set aside for now: ${[...new Set(s.setAside)].map((k) => esc(STEP_TEXT[k] || k)).join(', ')}</span>` : '');
+  const doing = s.mode === 'fight' ? 'fighting' : s.mode === 'flee' ? 'getting away from a mob' : s.stepLabel || STEP_TEXT[s.step] || pretty(s.task);
+  $('nowline').innerHTML = cur
+    ? `Goal <b>${esc(cur.goal)}</b> (${goals.indexOf(cur) + 1} of ${goals.length}) · right now: <b>${esc(doing)}</b>${side}`
+    : goals.length ? `All ${goals.length} goals done · right now: <b>${esc(doing)}</b>${side}` : '—';
+  $('chain').innerHTML = goals.map((g, i) => `${i ? '<span class="arrow">›</span>' : ''}<span class="step ${g.status}">${g.status === 'done' ? '✓ ' : ''}${esc(g.goal)}</span>`).join('');
+  $('goals').innerHTML = goals.map((g) => {
+    const doneN = g.tasks.filter((t) => t.done).length;
+    const rows = g.tasks.map((t, i) => {
+      const now = g.status === 'current' && i === g.currentTask;
+      const num = t.need != null && g.status !== 'done' ? `<span class="num">${t.have}/${t.need}</span>` : '<span></span>';
+      const bar = t.need != null && !t.done ? `<div class="mini"><i style="width:${Math.round((t.have / Math.max(1, t.need)) * 100)}%"></i></div>` : '';
+      return `<div class="task${now ? ' now' : ''}"><span class="${t.done ? 'ok' : 'no'}">${t.done ? '✓' : '○'}</span><span class="tname">${esc(t.name)}</span>${num}${bar}</div>`;
+    }).join('');
+    return `<div class="goal ${g.status}"><h3>${esc(g.goal)} <small>${g.status === 'done' ? 'done' : `${doneN}/${g.tasks.length}`}</small></h3>${rows}</div>`;
+  }).join('');
+}
+const esc = (x) => String(x ?? '').replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+
+async function tick() {
+  try {
+    const r = await fetch('/api/status', { cache: 'no-store' });
+    render(await r.json());
+  } catch {
+    $('dot').className = 'dot off';
+    $('conn').textContent = 'brain not reachable (is Start Agent.bat running?)';
+  }
+}
+tick();
+setInterval(tick, 1000);
+</script>
+</body>
+</html>

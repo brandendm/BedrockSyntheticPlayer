@@ -1,0 +1,68 @@
+// Inventory helpers for the SimulatedPlayer. Ids passed around without the "minecraft:" prefix.
+import { ItemStack, EntityComponentTypes } from '@minecraft/server';
+
+const strip = (id) => id.replace('minecraft:', '');
+
+export function container(sim) {
+  return sim.getComponent(EntityComponentTypes.Inventory)?.container;
+}
+
+/** { itemId: count } */
+export function invCounts(sim) {
+  const c = container(sim);
+  const out = {};
+  if (!c) return out;
+  for (let i = 0; i < c.size; i++) {
+    const it = c.getItem(i);
+    if (it) out[strip(it.typeId)] = (out[strip(it.typeId)] ?? 0) + it.amount;
+  }
+  return out;
+}
+
+export function findSlot(sim, id) {
+  const c = container(sim);
+  for (let i = 0; c && i < c.size; i++) {
+    const it = c.getItem(i);
+    if (it && strip(it.typeId) === id) return i;
+  }
+  return -1;
+}
+
+const isTool = (id) => /_(pickaxe|shovel|axe|sword|hoe)$/.test(id);
+
+/** Hold an item (moving it into the hotbar if needed), or null for a bare hand. Returns the slot. */
+export function hold(sim, id) {
+  const c = container(sim);
+  if (!c) return -1;
+  if (id) {
+    let slot = findSlot(sim, id);
+    if (slot < 0) return -1;
+    if (slot >= 9) { c.swapItems(slot, 8, c); slot = 8; }
+    sim.selectedSlotIndex = slot;
+    return slot;
+  }
+  // Bare hand: an empty hotbar slot, else anything that isn't a tool.
+  for (let i = 0; i < 9; i++) if (!c.getItem(i)) { sim.selectedSlotIndex = i; return i; }
+  for (let i = 0; i < 9; i++) if (!isTool(strip(c.getItem(i).typeId))) { sim.selectedSlotIndex = i; return i; }
+  return sim.selectedSlotIndex;
+}
+
+/** Remove n items with this exact id. */
+export function take(sim, id, n) {
+  const c = container(sim);
+  for (let i = 0; c && i < c.size && n > 0; i++) {
+    const it = c.getItem(i);
+    if (!it || strip(it.typeId) !== id) continue;
+    const k = Math.min(n, it.amount);
+    n -= k;
+    if (k === it.amount) c.setItem(i, undefined);
+    else { it.amount -= k; c.setItem(i, it); }
+  }
+  if (n > 0) throw new Error(`inventory short of ${id}`);
+}
+
+export function give(sim, id, n) {
+  const c = container(sim);
+  const left = c?.addItem(new ItemStack(`minecraft:${id}`, n));
+  if (left) sim.dimension.spawnItem(left, sim.location); // full inventory: drop it, like the game does
+}

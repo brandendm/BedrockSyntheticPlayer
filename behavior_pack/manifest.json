@@ -1,0 +1,24 @@
+{
+  "format_version": 2,
+  "header": {
+    "name": "Bedrock Agent",
+    "description": "Autonomous agent body: natural motor control + pathfinding for a SimulatedPlayer",
+    "uuid": "697e98f8-d115-435a-84dc-82086bf3b304",
+    "version": [0, 1, 0],
+    "min_engine_version": [1, 21, 90]
+  },
+  "modules": [
+    {
+      "type": "script",
+      "language": "javascript",
+      "uuid": "59452fc7-998b-48bd-9683-a7bbe63003ec",
+      "entry": "scripts/main.js",
+      "version": [0, 1, 0]
+    }
+  ],
+  "dependencies": [
+    { "module_name": "@minecraft/server", "version": "2.11.0-beta" },
+    { "module_name": "@minecraft/server-gametest", "version": "1.0.0-beta" },
+    { "module_name": "@minecraft/server-net", "version": "1.0.0-beta" }
+  ]
+}
