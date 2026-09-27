@@ -63,49 +63,67 @@ export const CREEPER_HOLD = 3.0; // where to stand: just outside its fuse range,
 
 /**
  * Killing a creeper without it ever going off: keep it at arm's length. Stand just outside its fuse
- * range and hit it each time it walks into our reach, before it's inside 2.5; the knockback sends it
- * back a couple of blocks and it has to walk in again, by which time our swing is ready. It never
- * lights. This needs no running room (a dead-end tunnel is fine: it comes at us one way), and works
- * with any weapon, fists too: the knockback is what keeps it off, the damage only ends it sooner.
- * Too close (it came round a corner): back off to arm's length while swinging. Hissing anyway: knock
- * it back and get beyond 6 (the fuse stops), or with nowhere to go, shield up.
- * st keeps state between calls; lit: it's hissing (the game's is_ignited).
- * Call it every tick: the window between our reach and its fuse is ~7 ticks of its walk.
+ * range and hit it as it walks into our reach, before it's inside 2.5; the knockback sends it back
+ * and it has to walk in again. It never lights. No running room needed (a dead-end tunnel is fine:
+ * it comes at us one way), any weapon (the knockback does it; the damage only ends it sooner).
+ *  - It's coming at us: wait for it, facing it. Walking in on a creeper that's walking in on us
+ *    (down the quarry steps) closed the gap twice as fast, and the stop carried us inside 2.5.
+ *  - Not coming (stuck, wandering): walk up to it, stopping well short (momentum).
+ *  - Swing not ready and it's close (knockback up a step is weak: it's back in a few ticks): back
+ *    off, to keep it outside 2.5 until the swing is ready.
+ *  - Hissing anyway: knock it back and get beyond 6 (the fuse stops), or with nowhere to go, shield up.
+ * Backing off is `away`: the distance from the creeper to get to; the caller finds the nearest spot
+ * it can stand on that far away (a point on the straight line back is inside the rock on stairs).
+ * st keeps state between calls; lit: it's hissing (the game's is_ignited). Call it every tick.
  */
-export function creeperFight({ me, mob, t, st, shield = false, canSwing = true, canRetreat = true, lit = false }) {
+export function creeperFight({ me, mob, t, st, shield = false, canSwing = true, canRetreat = true, lit = false, reach = REACH_HIT, minReach = 0 }) {
   const d = dist(me, mob);
-  const out = { goal: null, tolerance: 0, urgent: false, now: false, stop: false, swing: false, block: false, stopAt: CREEPER_HOLD + 0.3 };
-  const inReach = d <= REACH_HIT;
+  const out = { goal: null, away: 0, tolerance: 0, urgent: false, walk: true, now: false, stop: false, swing: false, block: false };
+  const inReach = d <= reach && d >= minReach;
+  // Where to stand: just inside our reach. A sword's (3) barely clears its fuse (2.5); a spear's (4)
+  // clears it by a block and a half.
+  const hold = reach > REACH_HIT ? reach - 0.2 : CREEPER_HOLD;
+  // Is it coming at us? Distance now against ~half a second ago. And when it last was: a hit knocks
+  // it back (it's "going away" for a moment, and walking in on it then meets it on its way back).
+  st.hist = (st.hist ?? []).filter((h) => t - h.t <= 12);
+  st.hist.push({ t, d });
+  if ((st.hist.length > 1 && st.hist[0].d - d > 0.25) || st.lastComing === undefined) st.lastComing = t;
+  const closing = t - st.lastComing < 40;
+  const backOff = (to, urgent = false) => {
+    out.away = to; out.urgent = urgent; out.walk = !urgent;
+    out.now = !st.backing; st.backing = true;
+  };
   if (lit) {
-    // 1.5 s from the hiss. A hit throws it back (and buys the time to get clear); then away,
-    // straight back from it, past 6.
+    // 1.5 s from the hiss. A hit throws it back (and buys the time to get clear); then away past 6.
     if (inReach && canSwing) out.swing = true;
-    if (canRetreat) {
-      if (!st.retreat || dist(me, st.retreat) < 1.2) st.retreat = standOff(me, mob, CREEPER_CALM + 2);
-      out.goal = st.retreat; out.tolerance = 1; out.urgent = true; out.now = !st.fleeing; st.fleeing = true;
-    } else {
-      out.stop = true;
-      if (shield && !out.swing) out.block = true; // take it on the shield
-    }
-    void t;
+    if (canRetreat) backOff(CREEPER_CALM + 1.5, true);
+    else { out.stop = true; if (shield && !out.swing) out.block = true; } // take it on the shield
     return out;
   }
-  st.retreat = null; st.fleeing = false;
-  if (inReach && canSwing) out.swing = true;
-  if (d < CREEPER_HOLD - 0.15) {
-    // Inside arm's length: back off (facing it, walking backwards) while we wait on the swing.
-    out.goal = standOff(me, mob, CREEPER_HOLD + 0.4); out.tolerance = 0.3; out.now = !st.backing;
-    st.backing = true;
-    return out;
-  }
+  if (inReach && canSwing) { out.swing = true; out.stop = true; st.backing = false; st.lastComing = t; return out; }
+  // Too close for where our swing is at: keep it out of its fuse range until we can hit it.
+  // (Swing ready but it's inside a spear's 2-block minimum: back off to where the jab lands.)
+  if (canSwing ? d < minReach : d < hold + 0.4) { backOff(hold + 0.7); return out; }
   st.backing = false;
-  if (d <= REACH_HIT + 0.5) {
-    out.stop = true; // at arm's length: let it walk into the swing
-  } else {
-    // Go to it, stopping short (it's coming our way too).
-    out.goal = { x: mob.x, y: mob.y, z: mob.z }; out.tolerance = CREEPER_HOLD + 0.3; out.urgent = d > 8;
-  }
+  // Coming at us, or near enough: stand and let it walk into the swing.
+  if (closing || d <= reach + 0.9) { out.stop = true; return out; }
+  // Not come any closer for 2 s (stuck, wandering): walk up to it (no sprint), stopping well short.
+  out.goal = { x: mob.x, y: mob.y, z: mob.z }; out.tolerance = reach + 0.9;
   return out;
+}
+
+/**
+ * Where to back off to: the nearest spot we can walk to that's at least `away` from the mob (feet to
+ * feet, what its fuse goes by). A breadth-first search from our feet over the real terrain, capped
+ * small (it runs on the spot, not as a background job: a creeper doesn't wait). Returns the path
+ * (block cells) or null. findPath: the pathfinder's, passed in (tactics stays free of it).
+ */
+export function awayPath(findPath, classify, me, mob, away, maxNodes = 300) {
+  const r = findPath(classify, me, me, {
+    maxNodes,
+    goalTest: (x, y, z, w) => w.standable(x, y, z) && Math.hypot(x + 0.5 - mob.x, y - mob.y, z + 0.5 - mob.z) >= away,
+  });
+  return r.complete && r.path.length >= 2 ? r.path : null;
 }
 
 /** Fight a creeper at all? Armed (a stone sword or better), healthy, and nothing else on us. */
@@ -168,10 +186,49 @@ export function pickRefuge(me, threats, candidates, sees = null, margin = 3) {
 }
 
 /**
- * Spears: the jab hits for less than a sword of the same material. These are estimates (the
- * figures aren't settled for this game version), so a spear is only held with nothing better.
+ * Spears, Bedrock (minecraft.wiki, Spear: the jab). Damage and the forced use cooldown (ticks, shared
+ * by every spear we carry). Reach 2 to 4 blocks (eye to the target's box, which a spear inflates by
+ * 0.125) where a sword's is 3: less damage a second than a sword, but it hits a creeper from outside
+ * its 2.5-block fuse range with room to spare. Crafted from one of the material and two sticks.
  */
-export const SPEAR_DAMAGE = { wooden_spear: 2, stone_spear: 3, copper_spear: 3, iron_spear: 4, golden_spear: 2, diamond_spear: 5, netherite_spear: 6 };
+export const SPEAR_DAMAGE = { wooden_spear: 2, golden_spear: 2, stone_spear: 3, copper_spear: 3, iron_spear: 4, diamond_spear: 5, netherite_spear: 6 };
+export const SPEAR_COOLDOWN = { wooden_spear: 13, golden_spear: 19, stone_spear: 15, copper_spear: 17, iron_spear: 19, diamond_spear: 21, netherite_spear: 23 };
+export const isSpear = (id) => !!id && id.replace('minecraft:', '') in SPEAR_DAMAGE;
+
+/**
+ * How a weapon reaches and how often it hits, feet to feet (what our distances are): a sword or
+ * axe 3 from the eye (~3.2 feet to feet, level), a spear 4 from the eye plus its 0.125 margin (~4.4;
+ * 4.0 counted, to be safe) and nothing within 2 (~2.4). cooldown: ticks between hits that count
+ * (a mob shrugs off hits for 10 ticks after one; a spear's own cooldown is longer).
+ */
+export function weaponReach(id) {
+  const k = (id ?? '').replace('minecraft:', '');
+  if (k in SPEAR_DAMAGE) return { reach: 4.0, minReach: 2.4, cooldown: Math.max(10, SPEAR_COOLDOWN[k]), damage: SPEAR_DAMAGE[k] };
+  return { reach: REACH_HIT, minReach: 0, cooldown: 10, damage: weaponDamage(k) };
+}
+
+/**
+ * Which weapon to swing at a creeper right now, when we carry a spear and a sword: the spear's jab
+ * reaches 4 but has its own cooldown (15 ticks for stone, shared by all our spears); the sword
+ * reaches 3 and is ready whenever the mob can be hurt again (10 ticks after the last hit). Switching
+ * is instant in Bedrock. weapons: [{ id, reach, minReach, readyAt }]. Returns the one to use now
+ * (ready and in reach), else the next one to be ready (to plan the spacing for), with ready.
+ */
+export function pickCreeperSwing(weapons, d, t) {
+  const ready = weapons.filter((w) => t >= w.readyAt);
+  const now = ready.find((w) => d <= w.reach && d >= w.minReach);
+  if (now) return { ...now, ready: true };
+  if (ready.length) return { ...ready.sort((a, b) => b.reach - a.reach)[0], ready: true };
+  return { ...[...weapons].sort((a, b) => a.readyAt - b.readyAt)[0], ready: false };
+}
+
+/** What to hold against a creeper: a spear if we have one (reach), else our best weapon. */
+export function creeperWeapon(items, best) {
+  const spears = items.filter((i) => isSpear(i.id) && (i.uses ?? Infinity) >= 2);
+  // Most damage a second among them (all reach the same).
+  spears.sort((a, b) => SPEAR_DAMAGE[b.id] / SPEAR_COOLDOWN[b.id] - SPEAR_DAMAGE[a.id] / SPEAR_COOLDOWN[a.id]);
+  return spears[0]?.id ?? best;
+}
 
 /**
  * What to fight with: [{ id, uses }] (uses: durability left, Infinity if unknown). Most damage a
@@ -181,7 +238,8 @@ export const SPEAR_DAMAGE = { wooden_spear: 2, stone_spear: 3, copper_spear: 3, 
 export function bestWeapon(items) {
   let best = null, bestScore = 1;
   for (const { id, uses = Infinity } of items) {
-    const dmg = SPEAR_DAMAGE[id] ?? weaponDamage(id);
+    // A spear by its damage a hit spread over its cooldown (10 ticks is a sword's pace).
+    const dmg = id in SPEAR_DAMAGE ? SPEAR_DAMAGE[id] * 10 / SPEAR_COOLDOWN[id] : weaponDamage(id);
     if (dmg <= 1) continue;
     const score = dmg - (uses < 4 ? 3 : 0);
     if (score > bestScore) { bestScore = score; best = id; }

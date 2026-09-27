@@ -12,7 +12,7 @@ import { FOODS } from './settle.js';
 /** Free pack slots at or below this: time to put things away (a strip mine fills 36 slots fast). */
 export const FULL_SLOTS = 4;
 
-const KEEP_ALL = /(_pickaxe|_axe|_shovel|_sword|_hoe|_helmet|_chestplate|_leggings|_boots)$|^(shield|bucket|water_bucket|lava_bucket|shears|flint_and_steel|bow|arrow|crossbow|lead|raw_iron|iron_ingot|iron_ore|deepslate_iron_ore|bed|crafting_table|furnace|wooden_door|chest|clock|compass|map|filled_map)$/;
+const KEEP_ALL = /(_pickaxe|_axe|_shovel|_sword|_spear|_hoe|_helmet|_chestplate|_leggings|_boots)$|^(shield|bucket|water_bucket|lava_bucket|shears|flint_and_steel|bow|arrow|crossbow|lead|raw_iron|iron_ingot|iron_ore|deepslate_iron_ore|bed|crafting_table|furnace|wooden_door|chest|clock|compass|map|filled_map)$/;
 
 /** How many of this item to keep in the pack (Infinity: all of it). */
 export function keepCount(id, inv = {}) {

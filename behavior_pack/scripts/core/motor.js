@@ -91,10 +91,11 @@ export class MotorController {
    * seamless: if already walking, swap in the new path without stopping or a new reaction
    * delay (used when repathing toward a moving target).
    */
-  followPath(waypoints, { seamless = false, urgent = false } = {}) {
+  followPath(waypoints, { seamless = false, urgent = false, walk = false } = {}) {
     if (seamless && this.intent?.kind === 'path') {
       const it = this.intent;
       it.urgent = urgent;
+      it.walk = walk;
       it.wps = waypoints;
       it.idx = Math.min(1, waypoints.length - 1);
       it.lastRemaining = Infinity;
@@ -104,6 +105,7 @@ export class MotorController {
     return this._begin({
       kind: 'path',
       urgent,
+      walk, // never sprint (closing on a creeper: a sprint's carry takes us inside its fuse range)
       wps: waypoints,
       idx: Math.min(1, waypoints.length - 1),
       ticks: 0,
@@ -327,7 +329,7 @@ export class MotorController {
     // Sprint on long, straight, level stretches, with hysteresis. When fleeing or chasing, sprint whenever roughly facing the way.
     const levelAhead = this._levelAhead(pos, it, 4);
     const moveErr = Math.abs(angleDiff(moveYaw, this.yaw));
-    if (leap) this._setSprint(false); // a walking jump clears one block and can't overshoot the landing
+    if (leap || it.walk) this._setSprint(false); // a walking jump clears one block and can't overshoot the landing
     else if (it.urgent) this._setSprint(remaining > 2 && moveErr < 45);
     else if (!this.sprinting && remaining > o.sprintMinRemaining && absErr < 12 && levelAhead) this._setSprint(true);
     else if (this.sprinting && (remaining < 4 || absErr > 25 || !levelAhead)) this._setSprint(false);

@@ -44,6 +44,10 @@ export const RECIPES = {
   stone_sword: { out: 1, table: true, inputs: [{ match: (id) => TOOL_STONE.has(id), n: 2 }, { match: 'stick', n: 1 }] },
   stone_axe: { out: 1, table: true, inputs: [{ match: (id) => TOOL_STONE.has(id), n: 3 }, { match: 'stick', n: 2 }] },
   stone_shovel: { out: 1, table: true, inputs: [{ match: (id) => TOOL_STONE.has(id), n: 1 }, { match: 'stick', n: 2 }] },
+  // Spears (minecraft.wiki: one of the material and two sticks, on a diagonal): a jab reaches 4, so it
+  // hits a creeper from outside its fuse range (core/tactics.js).
+  stone_spear: { out: 1, table: true, inputs: [{ match: (id) => TOOL_STONE.has(id), n: 1 }, { match: 'stick', n: 2 }] },
+  wooden_spear: { out: 1, table: true, inputs: [{ match: isPlanks, n: 1 }, { match: 'stick', n: 2 }] },
   wooden_axe: { out: 1, table: true, inputs: [{ match: isPlanks, n: 3 }, { match: 'stick', n: 2 }] },
   furnace: { out: 1, table: true, inputs: [{ match: (id) => TOOL_STONE.has(id), n: 8 }] },
   torch: { out: 4, table: false, inputs: [{ match: (id) => id === 'charcoal' || id === 'coal', n: 1 }, { match: 'stick', n: 1 }] },
@@ -190,7 +194,7 @@ export function shovelWorthIt({ blocksToDig, canAffordFromInventory, extraLogs =
 
 // ---------- progression ----------
 
-export const COBBLE_GOAL = 9; // stone pickaxe 3 + sword 2 + axe 3 + shovel 1
+export const COBBLE_GOAL = 10; // stone pickaxe 3 + sword 2 + axe 3 + shovel 1 + spear 1
 export const TABLE_RADIUS = 4;          // close enough to use without walking
 export const WALK_SPEED = 4.3;          // blocks/s
 export const WOOD_VALUE_S = 3.5;        // a log costs about this much time to replace (fist, at a tree)
@@ -246,9 +250,10 @@ export function nextStep({ inv, tableDist = Infinity, exposedStoneKnown, tableDy
     return tableStep(inv, tableDist, wanted, tableDy) ?? { step: 'craft', items: wanted, needsTable: true };
   }
   // Stone tools, the full set in one table visit: pickaxe, sword, axe (logs 2x faster than a
-  // fist), shovel (dirt, sand, gravel). Each is only made if we don't have one as good already.
-  const better = (kind) => ['stone', 'iron', 'diamond', 'netherite'].some((t) => has(inv, `${t}_${kind}`));
-  const stoneKit = /** @type {Array<[string, number]>} */ ([['pickaxe', 3], ['sword', 2], ['axe', 3], ['shovel', 1]]).filter(([k]) => !better(k));
+  // fist), shovel (dirt, sand, gravel), spear (creepers, from 4 blocks out: one cobblestone). Each is
+  // only made if we don't have one as good already.
+  const better = (kind) => ['stone', 'copper', 'iron', 'diamond', 'netherite'].some((t) => has(inv, `${t}_${kind}`));
+  const stoneKit = /** @type {Array<[string, number]>} */ ([['pickaxe', 3], ['sword', 2], ['axe', 3], ['shovel', 1], ['spear', 1]]).filter(([k]) => !better(k));
   const kitCobble = stoneKit.reduce((a, [, n]) => a + n, 0);
   if (stoneKit.length && cobble < kitCobble) return { step: 'get_stone', need: kitCobble - cobble };
   if (stoneKit.length) {

@@ -565,10 +565,10 @@ export class Skills {
    * Break one block and pick up what drops. Gets in reach first, clears leaves in the way,
    * picks the right tool (never a pickaxe on dirt), looks at the block before swinging.
    */
-  async mine(gen, p, { collect = true, depth = 0, allowBelow = false } = {}) {
+  async mine(gen, p, { collect = true, depth = 0, allowBelow = false, force = false } = {}) {
     let id = this.blockAt(p);
     if (!id || id === 'air') return true;
-    if (this.isProtected(p)) return false; // a step of our own staircase or tunnel floor
+    if (this.isProtected(p) && !force) return false; // a step of our own staircase or tunnel floor (force: ore in it, filled back in after)
     if (/water|lava/.test(id)) return false;
     if (this.touchesLava(p)) return false; // opening it would let lava in
 
@@ -1867,6 +1867,7 @@ export class Skills {
     const seen = (await this.scan((id) => /iron_ore$/.test(id), { radius: 16, below: 6, above: 8, limit: 8 }))
       .filter((b) => !this.a.memory.isUnreachable(b) && this.sees(b));
     if (seen.length) {
+      this.rememberOre(seen);
       this.log(`iron: ${seen.length} ore in sight, nearest ${Math.round(dist3D(this.sim.location, seen[0]))} away`);
       for (const b of seen) {
         if (!more()) break;
@@ -1916,6 +1917,9 @@ export class Skills {
     if (this.feet().y < IRON_Y - 4 && !(await this.backToLevel(gen, IRON_Y))) return false;
     // 3. The camp at the foot of the stairs (once), then the branch mine.
     await this.ensureCamp(gen).catch((e) => { if (e instanceof Aborted) throw e; this.log(`camp: ${e}`); });
+    // Iron seen on an earlier trip and not mined (night fell, a fight, a full pack): that first.
+    if (await this.pendingIron(gen, more)) this.a.sayOnce('iron-pending', 'Back for the iron I saw last time.', 120000);
+    if (!more()) return this.rawIron() >= goal;
     this.a.sayOnce('iron-branch', 'At the iron layer: branch mining.', 120000);
     await this.branchMine(gen, more);
     return this.rawIron() >= goal;
@@ -1968,6 +1972,15 @@ export class Skills {
     }
     let di = prev?.di ?? mem.mineDir ?? this.stoniestDir();
     let steps = prev?.n ?? 0, blocked = 0;
+    // A branch left half dug last trip: finish it first.
+    const half = q?.branch;
+    if (half && Math.abs(half.at.y - this.feet().y) <= 2 && more()) {
+      this.log(`mine: finishing the branch left at ${half.at.x} ${half.at.y} ${half.at.z} (${half.left} to go)`);
+      if (await this.goNear(gen, { x: half.at.x + 0.5, y: half.at.y, z: half.at.z + 0.5 }, 0.8, 2)) {
+        await this.branch(gen, half.dx, half.dz, half.left, more, half.start);
+      } else { q.branch = null; this.a.memory.save(); }
+      if (prev) await this.goNear(gen, { x: prev.at.x + 0.5, y: prev.at.y, z: prev.at.z + 0.5 }, 0.8, 2);
+    }
     // Only ever saved on the mine's level: a spot down in a hole is never where the next trip starts.
     const record = () => {
       mem.mineDir = di;
@@ -2036,7 +2049,8 @@ export class Skills {
   async oreInView(gen, radius, { maxWalk = 16, minY = -Infinity, limit = 6 } = {}) {
     const f = this.feet();
     const found = (await this.scan((id) => Skills.isWanted(id), { radius, below: Math.min(radius, 8), above: Math.min(radius, 8), limit: 16 }))
-      .filter((b) => b.y >= minY && !this.isProtected(b) && !this.a.memory.isUnreachable(b) && this.sees(b) && chooseTool(b.id, invCounts(this.sim), { needDrop: true }));
+      .filter((b) => b.y >= minY && !this.a.memory.isUnreachable(b) && this.sees(b) && chooseTool(b.id, invCounts(this.sim), { needDrop: true }));
+    this.rememberOre(found.filter((b) => /iron_ore$/.test(b.id))); // till it's mined: a trip cut short comes back for it
     found.sort((a, b) => (/iron/.test(b.id) ? 1 : 0) - (/iron/.test(a.id) ? 1 : 0) || dist3D(f, a) - dist3D(f, b));
     let n = 0;
     for (const b of found.slice(0, limit)) {
@@ -2122,16 +2136,23 @@ export class Skills {
   }
 
   /** One branch off the main tunnel, `len` long, then back to where it started. */
-  async branch(gen, dx, dz, len, more) {
-    const start = { ...this.feet() };
-    let n = 0, at = start;
+  async branch(gen, dx, dz, len, more, from = null) {
+    const start = from ?? { ...this.feet() };
+    // Kept in the world as we go: a trip cut short (night, a fight, a full pack) finishes this branch
+    // next time rather than starting another past it.
+    const q = this.homeQuarry();
+    const save = (at, left) => { if (q) { q.branch = left > 0 ? { start, at, dx, dz, left } : null; this.a.memory.save(); } };
+    let n = 0, at = this.feet();
+    save(at, len);
     for (; n < len && more(); n++) {
       if (!(await this.backOntoLevel(gen, at))) break;
-      if (!(await this.tunnelStep(gen, dx, dz))) break;
+      if (!(await this.tunnelStep(gen, dx, dz))) { n = len; break; } // a dead end: the branch is done
       at = this.feet();
+      save(at, len - n - 1);
       await this.oreAround(gen, at);
       if (this.caveHere()) await this.exploreCave(gen, at, start.y, more);
     }
+    if (n >= len) save(at, 0);
     if (n) await this.goNear(gen, { x: start.x + 0.5, y: start.y, z: start.z + 0.5 }, 0.6, 2);
     return n;
   }
@@ -2172,7 +2193,8 @@ export class Skills {
   /** Ore showing on the walls around us (in reach and in view): mine it, whole veins. */
   async mineExposedOre(gen) {
     const ores = (await this.scan((id) => Skills.isOre(id), { radius: 4, below: 2, above: 3, limit: 12 }))
-      .filter((b) => this.inReach(b) && this.sees(b) && !this.isProtected(b) && chooseTool(b.id, invCounts(this.sim), { needDrop: true }));
+      .filter((b) => this.inReach(b) && this.sees(b) && chooseTool(b.id, invCounts(this.sim), { needDrop: true })); // (floor ore too: mineVein fills it back)
+    this.rememberOre(ores.filter((b) => /iron_ore$/.test(b.id)));
     let n = 0;
     for (const b of ores) if (Skills.isOre(this.blockAt(b) ?? '') && (await this.mineVein(gen, b))) n++;
     return n;
@@ -2186,18 +2208,34 @@ export class Skills {
     const kind = (this.blockAt(start) ?? '').replace(/^deepslate_/, '');
     if (!Skills.isOre(kind)) return false;
     const same = (id) => (id ?? '').replace(/^deepslate_/, '') === kind;
-    const todo = [start], done = new Set();
+    const todo = [start], done = new Set(), refill = [];
+    const stand = this.feet();
     let n = 0;
     while (todo.length && n < 16) {
       this.check(gen);
+      // Nearest first, from where we are: a vein mined in the order it was found had us walking
+      // round it and back.
+      const here = this.sim.location;
+      todo.sort((a, b) => dist3D(here, center(a)) - dist3D(here, center(b)));
       const b = todo.shift();
       const k = `${b.x},${b.y},${b.z}`;
       if (done.has(k)) continue;
       done.add(k);
       if (!same(this.blockAt(b)) || this.touchesLava(b) || this.touchesLiquid(b)) continue;
       if (!chooseTool(this.blockAt(b), invCounts(this.sim), { needDrop: true })) break; // pickaxe too weak for it
-      if (!(await this.mine(gen, b))) continue;
+      // Ore in our own floor (a tunnel's, a quarry step): mine it, then fill it back in, so the floor
+      // stays level and the way back stays whole. (These were skipped as protected: iron under our
+      // feet went unmined while the iron in the wall got taken.)
+      const floor = this.isProtected(b);
+      if (floor) {
+        const f = this.feet();
+        if (b.x === f.x && b.z === f.z && b.y < f.y && !(await this.stepOffFloor(gen, b))) continue;
+      }
+      // Drops are picked up once, at the end: a sweep after every block had us chasing each one
+      // into the pocket we'd just dug.
+      if (!(await this.mine(gen, b, { collect: false, force: floor }))) continue;
       n++;
+      if (floor) refill.push(b);
       for (const [ox, oy, oz] of [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]]) {
         const c = { x: b.x + ox, y: b.y + oy, z: b.z + oz };
         if (same(this.blockAt(c))) todo.push(c);
@@ -2205,9 +2243,90 @@ export class Skills {
     }
     if (n) {
       await this.collect(gen, this.sim.location, 5, 3);
-      this.log(`ore: mined ${n} ${kind.replace(/_/g, ' ')}`);
+      // Floor we took ore out of: back in with a cheap block (from where we stood, if we can).
+      for (const c of refill) {
+        if (!OPEN.test(this.blockAt(c) ?? 'air')) continue;
+        if (!this.inReach(c)) await this.goNear(gen, { x: stand.x + 0.5, y: stand.y, z: stand.z + 0.5 }, 0.6, 1);
+        const f = this.feet();
+        if (c.x === f.x && c.z === f.z && c.y < f.y) continue; // standing in it: leave it
+        await this.fillFloor(gen, c);
+      }
+      this.forgetOre(done);
+      this.log(`ore: mined ${n} ${kind.replace(/_/g, ' ')}${refill.length ? ` (${refill.length} from the floor, filled back in)` : ''}`);
     }
     return n > 0;
+  }
+
+  /** Room to stand in cell c: open at feet and head, something solid (not liquid) under it. */
+  standable(c) {
+    const at = (y) => this.blockAt({ x: c.x, y, z: c.z }) ?? 'air';
+    return OPEN.test(at(c.y)) && OPEN.test(at(c.y + 1)) && !OPEN.test(at(c.y - 1)) && !/water|lava/.test(at(c.y - 1));
+  }
+
+  /**
+   * Iron we've seen in the mine but not mined yet, kept in the world: a trip cut short (night, a
+   * fight, a full pack) comes back for it next time instead of starting a new branch past it.
+   */
+  rememberOre(blocks) {
+    if (!blocks.length) return;
+    const mem = this.a.memory.data;
+    const list = mem.pendingOre ?? (mem.pendingOre = []);
+    let added = 0;
+    for (const b of blocks) { const k = `${b.x},${b.y},${b.z}`; if (!list.includes(k)) { list.push(k); added++; } }
+    if (list.length > 48) list.splice(0, list.length - 48);
+    if (added) this.a.memory.save();
+  }
+
+  /** Mined (or gone): off the list. */
+  forgetOre(keys) {
+    const list = this.a.memory.data.pendingOre;
+    if (!list?.length) return;
+    const drop = new Set(keys);
+    const kept = list.filter((k) => !drop.has(k) && /iron_ore$/.test(this.blockAt((([x, y, z]) => ({ x, y, z }))(k.split(',').map(Number))) ?? 'iron_ore'));
+    if (kept.length !== list.length) { this.a.memory.data.pendingOre = kept; this.a.memory.save(); }
+  }
+
+  /**
+   * Back for iron seen on an earlier trip (pendingOre) within reach of the mine, nearest first.
+   * Returns veins mined.
+   */
+  async pendingIron(gen, more) {
+    const list = this.a.memory.data.pendingOre ?? [];
+    if (!list.length) return 0;
+    const f = this.feet();
+    const cells = list.map((k) => { const [x, y, z] = k.split(',').map(Number); return { x, y, z }; })
+      .filter((b) => Math.abs(b.y - f.y) <= 12 && dist3D(f, b) <= 64 && !this.a.memory.isUnreachable(b))
+      .sort((a, b) => dist3D(f, a) - dist3D(f, b));
+    let n = 0;
+    for (const b of cells) {
+      if (!more()) break;
+      this.check(gen);
+      if (!/iron_ore$/.test(this.blockAt(b) ?? '')) { this.forgetOre([`${b.x},${b.y},${b.z}`]); continue; }
+      this.log(`iron: back for the ore seen last trip at ${b.x} ${b.y} ${b.z}`);
+      if (!this.inReach(b)) {
+        const res = await this.a.plan(this.sim.location, center(b), REACH - 0.7, 6000);
+        this.check(gen);
+        if (!res.complete) { this.a.memory.markUnreachable(b, 600000); continue; }
+        await this.a.motor.followPath(smoothPath(this.a.classifier(), res.path));
+        this.check(gen);
+      }
+      if (await this.mineVein(gen, b)) n++;
+      else this.a.memory.markUnreachable(b, 600000);
+    }
+    return n;
+  }
+
+  /** Ore in the floor right under us: step onto the tunnel next to it first (never dig our own floor out from under us). */
+  async stepOffFloor(gen, b) {
+    const f = this.feet();
+    for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+      const c = { x: f.x + dx, y: f.y, z: f.z + dz };
+      if (!this.standable(c)) continue;
+      await this.goNear(gen, { x: c.x + 0.5, y: c.y, z: c.z + 0.5 }, 0.4, 1);
+      const g = this.feet();
+      if (!(g.x === b.x && g.z === b.z)) return this.inReach(b);
+    }
+    return false;
   }
 
   /**

@@ -11,7 +11,7 @@
 import { MotorController, EYE_HEIGHT } from '../behavior_pack/scripts/core/motor.js';
 import { findPath, searchJob, smoothPath, Cell } from '../behavior_pack/scripts/core/pathfinder.js';
 import { decide, MOBS, weaponDamage, REACH_HIT } from '../behavior_pack/scripts/core/threat.js';
-import { fightMove, creeperMove, creeperFight, Stalemate, pickRefuge, barricadeCells } from '../behavior_pack/scripts/core/tactics.js';
+import { fightMove, creeperMove, creeperFight, Stalemate, pickRefuge, barricadeCells, awayPath, weaponReach, creeperWeapon, bestWeapon, pickCreeperSwing } from '../behavior_pack/scripts/core/tactics.js';
 import { makeRng, dist3D } from '../behavior_pack/scripts/core/mathutil.js';
 import { SimBody } from '../tests/helpers.js';
 
@@ -41,6 +41,15 @@ function runPath(classify, from, to, tol, maxNodes = 1500) {
 
 // Knockback from a hit, in half blocks (4: two blocks). KB=2 to check nothing hangs on the guess.
 const KNOCKBACK_STEPS = Number(process.env.KB ?? 4);
+// The game, not an idealised one: a path planned in the game arrives LAG ticks later (the search runs
+// as a job); the body coasts after a stop (ground friction, 0.546 a tick); a swing lands only if the
+// mob's hitbox is within 3 blocks of our eye (a miss still costs the swing). CSPEED: creeper walk,
+// blocks a tick.
+const LAG = Number(process.env.LAG ?? 3);
+const CSPEED = Number(process.env.CSPEED ?? 0.1);
+// STALE_OK=1: a path that lands after a stop still runs (what the game did before the fix).
+const STALE_OK = process.env.STALE_OK === '1';
+const SPEAR = process.env.SPEAR === '1';
 
 // ---------- the arena ----------
 function arena({ classify: base, bot, mobs, weapon = 'stone_sword', shield = false, ticks = 1200, night = true, health = 20, blocks = 16 }) {
@@ -52,12 +61,42 @@ function arena({ classify: base, bot, mobs, weapon = 'stone_sword', shield = fal
   const body = new SimBody({ classify }, { ...bot }, bot.yaw ?? 0, { hw: 0.3 });
   const motor = new MotorController(body, {}, rng);
   let hp = health, mode = 'none', foughtAtDeath = false, nextRoute = 0, nextSwing = 0, corneredUntil = 0, blocking = false;
+  // Paths in flight (the game's plan() is a job): { at, path, urgent, seq }. A stop bumps routeSeq;
+  // a path planned before it is dropped when it lands (the game's routeTo does the same).
+  const inFlight = [];
+  let routeSeq = 0, misses = 0;
+  const route = (goal, tolerance, urgent, maxNodes, now = false, walk = false) => {
+    const r = runPath(classify, body.pos, goal, tolerance, maxNodes);
+    if (r.path.length < 2) return;
+    const go = () => motor.followPath(smoothPath(classify, r.path), { seamless: true, urgent, walk });
+    if (now || !LAG) go(); else inFlight.push({ at: t + LAG, go, seq: routeSeq });
+  };
+  const stopWalking = () => { routeSeq++; if (motor.busy) motor.stop(); };
+  // Our eye to the nearest point of the mob's box (0.6 wide, 1.7 tall).
+  const reachTo = (m) => {
+    const e = eye(), cl = (v, a, b) => Math.max(a, Math.min(b, v));
+    return Math.hypot(e.x - cl(e.x, m.x - 0.3, m.x + 0.3), e.y - cl(e.y, m.y, m.y + 1.7), e.z - cl(e.z, m.z - 0.3, m.z + 0.3));
+  };
   const log = [];
   const stale = new Stalemate(120);
   const giveUp = new Map(); // mob id -> tick we stop counting it as reachable until
   const reachCache = new Map();
   let kills = 0, idleWhileHunted = 0, worstIdle = 0, hitsTaken = 0, blocked = 0, gaveUp = 0;
-  const damage = weaponDamage(weapon);
+  // Weapons: the best for a fight, a spear if we carry one for creepers. `weapon` may be a list.
+  const carried = (Array.isArray(weapon) ? weapon : [weapon]).filter(Boolean).map((id) => ({ id }));
+  const mainId = bestWeapon(carried), creeperId = creeperWeapon(carried, mainId);
+  const prof = (m) => weaponReach(m?.type === 'creeper' ? creeperId : mainId);
+  const damage = weaponReach(mainId).damage > 1 ? weaponReach(mainId).damage : 1;
+  // Against a creeper: spear and sword both (HYBRID=0: the creeper weapon alone).
+  let spearNext = 0;
+  const HYB = process.env.HYBRID !== '0';
+  const cw = (m) => {
+    const d = dist3D(body.pos, m), ws = [];
+    const sp = weaponReach(creeperId);
+    if (sp.reach > 3.5) ws.push({ ...sp, readyAt: Math.max(spearNext, nextSwing) });
+    if (!ws.length || HYB) ws.push({ ...weaponReach(mainId), readyAt: nextSwing });
+    return pickCreeperSwing(ws, d, t);
+  };
   mobs.forEach((m, i) => { m.id = `${m.type}${i}`; m.hp = MOBS[m.type].hp; m.cool = 0; m.fuse = -1; m.lastHitMe = -1e9; m.path = null; m.pi = 0; m.iframe = 0; });
   // Sneaking (shield up) slows the body to 0.3.
   const move0 = body.move.bind(body);
@@ -99,19 +138,26 @@ function arena({ classify: base, bot, mobs, weapon = 'stone_sword', shield = fal
     }
     const walledNow = m.type === 'creeper' && m.room === false && !shield && tryWall(seen);
     const mv = walledNow ? { goal: null, stop: true, swing: false, block: false }
-      : m.type === 'creeper' ? creeperFight({ me, mob: m, t, st: (m.st ??= {}), shield, canSwing: t >= nextSwing, canRetreat: m.room !== false, lit: m.fuse >= 0 })
+      : m.type === 'creeper' ? creeperFight({ me, mob: m, t, st: (m.st ??= {}), shield, canSwing: cw(m).ready, canRetreat: m.room !== false, lit: m.fuse >= 0, reach: cw(m).reach, minReach: cw(m).minReach })
       : fightMove({ me, mob: m, melee: MOBS[m.type].kind === 'melee', t, shield, canSwing: t >= nextSwing });
     if (OLD && mv.goal) { const d0 = dist3D(me, m); mv.goal = d0 > 3.3 ? standOffOld(me, m) : { x: m.x, y: m.y, z: m.z }; mv.tolerance = 0.5; }
     blocking = mv.block;
     if (VERBOSE && process.env.TRACE) log.push(`${t}: me ${me.x.toFixed(1)},${me.y.toFixed(1)} mob ${m.x.toFixed(1)} d ${dist3D(me, m).toFixed(1)} goal ${mv.goal ? `${mv.goal.x.toFixed(1)},${mv.goal.z.toFixed(1)}` : '-'} busy ${motor.busy} st ${m.st?.phase}`);
-    if (mv.stop && motor.busy) motor.stop();
-    if (mv.goal && (t >= nextRoute || !motor.busy || mv.now)) {
+    if (mv.stop) stopWalking();
+    if (mv.away && (mv.now || !motor.busy)) {
+      // Backing off a creeper: the nearest spot that far from it, found and walked on the spot.
+      const path = awayPath(findPath, classify, me, m, mv.away);
+      if (path) { routeSeq++; motor.followPath(smoothPath(classify, path), { seamless: true, urgent: mv.urgent, walk: mv.walk }); }
+    } else if (mv.goal && (t >= nextRoute || !motor.busy || mv.now)) {
       nextRoute = t + 6;
-      const r = runPath(classify, me, mv.goal, mv.tolerance, 1500);
-      if (r.path.length >= 2) motor.followPath(smoothPath(classify, r.path), { seamless: true, urgent: mv.urgent });
+      route(mv.goal, mv.tolerance, mv.urgent, 1500, mv.sync, mv.walk);
     }
-    if (mv.swing && facingMob(m) && m.iframe <= t) {
-      m.hp -= damage; m.iframe = t + 10; nextSwing = t + 10;
+    const pw = m.type === 'creeper' ? cw(m) : prof(m), spear = pw.reach > 3.5;
+    const eyeReach = spear ? 4.125 : 3, tooNear = spear && dist3D(me, m) < 2;
+    if (mv.swing && facingMob(m) && (reachTo(m) > eyeReach || tooNear)) { nextSwing = t + pw.cooldown; misses++; if (VERBOSE) log.push(`${t}: swing at ${m.type} misses (${reachTo(m).toFixed(2)} from the eye)`); }
+    else if (mv.swing && facingMob(m) && m.iframe <= t) {
+      m.hp -= pw.damage > 1 ? pw.damage : 1; m.iframe = t + 10; nextSwing = t + 10;
+      if (spear) spearNext = t + pw.cooldown;
       if (VERBOSE) log.push(`${t}: hit ${m.type} at ${dist3D(me, m).toFixed(1)} (hp ${m.hp})`);
       // Knockback: pushed a block away from us (if there's room).
       const dx = m.x - me.x, dz = m.z - me.z, l = Math.hypot(dx, dz) || 1;
@@ -133,7 +179,7 @@ function arena({ classify: base, bot, mobs, weapon = 'stone_sword', shield = fal
       if (VERBOSE) log.push(`${t}: giving up on ${m.id} (no progress)`);
     }
   }
-  let t = 0, fightRef = null, explosions = 0;
+  let t = 0, fightRef = null, explosions = 0, coast = 0, coastDir = { x: 0, z: 0 };
   for (; t < ticks && hp > 0; t++) {
     const alive = mobs.filter((m) => m.hp > 0);
     const me = body.pos;
@@ -150,7 +196,8 @@ function arena({ classify: base, bot, mobs, weapon = 'stone_sword', shield = fal
         }
         if ((giveUp.get(m.id) ?? 0) > t) canReach = false;
         if (OLD && MOBS[m.type].kind === 'ranged') canReach = undefined;
-        return { id: m.id, type: m.type, hp: m.hp, lit: m.type === 'creeper' && m.fuse >= 0, dist: d, visible, targetingMe: m.aware !== false && d <= 16, attackedMe: t - m.lastHitMe < 200, recent: visible, dy: m.y - me.y, canReach, pos: { x: m.x, y: m.y, z: m.z }, inWater: false, ref: m };
+        if (visible) m.seenAt = t;
+        return { id: m.id, type: m.type, hp: m.hp, lit: m.type === 'creeper' && m.fuse >= 0, dist: d, visible, targetingMe: m.aware !== false && d <= 16, attackedMe: t - m.lastHitMe < 200, recent: visible || t - (m.seenAt ?? -1e9) < 100, dy: m.y - me.y, canReach, pos: { x: m.x, y: m.y, z: m.z }, inWater: false, ref: m };
       });
       const d = decide({ health: hp, damage, isNight: night, prevMode: mode, mobs: seen, shield });
       if (d.mode === 'flee' && corneredUntil > t && d.reason !== 'creeper' && d.reason !== 'cover') {
@@ -169,7 +216,7 @@ function arena({ classify: base, bot, mobs, weapon = 'stone_sword', shield = fal
         motor.setFocus(null);
         const creeper = d.threats.find((m) => m.type === 'creeper');
         if (creeper && creeperMove({ me, creeper: creeper.pos, shield, lit: creeper.lit }) === 'block') {
-          blocking = true; motor.stop(); motor.setFocus({ x: creeper.pos.x, y: creeper.pos.y + 1, z: creeper.pos.z });
+          blocking = true; stopWalking(); motor.setFocus({ x: creeper.pos.x, y: creeper.pos.y + 1, z: creeper.pos.z });
         } else if (t >= nextRoute || !motor.busy) {
           nextRoute = t + 20;
           const cands = [];
@@ -181,18 +228,16 @@ function arena({ classify: base, bot, mobs, weapon = 'stone_sword', shield = fal
           // and wall off there; only if neither, stand and fight.
           const deeper = spot ? null : pickRefuge(me, d.threats, cands, sees, 0.5);
           if (!spot && !tryWall(d.threats)) {
-            if (deeper) { const r = runPath(classify, me, deeper, 0.5, 1500); if (r.path.length >= 2) motor.followPath(smoothPath(classify, r.path), { urgent: true }); nextRoute = t + 8; }
+            if (deeper) { route(deeper, 0.5, true, 1500); nextRoute = t + 8; }
             else corneredUntil = t + 200;
-          } else if (spot) {
-            const r = runPath(classify, me, spot, 1, 3000);
-            if (r.path.length >= 2) motor.followPath(smoothPath(classify, r.path), { urgent: true });
-          }
+          } else if (spot) route(spot, 1, true, 3000);
         }
       } else motor.setFocus(null);
       // Standing still while something's after us and nothing's happening: the staring contest.
       const hunted = seen.some((m) => m.visible && m.dist <= 16);
       if (hunted && !motor.busy && mode !== 'fight' && mode !== 'flee' && !blocking) idleWhileHunted += 4;
-      else if (hunted && mode === 'fight' && !motor.busy && !seen.some((m) => m.dist <= REACH_HIT + 0.5)) idleWhileHunted += 4;
+      // (Standing off a creeper at spear's length, waiting on it, isn't idling.)
+      else if (hunted && mode === 'fight' && !motor.busy && !seen.some((m) => m.dist <= REACH_HIT + 0.5 || (m.type === 'creeper' && m.dist <= 6))) idleWhileHunted += 4;
       else idleWhileHunted = 0;
       worstIdle = Math.max(worstIdle, idleWhileHunted);
     }
@@ -202,8 +247,24 @@ function arena({ classify: base, bot, mobs, weapon = 'stone_sword', shield = fal
       const m = fightRef;
       act({ ref: m, id: m.id, type: m.type, dist: dist3D(me, m), pos: { x: m.x, y: m.y, z: m.z } }, []);
     }
+    for (let k = inFlight.length - 1; k >= 0; k--) {
+      if (inFlight[k].at > t) continue;
+      const f = inFlight.splice(k, 1)[0];
+      if (!STALE_OK && f.seq !== routeSeq) continue; // stopped since it was asked for
+      f.go();
+    }
+    const before = { x: body.pos.x, z: body.pos.z };
     motor.tick();
+    // No command this tick: the body coasts on what it had (0.546 a tick on the ground).
+    let coasting = false;
+    if (!body.cmd && coast > 0.01) { body.cmd = { dx: coastDir.x, dz: coastDir.z, s: coast / 0.216 }; body.sprint = false; coasting = true; }
     body.step();
+    if (coasting) { body.cmd = null; coast *= 0.546; }
+    else {
+      const moved = Math.hypot(body.pos.x - before.x, body.pos.z - before.z);
+      coast = body.cmd && moved > 0.01 ? moved : 0;
+      if (coast) coastDir = { x: (body.pos.x - before.x) / moved, z: (body.pos.z - before.z) / moved };
+    }
     // ---- the mobs ----
     for (const m of alive) {
       const d = dist3D(me, m);
@@ -227,7 +288,7 @@ function arena({ classify: base, bot, mobs, weapon = 'stone_sword', shield = fal
         const r = runPath(classify, m, me, 1, 500);
         m.path = r.path.length >= 2 ? r.path : null; m.pi = 1;
       }
-      const speed = m.type === 'creeper' ? 0.1 : 0.115;
+      const speed = m.type === 'creeper' ? CSPEED : 0.115;
       if (m.path && m.pi < m.path.length && d > 1.3 && !(m.type === 'creeper' && m.fuse >= 0)) { // a hissing creeper stands still
         const w = m.path[m.pi], tx = w.x + 0.5, tz = w.z + 0.5;
         const dx = tx - m.x, dz = tz - m.z, l = Math.hypot(dx, dz);
@@ -252,7 +313,7 @@ function arena({ classify: base, bot, mobs, weapon = 'stone_sword', shield = fal
     }
     if (!mobs.some((m) => m.hp > 0)) break;
   }
-  return { explosions, walls, foughtAtDeath, hp: Math.max(0, hp), kills, total: mobs.length, ticks: t, worstIdle, hitsTaken, blocked, gaveUp, log };
+  return { misses, explosions, walls, foughtAtDeath, hp: Math.max(0, hp), kills, total: mobs.length, ticks: t, worstIdle, hitsTaken, blocked, gaveUp, log };
 }
 
 const standOffOld = (me, mob, r = 2.8) => { const dx = me.x - mob.x, dz = me.z - mob.z, l = Math.hypot(dx, dz) || 1; return { x: mob.x + dx / l * r, y: mob.y, z: mob.z + dz / l * r }; };
@@ -286,7 +347,8 @@ function tunnel() {
 }
 
 const SCENARIOS = {
-  'creeper coming down the quarry steps, stone sword': () => ({ classify: quarry(), bot: { x: 10.5, y: 54, z: 0.5 }, mobs: [{ type: 'creeper', x: -1.5, y: 64, z: 0.5 }], minHp: 20 }),
+  'creeper coming down the quarry steps, spear': () => ({ classify: quarry(), weapon: ['stone_sword', 'stone_spear'], bot: { x: 10.5, y: 54, z: 0.5 }, mobs: [{ type: 'creeper', aware: false, x: -1.5, y: 64, z: 0.5 }], minHp: 20 }),
+  'creeper coming down the quarry steps, stone sword': () => ({ classify: quarry(), bot: { x: 10.5, y: 54, z: 0.5 }, mobs: [{ type: 'creeper', aware: false, x: -1.5, y: 64, z: 0.5 }], minHp: 20 }),
   'down a mine tunnel: skeleton then a zombie, iron sword + shield, hurt': () => ({ classify: tunnel(), bot: { x: 2.5, y: 40, z: 0.5 }, weapon: 'iron_sword', shield: true, health: 14, mobs: [{ type: 'skeleton', x: 8.5, y: 40, z: 0.5 }, { type: 'zombie', x: 11.5, y: 40, z: 0.5 }], minHp: 6 }),
   'down a mine tunnel: skeleton behind two zombies, stone sword': () => ({ classify: tunnel(), bot: { x: 3.5, y: 40, z: 0.5 }, mobs: [{ type: 'skeleton', x: 9.5, y: 40, z: 0.5 }, { type: 'zombie', x: 12.5, y: 40, z: 0.5 }, { type: 'zombie', x: 15.5, y: 40, z: 0.5 }], minHp: 1 }),
   'zombie, open field, stone sword': () => ({ classify: flat(), bot: { x: 0.5, y: 64, z: 0.5 }, mobs: [{ type: 'zombie', x: 10.5, y: 64, z: 0.5 }] }),
@@ -374,8 +436,9 @@ if (CREEPERS) {
       mobs.push({ type, aware: rng() < 0.5, ...(terrain === 'quarry' ? { x: -1.5 - k * 2, y: 64, z: 0.5 } : terrain === 'tunnel' ? { x: bot.x + 5 + k * 3 + Math.floor(rng() * 6), y: 40, z: 0.5 } : { x: 0.5 + Math.cos(a) * r, y: 70, z: 0.5 + Math.sin(a) * r }) });
     }
     const weapon = pick([null, 'wooden_sword', 'stone_sword', 'stone_sword', 'iron_sword', 'stone_axe']);
-    const sc = { classify, bot: ground(classify, bot), mobs: mobs.map((m) => ground(classify, m)), weapon, shield: rng() < 0.4, health: pick([20, 20, 14, 8]), ticks: 900 };
-    const desc = `${terrain}, ${mobs.map((m) => m.type + (m.aware ? '' : '(unaware)')).join('+')}, ${weapon ?? 'fists'}${sc.shield ? '+shield' : ''}, ${sc.health} hp`;
+    // SPEAR=1: a stone spear carried too (what the bot makes for creepers).
+    const sc = { classify, bot: ground(classify, bot), mobs: mobs.map((m) => ground(classify, m)), weapon: SPEAR ? [weapon, 'stone_spear'] : weapon, shield: rng() < 0.4, health: pick([20, 20, 14, 8]), ticks: 900 };
+    const desc = `${terrain}, ${mobs.map((m) => m.type + (m.aware ? '' : '(unaware)')).join('+')}, ${weapon ?? 'fists'}${SPEAR ? '+spear' : ''}${sc.shield ? '+shield' : ''}, ${sc.health} hp`;
     const r = arena(sc);
     stats.runs++;
     const key = `${terrain}${company.length ? '+company' : ''}`;

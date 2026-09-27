@@ -81,16 +81,18 @@ test('progression from nothing', () => {
 
   s = nextStep({ inv: { wooden_pickaxe: 1, wooden_sword: 1 }, tableDist: 2, exposedStoneKnown: false });
   assert.equal(s.step, 'get_stone', 'tables stay where they are now (remembered), no pickup');
-  s = nextStep({ inv: { wooden_pickaxe: 1, cobblestone: COBBLE_GOAL, stick: 8 }, tableDist: 30, exposedStoneKnown: false });
+  s = nextStep({ inv: { wooden_pickaxe: 1, cobblestone: COBBLE_GOAL, stick: 9 }, tableDist: 30, exposedStoneKnown: false });
   assert.equal(s.step, 'goto_table', 'no wood left: walking 30 blocks beats a trip for logs');
-  s = nextStep({ inv: { wooden_pickaxe: 1, cobblestone: COBBLE_GOAL, stick: 8, oak_planks: 4 }, tableDist: 70, exposedStoneKnown: false });
+  s = nextStep({ inv: { wooden_pickaxe: 1, cobblestone: COBBLE_GOAL, stick: 9, oak_planks: 4 }, tableDist: 70, exposedStoneKnown: false });
   assert.deepEqual([s.step, s.items], ['craft', ['crafting_table']]);
-  s = nextStep({ inv: { wooden_pickaxe: 1, cobblestone: COBBLE_GOAL, stick: 8 }, tableDist: 2, exposedStoneKnown: false });
-  assert.deepEqual(s.items, ['stone_pickaxe', 'stone_sword', 'stone_axe', 'stone_shovel']);
+  s = nextStep({ inv: { wooden_pickaxe: 1, cobblestone: COBBLE_GOAL, stick: 9 }, tableDist: 2, exposedStoneKnown: false });
+  assert.deepEqual(s.items, ['stone_pickaxe', 'stone_sword', 'stone_axe', 'stone_shovel', 'stone_spear']);
   s = nextStep({ inv: { wooden_pickaxe: 1, cobblestone: COBBLE_GOAL, stick: 1, oak_planks: 1 }, tableDist: 2, exposedStoneKnown: false });
   assert.deepEqual([s.step, s.count], ['gather_logs', 1], 'short on sticks for stone tools -> one more log');
   s = nextStep({ inv: { stone_pickaxe: 1, stone_sword: 1 }, tableDist: 2, exposedStoneKnown: false });
-  assert.deepEqual([s.step, s.need], ['get_stone', 4], 'axe and shovel still to make');
-  s = nextStep({ inv: { stone_pickaxe: 1, stone_sword: 1, stone_axe: 1, stone_shovel: 1 }, tableDist: 2, exposedStoneKnown: false });
+  assert.deepEqual([s.step, s.need], ['get_stone', 5], 'axe, shovel and spear still to make');
+  s = nextStep({ inv: { stone_pickaxe: 1, stone_sword: 1, stone_axe: 1, stone_shovel: 1, stone_spear: 1 }, tableDist: 2, exposedStoneKnown: false });
   assert.equal(s.step, 'done');
+  s = nextStep({ inv: { stone_pickaxe: 1, stone_sword: 1, stone_axe: 1, stone_shovel: 1, cobblestone: 3, stick: 2 }, tableDist: 2, exposedStoneKnown: false });
+  assert.deepEqual(s.items, ['stone_spear'], 'a spear for creepers: one cobblestone, two sticks');
 });

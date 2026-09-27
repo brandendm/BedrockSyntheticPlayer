@@ -3,14 +3,14 @@
 // the brain is only consulted on events (commands, stuck, task done, combat reports).
 import { system, world, EntityComponentTypes, Direction, EquipmentSlot, ItemStack } from '@minecraft/server';
 import { MotorController, EYE_HEIGHT } from '../core/motor.js';
-import { searchJob, smoothPath, Cell } from '../core/pathfinder.js';
+import { searchJob, smoothPath, findPath, Cell } from '../core/pathfinder.js';
 import { dist3D, makeRng } from '../core/mathutil.js';
 import { decide, fleePoint, weaponDamage, MOBS, REACH_HIT, STOP_AT } from '../core/threat.js';
-import { fightMove, creeperFight, creeperMove, Stalemate, pickRefuge, bestWeapon, barricadeCells, SPEAR_DAMAGE } from '../core/tactics.js';
+import { fightMove, creeperFight, creeperMove, Stalemate, pickRefuge, bestWeapon, barricadeCells, SPEAR_DAMAGE, weaponReach, pickCreeperSwing, creeperWeapon, isSpear, awayPath, CREEPER_LIGHT, CREEPER_CALM } from '../core/tactics.js';
 import { nextStep, STONE_TARGETS, TOOL_STONE, count, isLog } from '../core/recipes.js';
 import { settleStep, foodCount, FOOD_GOAL, isNight } from '../core/settle.js';
 import { goalChain } from '../core/goals.js';
-import { advanceStep, advanceProgress } from '../core/advance.js';
+import { advanceStep, advanceProgress, ironHave, IRON_GOAL } from '../core/advance.js';
 import { Farm } from './farm.js';
 import { chooseStep, needs as goalNeeds, stepKey } from '../core/focus.js';
 import { inside as houseInside } from '../core/house.js';
@@ -26,6 +26,8 @@ import { sendEvent, trace } from './bridge.js';
 import { parseLocal } from './localCommands.js';
 import { CONFIG } from '../config.js';
 
+/** Steps done down the mine (the camp's furnace and table too): night doesn't send us home from them. */
+const MINE_STEPS = new Set(['get_iron', 'get_stone', 'smelt', 'collect_smelt', 'craft', 'equip']);
 const SURVIVE_EVERY = 4;          // ticks between threat checks (0.2 s reaction time)
 const ENDERMAN_SCAN_EVERY = 20;
 const CALM_TICKS_TO_RESUME = 40;  // threats gone this long -> resume the interrupted task
@@ -193,7 +195,7 @@ export class Agent {
     // Dusk: drop whatever daytime job is running so the plan can send us home.
     if (t % 100 === 50) {
       const night = isNight(world.getTimeOfDay());
-      const mining = ['get_iron', 'get_stone'].includes(this.autoStep) && this.minedUnderground();
+      const mining = MINE_STEPS.has(this.autoStep) && this.minedUnderground();
       if (night && !this.wasNight && this.task?.kind === 'auto' && !mining && !['go_home', 'shelter', 'build_house'].includes(this.autoStep)) this.startAuto();
       this.wasNight = night;
     }
@@ -477,6 +479,9 @@ export class Agent {
       const best = bestWeapon(items);
       this.damage = best ? SPEAR_DAMAGE[best] ?? weaponDamage(best) : 1;
       this.weaponId = best;
+      // Against creepers a spear as well (it reaches 4: outside their fuse range).
+      const spear = creeperWeapon(items, null);
+      this.spearId = spear && isSpear(spear) ? spear : null;
     } catch (e) {
       console.warn(`[agent] equip: ${e}`);
     }
@@ -534,14 +539,14 @@ export class Agent {
         if (this.mode === 'none') {
           if (!['fight', 'flee', 'swim_out'].includes(this.task?.kind)) this.suspended = this.task ?? this.suspended;
           this.newTask({ kind: d.mode });
-          if (d.mode === 'fight' && this.weaponId) hold(this.sim, this.weaponId);
+          if (d.mode === 'fight' && this.weaponId) { hold(this.sim, this.weaponId); this.heldWeapon = this.weaponId; }
           if (t - this.lastShout > 200) {
             this.lastShout = t;
             this.say(d.mode === 'fight' ? `Fighting a ${d.threats[0].type}.` : `Running from a ${d.threats[0].type}.`);
           }
         } else {
           this.newTask({ kind: d.mode });
-          if (d.mode === 'fight' && this.weaponId) hold(this.sim, this.weaponId); // turned round from running
+          if (d.mode === 'fight' && this.weaponId) { hold(this.sim, this.weaponId); this.heldWeapon = this.weaponId; } // turned round from running
         }
         this.emit('combat', { mode: d.mode, reason: d.reason, threats: d.threats.map((m) => ({ type: m.type, dist: +m.dist.toFixed(1) })) });
       }
@@ -578,6 +583,7 @@ export class Agent {
     this.setBlocking(false);
     this.creeperSt.clear();
     this.stale.reset();
+    this.heldWeapon = null; this.swingCheck = null;
     if (this.task?.kind === 'fight' || this.task?.kind === 'flee') {
       this.newTask(null);
       this.motor.stop();
@@ -1053,9 +1059,17 @@ export class Agent {
     // usual night plan.
     if (!dayTime && isNight(world.getTimeOfDay()) && this.minedUnderground()) {
       const day = this.planStep(inv, tableDist, tableDy, { opportunities: false, dayTime: true });
-      if (['get_iron', 'get_stone'].includes(day.step)) {
+      // Anything that's done down here (the camp's furnace and table, putting gear on) carries on.
+      if (MINE_STEPS.has(day.step) && !(day.step === 'craft' && day.needsTable && !(tableDist <= 16))) {
         this.sayOnce('mine-night', "It's night, but I'm down the mine: carrying on here.", 600000);
         return day;
+      }
+      // The day plan wants something up top (the farm, the chest), but there's still iron to find:
+      // mine on till morning rather than walk home through the dark and back down after.
+      const short = IRON_GOAL - ironHave(inv, this.worn());
+      if (this.homestead.house && short > 0 && day.step !== 'store') {
+        this.sayOnce('mine-night', "It's night, but I'm down the mine: carrying on here.", 600000);
+        return { step: 'get_iron', need: short, why: 'iron gear (night in the mine)' };
       }
     }
     const night = !dayTime && isNight(world.getTimeOfDay());
@@ -1085,7 +1099,10 @@ export class Agent {
   minedUnderground() {
     try {
       const S = this.skills;
-      return Object.keys(invCounts(this.sim)).some((id) => /_pickaxe$/.test(id)) && S.isUnderground() && S.nearQuarry(this.sim.location, 48);
+      // In the mine: under cover near our quarry (its shaft, the tunnel's end), or deep anyway (a long
+      // branch can run well past 48 blocks from the shaft).
+      const p = this.sim.location;
+      return Object.keys(invCounts(this.sim)).some((id) => /_pickaxe$/.test(id)) && S.isUnderground() && (S.nearQuarry(p, 64) || p.y < 40);
     } catch { return false; }
   }
 
@@ -1285,28 +1302,47 @@ export class Agent {
     const me = this.body.getPos();
     const mob = target.pos;
     const d = dist3D(me, mob);
-    const canSwing = t >= this.nextSwing;
-    let mv;
+    let canSwing = t >= this.nextSwing;
+    let mv, swingWith = this.weaponId, reach = REACH_HIT, minReach = 0, spearSwing = false, cooldown = 10;
     if (target.type === 'creeper') {
       const room = this.creeperRoom(target, me, t);
       if (!this.creeperSt.has(e.id)) this.creeperSt.set(e.id, {});
       const st = this.creeperSt.get(e.id);
-      mv = creeperFight({ me, mob, t, st, shield: this.shield, canSwing, canRetreat: room !== false, lit: target.lit ?? this.hissing(e) });
+      // Spear and sword both: the spear's jab from 4 when it's ready, the sword up close while it
+      // recharges (switching is instant; the spear's cooldown is its own).
+      const ws = [];
+      if (this.spearId && this.spearReachOk !== false) ws.push({ id: this.spearId, ...weaponReach(this.spearId), readyAt: Math.max(this.spearNext ?? 0, this.nextSwing) });
+      ws.push({ id: this.weaponId, ...weaponReach(this.weaponId), readyAt: this.nextSwing });
+      const w = pickCreeperSwing(ws, d, t);
+      swingWith = w.id; reach = w.reach; minReach = w.minReach; canSwing = w.ready; spearSwing = isSpear(w.id); cooldown = w.cooldown;
+      mv = creeperFight({ me, mob, t, st, shield: this.shield, canSwing, canRetreat: room !== false, lit: this.creeperLit(target, e, d, t), reach, minReach });
       this.fightMove = 'creeper'; // its own spacing (creeperTick), not the melee stop
     } else {
+      if (this.heldWeapon && this.heldWeapon !== this.weaponId && this.weaponId) { hold(this.sim, this.weaponId); this.heldWeapon = this.weaponId; }
       mv = fightMove({ me, mob, melee: MOBS[target.type]?.kind === 'melee', t, shield: this.shield, canSwing });
       this.fightMove = mv.stop ? 'hold' : mv.goal && d > STOP_AT ? 'approach' : 'back';
     }
     this.setBlocking(!!mv.block);
-    if (mv.stop && this.motor.busy) this.motor.stop();
-    if (mv.goal && (t >= this.nextRoute || !this.motor.busy || mv.now)) {
+    if (mv.stop) this.stopWalking();
+    if (mv.away && (mv.now || !this.motor.busy)) {
+      // Backing off a creeper: the nearest spot that far from it, found and walked on the spot (a
+      // path planned in the background lands a few ticks late: a creeper doesn't wait).
+      const path = awayPath(findPath, this.classifier(), me, mob, mv.away);
+      if (path) { this.routeSeq = (this.routeSeq ?? 0) + 1; this.motor.followPath(smoothPath(this.classifier(), path), { seamless: true, urgent: mv.urgent, walk: mv.walk }); }
+    } else if (mv.goal && (t >= this.nextRoute || !this.motor.busy || mv.now)) {
       this.nextRoute = t + 6;
-      this.routeTo(mv.goal, mv.tolerance, mv.urgent, 1500);
+      this.routeTo(mv.goal, mv.tolerance, mv.urgent, 1500, mv.walk);
     }
-    if (mv.swing && d <= REACH_HIT && canSwing && this.facing(chest, 25)) {
+    if (mv.swing && d <= reach && d >= minReach && canSwing && this.facing(chest, 25)) {
       this.setBlocking(false);
+      if (swingWith !== this.heldWeapon) { hold(this.sim, swingWith); this.heldWeapon = swingWith; }
+      let hp0 = null;
+      try { hp0 = e.getComponent('minecraft:health')?.currentValue ?? null; } catch {}
       try { this.sim.attackEntity(e); } catch {}
-      this.nextSwing = t + 10 + Math.floor(this.rng() * 4);
+      // A creeper can be hurt again 10 ticks after a hit; a spear has its own, longer cooldown.
+      this.nextSwing = t + (target.type === 'creeper' ? 10 : 10 + Math.floor(this.rng() * 4));
+      if (spearSwing) this.spearNext = t + cooldown + 1;
+      if (target.type === 'creeper' && hp0 !== null) this.swingCheck = { e, hp0, t, d, spear: spearSwing };
     }
     // Going nowhere (no hit landed, not a block closer for 6 s): give it up for a minute. It counts
     // as out of reach, so we either get on with things or, if it's shooting us, get out of its sight.
@@ -1376,6 +1412,23 @@ export class Agent {
     // A creeper fight runs every tick: between our reach and its fuse there's ~7 ticks of its walk.
     if (this.mode === 'fight' && this.fightMove === 'creeper' && e?.isValid) {
       const t = system.currentTick;
+      // Did that swing land? If its health didn't drop, it missed (out of reach after all, or not
+      // lined up): swing again at once rather than wait out a cooldown while it walks in. A spear that
+      // keeps missing from past a sword's reach: stop counting on its reach.
+      const sc = this.swingCheck;
+      if (sc && t - sc.t >= 2) {
+        this.swingCheck = null;
+        let hp = sc.hp0;
+        try { hp = sc.e.getComponent('minecraft:health')?.currentValue ?? hp; } catch {}
+        if (hp >= sc.hp0) {
+          this.nextSwing = t;
+          if (sc.spear) { this.spearNext = t; if (sc.d > REACH_HIT) this.spearMisses = (this.spearMisses ?? 0) + 1; }
+          if ((this.spearMisses ?? 0) >= 3 && this.spearReachOk !== false) {
+            this.spearReachOk = false;
+            this.say("My spear isn't reaching the creepers from out there: sword only.");
+          }
+        } else if (sc.spear && sc.d > REACH_HIT) this.spearMisses = 0;
+      }
       if (t % SURVIVE_EVERY !== 0) {
         const l = e.location;
         this.fight({ id: e.id, type: 'creeper', entity: e, pos: { x: l.x, y: l.y, z: l.z }, lit: this.hissing(e) }, t);
@@ -1439,11 +1492,32 @@ export class Agent {
   }
 
   /** Plan and start walking, replacing any current path without a stop. */
-  async routeTo(goal, tolerance, urgent, maxNodes) {
-    const gen = this.taskGen;
+  async routeTo(goal, tolerance, urgent, maxNodes, walk = false) {
+    const gen = this.taskGen, seq = this.routeSeq ?? 0;
     const res = await this.plan(this.body.getPos(), goal, tolerance, maxNodes);
-    if (gen !== this.taskGen || res.path.length < 2) return;
-    this.motor.followPath(smoothPath(this.classifier(), res.path), { seamless: true, urgent });
+    // Stopped (or sent elsewhere) while it planned: a path that lands after a stop walked us on
+    // into the creeper we'd stopped short of.
+    if (gen !== this.taskGen || seq !== (this.routeSeq ?? 0) || res.path.length < 2) return;
+    this.motor.followPath(smoothPath(this.classifier(), res.path), { seamless: true, urgent, walk });
+  }
+
+  /** Stand still, and drop any path still being planned. */
+  stopWalking() {
+    this.routeSeq = (this.routeSeq ?? 0) + 1;
+    if (this.motor.busy) this.motor.stop();
+  }
+
+  /**
+   * Is this creeper hissing? The game's is_ignited component if it has one; failing that, what its
+   * fuse does: it starts once we're inside 2.5 and in its sight, and runs 1.5 s unless we get past 6.
+   */
+  creeperLit(target, e, d, t) {
+    if (target.lit ?? this.hissing(e)) return true;
+    const st = this.creeperSt.get(e.id);
+    if (!st) return false;
+    if (d <= CREEPER_LIGHT + 0.1 && target.visible !== false) st.fuseFrom ??= t;
+    if (d > CREEPER_CALM) st.fuseFrom = undefined;
+    return st.fuseFrom !== undefined && t - st.fuseFrom < 32;
   }
 
   // ---------- brain link ----------
