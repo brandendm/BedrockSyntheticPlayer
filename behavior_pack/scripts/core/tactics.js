@@ -183,6 +183,25 @@ export function blockOffCells(me, mob, at) {
   return out;
 }
 
+/**
+ * Running from something that's catching up (a spider, a zombie while the ground slows us): turn
+ * and jab it with the spear from out of its reach (2.4-4 blocks; the knockback sends it back 1.21),
+ * then run on. Only a melee mob, only one that's gaining on us, only in the spear's range, only
+ * with the jab ready: facing back costs us the sprint for a moment, so it has to pay. Something
+ * right on us (2.6 or less, still gaining) gets the sword instead: it's hitting us anyway.
+ * st: per-mob state (its distance over the last half second). Returns 'spear' | 'sword' | null.
+ */
+export function fleeJab({ me, mob, t, st, melee = true, spearReady = false, swordReady = false, hasSpear = false }) {
+  const d = dist(me, mob);
+  st.hist = (st.hist ?? []).filter((h) => t - h.t <= 10);
+  st.hist.push({ t, d });
+  const gaining = st.hist.length > 1 && st.hist[0].d - d > 0.15;
+  if (!melee || !gaining) return null;
+  if (hasSpear && spearReady && d >= 2.4 && d <= 3.9) return 'spear';
+  if (swordReady && d <= 2.6) return 'sword';
+  return null;
+}
+
 /** Fight a creeper at all? Armed (a stone sword or better), healthy, and nothing else on us. */
 export function creeperWorthFighting({ damage, health, others }) {
   void damage; void health;

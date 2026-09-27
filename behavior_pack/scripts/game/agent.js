@@ -6,7 +6,7 @@ import { MotorController, EYE_HEIGHT } from '../core/motor.js';
 import { searchJob, smoothPath, findPath, Cell } from '../core/pathfinder.js';
 import { dist3D, makeRng } from '../core/mathutil.js';
 import { decide, fleePoint, weaponDamage, MOBS, REACH_HIT, STOP_AT } from '../core/threat.js';
-import { fightMove, creeperFight, creeperMove, Stalemate, pickRefuge, bestWeapon, barricadeCells, SPEAR_DAMAGE, weaponReach, pickCreeperSwing, creeperWeapon, isSpear, awayPath, knockbackRoom, blockOffCells, CREEPER_LIGHT, CREEPER_CALM } from '../core/tactics.js';
+import { fightMove, creeperFight, creeperMove, Stalemate, pickRefuge, bestWeapon, barricadeCells, SPEAR_DAMAGE, weaponReach, pickCreeperSwing, creeperWeapon, isSpear, awayPath, knockbackRoom, blockOffCells, fleeJab, CREEPER_LIGHT, CREEPER_CALM } from '../core/tactics.js';
 import { nextStep, STONE_TARGETS, TOOL_STONE, count, isLog } from '../core/recipes.js';
 import { settleStep, foodCount, FOOD_GOAL, isNight } from '../core/settle.js';
 import { goalChain } from '../core/goals.js';
@@ -89,6 +89,9 @@ export class Agent {
     this.testHold = false;       // a calibration test is driving: no fighting or running of our own
     this.swell = new Map();      // creeper id -> { still, t, since }: is it standing still, swelling?
     this.miningTrip = false;     // down the mine for iron since the plan last had us elsewhere
+    this.fleeJabSt = new Map();  // mob id -> distance history, to tell who is catching up while we run
+    this.jabbing = false;        // turned to jab something catching up
+    this.fleeThreats = null;     // what we are running from
     this.hunting = false;        // homestead.hunt is steering the head
     this.trail = [];             // recent positions, newest last: {x, y, z, under}
     const follow = this.motor.followPath.bind(this.motor);
@@ -171,6 +174,7 @@ export class Agent {
       this.skills.survey().catch(() => {}).finally(() => { this.surveying = false; });
     }
     this.fightSpacingTick();
+    this.fleeJabTick(t);
     // Head locked on something while just walking (a fight or a hunt that ended mid-step): let go,
     // so we look where we're going again.
     // Head locked on a target while walking a path, with no fight going on (or the "fight" is
@@ -628,7 +632,7 @@ export class Agent {
     this.setBlocking(false);
     this.creeperSt.clear();
     this.stale.reset();
-    this.heldWeapon = null; this.swingCheck = null;
+    this.heldWeapon = null; this.swingCheck = null; this.jabbing = false; this.fleeThreats = null;
     if (this.task?.kind === 'fight' || this.task?.kind === 'flee') {
       this.newTask(null);
       this.motor.stop();
@@ -1539,6 +1543,7 @@ export class Agent {
    * A creeper about to go off next to us with a shield on: face it, shield up, rather than race it.
    */
   flee(threats, t) {
+    this.fleeThreats = threats;
     const me = this.body.getPos();
     const creeper = threats.find((m) => m.type === 'creeper');
     if (creeper && creeperMove({ me, creeper: creeper.pos, shield: this.shield, lit: creeper.lit }) === 'block') {
@@ -1548,7 +1553,7 @@ export class Agent {
       return;
     }
     this.setBlocking(false);
-    this.motor.setFocus(null);
+    if (!this.jabbing) this.motor.setFocus(null); // (turned to jab something catching up: leave the head on it)
     if ((t < this.nextRoute && this.motor.busy) || this.findingRefuge || this.walling) return;
     this.nextRoute = t + 20;
     this.findingRefuge = true;
@@ -1592,6 +1597,43 @@ export class Agent {
     // into the creeper we'd stopped short of.
     if (gen !== this.taskGen || seq !== (this.routeSeq ?? 0) || res.path.length < 2) return;
     this.motor.followPath(smoothPath(this.classifier(), res.path), { seamless: true, urgent, walk });
+  }
+
+  /**
+   * Running, and a melee mob is catching up: turn and jab it (the spear from out of its reach, the
+   * sword if it's right on us), then run on (core/tactics.js fleeJab). Every tick while fleeing.
+   */
+  fleeJabTick(t) {
+    const stopJab = () => { if (this.jabbing) { this.jabbing = false; this.motor.setFocus(null); } };
+    if (this.mode !== 'flee' || !this.fleeThreats?.length) { stopJab(); return; }
+    const me = this.body.getPos();
+    let best = null;
+    for (const m of this.fleeThreats) {
+      if (MOBS[m.type]?.kind !== 'melee' || !m.entity) continue;
+      let l;
+      try { if (!m.entity.isValid) continue; l = m.entity.location; } catch { continue; }
+      const d = dist3D(me, l);
+      if (!best || d < best.d) best = { m, l, d };
+    }
+    if (!best) { stopJab(); return; }
+    if (!this.fleeJabSt.has(best.m.id)) { if (this.fleeJabSt.size > 16) this.fleeJabSt.clear(); this.fleeJabSt.set(best.m.id, {}); }
+    const how = fleeJab({
+      me, mob: best.l, t, st: this.fleeJabSt.get(best.m.id), melee: true,
+      hasSpear: !!this.spearId && this.spearReachOk !== false,
+      spearReady: t >= Math.max(this.spearNext ?? 0, this.nextSwing), swordReady: t >= this.nextSwing,
+    });
+    if (!how) { stopJab(); return; }
+    const chest = { x: best.l.x, y: best.l.y + 1, z: best.l.z };
+    this.motor.setFocus(chest);
+    this.jabbing = true;
+    if (!this.facing(chest, 30)) return; // turning to it
+    const id = how === 'spear' ? this.spearId : this.weaponId;
+    if (id && id !== this.heldWeapon) { hold(this.sim, id); this.heldWeapon = id; }
+    try { this.sim.attackEntity(best.m.entity); } catch {}
+    this.nextSwing = t + 10;
+    if (how === 'spear') this.spearNext = t + weaponReach(id).cooldown + 1;
+    trace(`running: jabbed the ${best.m.type} with the ${how} at ${best.d.toFixed(2)}`);
+    stopJab(); // and on
   }
 
   /** Blocks as tactics.js reads them: 'open' | 'solid' | 'other'. */

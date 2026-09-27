@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { fightMove, creeperFight, creeperMove, Stalemate, pickRefuge, bestWeapon, barricadeCells, CREEPER_HOLD, CREEPER_LIGHT, CREEPER_CALM, weaponReach, pickCreeperSwing, creeperWeapon, knockbackRoom, blockOffCells } from '../behavior_pack/scripts/core/tactics.js';
+import { fightMove, creeperFight, creeperMove, Stalemate, pickRefuge, bestWeapon, barricadeCells, CREEPER_HOLD, CREEPER_LIGHT, CREEPER_CALM, weaponReach, pickCreeperSwing, creeperWeapon, knockbackRoom, blockOffCells, fleeJab } from '../behavior_pack/scripts/core/tactics.js';
 import { HOLD_AT, REACH_HIT } from '../behavior_pack/scripts/core/threat.js';
 
 const P = (x, y, z) => ({ x, y, z });
@@ -174,4 +174,15 @@ test('creeper fight: cornered, no shield, a hit would not move it: wall it off (
   assert.equal(creeperFight({ me, mob: P(6, 43, 0.5), t: 8, st: { lastComing: 0 }, canWall: true, kbPoor: true, shield: true }).wall, false, 'a shield: no need');
   assert.equal(creeperFight({ me, mob: P(6, 40, 0.5), t: 8, st: { lastComing: 0 }, canWall: true, kbPoor: false }).wall, false, 'knockback works: keep it off with that');
   assert.equal(creeperFight({ me, mob: P(6, 43, 0.5), t: 8, st: { lastComing: 0 }, canWall: false, kbPoor: true }).wall, false, 'no blocks');
+});
+
+test('flee jab: spear something catching up from out of its reach, sword it if it is on us, leave one that is not gaining', () => {
+  const me = P(0, 64, 0);
+  const run = (ds, opts) => { const st = {}; let r = null; ds.forEach((d, i) => { r = fleeJab({ me, mob: P(d, 64, 0), t: i * 2, st, ...opts }); }); return r; };
+  const ready = { hasSpear: true, spearReady: true, swordReady: true };
+  assert.equal(run([4.2, 3.9, 3.6, 3.3], ready), 'spear');
+  assert.equal(run([3.2, 2.9, 2.6, 2.3], { ...ready, hasSpear: false }), 'sword');
+  assert.equal(run([3.3, 3.3, 3.3, 3.3], ready), null, 'keeping pace, not gaining');
+  assert.equal(run([4.2, 3.9, 3.6, 3.3], { ...ready, spearReady: false, swordReady: false }), null, 'nothing ready');
+  assert.equal(run([4.2, 3.9, 3.6, 3.3], { ...ready, melee: false }), null, 'only melee mobs');
 });

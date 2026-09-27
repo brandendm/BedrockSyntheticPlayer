@@ -165,8 +165,13 @@ export function decide({ health, damage = FIST_DAMAGE, isNight = false, prevMode
     // Whatever's in our face first (a zombie in the tunnel between us and the skeleton that shot
     // us: going for the skeleton meant not swinging at the zombie hitting us), then whoever is
     // actually hitting us, then the nearest.
+    // Of those in our face, the one with least health left: one nearly dead gets finished (two
+    // hitting us is twice the damage; killing one sooner halves it sooner), not left at 4 hp for a
+    // fresh one that stepped in front.
     const inFace = (m) => MOBS[m.type].kind === 'melee' && m.dist <= 3.5;
-    const target = engaged.find((m) => m.attackedMe && inFace(m)) || engaged.find(inFace) || engaged.find((m) => m.attackedMe) || engaged[0];
+    const hpLeft = (m) => m.hp ?? MOBS[m.type].hp;
+    const faced = engaged.filter(inFace).sort((a, b) => hpLeft(a) - hpLeft(b) || (b.attackedMe ? 1 : 0) - (a.attackedMe ? 1 : 0));
+    const target = faced[0] || engaged.find((m) => m.attackedMe) || engaged[0];
     return { mode: 'fight', target: target.id, threats, reason: why };
   }
   return { mode: 'flee', threats, reason: why };
