@@ -55,22 +55,23 @@ export function fightMove({ me, mob, melee, t, shield = false, canSwing = true, 
   return out;
 }
 
-// Bedrock's creeper (its target_nearby_sensor): the fuse starts once we're inside 2.5 blocks and
-// in its sight, and stops again beyond 6 or when it loses sight of us. Our reach is ~3.
-export const CREEPER_LIGHT = 2.5;
+// Bedrock's creeper: the fuse starts once we're inside ~2.9 blocks (measured in the game: it stops to
+// swell at 2.88) and in its sight, and stops again beyond 6 or when it loses sight of us. A sword
+// reaches ~3.2 (feet to feet): a window of a third of a block. A spear reaches 4.
+export const CREEPER_LIGHT = 2.9; // measured (`!bot test creeper`): it stops to swell at 2.88
 export const CREEPER_CALM = 6;
-export const CREEPER_HOLD = 3.0; // where to stand: just outside its fuse range, inside our reach
+export const CREEPER_HOLD = 3.1; // where to stand with a sword: just outside its fuse range, inside our reach
 
 /**
  * Killing a creeper without it ever going off: keep it at arm's length. Stand just outside its fuse
- * range and hit it as it walks into our reach, before it's inside 2.5; the knockback sends it back
+ * range and hit it as it walks into our reach, before it's inside 2.9; the knockback sends it back
  * and it has to walk in again. It never lights. No running room needed (a dead-end tunnel is fine:
  * it comes at us one way), any weapon (the knockback does it; the damage only ends it sooner).
  *  - It's coming at us: wait for it, facing it. Walking in on a creeper that's walking in on us
- *    (down the quarry steps) closed the gap twice as fast, and the stop carried us inside 2.5.
+ *    (down the quarry steps) closed the gap twice as fast, and the stop carried us inside its fuse range.
  *  - Not coming (stuck, wandering): walk up to it, stopping well short (momentum).
  *  - Swing not ready and it's close (knockback up a step is weak: it's back in a few ticks): back
- *    off, to keep it outside 2.5 until the swing is ready.
+ *    off, to keep it outside its fuse range until the swing is ready.
  *  - Hissing anyway: knock it back and get beyond 6 (the fuse stops), or with nowhere to go, shield up.
  * Backing off is `away`: the distance from the creeper to get to; the caller finds the nearest spot
  * it can stand on that far away (a point on the straight line back is inside the rock on stairs).
@@ -80,8 +81,9 @@ export function creeperFight({ me, mob, t, st, shield = false, canSwing = true, 
   const d = dist(me, mob);
   const out = { goal: null, away: 0, tolerance: 0, urgent: false, walk: true, now: false, stop: false, swing: false, block: false };
   const inReach = d <= reach && d >= minReach;
-  // Where to stand: just inside our reach. A sword's (3) barely clears its fuse (2.5); a spear's (4)
-  // clears it by a block and a half.
+  // Where to stand: just inside our reach. A sword's (3.2) barely clears its fuse (2.9); a spear's (4)
+  // clears it by a block. (Knockback is 1.21 blocks, measured: it's back in 9 ticks, before a spear's
+  // 15-tick cooldown is up, so the sword covers in between.)
   const hold = reach > REACH_HIT ? reach - 0.2 : CREEPER_HOLD;
   // Is it coming at us? Distance now against ~half a second ago. And when it last was: a hit knocks
   // it back (it's "going away" for a moment, and walking in on it then meets it on its way back).
@@ -189,7 +191,7 @@ export function pickRefuge(me, threats, candidates, sees = null, margin = 3) {
  * Spears, Bedrock (minecraft.wiki, Spear: the jab). Damage and the forced use cooldown (ticks, shared
  * by every spear we carry). Reach 2 to 4 blocks (eye to the target's box, which a spear inflates by
  * 0.125) where a sword's is 3: less damage a second than a sword, but it hits a creeper from outside
- * its 2.5-block fuse range with room to spare. Crafted from one of the material and two sticks.
+ * its ~2.9-block fuse range with room to spare. Crafted from one of the material and two sticks.
  */
 export const SPEAR_DAMAGE = { wooden_spear: 2, golden_spear: 2, stone_spear: 3, copper_spear: 3, iron_spear: 4, diamond_spear: 5, netherite_spear: 6 };
 export const SPEAR_COOLDOWN = { wooden_spear: 13, golden_spear: 19, stone_spear: 15, copper_spear: 17, iron_spear: 19, diamond_spear: 21, netherite_spear: 23 };

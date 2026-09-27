@@ -1,0 +1,6 @@
+{
+  "_source": "!bot test creeper, build u59, 2026-09-27 (sword/spear hit at every distance tried, up to 4.33: the game doesn't check the bot's reach there, so reach stays player-like in the arena and the bot)",
+  "creeperSpeed": 0.135,
+  "fuseStart": 2.88,
+  "knockback": { "sword": 1.21, "spear": 1.21 }
+}
