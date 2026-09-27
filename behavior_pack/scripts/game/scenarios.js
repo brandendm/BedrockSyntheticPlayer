@@ -610,6 +610,10 @@ async function runOne(agent, player, name, arg) {
         break;
       }
       case 'creeper': {
+        // On Peaceful a summoned creeper is gone the same tick: nothing to measure.
+        let diff = '';
+        try { diff = String(world.getDifficulty()); } catch {}
+        if (diff === 'Peaceful') { detail = 'the world is on Peaceful: creepers vanish as soon as they are summoned (set it to Easy or harder for this test)'; break; }
         // A sealed lane along +x: stone floor level with the highest surface round here (water and
         // leaves count: started in a lake, the lane was built on the lake bed and the water came
         // back in), glass walls and roof, the inside cleared. The test area is put back afterwards.
@@ -632,13 +636,27 @@ async function runOne(agent, player, name, arg) {
         }
         const hpOf = (e) => { try { return e.getComponent('minecraft:health')?.currentValue ?? null; } catch { return null; } };
         const lit = (e) => { try { return !!e.getComponent('minecraft:is_ignited'); } catch { return false; } };
-        const dd = (e) => dist3D(sim.location, e.location);
+        // A creeper can go at any moment (despawned, killed, removed): every read of it is guarded.
+        const ok = (e) => { try { return !!e?.isValid; } catch { return false; } };
+        const dd = (e) => { try { return ok(e) ? dist3D(sim.location, e.location) : NaN; } catch { return NaN; } };
+        let vanished = 0, stale = 0;
+        // A handle to a creeper can go stale while the creeper's still there (the game reloads it):
+        // find it again, the nearest creeper in the lane.
+        const fresh = (c) => {
+          if (ok(c)) return c;
+          try {
+            const e = dim.getEntities({ type: 'minecraft:creeper', location: { x: x + 6, y: fy + 1, z: z + 0.5 }, maxDistance: 12 })[0];
+            if (e) { stale++; return e; }
+          } catch {}
+          return null;
+        };
         const summon = async (dx) => {
           cmd(`summon creeper ${x + dx} ${fy + 1} ${z}`);
           await system.waitTicks(2);
           return dim.getEntities({ type: 'minecraft:creeper', location: { x: x + dx + 0.5, y: fy + 1, z: z + 0.5 }, maxDistance: 3 })[0] ?? null;
         };
-        const gone = (c) => { try { if (c?.isValid) c.remove(); } catch {} };
+        // Removed however stale our handle is: the lane is cleared of creepers.
+        const gone = () => { try { for (const e of dim.getEntities({ type: 'minecraft:creeper', location: { x: x + 6, y: fy + 1, z: z + 0.5 }, maxDistance: 14 })) e.remove(); } catch {} };
         // Eyes on it (the motor's focus, which it holds every tick, and the body).
         const face = (c) => { try { const l = c.location; agent.motor.setFocus({ x: l.x, y: l.y + 1, z: l.z }); sim.lookAtEntity(c); } catch {} };
         const log = [];
@@ -647,23 +665,26 @@ async function runOne(agent, player, name, arg) {
         let sawIgnite = false;
         for (let trial = 0; trial < 2; trial++) {
           tp(x, fy + 1, z);
-          const c = await summon(10);
+          let c = await summon(10);
           if (!c) { log.push("couldn't summon a creeper"); break; }
           let prev = dd(c);
-          for (let i = 0; i < 400 && c.isValid; i++) {
+          for (let i = 0; i < 400 && c; i++) {
             face(c);
             await system.waitTicks(1);
-            if (!c.isValid) break;
+            c = fresh(c);
             const d = dd(c);
+            if (!c || Number.isNaN(d)) { vanished++; break; }
             if (d > 3.2 && d < 8.5) speeds.push(prev - d);
             prev = d;
             if (lit(c)) { sawIgnite = true; litAt.push(d); break; }
             if (d < 1.4) { litAt.push(-1); break; } // right up to us and never showed as lit
           }
-          gone(c);
+          gone();
           await system.waitTicks(20);
         }
         const avg = (a) => (a.length ? a.reduce((p, q) => p + q, 0) / a.length : NaN);
+        if (stale) log.push(`(creeper handle went stale ${stale} time${stale > 1 ? 's' : ''}: found it again)`);
+        if (vanished) log.push(`lost the creeper ${vanished} time${vanished > 1 ? 's' : ''}`);
         log.push(`walks ${avg(speeds).toFixed(3)} blocks/tick`);
         log.push(sawIgnite ? `starts hissing at ${litAt.map((v) => v.toFixed(2)).join(', ')}` : `is_ignited never showed (${litAt.length} runs)`);
         // 2. One swing each, sword and spear, at 2.8 to 4.4 blocks (feet to feet): landed? knockback?
@@ -672,27 +693,30 @@ async function runOne(agent, player, name, arg) {
           for (const at of [2.8, 3.2, 3.6, 4.0, 4.4]) {
             tp(x, fy + 1, z);
             hold(sim, w);
-            const c = await summon(9);
+            let c = await summon(9);
             if (!c) break;
             let d = dd(c), early = false;
-            for (let i = 0; i < 300 && c.isValid && d > at; i++) {
+            for (let i = 0; i < 300 && c && d > at; i++) {
               face(c);
               await system.waitTicks(1);
+              c = fresh(c);
               d = dd(c);
-              if (lit(c)) { early = true; break; }
+              if (c && lit(c)) { early = true; break; }
             }
-            if (early || !c.isValid) { log.push(`${w} ${at}: it hissed first`); gone(c); continue; }
+            if (!c || Number.isNaN(d)) { vanished++; log.push(`${w} ${at}: lost the creeper`); gone(); continue; }
+            if (early) { log.push(`${w} ${at}: it hissed first`); gone(); continue; }
             face(c);
             const hp0 = hpOf(c), d0 = dd(c);
             try { sim.attackEntity(c); } catch (e) { log.push(`${w}: attack threw ${e}`); }
             await system.waitTicks(2);
-            const hp1 = c.isValid ? hpOf(c) : null;
+            c = fresh(c);
+            const hp1 = c ? hpOf(c) : null;
             let far = d0;
-            for (let k = 0; k < 16 && c.isValid; k++) { await system.waitTicks(1); if (c.isValid) far = Math.max(far, dd(c)); if (lit(c)) break; }
+            for (let k = 0; k < 16 && c; k++) { await system.waitTicks(1); c = fresh(c); const dk = dd(c); if (!Number.isNaN(dk)) far = Math.max(far, dk); if (c && lit(c)) break; }
             const landed = hp0 !== null && hp1 !== null && hp1 < hp0;
             (hits[w] ??= []).push({ at: d0, landed, kb: far - d0 });
             log.push(`${w} at ${d0.toFixed(2)}: ${landed ? `hit (${hp0}->${hp1}), knocked back ${(far - d0).toFixed(2)}` : 'MISSED'}`);
-            gone(c);
+            gone();
             await system.waitTicks(w.endsWith('spear') ? 25 : 12); // the spear's own cooldown
           }
         }
@@ -737,7 +761,9 @@ async function runOne(agent, player, name, arg) {
       }
     }
   } catch (e) {
-    detail = `error: ${e}`;
+    // Where it broke: the first line of the stack in our code.
+    const at = String(e?.stack ?? '').split('\n').find((l) => /scenarios|agent|skills/.test(l))?.trim() ?? '';
+    detail = `${detail ? `${detail}; ` : ''}error: ${e}${at ? ` (${at})` : ''}`;
   } finally {
     agent.testHold = false;
     agent.newTask(null);
