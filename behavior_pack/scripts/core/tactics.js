@@ -55,54 +55,63 @@ export function fightMove({ me, mob, melee, t, shield = false, canSwing = true, 
   return out;
 }
 
+// Bedrock's creeper (its target_nearby_sensor): the fuse starts once we're inside 2.5 blocks and
+// in its sight, and stops again beyond 6 or when it loses sight of us. Our reach is ~3.
+export const CREEPER_LIGHT = 2.5;
+export const CREEPER_CALM = 6;
+export const CREEPER_HOLD = 3.0; // where to stand: just outside its fuse range, inside our reach
+
 /**
- * Killing a creeper the way players do: walk in, hit it (the knockback throws it back), back straight
- * off until we're well clear (its fuse stops once we're out of range), again. Four hits with a stone
- * sword. st keeps the phase between calls ({ phase: 'in'|'out', since }). Shield up if it's still
- * close a second after the hit (it may go off before we're clear), and always if we can't get away.
+ * Killing a creeper without it ever going off: keep it at arm's length. Stand just outside its fuse
+ * range and hit it each time it walks into our reach, before it's inside 2.5; the knockback sends it
+ * back a couple of blocks and it has to walk in again, by which time our swing is ready. It never
+ * lights. This needs no running room (a dead-end tunnel is fine: it comes at us one way), and works
+ * with any weapon, fists too: the knockback is what keeps it off, the damage only ends it sooner.
+ * Too close (it came round a corner): back off to arm's length while swinging. Hissing anyway: knock
+ * it back and get beyond 6 (the fuse stops), or with nowhere to go, shield up.
+ * st keeps state between calls; lit: it's hissing (the game's is_ignited).
+ * Call it every tick: the window between our reach and its fuse is ~7 ticks of its walk.
  */
-export function creeperFight({ me, mob, t, st, shield = false, canSwing = true, canRetreat = true }) {
+export function creeperFight({ me, mob, t, st, shield = false, canSwing = true, canRetreat = true, lit = false }) {
   const d = dist(me, mob);
-  const out = { goal: null, tolerance: 0, urgent: true, now: false, stop: false, swing: false, block: false };
-  // Nowhere to back off to (a dead end, a pit): the dance can't work. Shield up and let it go off on
-  // the shield; without one, keep hitting it back (each hit buys a moment) and hope.
-  if (!canRetreat) {
-    if (shield) { out.stop = true; out.block = d < 6; return out; }
-    // No shield: stay as far back as we can get (the blast weakens fast with distance), and only
-    // hit it if it comes into reach (the knockback buys a block or two).
-    out.stop = true;
-    if (d <= REACH_HIT && canSwing) out.swing = true;
+  const out = { goal: null, tolerance: 0, urgent: false, now: false, stop: false, swing: false, block: false, stopAt: CREEPER_HOLD + 0.3 };
+  const inReach = d <= REACH_HIT;
+  if (lit) {
+    // 1.5 s from the hiss. A hit throws it back (and buys the time to get clear); then away,
+    // straight back from it, past 6.
+    if (inReach && canSwing) out.swing = true;
+    if (canRetreat) {
+      if (!st.retreat || dist(me, st.retreat) < 1.2) st.retreat = standOff(me, mob, CREEPER_CALM + 2);
+      out.goal = st.retreat; out.tolerance = 1; out.urgent = true; out.now = !st.fleeing; st.fleeing = true;
+    } else {
+      out.stop = true;
+      if (shield && !out.swing) out.block = true; // take it on the shield
+    }
+    void t;
     return out;
   }
-  // Back in only once its fuse has gone off or died down (1.5 s from when it started hissing: 2 s
-  // after our hit covers it) and we're clear.
-  // (Or it's walked back up to us by then: hit it again, it's the same dance.)
-  if (st.phase === 'out' && t - st.since >= 40 && (d >= 6 || d <= REACH_HIT + 0.3)) st.phase = 'in';
-  if (st.phase !== 'out') {
-    if (d <= REACH_HIT && canSwing) {
-      // Hit, and pick the spot to back off to now, once (well past the fuse's range, straight away
-      // from it): chasing a point that moves with us every few steps never got us clear.
-      // Straight from walking in to backing off, no stop between (a fresh walk starts with a
-      // moment's reaction: time the fuse doesn't give us).
-      out.swing = true;
-      st.phase = 'out'; st.since = t; st.retreat = standOff(me, mob, 8.5);
-      out.goal = st.retreat; out.tolerance = 1; out.now = true;
-      return out;
-    }
-    out.goal = { x: mob.x, y: mob.y, z: mob.z }; out.tolerance = HOLD_AT - 0.2;
+  st.retreat = null; st.fleeing = false;
+  if (inReach && canSwing) out.swing = true;
+  if (d < CREEPER_HOLD - 0.15) {
+    // Inside arm's length: back off (facing it, walking backwards) while we wait on the swing.
+    out.goal = standOff(me, mob, CREEPER_HOLD + 0.4); out.tolerance = 0.3; out.now = !st.backing;
+    st.backing = true;
+    return out;
   }
-  if (st.phase === 'out') {
-    if (!st.retreat || dist(me, st.retreat) < 1.6) st.retreat = standOff(me, mob, 8.5);
-    out.goal = st.retreat;
-    out.tolerance = 1;
-    if (shield && d < 3.5 && t - st.since > 20) { out.block = true; out.goal = null; out.stop = true; }
+  st.backing = false;
+  if (d <= REACH_HIT + 0.5) {
+    out.stop = true; // at arm's length: let it walk into the swing
+  } else {
+    // Go to it, stopping short (it's coming our way too).
+    out.goal = { x: mob.x, y: mob.y, z: mob.z }; out.tolerance = CREEPER_HOLD + 0.3; out.urgent = d > 8;
   }
   return out;
 }
 
 /** Fight a creeper at all? Armed (a stone sword or better), healthy, and nothing else on us. */
 export function creeperWorthFighting({ damage, health, others }) {
-  return damage >= 5 && health >= 12 && !others;
+  void damage; void health;
+  return !others; // the knockback keeps it off, whatever we hit it with
 }
 
 /**
@@ -110,9 +119,9 @@ export function creeperWorthFighting({ damage, health, others }) {
  * blast from the front) rather than run a race we'll lose. Without a shield: run.
  * Returns 'block' | 'run'.
  */
-export function creeperMove({ me, creeper, shield }) {
+export function creeperMove({ me, creeper, shield, lit = true }) {
   const d = dist(me, creeper);
-  return shield && d <= 4 ? 'block' : 'run';
+  return shield && lit && d <= 4 ? 'block' : 'run';
 }
 
 /**

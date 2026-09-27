@@ -11,7 +11,7 @@ import { cheapestPlaceable, plankReserve } from '../core/costs.js';
 import { siteWork, siteScore } from '../core/site.js';
 import { depositPlan, takePlan } from '../core/storage.js';
 import { invCounts, hold, take, give, container as packOf } from './inventory.js';
-import { canSee } from './world.js';
+import { canSee, ONE_TAP } from './world.js';
 
 const strip = (id) => id.replace('minecraft:', '');
 const center = (p) => ({ x: p.x + 0.5, y: p.y + 0.5, z: p.z + 0.5 });
@@ -635,6 +635,8 @@ export class Homestead {
     // Level: dig out plants and natural bumps. Never anything we built: coming back to a half-built
     // house must not tear its walls down (that's the build-destroy-rebuild loop).
     // Top down, so a tree comes down trunk-last and nothing falls on us.
+    // Grass and flowers first, swiped through in one go from where we stand.
+    await S.swipe(gen, clearance(site, dir).filter((p) => ONE_TAP.test(S.blockAt(p) ?? 'air') && S.inReach(p)));
     for (const p of clearance(site, dir).sort((a, b) => b.y - a.y)) {
       const id = S.blockAt(p) ?? 'air';
       if (id === 'air') continue;

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { fightMove, creeperFight, creeperMove, Stalemate, pickRefuge, bestWeapon, barricadeCells } from '../behavior_pack/scripts/core/tactics.js';
+import { fightMove, creeperFight, creeperMove, Stalemate, pickRefuge, bestWeapon, barricadeCells, CREEPER_HOLD, CREEPER_LIGHT, CREEPER_CALM } from '../behavior_pack/scripts/core/tactics.js';
 import { HOLD_AT, REACH_HIT } from '../behavior_pack/scripts/core/threat.js';
 
 const P = (x, y, z) => ({ x, y, z });
@@ -34,31 +34,34 @@ test('shield: up against an archer on the way in and between swings on a zombie,
   assert.equal(fightMove({ me: P(0, 64, 0), mob: P(10, 64, 0), melee: false, t: 0 }).block, false, 'no shield, nothing to raise');
 });
 
-test('creeper: walk in, hit, back straight off to one fixed spot, back in once the fuse is done', () => {
-  const st = {};
+test('creeper: arm\'s length. Hit it as it walks into reach, before its fuse range; never walk into it', () => {
   const me = P(0, 64, 0);
-  const walk = creeperFight({ me, mob: P(6, 64, 0), t: 0, st });
-  assert.ok(walk.goal && walk.goal.x > 0);
-  const hit = creeperFight({ me, mob: P(REACH_HIT - 0.2, 64, 0), t: 10, st });
-  assert.equal(hit.swing, true);
-  assert.equal(st.phase, 'out');
-  assert.ok(hit.goal.x < -5, 'the retreat is well away from it');
-  const retreat = { ...st.retreat };
-  const next = creeperFight({ me: P(-1, 64, 0), mob: P(4, 64, 0), t: 14, st });
-  assert.deepEqual(next.goal, retreat, 'the same spot, not one that moves with us');
-  assert.equal(creeperFight({ me: P(-6, 64, 0), mob: P(1, 64, 0), t: 30, st }).swing, false, 'not back in while the fuse may be lit');
-  creeperFight({ me: P(-6, 64, 0), mob: P(1, 64, 0), t: 60, st });
-  assert.equal(st.phase, 'in');
+  const far = creeperFight({ me, mob: P(8, 64, 0), t: 0, st: {} });
+  assert.ok(far.goal && far.tolerance >= CREEPER_HOLD, 'goes to it, stopping short');
+  const wait = creeperFight({ me, mob: P(3.5, 64, 0), t: 0, st: {} });
+  assert.equal(wait.stop, true, 'at arm\'s length: let it come');
+  assert.equal(wait.swing, false);
+  const hit = creeperFight({ me, mob: P(3.1, 64, 0), t: 0, st: {} });
+  assert.equal(hit.swing, true, 'in our reach, outside its fuse range');
+  assert.ok(REACH_HIT > CREEPER_LIGHT);
+  const st = {};
+  const close = creeperFight({ me, mob: P(2.2, 64, 0), t: 0, st, canSwing: false });
+  assert.ok(close.goal && close.goal.x < 0, 'too close: back off');
+  assert.equal(close.now, true);
+  assert.equal(creeperFight({ me, mob: P(2.2, 64, 0), t: 1, st, canSwing: false }).now, false, 'not a new path every tick');
 });
 
-test('creeper in a dead end: shield up and stand; no shield, hit it back only when it comes in reach', () => {
-  const block = creeperFight({ me: P(0, 64, 0), mob: P(4, 64, 0), t: 0, st: {}, shield: true, canRetreat: false });
-  assert.equal(block.block, true);
-  assert.equal(block.goal, null);
-  const far = creeperFight({ me: P(0, 64, 0), mob: P(5, 64, 0), t: 0, st: {}, canRetreat: false });
-  assert.equal(far.swing, false);
-  assert.equal(creeperFight({ me: P(0, 64, 0), mob: P(3, 64, 0), t: 0, st: {}, canRetreat: false }).swing, true);
-  assert.equal(creeperMove({ me: P(0, 64, 0), creeper: P(3, 64, 0), shield: true }), 'block');
+test('creeper hissing: knock it back and get past its calm range; nowhere to go: shield', () => {
+  const st = {};
+  const run = creeperFight({ me: P(0, 64, 0), mob: P(2.4, 64, 0), t: 0, st, lit: true });
+  assert.equal(run.swing, true);
+  assert.ok(run.goal && Math.hypot(run.goal.x - 2.4, run.goal.z) > CREEPER_CALM, 'past 6 from it');
+  assert.equal(run.urgent, true);
+  const stuck = creeperFight({ me: P(0, 64, 0), mob: P(2.4, 64, 0), t: 0, st: {}, lit: true, shield: true, canRetreat: false, canSwing: false });
+  assert.equal(stuck.block, true);
+  assert.equal(stuck.goal, null);
+  assert.equal(creeperMove({ me: P(0, 64, 0), creeper: P(3, 64, 0), shield: true, lit: true }), 'block');
+  assert.equal(creeperMove({ me: P(0, 64, 0), creeper: P(3, 64, 0), shield: true, lit: false }), 'run', 'not hissing: no need to crouch');
   assert.equal(creeperMove({ me: P(0, 64, 0), creeper: P(3, 64, 0), shield: false }), 'run');
 });
 

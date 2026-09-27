@@ -69,6 +69,8 @@ export function isActiveThreat(m, isNight, alert = false) {
   const info = MOBS[m.type];
   if (!info) return false;
   const provoked = m.targetingMe || m.attackedMe;
+  // A creeper hissing near us is heard, seen or not; one right next to us is there, seen or not.
+  if (m.type === 'creeper' && ((m.lit && m.dist <= 8) || m.dist <= 4)) return true;
   if (info.neutral) return provoked;
   if (info.neutralInDay && !isNight) return provoked;
   // Once we're already fighting or running, keep tracking mobs a bit further and around corners:
@@ -88,16 +90,20 @@ export function decide({ health, damage = FIST_DAMAGE, isNight = false, prevMode
   const threats = mobs.filter((m) => isActiveThreat(m, isNight, alert)).sort((a, b) => a.dist - b.dist);
   if (!threats.length) return { mode: 'none', threats, reason: 'clear' };
 
-  // Creepers: never melee. Keep well clear of one that's closing in; stop only once it's lost interest.
-  // Creepers only matter up close: one hissing at us from 15 blocks away is a reason to keep an
-  // eye on it, not to drop everything (it has to get within 3 to blow).
-  const creeper = threats.find((m) => m.type === 'creeper' && (m.canReach ?? true) &&
-    ((m.visible || m.recent) && m.dist <= (alert ? 10 : m.targetingMe ? 8 : 5)));
+  // Creepers. Noticed early: one we can see within 8, one after us within 12, one hissing within 8
+  // (heard, seen or not) and anything within 4 whatever the path search said (it's right there).
+  // Handled by keeping it at arm's length (core/tactics.js creeperFight: it never gets to light) if
+  // it's the only thing on us; with company, away from it.
+  const creeper = threats.find((m) => m.type === 'creeper' && (
+    m.dist <= 4 || (m.lit && m.dist <= 8) ||
+    ((m.canReach ?? true) && (m.visible || m.recent) && m.dist <= (alert ? 12 : m.targetingMe ? 12 : 8))));
   if (creeper) {
-    // Armed, healthy and it's the only thing on us: hit it and back off (core/tactics.js
-    // creeperFight) rather than run from it for ever while it follows us about.
-    const others = threats.some((m) => m !== creeper && m.type !== 'creeper' && (m.visible || m.attackedMe) && m.dist <= 10);
-    if (damage >= 5 && health >= 12 && !others && creeper.canReach !== false) return { mode: 'fight', target: creeper.id, threats, reason: 'creeper: hit and back off' };
+    // Company that rules it out: something that would be on us while we hold the creeper off (a
+    // zombie within 10, another creeper). A skeleton at range is less than a blast: hold the creeper
+    // off anyway.
+    const others = threats.some((m) => m !== creeper && (m.visible || m.attackedMe) &&
+      (m.type === 'creeper' ? m.dist <= 8 : MOBS[m.type].kind === 'melee' ? m.dist <= 10 : m.dist <= 3));
+    if (!others && creeper.canReach !== false && !inWater) return { mode: 'fight', target: creeper.id, threats, reason: 'creeper: keep it at arm\'s length' };
     return { mode: 'flee', threats, reason: 'creeper' };
   }
   const never = threats.find((m) => MOBS[m.type].never && m.dist <= 16);

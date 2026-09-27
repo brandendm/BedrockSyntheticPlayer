@@ -9,7 +9,7 @@ import { toolFor, planCrafts, applyCraft, isLog, isPlanks, STONE_TARGETS, SHOVEL
 import { chooseTool, breakSeconds, cheapestPlaceable, spendableBlocks, blockSourceCost, itemValue, plankReserve } from '../core/costs.js';
 import { invCounts, hold, take, give, container, findSlot } from './inventory.js';
 import { chooseSource, chooseSourceSticky, sourceKey, trustFor, trunksOf, EXPLORE_S, DIG_DOWN_S } from '../core/sourcing.js';
-import { castRay, canSee } from './world.js';
+import { castRay, canSee, ONE_TAP } from './world.js';
 import { CONFIG } from '../config.js';
 import { wantScore, biomeName } from '../core/biomes.js';
 import { trace } from './bridge.js';
@@ -249,6 +249,26 @@ export class Skills {
   /** Put the weapon back in hand (or an empty hand) after building or crafting. */
   restHands() {
     hold(this.sim, this.a.weaponId && findSlot(this.sim, this.a.weaponId) >= 0 ? this.a.weaponId : null);
+  }
+
+  /** How far (degrees) our view is off point c: the larger of the yaw and pitch errors. */
+  aimError(c) {
+    try {
+      const e = this.sim.getHeadLocation(), r = this.sim.getRotation();
+      const dx = c.x - e.x, dy = c.y - e.y, dz = c.z - e.z;
+      const yaw = Math.atan2(-dx, dz) * 180 / Math.PI, pitch = -Math.atan2(dy, Math.hypot(dx, dz)) * 180 / Math.PI;
+      return Math.max(Math.abs(((yaw - r.y + 540) % 360) - 180), Math.abs(pitch - r.x));
+    } catch { return 0; }
+  }
+
+  /**
+   * Put the crosshair on c, the way a player does before a swing: near enough is enough (the head
+   * keeps settling onto it while we break). No stop and no hold: the old look (settle to 2.5 deg,
+   * hold 3 ticks, and it stopped the walk) cost 6-12 ticks a block. Leaves the focus on c.
+   */
+  async aim(gen, c, tol = 12, maxTicks = 10) {
+    this.a.motor.setFocus(c);
+    for (let k = 0; k < maxTicks && this.aimError(c) > tol; k++) await this.wait(gen, 1);
   }
 
   // ---------- movement ----------
@@ -554,6 +574,12 @@ export class Skills {
 
     if (!this.inReach(p) && !(await this.goNear(gen, p, 3))) return false;
     if (!this.inReach(p) && !(await this.goNear(gen, p, 1.5))) return false;
+    // Grass, a flower, litter: one tap, no tool, no settling.
+    if (ONE_TAP.test(id) && !(p.x === this.feet().x && p.z === this.feet().z && p.y < this.feet().y)) {
+      const ok = await this.tap(gen, p);
+      if (ok && collect) await this.collect(gen, p, 4, 3, false);
+      return ok;
+    }
 
     // Something in the way (usually leaves)? Clear it first. Rays pass straight through snow
     // layers, grass and flowers, so for those the "obstruction" is just the block behind: skip it.
@@ -580,14 +606,12 @@ export class Skills {
     const tool = (chooseTool(id, inv, { needDrop: true }) ?? chooseTool(id, inv, { needDrop: false }))?.tool ?? null;
     hold(this.sim, tool);
     const c = center(p);
-    await this.a.motor.lookAt(c, 3, 40);
-    this.check(gen);
-    this.a.motor.setFocus(c);
+    await this.aim(gen, c);
     try {
       this.sim.breakBlock(p);
       const limit = breakTicks(id, tool) * 2 + 40;
-      for (let t = 0; t < limit; t += 2) {
-        await this.wait(gen, 2);
+      for (let t = 0; t < limit; t++) {
+        await this.wait(gen, 1);
         if (this.blockAt(p) !== id) break;
       }
     } finally {
@@ -601,14 +625,20 @@ export class Skills {
     }
     this.a.cellChanged?.();
     if (this.blockAt(p) === id) return false;
-    if (collect) await this.collect(gen, p);
+    // A quick one: what landed within a couple of blocks we pick up by standing here; what bounced
+    // further we walk over. (It used to settle 8 ticks and wait out every drop at our feet.)
+    if (collect) await this.collect(gen, p, 5, 4, false);
     return true;
   }
 
-  /** Walk over dropped items near a spot so they get picked up. */
-  async collect(gen, near, radius = 5, settleTicks = 8) {
+  /**
+   * Walk over dropped items near a spot so they get picked up. waitNear: also stand and wait out
+   * a fresh drop right at our feet (can't be picked up for a moment); off between blocks of a job
+   * (we're staying put, it comes in anyway), on for the last sweep.
+   */
+  async collect(gen, near, radius = 5, settleTicks = 8, waitNear = true) {
     await this.wait(gen, settleTicks); // let drops land
-    await this.sweep(gen, near, radius, null, 6);
+    await this.sweep(gen, near, radius, null, 6, waitNear);
   }
 
   /**
@@ -616,7 +646,7 @@ export class Skills {
    * nearest first, for up to maxS seconds. Items we can't reach (on leaves, up a cliff) are
    * remembered for later rather than chased forever.
    */
-  async sweep(gen, near, radius = 6, pred = null, maxS = 10) {
+  async sweep(gen, near, radius = 6, pred = null, maxS = 10, waitNear = true) {
     // Items we couldn't get to: written off for 2 minutes (they may be reachable from elsewhere),
     // plus ones skipped just for this sweep.
     const t0 = system.currentTick, writtenOff = this.unreachableItems, local = new Set();
@@ -639,8 +669,10 @@ export class Skills {
       const { e: it, id: itId, loc } = withPos[0];
       const gone = () => { try { return !it.isValid; } catch { return true; } };
       const stillFar = () => { try { return it.isValid && dist3D(this.sim.location, it.location) > 1.5; } catch { return false; } };
-      if (dist3D(here, loc) < 1.2) {
-        // Right at our feet: a fresh drop can't be picked up for a moment. Wait it out.
+      if (dist3D(here, loc) < (waitNear ? 1.2 : 1.8)) {
+        // Right at our feet: a fresh drop can't be picked up for a moment. Wait it out (or, mid-job,
+        // leave it: we're staying here and it comes in on its own).
+        if (!waitNear) { local.add(itId); continue; }
         for (let w = 0; w < 30 && !gone(); w += 3) await this.wait(gen, 3);
         if (!gone()) local.add(itId); // still here: something odd about it, move on for now
         continue;
@@ -669,7 +701,7 @@ export class Skills {
       }
       if (res.path.length >= 2) await this.a.motor.followPath(smoothPath(this.a.classifier(), res.path));
       this.check(gen);
-      await this.wait(gen, 4);
+      await this.wait(gen, 2);
       if (stillFar()) skip.add(itId);
     }
     this.rememberItems(radius + 2); // anything left behind: remember it
@@ -760,28 +792,82 @@ export class Skills {
   }
 
   /**
-   * Leaf litter within arm's reach: fuel for next to nothing. One layer burns 0.5 items; a block
-   * holds 1-4 layers and breaks instantly, so it's ~0.3 s for ~1.25 items of cooking, where a log
-   * made into planks is ~3.8 s of chopping for 6 (~2.5x the work per item). Never worth walking
-   * for (a detour costs more than it gives), so only what we can reach from here, at most 8 blocks
-   * (~4 s), and only until we carry 32 layers (16 items of cooking).
+   * Punch held down and swept across one-tap blocks, like a player running a hand through grass:
+   * each breaks the tick the crosshair is on it and we're straight on to the next, in order of
+   * bearing so the head sweeps round instead of jumping back and forth. ~2 ticks a block (mine(),
+   * with its checks and pick-up, was 10+). Only ones in reach. Returns how many broke.
+   */
+  async swipe(gen, cells, maxTicks = 200) {
+    const e = this.eye(), t0 = system.currentTick;
+    let face = 0;
+    try { face = (-this.sim.getRotation().y + 90) * Math.PI / 180; } catch {}
+    const bearing = (c) => { const a = Math.atan2(c.z + 0.5 - e.z, c.x + 0.5 - e.x) - face; return ((a % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI); };
+    const order = [...cells].sort((p, q) => bearing(p) - bearing(q));
+    hold(this.sim, null); // a bare hand: no tool wear on grass
+    let broke = 0;
+    try {
+      for (const c of order) {
+        if (system.currentTick - t0 > maxTicks) break;
+        if (await this.tap(gen, c)) broke++;
+      }
+    } finally {
+      this.a.motor.setFocus(null);
+    }
+    return broke;
+  }
+
+  /** One swipe at a one-tap block: crosshair near it, hit, gone next tick. */
+  async tap(gen, c, tol = 25) {
+    const id = this.blockAt(c) ?? 'air';
+    if (!ONE_TAP.test(id) || !this.inReach(c) || this.isProtected(c)) return false;
+    const pt = { x: c.x + 0.5, y: c.y + 0.25, z: c.z + 0.5 };
+    this.a.motor.setFocus(pt);
+    for (let k = 0; k < 4 && this.aimError(pt) > tol; k++) await this.wait(gen, 1);
+    try { this.sim.breakBlock(c); } catch {}
+    await this.wait(gen, 1);
+    try { this.sim.stopBreakingBlock(); } catch {}
+    // The break ray can miss something this thin: knock it out the way the punch would have.
+    if (this.blockAt(c) === id) { try { this.dim.runCommand(`setblock ${c.x} ${c.y} ${c.z} air destroy`); } catch {} }
+    this.a.cellChanged?.();
+    return this.blockAt(c) !== id;
+  }
+
+  /**
+   * Leaf litter: fuel for next to nothing. One layer burns 0.5 items, a block holds 1-4 layers and
+   * breaks at a touch. Swiped through (see swipe) at ~2 ticks a block, so a patch is worth taking:
+   * what's in reach, then on into the rest of the patch a few steps away, punching it down as it
+   * comes into reach while we walk. Up to 64 layers (32 items of cooking), ~15 s at most.
    */
   async grabLitter(gen) {
-    const have = invCounts(this.sim).leaf_litter ?? 0;
-    if (have >= 32) return 0;
-    const near = (await this.scan((id) => id === 'leaf_litter', { radius: 5, below: 2, above: 2, limit: 16 }))
+    const have = () => invCounts(this.sim).leaf_litter ?? 0;
+    if (have() >= 64) return 0;
+    const t0 = system.currentTick, isLitter = (b) => (this.blockAt(b) ?? '') === 'leaf_litter';
+    let broke = 0;
+    for (let round = 0; round < 4 && system.currentTick - t0 < 300 && have() + broke * 2 < 64; round++) {
       // Litter is see-through (a sight line passes it rather than hitting it): what counts is
       // nothing solid in the way to it.
-      .filter((b) => this.inReach(b) && canSee(this.dim, this.eye(), { x: b.x + 0.5, y: b.y + 0.1, z: b.z + 0.5 }));
-    let broke = 0;
-    const t0 = system.currentTick;
-    for (const b of near) {
-      if (broke >= 8 || system.currentTick - t0 > 80) break;
+      const patch = (await this.scan((id) => id === 'leaf_litter', { radius: 6, below: 2, above: 2, limit: 32 }))
+        .filter((b) => canSee(this.dim, this.eye(), { x: b.x + 0.5, y: b.y + 0.1, z: b.z + 0.5 }));
       this.check(gen);
-      if ((this.blockAt(b) ?? '') !== 'leaf_litter' || !this.inReach(b)) continue;
-      if (await this.mine(gen, b, { collect: false })) broke++;
+      broke += await this.swipe(gen, patch.filter((b) => this.inReach(b)));
+      const rest = patch.filter((b) => isLitter(b) && !this.inReach(b));
+      if (rest.length < 3) break; // the odd block further off isn't worth the walk
+      // Into the rest of the patch: walk to its nearest block, swiping at whatever comes into reach.
+      const res = await this.a.plan(this.sim.location, rest[0], 1.5, 1500);
+      this.check(gen);
+      if (!res.complete || res.path.length < 2) break;
+      let walking = true;
+      this.a.motor.followPath(smoothPath(this.a.classifier(), res.path)).finally(() => { walking = false; });
+      hold(this.sim, null);
+      try {
+        for (let k = 0; walking && k < 120; k++) {
+          const c = rest.find((b) => isLitter(b) && this.inReach(b));
+          if (c && await this.tap(gen, c, 35)) broke++;
+          else { this.a.motor.setFocus(null); await this.wait(gen, 1); }
+        }
+      } finally { this.a.motor.setFocus(null); }
     }
-    if (broke) this.log(`leaf litter: broke ${broke} within reach for fuel (have ${have})`);
+    if (broke) this.log(`leaf litter: swiped ${broke} blocks for fuel in ${((system.currentTick - t0) / 20).toFixed(1)} s (had ${have()})`);
     return broke;
   }
 
@@ -1046,7 +1132,8 @@ export class Skills {
       // The rest of the trunk is out of reach: build up beside it (a cheap block under us, leaves
       // above cut away) instead of leaving the top of the tree and walking off to another one.
       if (b.y - this.feet().y > 4 && !(await this.climbForLog(gen, b))) break;
-      if (await this.mine(gen, b)) chopped++;
+      // No pick-up after each log: the sweep below gets the whole tree's in one go.
+      if (await this.mine(gen, b, { collect: false })) chopped++;
     }
     if (chopped) this.memVisits.clear(); // trips paid off: nothing to hold against those memories
     await this.descendPillar(gen); // built up to reach the top logs: come back down the same way
@@ -1266,12 +1353,29 @@ export class Skills {
   }
 
   /** Stone blocks we can see from here (line of sight to the block), nearest first. */
+  /** Stone next to a block we just mined (what it uncovered) that we can reach and see from here. */
+  stoneBehind(b) {
+    const f = this.feet(), out = [];
+    for (const [ox, oy, oz] of [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]]) {
+      const c = { x: b.x + ox, y: b.y + oy, z: b.z + oz };
+      if (!STONE_TARGETS.has(this.blockAt(c) ?? '') || !this.inReach(c)) continue;
+      if (c.x === f.x && c.z === f.z && c.y < f.y) continue; // our own floor
+      if (this.isProtected(c) || this.nearHome(c) || this.touchesLava(c) || this.a.memory.isUnreachable(c) || !this.sees(c)) continue;
+      out.push(c);
+    }
+    return out;
+  }
+
+  /** Part of the house's footprint (and just round it): never quarried for stone. */
+  nearHome(b) {
+    const home = this.a.homestead?.house ?? this.a.homestead?.project;
+    return !!home && Math.abs(b.x - home.x) <= 4 && Math.abs(b.z - home.z) <= 4 && b.y >= home.y - 3 && b.y <= home.y + 4;
+  }
+
   async visibleStone(radius) {
     const f = this.feet();
     const found = await this.scan((id) => STONE_TARGETS.has(id), { radius, below: 4, above: 6, limit: 24 });
-    const home = this.a.homestead?.house ?? this.a.homestead?.project;
-    const nearHome = (b) => home && Math.abs(b.x - home.x) <= 4 && Math.abs(b.z - home.z) <= 4 && b.y >= home.y - 3 && b.y <= home.y + 4;
-    return found.filter((b) => !this.touchesLava(b) && !nearHome(b) && !this.isProtected(b) && !this.a.memory.isUnreachable(b) && !(b.x === f.x && b.z === f.z && b.y < f.y) && this.sees(b));
+    return found.filter((b) => !this.touchesLava(b) && !this.nearHome(b) && !this.isProtected(b) && !this.a.memory.isUnreachable(b) && !(b.x === f.x && b.z === f.z && b.y < f.y) && this.sees(b));
   }
 
   /**
@@ -1333,18 +1437,24 @@ export class Skills {
     const have = () => count(invCounts(this.sim), (id) => TOOL_STONE.has(id));
     const more = typeof goal === 'function' ? goal : () => count(invCounts(this.sim), (id) => TOOL_STONE.has(id)) < goal; // goal: a count, or "keep going?"
     let target = first, fails = 0;
+    const cost = (f, b) => dist3D(f, b) + (b.y - f.y > 2 ? 3 : 0) + (b.y < f.y - 1 ? 2 : 0);
     for (let n = 0; target && more() && fails < 4 && n < 64; n++) {
       this.check(gen);
-      const before = have();
-      if (!(await this.mine(gen, target))) { fails++; this.a.memory.markUnreachable(target, 120000); }
-      else if (have() === before) await this.pickUp(gen, (id) => TOOL_STONE.has(id), target, 5); // the drop rolled off
+      const mined = target;
+      // Drops are gathered every few blocks, not after each one (a player mines a face, then walks
+      // over what fell).
+      if (!(await this.mine(gen, target, { collect: false }))) { fails++; this.a.memory.markUnreachable(target, 120000); }
+      if (n % 4 === 3) await this.sweep(gen, this.sim.location, 5, null, 4, false);
       // Coal or iron showing near the stone we're working: take it (torches, fuel, the iron gear).
       if (n % 4 === 0) await this.oreInView(gen, 8, { maxWalk: 12 });
       const f = this.feet();
+      // The face that block uncovered, in reach from here: the next swing, no looking round (the
+      // full scan and its sight checks, after every block, was the pause between swings).
+      const next = this.stoneBehind(mined).sort((p, q) => cost(f, p) - cost(f, q))[0];
+      if (next) { target = next; continue; }
       const near = await this.visibleStone(6);
       this.check(gen);
-      const cost = (b) => dist3D(f, b) + (b.y - f.y > 2 ? 3 : 0) + (b.y < f.y - 1 ? 2 : 0);
-      target = near.sort((p, q) => cost(p) - cost(q))[0] ?? null;
+      target = near.sort((p, q) => cost(f, p) - cost(f, q))[0] ?? null;
     }
     await this.sweep(gen, this.sim.location, 6, null, 6);
     // Stone left here that we can see: remember the spot, next time we come straight back.
@@ -2052,7 +2162,7 @@ export class Skills {
     }
     const r = await this.a.motor.followPath([{ x: f.x + 0.5, y: f.y, z: f.z + 0.5 }, { x: feet.x + 0.5, y: f.y, z: feet.z + 0.5 }]);
     this.check(gen);
-    await this.collect(gen, this.sim.location, 3, 2);
+    await this.collect(gen, this.sim.location, 3, 2, false);
     if (r.status !== 'arrived') return false;
     this.protect({ x: feet.x, y: f.y - 1, z: feet.z });
     await this.lightQuarry(gen, { x: f.x, y: f.y, z: f.z });

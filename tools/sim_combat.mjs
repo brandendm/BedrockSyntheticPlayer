@@ -39,6 +39,9 @@ function runPath(classify, from, to, tol, maxNodes = 1500) {
   return r;
 }
 
+// Knockback from a hit, in half blocks (4: two blocks). KB=2 to check nothing hangs on the guess.
+const KNOCKBACK_STEPS = Number(process.env.KB ?? 4);
+
 // ---------- the arena ----------
 function arena({ classify: base, bot, mobs, weapon = 'stone_sword', shield = false, ticks = 1200, night = true, health = 20, blocks = 16 }) {
   // Blocks the bot puts down (a barricade) are solid to everyone from then on.
@@ -83,7 +86,54 @@ function arena({ classify: base, bot, mobs, weapon = 'stone_sword', shield = fal
     if (VERBOSE) log.push(`${t}: walled off the way in (${cells.length} blocks)`);
     return true;
   }
-  let t = 0;
+  /** One fight step against tm (a seen mob): where to go, swing, shield. */
+  function act(tm, seen) {
+    const me = body.pos;
+    const m = tm.ref;
+    motor.setFocus({ x: m.x, y: m.y + 1, z: m.z });
+    // Room to back off from a creeper: somewhere we can walk to 6.5+ blocks from it.
+    if (m.type === 'creeper' && (m.roomAt ?? -1e9) + 20 <= t) {
+      m.roomAt = t;
+      const need = Math.max(6.5, dist3D(me, m) + 4); // 4 blocks further from it than we are now
+      m.room = findPath(classify, me, me, { maxNodes: 400, goalTest: (x, y, z, w) => w.standable(x, y, z) && Math.hypot(x + 0.5 - m.x, z + 0.5 - m.z) >= need && Math.hypot(x + 0.5 - me.x, z + 0.5 - me.z) < Math.hypot(x + 0.5 - m.x, z + 0.5 - m.z) - 2 }).complete;
+    }
+    const walledNow = m.type === 'creeper' && m.room === false && !shield && tryWall(seen);
+    const mv = walledNow ? { goal: null, stop: true, swing: false, block: false }
+      : m.type === 'creeper' ? creeperFight({ me, mob: m, t, st: (m.st ??= {}), shield, canSwing: t >= nextSwing, canRetreat: m.room !== false, lit: m.fuse >= 0 })
+      : fightMove({ me, mob: m, melee: MOBS[m.type].kind === 'melee', t, shield, canSwing: t >= nextSwing });
+    if (OLD && mv.goal) { const d0 = dist3D(me, m); mv.goal = d0 > 3.3 ? standOffOld(me, m) : { x: m.x, y: m.y, z: m.z }; mv.tolerance = 0.5; }
+    blocking = mv.block;
+    if (VERBOSE && process.env.TRACE) log.push(`${t}: me ${me.x.toFixed(1)},${me.y.toFixed(1)} mob ${m.x.toFixed(1)} d ${dist3D(me, m).toFixed(1)} goal ${mv.goal ? `${mv.goal.x.toFixed(1)},${mv.goal.z.toFixed(1)}` : '-'} busy ${motor.busy} st ${m.st?.phase}`);
+    if (mv.stop && motor.busy) motor.stop();
+    if (mv.goal && (t >= nextRoute || !motor.busy || mv.now)) {
+      nextRoute = t + 6;
+      const r = runPath(classify, me, mv.goal, mv.tolerance, 1500);
+      if (r.path.length >= 2) motor.followPath(smoothPath(classify, r.path), { seamless: true, urgent: mv.urgent });
+    }
+    if (mv.swing && facingMob(m) && m.iframe <= t) {
+      m.hp -= damage; m.iframe = t + 10; nextSwing = t + 10;
+      if (VERBOSE) log.push(`${t}: hit ${m.type} at ${dist3D(me, m).toFixed(1)} (hp ${m.hp})`);
+      // Knockback: pushed a block away from us (if there's room).
+      const dx = m.x - me.x, dz = m.z - me.z, l = Math.hypot(dx, dz) || 1;
+      // (Knockback has an upward kick: it can carry a mob up one step, as up the quarry stairs.)
+      let rose = false;
+      for (let k = 0; k < KNOCKBACK_STEPS; k++) {
+        const nx = m.x + dx / l * 0.5, nz = m.z + dz / l * 0.5;
+        const open = (y) => classify(Math.floor(nx), y, Math.floor(nz)) === Cell.AIR && classify(Math.floor(nx), y + 1, Math.floor(nz)) === Cell.AIR;
+        if (open(Math.floor(m.y))) { m.x = nx; m.z = nz; }
+        else if (!rose && open(Math.floor(m.y) + 1)) { m.x = nx; m.z = nz; m.y = Math.floor(m.y) + 1; rose = true; }
+        else break;
+      }
+      // Landed: down to the ground under it.
+      while (classify(Math.floor(m.x), Math.floor(m.y) - 1, Math.floor(m.z)) === Cell.AIR && m.y > -60) m.y = Math.floor(m.y) - 1;
+      if (m.hp <= 0) { kills++; if (VERBOSE) log.push(`${t}: killed ${m.type}`); stale.reset(); }
+    }
+    if (m.hp > 0 && !OLD && stale.update(m.id, t, tm.dist, MOBS[m.type].hp - m.hp)) {
+      giveUp.set(m.id, t + 1200); gaveUp++; stale.reset();
+      if (VERBOSE) log.push(`${t}: giving up on ${m.id} (no progress)`);
+    }
+  }
+  let t = 0, fightRef = null, explosions = 0;
   for (; t < ticks && hp > 0; t++) {
     const alive = mobs.filter((m) => m.hp > 0);
     const me = body.pos;
@@ -100,7 +150,7 @@ function arena({ classify: base, bot, mobs, weapon = 'stone_sword', shield = fal
         }
         if ((giveUp.get(m.id) ?? 0) > t) canReach = false;
         if (OLD && MOBS[m.type].kind === 'ranged') canReach = undefined;
-        return { id: m.id, type: m.type, hp: m.hp, dist: d, visible, targetingMe: d <= 16, attackedMe: t - m.lastHitMe < 200, recent: visible, dy: m.y - me.y, canReach, pos: { x: m.x, y: m.y, z: m.z }, inWater: false, ref: m };
+        return { id: m.id, type: m.type, hp: m.hp, lit: m.type === 'creeper' && m.fuse >= 0, dist: d, visible, targetingMe: m.aware !== false && d <= 16, attackedMe: t - m.lastHitMe < 200, recent: visible, dy: m.y - me.y, canReach, pos: { x: m.x, y: m.y, z: m.z }, inWater: false, ref: m };
       });
       const d = decide({ health: hp, damage, isNight: night, prevMode: mode, mobs: seen, shield });
       if (d.mode === 'flee' && corneredUntil > t && d.reason !== 'creeper' && d.reason !== 'cover') {
@@ -113,49 +163,12 @@ function arena({ classify: base, bot, mobs, weapon = 'stone_sword', shield = fal
       blocking = false;
       if (mode === 'fight') {
         const tm = seen.find((m) => m.id === d.target);
-        if (tm) {
-          const m = tm.ref;
-          motor.setFocus({ x: m.x, y: m.y + 1, z: m.z });
-          // Room to back off from a creeper: somewhere we can walk to 6.5+ blocks from it.
-          if (m.type === 'creeper' && (m.roomAt ?? -1e9) + 20 <= t) {
-            m.roomAt = t;
-            const need = Math.max(6.5, dist3D(me, m) + 4); // 4 blocks further from it than we are now
-            m.room = findPath(classify, me, me, { maxNodes: 400, goalTest: (x, y, z, w) => w.standable(x, y, z) && Math.hypot(x + 0.5 - m.x, z + 0.5 - m.z) >= need && Math.hypot(x + 0.5 - me.x, z + 0.5 - me.z) < Math.hypot(x + 0.5 - m.x, z + 0.5 - m.z) - 2 }).complete;
-          }
-          const walledNow = m.type === 'creeper' && m.room === false && !shield && tryWall(seen);
-          const mv = walledNow ? { goal: null, stop: true, swing: false, block: false }
-            : m.type === 'creeper' ? creeperFight({ me, mob: m, t, st: (m.st ??= {}), shield, canSwing: t >= nextSwing, canRetreat: m.room !== false })
-            : fightMove({ me, mob: m, melee: MOBS[m.type].kind === 'melee', t, shield, canSwing: t >= nextSwing });
-          if (OLD && mv.goal) { const d0 = dist3D(me, m); mv.goal = d0 > 3.3 ? standOffOld(me, m) : { x: m.x, y: m.y, z: m.z }; mv.tolerance = 0.5; }
-          blocking = mv.block;
-          if (VERBOSE && process.env.TRACE) log.push(`${t}: me ${me.x.toFixed(1)},${me.y.toFixed(1)} mob ${m.x.toFixed(1)} d ${dist3D(me, m).toFixed(1)} goal ${mv.goal ? `${mv.goal.x.toFixed(1)},${mv.goal.z.toFixed(1)}` : '-'} busy ${motor.busy} st ${m.st?.phase}`);
-          if (mv.stop && motor.busy) motor.stop();
-          if (mv.goal && (t >= nextRoute || !motor.busy || mv.now)) {
-            nextRoute = t + 6;
-            const r = runPath(classify, me, mv.goal, mv.tolerance, 1500);
-            if (r.path.length >= 2) motor.followPath(smoothPath(classify, r.path), { seamless: true, urgent: mv.urgent });
-          }
-          if (mv.swing && facingMob(m) && m.iframe <= t) {
-            m.hp -= damage; m.iframe = t + 10; nextSwing = t + 10;
-            if (VERBOSE) log.push(`${t}: hit ${m.type} at ${dist3D(me, m).toFixed(1)} (hp ${m.hp})`);
-            // Knockback: pushed a block away from us (if there's room).
-            const dx = m.x - me.x, dz = m.z - me.z, l = Math.hypot(dx, dz) || 1;
-            for (let k = 0; k < 4; k++) {
-              const nx = m.x + dx / l * 0.5, nz = m.z + dz / l * 0.5;
-              if (classify(Math.floor(nx), Math.floor(m.y), Math.floor(nz)) !== Cell.AIR) break;
-              m.x = nx; m.z = nz;
-            }
-            if (m.hp <= 0) { kills++; if (VERBOSE) log.push(`${t}: killed ${m.type}`); stale.reset(); }
-          }
-          if (m.hp > 0 && !OLD && stale.update(m.id, t, tm.dist, MOBS[m.type].hp - m.hp)) {
-            giveUp.set(m.id, t + 1200); gaveUp++; stale.reset();
-            if (VERBOSE) log.push(`${t}: giving up on ${m.id} (no progress)`);
-          }
-        }
+        fightRef = tm?.ref ?? null;
+        if (tm) act(tm, seen);
       } else if (mode === 'flee') {
         motor.setFocus(null);
         const creeper = d.threats.find((m) => m.type === 'creeper');
-        if (creeper && creeperMove({ me, creeper: creeper.pos, shield }) === 'block') {
+        if (creeper && creeperMove({ me, creeper: creeper.pos, shield, lit: creeper.lit }) === 'block') {
           blocking = true; motor.stop(); motor.setFocus({ x: creeper.pos.x, y: creeper.pos.y + 1, z: creeper.pos.z });
         } else if (t >= nextRoute || !motor.busy) {
           nextRoute = t + 20;
@@ -183,6 +196,12 @@ function arena({ classify: base, bot, mobs, weapon = 'stone_sword', shield = fal
       else idleWhileHunted = 0;
       worstIdle = Math.max(worstIdle, idleWhileHunted);
     }
+    // A creeper fight is timed in ticks (a 0.7-block window between our reach and its fuse): every
+    // tick, like the game's creeper step.
+    if (t % 4 !== 0 && mode === 'fight' && fightRef?.type === 'creeper' && fightRef.hp > 0 && !OLD) {
+      const m = fightRef;
+      act({ ref: m, id: m.id, type: m.type, dist: dist3D(me, m), pos: { x: m.x, y: m.y, z: m.z } }, []);
+    }
     motor.tick();
     body.step();
     // ---- the mobs ----
@@ -209,19 +228,22 @@ function arena({ classify: base, bot, mobs, weapon = 'stone_sword', shield = fal
         m.path = r.path.length >= 2 ? r.path : null; m.pi = 1;
       }
       const speed = m.type === 'creeper' ? 0.1 : 0.115;
-      if (m.path && m.pi < m.path.length && d > 1.3) {
+      if (m.path && m.pi < m.path.length && d > 1.3 && !(m.type === 'creeper' && m.fuse >= 0)) { // a hissing creeper stands still
         const w = m.path[m.pi], tx = w.x + 0.5, tz = w.z + 0.5;
         const dx = tx - m.x, dz = tz - m.z, l = Math.hypot(dx, dz);
         if (l < speed) { m.x = tx; m.z = tz; m.y = w.y; m.pi++; } else { m.x += dx / l * speed; m.z += dz / l * speed; if (Math.abs(w.y - m.y) >= 1 && l < 0.6) m.y = w.y; }
       }
       if (m.type === 'creeper') {
         const sight = clear(classify, { x: m.x, y: m.y + 1.5, z: m.z }, { x: me.x, y: me.y + 1.2, z: me.z });
-        if (m.fuse < 0 && d <= 3 && sight) { m.fuse = t + 30; if (VERBOSE) log.push(`${t}: creeper hisses at ${d.toFixed(1)}`); }
-        if (m.fuse >= 0 && d > 7) { m.fuse = -1; if (VERBOSE) log.push(`${t}: creeper calms down at ${d.toFixed(1)}`); }
+        // Bedrock's creeper: the fuse starts inside 2.5 blocks of us with us in sight, and stops
+        // beyond 6 or once it loses sight of us (its target_nearby_sensor).
+        if (m.fuse < 0 && d <= 2.5 && sight) { m.fuse = t + 30; if (VERBOSE) log.push(`${t}: creeper hisses at ${d.toFixed(1)}`); }
+        if (m.fuse >= 0 && (d > 6 || !sight)) { m.fuse = -1; if (VERBOSE) log.push(`${t}: creeper calms down at ${d.toFixed(1)}`); }
         if (m.fuse >= 0 && t >= m.fuse) {
           const dmg = Math.max(0, 25 * (1 - d / 6)) * (sight ? 1 : 0.3);
           if (VERBOSE) log.push(`${t}: creeper goes off at ${d.toFixed(1)} blocks`);
           hurt(dmg, m, 'creeper');
+          explosions++;
           m.hp = 0;
         }
         continue;
@@ -230,7 +252,7 @@ function arena({ classify: base, bot, mobs, weapon = 'stone_sword', shield = fal
     }
     if (!mobs.some((m) => m.hp > 0)) break;
   }
-  return { walls, foughtAtDeath, hp: Math.max(0, hp), kills, total: mobs.length, ticks: t, worstIdle, hitsTaken, blocked, gaveUp, log };
+  return { explosions, walls, foughtAtDeath, hp: Math.max(0, hp), kills, total: mobs.length, ticks: t, worstIdle, hitsTaken, blocked, gaveUp, log };
 }
 
 const standOffOld = (me, mob, r = 2.8) => { const dx = me.x - mob.x, dz = me.z - mob.z, l = Math.hypot(dx, dz) || 1; return { x: mob.x + dx / l * r, y: mob.y, z: mob.z + dz / l * r }; };
@@ -264,6 +286,7 @@ function tunnel() {
 }
 
 const SCENARIOS = {
+  'creeper coming down the quarry steps, stone sword': () => ({ classify: quarry(), bot: { x: 10.5, y: 54, z: 0.5 }, mobs: [{ type: 'creeper', x: -1.5, y: 64, z: 0.5 }], minHp: 20 }),
   'down a mine tunnel: skeleton then a zombie, iron sword + shield, hurt': () => ({ classify: tunnel(), bot: { x: 2.5, y: 40, z: 0.5 }, weapon: 'iron_sword', shield: true, health: 14, mobs: [{ type: 'skeleton', x: 8.5, y: 40, z: 0.5 }, { type: 'zombie', x: 11.5, y: 40, z: 0.5 }], minHp: 6 }),
   'down a mine tunnel: skeleton behind two zombies, stone sword': () => ({ classify: tunnel(), bot: { x: 3.5, y: 40, z: 0.5 }, mobs: [{ type: 'skeleton', x: 9.5, y: 40, z: 0.5 }, { type: 'zombie', x: 12.5, y: 40, z: 0.5 }, { type: 'zombie', x: 15.5, y: 40, z: 0.5 }], minHp: 1 }),
   'zombie, open field, stone sword': () => ({ classify: flat(), bot: { x: 0.5, y: 64, z: 0.5 }, mobs: [{ type: 'zombie', x: 10.5, y: 64, z: 0.5 }] }),
@@ -330,6 +353,40 @@ if (FUZZ) {
   console.log(JSON.stringify(stats));
   for (const b of bad.slice(0, 25)) console.log(`  - ${b}`);
   process.exit(stats.diedFighting + stats.stared ? 1 : 0);
+}
+
+// --creepers N: creeper encounters: from any side, behind trees or round a corner, not always known
+// to be after us, sometimes with company; any gear (fists too). Counts how many never went off.
+const CREEPERS = process.argv.includes('--creepers') ? Number(process.argv[process.argv.indexOf('--creepers') + 1] || 200) : 0;
+if (CREEPERS) {
+  const rng = makeRng(4242);
+  const pick = (a) => a[Math.floor(rng() * a.length)];
+  const stats = { runs: 0, exploded: 0, died: 0 };
+  const bad = [], byKind = {};
+  for (let i = 0; i < CREEPERS; i++) {
+    const terrain = pick(['flat', 'forest', 'forest', 'quarry', 'tunnel']);
+    const classify = terrain === 'flat' ? flat() : terrain === 'forest' ? forest() : terrain === 'quarry' ? quarry() : tunnel();
+    const bot = terrain === 'quarry' ? { x: 10.5, y: 54, z: 0.5 } : terrain === 'tunnel' ? { x: 1.5 + Math.floor(rng() * 5), y: 40, z: 0.5 } : { x: 0.5, y: 70, z: 0.5 };
+    const company = rng() < 0.25 ? [pick(['zombie', 'skeleton', 'creeper'])] : [];
+    const mobs = [];
+    for (const [k, type] of ['creeper', ...company].entries()) {
+      const a = rng() * Math.PI * 2, r = 5 + rng() * 9;
+      mobs.push({ type, aware: rng() < 0.5, ...(terrain === 'quarry' ? { x: -1.5 - k * 2, y: 64, z: 0.5 } : terrain === 'tunnel' ? { x: bot.x + 5 + k * 3 + Math.floor(rng() * 6), y: 40, z: 0.5 } : { x: 0.5 + Math.cos(a) * r, y: 70, z: 0.5 + Math.sin(a) * r }) });
+    }
+    const weapon = pick([null, 'wooden_sword', 'stone_sword', 'stone_sword', 'iron_sword', 'stone_axe']);
+    const sc = { classify, bot: ground(classify, bot), mobs: mobs.map((m) => ground(classify, m)), weapon, shield: rng() < 0.4, health: pick([20, 20, 14, 8]), ticks: 900 };
+    const desc = `${terrain}, ${mobs.map((m) => m.type + (m.aware ? '' : '(unaware)')).join('+')}, ${weapon ?? 'fists'}${sc.shield ? '+shield' : ''}, ${sc.health} hp`;
+    const r = arena(sc);
+    stats.runs++;
+    const key = `${terrain}${company.length ? '+company' : ''}`;
+    byKind[key] ??= [0, 0]; byKind[key][0]++;
+    if (r.explosions) { stats.exploded++; byKind[key][1]++; bad.push(`${r.hp <= 0 ? 'DIED' : `${r.hp.toFixed(0)} hp`}: ${desc}`); }
+    if (r.hp <= 0) stats.died++;
+  }
+  console.log(`${stats.runs - stats.exploded}/${stats.runs} without an explosion (${(100 * (1 - stats.exploded / stats.runs)).toFixed(1)}%), ${stats.died} died`);
+  for (const [k, [n, e]] of Object.entries(byKind)) console.log(`  ${k.padEnd(16)} ${n - e}/${n}`);
+  for (const b of bad.slice(0, VERBOSE ? 60 : 12)) console.log(`  - ${b}`);
+  process.exit(0);
 }
 
 let failed = 0;

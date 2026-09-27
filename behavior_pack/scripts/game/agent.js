@@ -400,10 +400,11 @@ export class Agent {
         pos: { x: e.location.x, y: e.location.y, z: e.location.z },
         dist: dist3D(pos, e.location),
         visible: canSee(this.dim, eye, head),
-        targetingMe, attackedMe, recent: false, dy: e.location.y - pos.y, canReach: true, inWater: !!e.isInWater, hp: undefined,
+        targetingMe, attackedMe, recent: false, dy: e.location.y - pos.y, canReach: true, inWater: !!e.isInWater, hp: undefined, lit: false,
       });
       const m = out[out.length - 1];
       try { m.hp = e.getComponent('minecraft:health')?.currentValue; } catch {}
+      if (type === 'creeper') m.lit = this.hissing(e);
       m.canReach = this.canReachMe(e, pos, t);
       // A fight that went nowhere: it counts as out of reach for a minute, so we get on with things
       // (or into cover from it) instead of staring at it.
@@ -482,6 +483,11 @@ export class Agent {
     this.shield = this.worn().includes('shield');
   }
 
+  /** A creeper with its fuse lit (the game's is_ignited component is there only while it hisses). */
+  hissing(e) {
+    try { return !!e.getComponent('minecraft:is_ignited'); } catch { return false; }
+  }
+
   /** Shield up (crouch) or down. */
   setBlocking(on) {
     if (on === this.blocking) return;
@@ -515,7 +521,8 @@ export class Agent {
       this.flips = [...(this.flips ?? []).filter((x) => t - x < 1200), t];
       if (this.flips.length >= 8) { this.ignoreThreatsUntil = t + 600; this.flips = []; if (CONFIG.debug) console.warn('[agent] flip-flopping: ignoring threats for 30 s'); }
     }
-    if (d.mode !== 'none' && (this.ignoreThreatsUntil ?? 0) > t && this.health() >= 10 && !d.threats.some((m) => m.attackedMe && m.dist <= 4)) {
+    // (Never a creeper close by: it doesn't hit us before it goes off.)
+    if (d.mode !== 'none' && (this.ignoreThreatsUntil ?? 0) > t && this.health() >= 10 && !d.threats.some((m) => (m.attackedMe && m.dist <= 4) || (m.type === 'creeper' && m.dist <= 8))) {
       d.mode = 'none'; d.reason = 'ignoring (flip-flopping)';
     }
     if (d.mode !== this.mode) {
@@ -1284,10 +1291,8 @@ export class Agent {
       const room = this.creeperRoom(target, me, t);
       if (!this.creeperSt.has(e.id)) this.creeperSt.set(e.id, {});
       const st = this.creeperSt.get(e.id);
-      // Stuck in a dead end with it and no shield: wall it off if the way in is one block wide.
-      if (room === false && !this.shield && this.wallOff([target])) mv = { goal: null, tolerance: 0, urgent: false, now: false, stop: true, swing: false, block: false };
-      else mv = creeperFight({ me, mob, t, st, shield: this.shield, canSwing, canRetreat: room !== false });
-      this.fightMove = st.phase === 'out' ? 'back' : 'approach';
+      mv = creeperFight({ me, mob, t, st, shield: this.shield, canSwing, canRetreat: room !== false, lit: target.lit ?? this.hissing(e) });
+      this.fightMove = 'creeper'; // its own spacing (creeperTick), not the melee stop
     } else {
       mv = fightMove({ me, mob, melee: MOBS[target.type]?.kind === 'melee', t, shield: this.shield, canSwing });
       this.fightMove = mv.stop ? 'hold' : mv.goal && d > STOP_AT ? 'approach' : 'back';
@@ -1368,6 +1373,15 @@ export class Agent {
   /** Every tick while fighting: stop walking in the moment we're at striking distance. */
   fightSpacingTick() {
     const e = this.fightTarget;
+    // A creeper fight runs every tick: between our reach and its fuse there's ~7 ticks of its walk.
+    if (this.mode === 'fight' && this.fightMove === 'creeper' && e?.isValid) {
+      const t = system.currentTick;
+      if (t % SURVIVE_EVERY !== 0) {
+        const l = e.location;
+        this.fight({ id: e.id, type: 'creeper', entity: e, pos: { x: l.x, y: l.y, z: l.z }, lit: this.hissing(e) }, t);
+      }
+      return;
+    }
     if (this.mode !== 'fight' || this.fightMove !== 'approach' || !e?.isValid || !this.motor.busy) return;
     if (dist3D(this.body.getPos(), e.location) <= STOP_AT) { this.motor.stop(); this.fightMove = 'hold'; }
   }
@@ -1381,7 +1395,7 @@ export class Agent {
   flee(threats, t) {
     const me = this.body.getPos();
     const creeper = threats.find((m) => m.type === 'creeper');
-    if (creeper && creeperMove({ me, creeper: creeper.pos, shield: this.shield }) === 'block') {
+    if (creeper && creeperMove({ me, creeper: creeper.pos, shield: this.shield, lit: creeper.lit }) === 'block') {
       this.setBlocking(true);
       if (this.motor.busy) this.motor.stop();
       this.motor.setFocus({ x: creeper.pos.x, y: creeper.pos.y + 1, z: creeper.pos.z });

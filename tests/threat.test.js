@@ -15,14 +15,22 @@ test('iron sword vs one or two zombies: fight, vs three: flee', () => {
   assert.equal(decide({ health: 20, damage: d, mobs: [mob('zombie', 3), mob('zombie', 4), mob('zombie', 5)] }).mode, 'flee');
 });
 
-test('creepers: hit and back off when armed, healthy and it is the only thing on us; else run', () => {
+test('creepers: held off at arm\'s length when it is the only thing on us (any weapon); else run', () => {
   const d = decide({ health: 20, damage: 6, mobs: [mob('creeper', 5)] });
   assert.equal(d.mode, 'fight');
   assert.match(d.reason, /creeper/);
-  assert.equal(decide({ health: 20, damage: 1, mobs: [mob('creeper', 5)] }).mode, 'flee', 'unarmed');
-  assert.equal(decide({ health: 10, damage: 6, mobs: [mob('creeper', 5)] }).mode, 'flee', 'hurt');
+  assert.equal(decide({ health: 20, damage: 1, mobs: [mob('creeper', 5)] }).mode, 'fight', 'fists: the knockback does it');
   assert.equal(decide({ health: 20, damage: 6, mobs: [mob('creeper', 5), mob('zombie', 6)] }).mode, 'flee', 'not with a zombie on us too');
-  assert.equal(decide({ health: 20, damage: 6, mobs: [mob('creeper', 5, { canReach: false })] }).mode, 'none', 'one that cannot get at us is no threat');
+  assert.equal(decide({ health: 20, damage: 6, mobs: [mob('creeper', 5), mob('skeleton', 12, { targetingMe: true })] }).mode, 'fight', 'a skeleton off at range: still hold the creeper off');
+  assert.equal(decide({ health: 20, damage: 6, mobs: [mob('creeper', 6, { canReach: false })] }).mode, 'none', 'one that cannot get at us is no threat');
+});
+
+test('creepers are noticed early: in sight within 8, hissing unseen within 8, anything within 4', () => {
+  assert.equal(decide({ health: 20, damage: 6, mobs: [mob('creeper', 7.5)] }).mode, 'fight', 'in sight, not known to be after us');
+  assert.equal(decide({ health: 20, damage: 6, mobs: [mob('creeper', 7, { visible: false, lit: true })] }).mode, 'fight', 'heard hissing');
+  assert.notEqual(decide({ health: 20, damage: 6, mobs: [mob('creeper', 3.5, { visible: false, recent: false, canReach: false })] }).mode, 'none', 'right here, round a corner: noticed (and kept away from)');
+  assert.equal(decide({ health: 20, damage: 6, mobs: [mob('creeper', 11, { targetingMe: true })] }).mode, 'fight', 'after us from 11');
+  assert.equal(decide({ health: 20, damage: 6, mobs: [mob('creeper', 11)] }).mode, 'none', 'wandering, well off');
 });
 
 test('endermen are ignored unless provoked', () => {
