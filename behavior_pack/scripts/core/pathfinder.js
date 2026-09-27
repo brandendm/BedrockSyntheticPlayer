@@ -479,7 +479,40 @@ export function smoothPath(classify, path, halfWidth = 0.3) {
     out.push(center(path[j]));
     i = j;
   }
+  // Tight waypoints, which the motor steers at exactly instead of cutting the corner past them:
+  //  - beside a drop we wouldn't walk away from (deeper than a safe fall, or into lava);
+  //  - a corner that can't be cut: the straight line on from where the motor would start turning
+  //    (0.7 short of it) clips something the line from the waypoint itself clears (round a trunk,
+  //    a bush), and cutting it pinned the body against that.
+  for (let k = 0; k < out.length; k++) {
+    const c = out[k];
+    if (c.leap) continue;
+    if (besideDrop(w, Math.floor(c.x), c.y, Math.floor(c.z))) { c.tight = true; continue; }
+    const a = out[k - 1], b = out[k + 1];
+    if (!a || !b || a.y !== c.y || b.y !== c.y) continue;
+    const len = Math.hypot(c.x - a.x, c.z - a.z);
+    if (len < 1e-6) continue;
+    const s = Math.min(0.7, len) / len;
+    const early = { x: c.x - (c.x - a.x) * s, y: c.y, z: c.z - (c.z - a.z) * s };
+    if (!walkableLine(w, early, b, halfWidth)) c.tight = true;
+  }
   return out;
+}
+
+/** An open neighbour column (any of 8) with no ground within a safe fall below it. */
+function besideDrop(w, x, y, z) {
+  for (const [dx, dz] of DIRS) {
+    const nx = x + dx, nz = z + dz;
+    if (!w.open(nx, y, nz)) continue;
+    let safe = false;
+    for (let d = 1; d <= DEFAULT_COSTS.maxDrop + 1; d++) {
+      const c = w.get(nx, y - d, nz);
+      if (c === Cell.DANGER) break;
+      if (c !== Cell.AIR && c !== Cell.CLIMB) { safe = c !== Cell.UNKNOWN; break; }
+    }
+    if (!safe) return true;
+  }
+  return false;
 }
 
 function center(p) {

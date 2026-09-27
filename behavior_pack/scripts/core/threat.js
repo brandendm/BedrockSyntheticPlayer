@@ -13,6 +13,7 @@
 export const ATTACK_INTERVAL_S = 0.6; // how often we swing (12 ticks)
 export const FIGHT_MARGIN = 0.6;       // need to win the race by this margin to start a fight
 export const KEEP_FIGHTING_MARGIN = 0.9; // hysteresis: once engaged, keep going unless clearly losing
+export const COMMITTED_MARGIN = 1.3;    // toe to toe with a melee mob: running gives it free hits
 export const FLEE_HEALTH = 6;
 export const FIST_DAMAGE = 1;
 export const KNOCKBACK = 0.5;
@@ -82,7 +83,7 @@ export function isActiveThreat(m, isNight, alert = false) {
  * input: { health, damage, isNight, prevMode, mobs: [{id, type, dist, visible, targetingMe, attackedMe}] }
  * output: { mode: 'none'|'fight'|'flee', target?: id, threats: [mob], reason }
  */
-export function decide({ health, damage = FIST_DAMAGE, isNight = false, prevMode = 'none', mobs, inWater = false }) {
+export function decide({ health, damage = FIST_DAMAGE, isNight = false, prevMode = 'none', mobs, inWater = false, shield = false }) {
   const alert = prevMode !== 'none';
   const threats = mobs.filter((m) => isActiveThreat(m, isNight, alert)).sort((a, b) => a.dist - b.dist);
   if (!threats.length) return { mode: 'none', threats, reason: 'clear' };
@@ -92,10 +93,28 @@ export function decide({ health, damage = FIST_DAMAGE, isNight = false, prevMode
   // eye on it, not to drop everything (it has to get within 3 to blow).
   const creeper = threats.find((m) => m.type === 'creeper' && (m.canReach ?? true) &&
     ((m.visible || m.recent) && m.dist <= (alert ? 10 : m.targetingMe ? 8 : 5)));
-  if (creeper) return { mode: 'flee', threats, reason: 'creeper' };
+  if (creeper) {
+    // Armed, healthy and it's the only thing on us: hit it and back off (core/tactics.js
+    // creeperFight) rather than run from it for ever while it follows us about.
+    const others = threats.some((m) => m !== creeper && m.type !== 'creeper' && (m.visible || m.attackedMe) && m.dist <= 10);
+    if (damage >= 5 && health >= 12 && !others && creeper.canReach !== false) return { mode: 'fight', target: creeper.id, threats, reason: 'creeper: hit and back off' };
+    return { mode: 'flee', threats, reason: 'creeper' };
+  }
   const never = threats.find((m) => MOBS[m.type].never && m.dist <= 16);
   if (never) return { mode: 'flee', threats, reason: `won't fight ${never.type}` };
-  if (health <= FLEE_HEALTH) return { mode: 'flee', threats, reason: 'low health' };
+  // Low on health: run. Except already up close to an archer and nothing else on us: turning our
+  // back on it in the open is how it gets the last few shots in; finish it.
+  if (health <= FLEE_HEALTH) {
+    const close = threats.filter((m) => m.dist <= 16 && (m.visible || m.attackedMe));
+    const archerOnly = close.length > 0 && close.every((m) => MOBS[m.type].kind === 'ranged');
+    const nearest = close[0];
+    // Or a melee mob on us that one more hit or two finishes: running is free hits for it.
+    const finishing = prevMode === 'fight' && nearest && nearest.dist <= 3.5 && MOBS[nearest.type].kind === 'melee' &&
+      nearest.hp !== undefined && Math.ceil(nearest.hp / damage) <= 2;
+    if (finishing) return { mode: 'fight', target: nearest.id, threats, reason: 'low health, but one more hit or two finishes it' };
+    if (!(prevMode === 'fight' && archerOnly && nearest && nearest.dist <= 5 && damage >= 4)) return { mode: 'flee', threats, reason: 'low health' };
+    return { mode: 'fight', target: nearest.id, threats, reason: 'low health, but it is right here: finishing it' };
+  }
 
   // Only the mobs close enough to matter in the next few seconds go into the race.
   // Only mobs that can actually get at us: seen (not a zombie in the cave under our feet or
@@ -103,23 +122,43 @@ export function decide({ health, damage = FIST_DAMAGE, isNight = false, prevMode
   // that isn't aiming at us is ignored unless it's right here.
   // A melee mob also has to be able to walk to us (m.canReach, from a short path search).
   // (A drowned bobbing in the lake next to us is not our problem until it comes out and hits us.)
-  const reachable = (m) => m.attackedMe || (m.inWater && !inWater ? false : m.dist <= 2.5 || ((m.visible || (alert && (m.recent ?? true))) &&
-    (MOBS[m.type].kind === 'ranged' || (m.canReach ?? Math.abs(m.dy ?? 0) <= 4))));
+  // Archers too: one we can't get a path to (up at the mouth of the quarry, across a ravine) is no
+  // fight: going for it was the staring contest. If it's hitting us, take cover instead (below).
+  const reachable = (m) => (m.attackedMe && m.canReach !== false) || (m.inWater && !inWater ? false : m.dist <= 2.5 || ((m.visible || (alert && (m.recent ?? true))) &&
+    (m.canReach ?? (MOBS[m.type].kind === 'ranged' || Math.abs(m.dy ?? 0) <= 4))));
   const engaged = threats.filter((m) => m.type !== 'creeper' && reachable(m) &&
     (m.attackedMe || m.dist <= (MOBS[m.type].kind === 'ranged' ? (m.targetingMe ? 16 : 4) : alert ? 16 : m.targetingMe ? 12 : 8)));
-  if (!engaged.length) return { mode: 'none', threats, reason: 'threats not engaged yet' };
+  const engagedCount = engaged.length;
+  if (!engaged.length) {
+    // Shot at by something we can't get to: out of its line of fire (a corner, back down the tunnel).
+    const shooter = threats.find((m) => MOBS[m.type].kind === 'ranged' && m.attackedMe && m.canReach === false);
+    if (shooter) return { mode: 'flee', threats, reason: 'cover', cover: true };
+    return { mode: 'none', threats, reason: 'threats not engaged yet' };
+  }
 
-  const ttk = engaged.reduce((s, m) => s + Math.ceil(MOBS[m.type].hp / damage) * ATTACK_INTERVAL_S, 0);
-  const enemyDps = engaged.reduce((s, m) => s + MOBS[m.type].dps, 0) * KNOCKBACK;
+  // An archer has to be walked up to first, and it shoots all the way: that time counts too.
+  const walkIn = (m) => (MOBS[m.type].kind === 'ranged' ? Math.max(0, m.dist - 3) / 4.3 : 0);
+  // Health it has left (m.hp) when known: a skeleton we've already hit twice is nearly done.
+  const ttk = engaged.reduce((s, m) => s + Math.ceil(Math.max(1, m.hp ?? MOBS[m.type].hp) / damage) * ATTACK_INTERVAL_S + walkIn(m), 0);
+  // A shield takes arrows from the front and much of what's in front of us up close.
+  // (Only from the front, and not while swinging: with two or more after us, less.)
+  const guard = (m) => (!shield ? 1 : (MOBS[m.type].kind === 'ranged' ? 0.4 : 0.7) + (engagedCount > 1 ? 0.2 : 0));
+  const enemyDps = engaged.reduce((s, m) => s + MOBS[m.type].dps * guard(m), 0) * KNOCKBACK;
   const ttd = health / enemyDps;
-  const margin = prevMode === 'fight' ? KEEP_FIGHTING_MARGIN : FIGHT_MARGIN;
+  // Already trading blows with something right on us: turning our back is free hits for it (a
+  // zombie keeps up for the first seconds, and in a tunnel for ever). Run only if clearly losing.
+  const toeToToe = prevMode === 'fight' && engaged.some((m) => MOBS[m.type].kind === 'melee' && m.dist <= 3);
+  const margin = toeToToe ? COMMITTED_MARGIN : prevMode === 'fight' ? KEEP_FIGHTING_MARGIN : FIGHT_MARGIN;
   const why = `kill ${ttk.toFixed(1)}s vs die ${ttd.toFixed(1)}s`;
 
   // In water we swing slowly, can't dodge and drowned out-swim us: get to land first.
   if (inWater) return { mode: 'flee', threats, reason: `in water (${why})` };
   if (ttk < margin * ttd) {
-    // Hit whoever is actually hitting us first, then the nearest.
-    const target = engaged.find((m) => m.attackedMe) || engaged[0];
+    // Whatever's in our face first (a zombie in the tunnel between us and the skeleton that shot
+    // us: going for the skeleton meant not swinging at the zombie hitting us), then whoever is
+    // actually hitting us, then the nearest.
+    const inFace = (m) => MOBS[m.type].kind === 'melee' && m.dist <= 3.5;
+    const target = engaged.find((m) => m.attackedMe && inFace(m)) || engaged.find(inFace) || engaged.find((m) => m.attackedMe) || engaged[0];
     return { mode: 'fight', target: target.id, threats, reason: why };
   }
   return { mode: 'flee', threats, reason: why };

@@ -15,8 +15,14 @@ test('iron sword vs one or two zombies: fight, vs three: flee', () => {
   assert.equal(decide({ health: 20, damage: d, mobs: [mob('zombie', 3), mob('zombie', 4), mob('zombie', 5)] }).mode, 'flee');
 });
 
-test('creepers are never meleed, even with a netherite sword', () => {
-  assert.equal(decide({ health: 20, damage: 9, mobs: [mob('creeper', 5)] }).mode, 'flee');
+test('creepers: hit and back off when armed, healthy and it is the only thing on us; else run', () => {
+  const d = decide({ health: 20, damage: 6, mobs: [mob('creeper', 5)] });
+  assert.equal(d.mode, 'fight');
+  assert.match(d.reason, /creeper/);
+  assert.equal(decide({ health: 20, damage: 1, mobs: [mob('creeper', 5)] }).mode, 'flee', 'unarmed');
+  assert.equal(decide({ health: 10, damage: 6, mobs: [mob('creeper', 5)] }).mode, 'flee', 'hurt');
+  assert.equal(decide({ health: 20, damage: 6, mobs: [mob('creeper', 5), mob('zombie', 6)] }).mode, 'flee', 'not with a zombie on us too');
+  assert.equal(decide({ health: 20, damage: 6, mobs: [mob('creeper', 5, { canReach: false })] }).mode, 'none', 'one that cannot get at us is no threat');
 });
 
 test('endermen are ignored unless provoked', () => {
@@ -45,9 +51,25 @@ test('hysteresis keeps a fight going that would not have been started', () => {
 });
 
 test('targets the mob that is hitting us first', () => {
-  const r = decide({ health: 20, damage: 8, mobs: [mob('zombie', 2), mob('zombie', 4, { attackedMe: true })] });
+  const r = decide({ health: 20, damage: 8, mobs: [mob('zombie', 2), mob('zombie', 3, { attackedMe: true })] });
   assert.equal(r.mode, 'fight');
-  assert.equal(r.target, 'zombie4');
+  assert.equal(r.target, 'zombie3');
+  const far = decide({ health: 20, damage: 8, mobs: [mob('zombie', 6), mob('zombie', 9, { attackedMe: true })] });
+  assert.equal(far.target, 'zombie9');
+});
+
+test('a zombie in our face comes before the skeleton behind it that shot us', () => {
+  const r = decide({ health: 16, damage: 7, shield: true, prevMode: 'fight', mobs: [mob('zombie', 2, { canReach: true }), mob('skeleton', 7, { attackedMe: true, targetingMe: true, canReach: true })] });
+  assert.equal(r.mode, 'fight');
+  assert.equal(r.target, 'zombie2');
+});
+
+test('toe to toe with a zombie: run only if clearly losing; a nearly dead one gets finished', () => {
+  const mobs = [mob('zombie', 2, { canReach: true, attackedMe: true }), mob('skeleton', 6, { attackedMe: true, targetingMe: true, canReach: true, hp: 6 })];
+  assert.equal(decide({ health: 8, damage: 7, shield: true, prevMode: 'fight', mobs }).mode, 'fight');
+  const low = [mob('zombie', 2, { canReach: true, attackedMe: true, hp: 6 })];
+  assert.equal(decide({ health: 5, damage: 7, prevMode: 'fight', mobs: low }).mode, 'fight');
+  assert.equal(decide({ health: 5, damage: 7, prevMode: 'fight', mobs: [mob('zombie', 2, { canReach: true, attackedMe: true, hp: 20 })] }).mode, 'flee');
 });
 
 test('flee point is away from threats', () => {

@@ -187,3 +187,17 @@ test('climbs a 1-wide, 3-high staircase out of a quarry without turning round', 
   assert.ok(worst < 30, `turned ${worst.toFixed(0)} deg away from the way out`);
   assert.equal(body.jumps, 10, 'one jump per step');
 });
+
+// Worlds from tools/stress_path.mjs that used to trip the walker: a leaf at head height round a
+// drop (the lookahead cut the corner into it), a bush at a corner (turning 0.7 early clipped it),
+// a step-up onto a 1-wide bridge over a ravine (the jump's carry went over the side).
+test('stress worlds that used to trip the walker: all arrive', async () => {
+  const { KINDS, walk } = await import('../tools/stress_path.mjs');
+  const { makeRng: rng } = await import('../behavior_pack/scripts/core/mathutil.js');
+  for (const [kind, seed] of [['forest', 11], ['forest', 164], ['jungle', 104], ['ravine', 69]]) {
+    const sc = KINDS[kind](rng(seed * 7919 + kind.length));
+    const out = await walk(sc.w, sc.start, sc.goal, sc.tol, seed);
+    assert.equal(out.status, 'arrived', `${kind} ${seed}: ${out.status} at ${JSON.stringify(out.at)}`);
+    assert.equal(out.replans, 0, `${kind} ${seed}: needed a replan`);
+  }
+});

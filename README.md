@@ -122,7 +122,14 @@ With no orders (and after finishing any order) it works through a goal ladder.
 **Which mobs matter:**
 - **Melee mobs:** it only reacts to ones it has seen recently and that can walk to it (a short path search from the mob). A zombie in the cave under its feet, behind a wall, or across a ravine doesn't make it drop what it's doing.
 - **Water:** mobs in the water (drowned) are ignored unless they hit it.
-- **Nowhere to run:** fleeing goes to the safest place it can actually reach. If nowhere is safer, it fights whatever is close, or carries on if nothing is.
+- **Nowhere to run:** fleeing goes to the safest place it can actually reach, on its own side of the threats (never past them), and out of an archer's sight if one is shooting it. If nowhere is safer and it's in a 1-wide passage with the threat coming the one way in (a mine tunnel, a dead end), it walls the way in with two of its cheapest blocks. Failing that, it backs into the dead end nearby. Only then does it fight whatever is close, or carry on if nothing is.
+
+**Fighting** (`core/tactics.js`, the same code the combat arena runs):
+- **Getting to it:** it plans a path to the mob itself, over the real terrain. A skeleton at the top of the quarry means going back up the quarry steps to it. (It used to aim at a point on the straight line to the mob, which was inside the rock, so it stood at the bottom trading looks with the skeleton while the arrows hit the first step.) It weaves while walking in on an archer.
+- **Going nowhere:** if 6 s pass with no hit landed and not a block gained, it gives that mob up for a minute. The mob counts as out of reach, so the bot either gets on with its work or, if the mob is still shooting it, gets out of its sight.
+- **Shield:** the first iron ingot becomes a shield (before the pickaxe; if there's no wood for the planks, the pickaxe goes ahead and the ingot waits), and it's worn in the off hand. It crouches behind the shield walking in on an archer, and between its own swings when a zombie is about to hit. It drops the shield for the swing itself. Facing a creeper that's about to go off right next to it, it stands and takes the blast on the shield instead of racing it.
+- **Creepers:** with a stone sword or better, at 12+ health and nothing else near, it fights them the way players do: walk in, hit, and back straight off to one fixed spot well clear. It goes back in only once the fuse has died down. It does this only with room behind it; in a dead end it shields up, walls it off, or, with neither, keeps its distance and hits it back if it comes in reach. Otherwise it runs.
+- **Weapon:** the most damage per hit, since Bedrock has no attack cooldown. So a sword beats an axe of the same material (axes hit one less), and a spear is used only when there's nothing better. A weapon about to break is used last.
 - **Low on air:** under water with less than half its air left, it drops everything and swims for air. If it's sealed in, it digs up to reach air.
 
 **Picking up where it left off:** what it's in the middle of is kept in the world file and written immediately for the house: the current step, the furnace it loaded (and how long is left), where its gear dropped when it died, and the house site. After a restart, a `/reload` or a death it says "Picking up where I left off" and carries on. The house's progress is read from the blocks actually placed, so it continues the same house on the same spot (`!bot test resume` checks exactly this). The dashboard shows the house's progress and what it still needs.
@@ -134,6 +141,8 @@ With no orders (and after finishing any order) it works through a goal ladder.
 **Around or through:** when the walking route to somewhere within 32 blocks winds well past the straight line (a mangrove swamp, a hedge of leaves, a dirt bank), it also prices a route that breaks through. Break time uses its best tool, in the same units as walking. It takes the break-through route if that's at least 15% quicker, and says so. Mangrove roots are solid ground it can stand on and cut through (axe; muddy roots with a shovel), not something to walk into.
 
 **Steps and gaps:** step-ups are taken square-on. The bot lines its body up with the step block before jumping, so a 1-high step beside a 2-high wall doesn't turn into jumping into the seam between them. It counts a step as climbed only once it's standing on it, and takes it again if it bumps off. It jumps 1-block gaps (walking, from the edge, lined up) instead of climbing down and back out, but only over a gap it would survive falling into (ground or water within 3 blocks, no lava). If it isn't lined up by the edge, it backs up and tries again rather than walking off. Up a staircase (its quarry stairs, say) it's one jump per step. A step that really doesn't take after three jumps gets a step back while it keeps facing the stairs, the way a player presses S; it never turns round.
+
+**Tight corners and edges:** the smoothed path marks two kinds of waypoint as tight, and the bot walks onto those instead of cutting the corner past them. One is beside a drop it wouldn't survive or lava, such as the start of a 1-wide bridge over a ravine. The other is a corner where turning early would clip what the path goes round: a trunk, a bush, a leaf at head height. It also only aims past a step it's jumping up when the path carries straight on, so the jump's carry doesn't take it over the side. `tools/stress_path.mjs` walks thousands of these worlds with a real-width body; everything that has a way through arrives.
 
 **Stairs and slabs:** stairs the right way up and bottom slabs are their own kind of ground to the pathfinder. It walks up them without a jump (the game steps a body up half a block), so a staircase in a house or village is climbed like a player does it. They still need a block of headroom, just as a jump would, because the body rises while it's still under the step behind. From on top of a bottom slab it never plans a jump up a full block, since that's a 1.5-block climb. Upside-down stairs and top or double slabs are ordinary solid blocks.
 
@@ -212,9 +221,12 @@ Defaults are in `brain/config.example.json`. Copy it to `brain/config.json` to o
 
 ```powershell
 npm run fuzz; node tools/fuzz_steps.mjs  # random worlds; the second uses a real-width body with Minecraft jump physics
-npm test                         # pathfinder (incl. ladders), motor, threats, recipes, sourcing, costs, settle-in plan, house, focus, biomes (140 tests)
+npm test                         # pathfinder (incl. ladders), motor, threats, recipes, sourcing, costs, settle-in plan, house, focus, biomes, tactics (150 tests)
 npm run fuzz                     # 200 random worlds: plan + walk + replan
 npm run sim                      # the whole goal ladder played forward from nothing to done: no loops, no crafts it can't make, trips counted
+node tools/sim_combat.mjs        # combat arena: zombies, skeletons and creepers on flat ground, forest, the quarry, a mine tunnel (-v for a log, --old for the old fight code)
+node tools/sim_combat.mjs --fuzz 600   # random fights: terrain, mobs, gear, health
+node tools/stress_path.mjs 200   # walk dense forest on rough ground, jungle, ravines, cave mazes, hills and stairs, low tunnels, shafts, lake shores
 python -m unittest discover -s brain/tests -t .   # brain (21 tests)
 npm install; npm run typecheck # checks pack code against the real Script API typings
 ```

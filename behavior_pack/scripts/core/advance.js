@@ -6,8 +6,9 @@
 //   2. Iron, about 40: iron armor is 24 ingots, pickaxe/sword/axe/shovel 9, a bucket 3, a shield
 //      1. Exposed ore first (a cave wall, a mountainside), else a branch mine at Y 15-16 (the peak
 //      of the underground iron band) off the quarry by the house.
-//   3. Smelt it (coal from the same mine burns 8 items a piece), craft: the pickaxe first (it mines
-//      everything faster), sword, bucket, axe, shovel, shield, then armor, chest plate first.
+//   3. Smelt it (coal from the same mine burns 8 items a piece), craft: the shield first (one ingot,
+//      it takes arrows and blasts), the pickaxe (it mines everything faster), sword, bucket, axe,
+//      shovel, then armor, chest plate first.
 //   4. Wear the armor; bread from the wheat when food runs low; harvest and replant ripe wheat.
 import { count, has, isPlanks, isLog } from './recipes.js';
 import { planFuel } from './fuel.js';
@@ -18,8 +19,11 @@ export const IRON_IN = {
   iron_pickaxe: 3, iron_sword: 2, iron_axe: 3, iron_shovel: 1, bucket: 3, water_bucket: 3, shield: 1,
   iron_helmet: 5, iron_chestplate: 8, iron_leggings: 7, iron_boots: 4,
 };
-/** What to make, in order: the pickaxe first (faster mining for the rest), armor last. */
-export const IRON_ORDER = ['iron_pickaxe', 'iron_sword', 'bucket', 'iron_axe', 'iron_shovel', 'shield', 'iron_chestplate', 'iron_leggings', 'iron_helmet', 'iron_boots'];
+/**
+ * What to make, in order: the shield first (one ingot, and it stops arrows and most of a creeper's
+ * blast), the pickaxe (faster mining for the rest), armor last.
+ */
+export const IRON_ORDER = ['shield', 'iron_pickaxe', 'iron_sword', 'bucket', 'iron_axe', 'iron_shovel', 'iron_chestplate', 'iron_leggings', 'iron_helmet', 'iron_boots'];
 export const IRON_GOAL = IRON_ORDER.reduce((a, id) => a + IRON_IN[id], 0); // 37
 export const ARMOR = ['iron_helmet', 'iron_chestplate', 'iron_leggings', 'iron_boots'];
 const FARM_TILES = 24;
@@ -82,10 +86,13 @@ export function advanceStep(f) {
   }
 
   // 2-3. Iron, then the iron things, in order, as the ingots come in.
+  let spare = ingots;
   for (const id of IRON_ORDER) {
     if (made(inv, worn, id)) continue;
-    if (ingots >= IRON_IN[id]) {
-      if (id === 'shield' && count(inv, isPlanks) < 6 && count(inv, (x) => /(_log|_wood)$/.test(x)) < 2) break; // needs planks too
+    if (spare >= IRON_IN[id]) {
+      // Needs planks too: with no wood on us, make the next thing now and the shield once we have
+      // some (its ingot kept back).
+      if (id === 'shield' && count(inv, isPlanks) < 6 && count(inv, (x) => /(_log|_wood)$/.test(x)) < 2) { spare -= IRON_IN[id]; continue; }
       return craftStep(inv, [id], f.tableDist);
     }
     break; // the next thing needs more ingots: go get them

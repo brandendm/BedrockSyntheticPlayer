@@ -32,12 +32,21 @@ test('no water near: 3 iron, smelt, bucket, then the farm by the house', () => {
   assert.equal(farm.water, 'bucket');
 });
 
-test('after the farm: mine iron, pickaxe first as soon as there are 3 ingots', () => {
+test('after the farm: mine iron, the shield from the first ingot, then the pickaxe', () => {
   const f = { ...base, farm: { tiles: 24, ripe: 0 }, waterNearHouse: true };
   assert.equal(advanceStep({ ...f, inv: { ...kit, stone_hoe: 1 } }).step, 'get_iron');
-  assert.deepEqual(advanceStep({ ...f, inv: { ...kit, iron_ingot: 3 } }).items, ['iron_pickaxe']);
-  assert.deepEqual(advanceStep({ ...f, inv: { ...kit, iron_ingot: 3, iron_pickaxe: 1 } }).items, ['iron_sword']);
-  assert.equal(advanceStep({ ...f, inv: { ...kit, iron_ingot: 1, iron_pickaxe: 1 } }).step, 'get_iron');
+  assert.deepEqual(advanceStep({ ...f, inv: { ...kit, iron_ingot: 1 } }).items, ['shield']);
+  assert.equal(advanceStep({ ...f, inv: { ...kit, iron_ingot: 3, shield: 1 } }).step, 'equip');
+  assert.deepEqual(advanceStep({ ...f, worn: ['shield'], inv: { ...kit, iron_ingot: 3 } }).items, ['iron_pickaxe']);
+  assert.deepEqual(advanceStep({ ...f, worn: ['shield'], inv: { ...kit, iron_ingot: 3, iron_pickaxe: 1 } }).items, ['iron_sword']);
+  assert.equal(advanceStep({ ...f, worn: ['shield'], inv: { ...kit, iron_ingot: 1, iron_pickaxe: 1 } }).step, 'get_iron');
+});
+
+test('no wood for the shield: the pickaxe goes ahead, the shield keeps its ingot', () => {
+  const f = { ...base, farm: { tiles: 24, ripe: 0 }, waterNearHouse: true };
+  const bare = { ...kit, oak_planks: 0 };
+  assert.deepEqual(advanceStep({ ...f, inv: { ...bare, iron_ingot: 4 } }).items, ['iron_pickaxe']);
+  assert.equal(advanceStep({ ...f, inv: { ...bare, iron_ingot: 3 } }).step, 'get_iron');
 });
 
 test('armor gets worn; ripe wheat gets harvested; bread when hungry', () => {

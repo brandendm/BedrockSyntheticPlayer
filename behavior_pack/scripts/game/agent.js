@@ -5,7 +5,8 @@ import { system, world, EntityComponentTypes, Direction, EquipmentSlot, ItemStac
 import { MotorController, EYE_HEIGHT } from '../core/motor.js';
 import { searchJob, smoothPath, Cell } from '../core/pathfinder.js';
 import { dist3D, makeRng } from '../core/mathutil.js';
-import { decide, fleePoint, refugeScore, weaponDamage, MOBS, spacing, standOff, REACH_HIT, STOP_AT, HOLD_AT } from '../core/threat.js';
+import { decide, fleePoint, weaponDamage, MOBS, REACH_HIT, STOP_AT } from '../core/threat.js';
+import { fightMove, creeperFight, creeperMove, Stalemate, pickRefuge, bestWeapon, barricadeCells, SPEAR_DAMAGE } from '../core/tactics.js';
 import { nextStep, STONE_TARGETS, TOOL_STONE, count, isLog } from '../core/recipes.js';
 import { settleStep, foodCount, FOOD_GOAL, isNight } from '../core/settle.js';
 import { goalChain } from '../core/goals.js';
@@ -77,6 +78,12 @@ export class Agent {
     this.stuckOnce = new Map();  // first time we got stuck at a cell
     this.lastSeen = new Map();   // mob id -> tick we last saw it
     this.reachCache = new Map(); // mob id -> { ok, t, pending }: can it walk to us?
+    this.stale = new Stalemate(120); // a fight going nowhere (the skeleton up at the quarry's mouth)
+    this.giveUp = new Map();     // mob id -> tick until which we count it as out of reach
+    this.creeperSt = new Map();  // creeper id -> { phase, since, retreat }: the hit-and-back-off dance
+    this.roomCache = new Map();  // creeper id -> { ok, t, pending }: room to back off from it?
+    this.shield = false;         // a shield in the off hand
+    this.blocking = false;       // crouched behind it right now
     this.hunting = false;        // homestead.hunt is steering the head
     this.trail = [];             // recent positions, newest last: {x, y, z, under}
     const follow = this.motor.followPath.bind(this.motor);
@@ -393,10 +400,14 @@ export class Agent {
         pos: { x: e.location.x, y: e.location.y, z: e.location.z },
         dist: dist3D(pos, e.location),
         visible: canSee(this.dim, eye, head),
-        targetingMe, attackedMe, recent: false, dy: e.location.y - pos.y, canReach: true, inWater: !!e.isInWater,
+        targetingMe, attackedMe, recent: false, dy: e.location.y - pos.y, canReach: true, inWater: !!e.isInWater, hp: undefined,
       });
       const m = out[out.length - 1];
+      try { m.hp = e.getComponent('minecraft:health')?.currentValue; } catch {}
       m.canReach = this.canReachMe(e, pos, t);
+      // A fight that went nowhere: it counts as out of reach for a minute, so we get on with things
+      // (or into cover from it) instead of staring at it.
+      if ((this.giveUp.get(e.id) ?? 0) > t) m.canReach = false;
       if (m.visible) this.lastSeen.set(e.id, t);
       m.recent = m.visible || t - (this.lastSeen.get(e.id) ?? -Infinity) < 100; // seen in the last 5 s
     }
@@ -444,19 +455,38 @@ export class Agent {
 
   // ---------- survival ----------
 
-  /** Track our best weapon; it's only put in hand when a fight starts (tools stay in hand for work). */
+  /**
+   * Track our best weapon (sword, axe or spear: most damage a hit, one about to break last); it's
+   * only put in hand when a fight starts (tools stay in hand for work). And whether there's a shield
+   * in the off hand.
+   */
   equipBestWeapon() {
     try {
-      let best = null, bestDmg = 1;
-      for (const id of Object.keys(invCounts(this.sim))) {
-        const d = weaponDamage(id);
-        if (d > bestDmg) { bestDmg = d; best = id; }
+      const items = [];
+      const c = container(this.sim);
+      for (let i = 0; c && i < c.size; i++) {
+        const it = c.getItem(i);
+        if (!it) continue;
+        const id = it.typeId.replace('minecraft:', '');
+        if (!(id in SPEAR_DAMAGE) && weaponDamage(id) <= 1) continue;
+        let uses = Infinity;
+        try { const d = it.getComponent('minecraft:durability'); if (d) uses = d.maxDurability - d.damage; } catch {}
+        items.push({ id, uses });
       }
-      this.damage = bestDmg;
+      const best = bestWeapon(items);
+      this.damage = best ? SPEAR_DAMAGE[best] ?? weaponDamage(best) : 1;
       this.weaponId = best;
     } catch (e) {
       console.warn(`[agent] equip: ${e}`);
     }
+    this.shield = this.worn().includes('shield');
+  }
+
+  /** Shield up (crouch) or down. */
+  setBlocking(on) {
+    if (on === this.blocking) return;
+    this.blocking = on;
+    try { this.sim.isSneaking = on; } catch {}
   }
 
   survive(t) {
@@ -464,9 +494,9 @@ export class Agent {
     if (this.lastSeen.size > 200) for (const [id, at] of this.lastSeen) if (t - at > 200) this.lastSeen.delete(id);
     const mobs = this.scanMobs(this.mode === 'none' ? 16 : 24);
     const inWater = this.sim.isInWater;
-    const d = decide({ health: this.health(), damage: this.damage, isNight: this.isNight(), prevMode: this.mode, mobs, inWater });
+    const d = decide({ health: this.health(), damage: this.damage, isNight: this.isNight(), prevMode: this.mode, mobs, inWater, shield: this.shield });
     // Cornered with nowhere better to run: fight the nearest thing that can be fought.
-    if (d.mode === 'flee' && (this.corneredUntil ?? 0) > t && d.reason !== 'creeper') {
+    if (d.mode === 'flee' && (this.corneredUntil ?? 0) > t && d.reason !== 'creeper' && d.reason !== 'cover') {
       const fightable = (m) => !MOBS[m.type].never && m.type !== 'creeper' && m.dist <= 8 && (m.visible || m.attackedMe);
       const target = d.threats.find((m) => m.attackedMe && fightable(m)) ?? d.threats.find(fightable);
       if (target) { d.mode = 'fight'; d.target = target.id; d.reason = 'cornered'; }
@@ -504,6 +534,7 @@ export class Agent {
           }
         } else {
           this.newTask({ kind: d.mode });
+          if (d.mode === 'fight' && this.weaponId) hold(this.sim, this.weaponId); // turned round from running
         }
         this.emit('combat', { mode: d.mode, reason: d.reason, threats: d.threats.map((m) => ({ type: m.type, dist: +m.dist.toFixed(1) })) });
       }
@@ -521,6 +552,8 @@ export class Agent {
       this.flee(d.threats, t);
     } else if (this.task?.kind === 'fight' || this.task?.kind === 'flee') {
       this.endCombat();
+    } else if (this.blocking) {
+      this.setBlocking(false); // never left crouching once it's calm
     } else if (this.checkWater(t, inWater)) {
       // swimming to shore
     } else if (this.suspended && !this.task && t - this.calmSince > CALM_TICKS_TO_RESUME) {
@@ -535,6 +568,9 @@ export class Agent {
     if (this.fightTarget && !this.fightTarget.isValid && this.fightLast) this.lootAt = { ...this.fightLast, at: Date.now() };
     this.fightTarget = null;
     this.motor.setFocus(null);
+    this.setBlocking(false);
+    this.creeperSt.clear();
+    this.stale.reset();
     if (this.task?.kind === 'fight' || this.task?.kind === 'flee') {
       this.newTask(null);
       this.motor.stop();
@@ -1226,6 +1262,12 @@ export class Agent {
     else if (task.kind === 'follow') { this.newTask(task); this.followTick = 0; }
   }
 
+  /**
+   * One fight step (core/tactics.js decides; tools/sim_combat.mjs runs the same against simulated
+   * mobs). Walk to the mob over the real terrain (a skeleton up at the quarry's mouth: back up the
+   * steps to it, not at a point in the rock), swing when in reach, shield up between swings when
+   * something's about to hit us, and write the fight off if it goes nowhere.
+   */
   fight(target, t) {
     if (!target?.entity?.isValid) return;
     const e = target.entity;
@@ -1233,34 +1275,94 @@ export class Agent {
     this.fightLast = { x: e.location.x, y: e.location.y, z: e.location.z };
     const chest = { x: e.location.x, y: e.location.y + 1.0, z: e.location.z };
     this.motor.setFocus(chest);
-    const p = this.body.getPos();
-    const d = dist3D(p, e.location);
-    const melee = MOBS[target.type]?.kind === 'melee';
-    const move = spacing(d, melee);
-    this.fightMove = move;
-
-    if (move === 'approach' && t >= this.nextRoute) {
-      this.nextRoute = t + 6;
-      // Walk to the edge of our reach, not onto the mob. Sprint only while it's far.
-      let goal = d > HOLD_AT + 0.5 ? standOff(p, target.pos) : target.pos;
-      // Skeletons: don't run straight down the arrow line; weave a little.
-      if (!melee && d > 6) {
-        const side = Math.sin(t / 10) * 2.5;
-        const nx = -(goal.z - p.z) / d, nz = (goal.x - p.x) / d;
-        goal = { x: goal.x + nx * side, y: goal.y, z: goal.z + nz * side };
-      }
-      this.routeTo(goal, 0.5, d > 7, 1500);
-    } else if (move === 'back' && t >= this.nextRoute) {
-      this.nextRoute = t + 8; // head stays on the mob (focus): this is a backpedal, not a turn
-      this.routeTo(standOff(p, target.pos, HOLD_AT + 0.3), 0.4, false, 600);
-    } else if (move === 'hold' && this.motor.busy) {
-      this.motor.stop();
+    const me = this.body.getPos();
+    const mob = target.pos;
+    const d = dist3D(me, mob);
+    const canSwing = t >= this.nextSwing;
+    let mv;
+    if (target.type === 'creeper') {
+      const room = this.creeperRoom(target, me, t);
+      if (!this.creeperSt.has(e.id)) this.creeperSt.set(e.id, {});
+      const st = this.creeperSt.get(e.id);
+      // Stuck in a dead end with it and no shield: wall it off if the way in is one block wide.
+      if (room === false && !this.shield && this.wallOff([target])) mv = { goal: null, tolerance: 0, urgent: false, now: false, stop: true, swing: false, block: false };
+      else mv = creeperFight({ me, mob, t, st, shield: this.shield, canSwing, canRetreat: room !== false });
+      this.fightMove = st.phase === 'out' ? 'back' : 'approach';
+    } else {
+      mv = fightMove({ me, mob, melee: MOBS[target.type]?.kind === 'melee', t, shield: this.shield, canSwing });
+      this.fightMove = mv.stop ? 'hold' : mv.goal && d > STOP_AT ? 'approach' : 'back';
     }
-
-    if (d <= REACH_HIT && t >= this.nextSwing && this.facing(chest, 25)) {
+    this.setBlocking(!!mv.block);
+    if (mv.stop && this.motor.busy) this.motor.stop();
+    if (mv.goal && (t >= this.nextRoute || !this.motor.busy || mv.now)) {
+      this.nextRoute = t + 6;
+      this.routeTo(mv.goal, mv.tolerance, mv.urgent, 1500);
+    }
+    if (mv.swing && d <= REACH_HIT && canSwing && this.facing(chest, 25)) {
+      this.setBlocking(false);
       try { this.sim.attackEntity(e); } catch {}
       this.nextSwing = t + 10 + Math.floor(this.rng() * 4);
     }
+    // Going nowhere (no hit landed, not a block closer for 6 s): give it up for a minute. It counts
+    // as out of reach, so we either get on with things or, if it's shooting us, get out of its sight.
+    let hpLost = 0;
+    try { const h = e.getComponent('minecraft:health'); hpLost = h.effectiveMax - h.currentValue; } catch {}
+    if (this.stale.update(e.id, t, d, hpLost)) {
+      this.giveUp.set(e.id, t + 1200);
+      this.stale.reset();
+      if (this.giveUp.size > 32) for (const [id, until] of this.giveUp) if (until < t) this.giveUp.delete(id);
+      if (CONFIG.debug) console.warn(`[agent] fight with ${target.type} going nowhere at ${d.toFixed(1)}: giving it up`);
+      this.say(`Can't get at that ${target.type}. Leaving it.`);
+    }
+  }
+
+  /**
+   * Room to back off from a creeper (the hit-and-back-off dance needs a spot 4+ blocks further from
+   * it than we are, on our side of it). Planned in the background, refreshed every second.
+   * Returns true / false / undefined (not known yet).
+   */
+  creeperRoom(target, me, t) {
+    const c = this.roomCache.get(target.id);
+    if (c && (c.pending || t - c.t < 20)) return c.ok;
+    const entry = { ok: c?.ok, t, pending: true };
+    this.roomCache.set(target.id, entry);
+    if (this.roomCache.size > 16) for (const [id, v] of this.roomCache) if (t - v.t > 400) this.roomCache.delete(id);
+    const m = target.pos, need = Math.max(6.5, dist3D(me, m) + 4);
+    const goalTest = (x, y, z, w) => w.standable(x, y, z) && Math.hypot(x + 0.5 - m.x, z + 0.5 - m.z) >= need
+      && Math.hypot(x + 0.5 - me.x, z + 0.5 - me.z) < Math.hypot(x + 0.5 - m.x, z + 0.5 - m.z) - 2;
+    this.plan(me, me, 0, 400, goalTest).then((res) => { entry.ok = res.complete; entry.t = system.currentTick; entry.pending = false; })
+      .catch(() => { entry.pending = false; });
+    return entry.ok;
+  }
+
+  /**
+   * Cornered in a 1-wide passage with the threat coming the one way in: two blocks across it (feet
+   * and head height) keep zombies out, arrows off and most of a creeper's blast away. Cheapest
+   * blocks we carry. Returns true if a wall is going up.
+   */
+  wallOff(threats) {
+    if (this.walling) return true;
+    const near = threats.filter((m) => m.dist <= 12).sort((a, b) => a.dist - b.dist)[0];
+    if (!near) return false;
+    const me = this.body.getPos();
+    const w = this.classifier();
+    const at = (x, y, z) => { const c = w(x, y, z); return c === Cell.AIR ? 'open' : c === Cell.SOLID || c === Cell.STEP || c === Cell.SLAB ? 'solid' : 'other'; };
+    const cells = barricadeCells(me, near.pos, at);
+    if (!cells) return false;
+    const block = this.homestead.materialFor('stone');
+    if (!block || (invCounts(this.sim)[block] ?? 0) < cells.length) return false;
+    // Not on top of a mob standing in the gap.
+    if (threats.some((m) => cells.some((c) => Math.floor(m.pos.x) === c.x && Math.floor(m.pos.z) === c.z && Math.abs(Math.floor(m.pos.y) - c.y) <= 1))) return false;
+    this.walling = true;
+    this.motor.stop();
+    this.setBlocking(false);
+    const gen = this.taskGen;
+    (async () => {
+      let n = 0;
+      for (const c of cells) if (await this.homestead.placeAt(gen, c, block)) n++;
+      if (n) { this.say('Walled myself in.'); if (CONFIG.debug) console.warn(`[agent] walled off the way in (${n}/${cells.length} blocks)`); }
+    })().catch(() => {}).finally(() => { this.walling = false; });
+    return true;
   }
 
   /** Every tick while fighting: stop walking in the moment we're at striking distance. */
@@ -1271,36 +1373,46 @@ export class Agent {
   }
 
   /**
-   * Run to the reachable spot farthest from the threats (searched over where we can actually walk,
-   * not a point on a map that might be through a cave wall). If nowhere is much safer than here,
-   * we're cornered: stand and fight instead of freezing in a dead end.
+   * Run (core/tactics.js pickRefuge): to a spot we can actually walk to, far from the threats, on
+   * our side of them, and out of a shooter's sight if one is hitting us. Nowhere better: wall off
+   * the way in, or get into the dead end nearby; failing both, we're cornered: stand and fight.
+   * A creeper about to go off next to us with a shield on: face it, shield up, rather than race it.
    */
   flee(threats, t) {
+    const me = this.body.getPos();
+    const creeper = threats.find((m) => m.type === 'creeper');
+    if (creeper && creeperMove({ me, creeper: creeper.pos, shield: this.shield }) === 'block') {
+      this.setBlocking(true);
+      if (this.motor.busy) this.motor.stop();
+      this.motor.setFocus({ x: creeper.pos.x, y: creeper.pos.y + 1, z: creeper.pos.z });
+      return;
+    }
+    this.setBlocking(false);
     this.motor.setFocus(null);
-    if ((t < this.nextRoute && this.motor.busy) || this.findingRefuge) return;
+    if ((t < this.nextRoute && this.motor.busy) || this.findingRefuge || this.walling) return;
     this.nextRoute = t + 20;
     this.findingRefuge = true;
     const gen = this.taskGen;
-    const me = this.body.getPos();
-    const here = refugeScore(me, threats, 0);
-    let best = null, bestScore = here;
+    const f = { x: Math.floor(me.x), z: Math.floor(me.z) };
+    const cands = [];
     const probe = (x, y, z, w) => {
-      if (!w.standable(x, y, z)) return false;
-      const sc = refugeScore({ x: x + 0.5, y, z: z + 0.5 }, threats, Math.hypot(x - me.x, z - me.z));
-      if (sc > bestScore) { bestScore = sc; best = { x, y, z }; }
+      if (w.standable(x, y, z)) cands.push({ x: x + 0.5, y, z: z + 0.5, cost: Math.hypot(x - f.x, z - f.z) });
       return false;
     };
-    this.plan(me, me, 0, 2500, probe).then((res) => {
+    this.plan(me, me, 0, 2500, probe).then(() => {
       this.findingRefuge = false;
       if (gen !== this.taskGen || this.mode !== 'flee') return;
-      if (!best || bestScore < here + 3) {
-        this.corneredUntil = system.currentTick + 200; // 10 s: fight back
-        if (CONFIG.debug && !(this.corneredSaid > system.currentTick - 200)) console.warn(`[agent] cornered (safest reachable spot ${(bestScore - here).toFixed(1)} better than here)`);
-        this.corneredSaid = system.currentTick;
-        return;
-      }
-      this.routeTo({ x: best.x + 0.5, y: best.y, z: best.z + 0.5 }, 1, true, 3000);
-      void res;
+      // Out of sight: the ray from the shooter's eye to our chest there.
+      const sees = (p, m) => { try { return canSee(this.dim, m.head, { x: p.x, y: p.y + 1.2, z: p.z }); } catch { return true; } };
+      const now = this.body.getPos();
+      const spot = pickRefuge(now, threats, cands, sees);
+      if (spot) { this.routeTo(spot, 1, true, 3000); return; }
+      if (this.wallOff(threats)) return;
+      const deeper = pickRefuge(now, threats, cands, sees, 0.5);
+      if (deeper) { this.routeTo(deeper, 0.5, true, 1500); this.nextRoute = system.currentTick + 8; return; }
+      this.corneredUntil = system.currentTick + 200; // 10 s: fight back
+      if (CONFIG.debug && !(this.corneredSaid > system.currentTick - 200)) console.warn('[agent] cornered: nowhere better to run');
+      this.corneredSaid = system.currentTick;
     }).catch(() => { this.findingRefuge = false; });
   }
 

@@ -414,8 +414,12 @@ export class MotorController {
     }
     const lead = clamp(-along, 0.6, 1.2);
     const heading = Math.abs(angleDiff(this.lastOutput.moveYaw ?? this.yaw, yawTo(pos, at(0.5))));
+    // Aim past the step's centre only if the path carries straight on: where it turns (onto a
+    // 1-wide bridge, along a cliff edge) the jump's carry would take us over the side.
+    const after = wps[it.idx + 1];
+    const straightOn = !next.tight && (!after || (after.x - next.x) * dx + (after.z - next.z) * dz > 0.95 * Math.hypot(after.x - next.x, after.z - next.z));
     return {
-      steer: at(Math.min(along + lead, 0.5)),
+      steer: at(Math.min(along + lead, straightOn ? 0.5 : 0)),
       aligned: Math.abs(lateral) < 0.18 && (heading < 35 || along > -0.95),
     };
   }
@@ -431,14 +435,15 @@ export class MotorController {
     if (w.stair) return pos.y >= w.y - 0.6 && this.body.isOnGround() && dist2D(pos, w) < 1.0;
     if (prev && w.y > prev.y + 0.5 && dist2D(prev, w) > 0.5) return pos.y >= w.y - 0.2 && this.body.isOnGround() && dist2D(pos, w) < 1.0;
     if (Math.abs(pos.y - w.y) > 0.9) return false;
-    if (dist2D(pos, w) < this.o.waypointRadius) return true;
+    // A tight one (beside a drop, a corner round a trunk): get onto it before turning for the next.
+    if (dist2D(pos, w) < (w.tight ? 0.3 : this.o.waypointRadius)) return true;
     // Passed it: projection onto segment (prev -> w) is beyond the end.
     const p = wps[i - 1] || w;
     const sx = w.x - p.x, sz = w.z - p.z;
     const len2 = sx * sx + sz * sz;
     if (len2 < 1e-6) return false;
     const t = ((pos.x - p.x) * sx + (pos.z - p.z) * sz) / len2;
-    return t >= 1 && dist2D(pos, w) < 1.2;
+    return t >= 1 && dist2D(pos, w) < (w.tight ? 0.5 : 1.2);
   }
 
   /** Point `dist` blocks ahead along the path. Stops at the next height change so jumps are lined up. */
@@ -454,9 +459,19 @@ export class MotorController {
         return { x: cur.x + (w.x - cur.x) * t, y: w.y, z: cur.z + (w.z - cur.z) * t };
       }
       rem -= d;
+      const before = cur;
       cur = w;
       const nxt = wps[k + 1];
       if (nxt && nxt.y !== w.y && Math.abs(pos.y - w.y) > 0.5) break;
+      // A waypoint off our level (a drop down) or a hairpin (round a tree, a leaf at head height):
+      // steer at it, not across the corner. Cutting it aimed the body straight into what the path
+      // went round, and it walked into that forever.
+      if (nxt && (Math.abs(pos.y - w.y) > 0.5 || w.tight)) break;
+      if (nxt) {
+        const ax = w.x - before.x, az = w.z - before.z, bx = nxt.x - w.x, bz = nxt.z - w.z;
+        const la = Math.hypot(ax, az), lb = Math.hypot(bx, bz);
+        if (la > 1e-6 && lb > 1e-6 && (ax * bx + az * bz) / (la * lb) < 0.2) break; // turns > ~80 deg
+      }
     }
     return cur;
   }
