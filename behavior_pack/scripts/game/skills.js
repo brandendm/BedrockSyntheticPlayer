@@ -3,6 +3,7 @@
 // as the agent switches task (a fight, a command) so nothing keeps running in the background.
 import { system, world, Direction, BlockTypes, BlockVolume, ItemTypes } from '@minecraft/server';
 import { isNight } from '../core/settle.js';
+import { wetCones, towardWet, ExploreStall } from '../core/explore.js';
 import { EYE_HEIGHT } from '../core/motor.js';
 import { smoothPath, Cell, isWalkMove, isGround } from '../core/pathfinder.js';
 import { dist3D } from '../core/mathutil.js';
@@ -70,6 +71,8 @@ export class Skills {
     this.unreachableItems = new Map();
     /** @type {Record<string, {n: number, at: number, since?: number}>} explore trips per want that found nothing */
     this.exploreMiss = {};
+    this.exploreGaveUp = {};      // want -> until when (ms) we've stopped looking for it (explore got nowhere)
+    this.exploreStall = null;
     this.memVisits = new Map();       // remembered spot -> { at, n }: trips there that came to nothing
     // Chunks we've walked through (exploring prefers new ones), kept in the world's memory.
     this.visited = new Set(agent.memory?.data.visited ?? []);
@@ -3431,7 +3434,44 @@ export class Skills {
 
   // ---------- exploring ----------
 
+  /**
+   * Go looking for `what`. Watched for getting nowhere (core/explore.js): three goes that end where
+   * they began and it treks 48 blocks a new way; six and it stops looking for that for 10 minutes
+   * (exploreGaveUp), rather than stand in one spot saying it's looking further out, for ever.
+   */
   async explore(gen, what, want = wantOf(what)) {
+    const st = this.exploreStall ?? (this.exploreStall = new ExploreStall());
+    st.start(this.sim.location, want ?? what);
+    try {
+      const v = st.verdict();
+      if (v === 'giveup') {
+        this.exploreGaveUp[want ?? what] = Date.now() + 600000;
+        this.a.say(`I'm not getting anywhere looking for ${what}: leaving that for now.`);
+        this.log(`explore: ${what}: six goes that got nowhere, giving up on it for 10 minutes`);
+        st.n = 0;
+        return;
+      }
+      if (v === 'trek') {
+        const p = this.sim.location;
+        const ang = st.trekAngle(Math.random, wetCones(this.a.wetSpots, p, system.currentTick));
+        this.log(`explore: ${what}: getting nowhere here, a long leg ${Math.round(ang * 180 / Math.PI)} deg`);
+        this.a.sayOnce(`explore-trek:${what}`, `Nothing new round here: trying further off for ${what}.`, 60000);
+        this.spotted = null;
+        this.spotWant = want;
+        try { await this.travelToward(gen, { x: p.x + Math.cos(ang) * 48, y: p.y, z: p.z + Math.sin(ang) * 48 }, 3); } finally { this.spotWant = null; }
+        this.spotted = null;
+        return;
+      }
+      await this.exploreOnce(gen, what, want);
+    } finally {
+      st.end(this.sim.location);
+    }
+  }
+
+  /** Given up looking for this (explore got nowhere): until when, or 0. */
+  gaveUpLooking(want) { return (this.exploreGaveUp[want] ?? 0) > Date.now(); }
+
+  async exploreOnce(gen, what, want = wantOf(what)) {
     if (await this.needsEscape(gen)) { await this.toSurface(gen); return; }
     const label = this.a.task?.kind === 'auto' && this.a.autoLabel?.startsWith('looking') ? this.a.autoLabel : `looking for ${what}`;
     this.a.sayOnce(`explore:${what}`, `${label[0].toUpperCase()}${label.slice(1)}.`, 30000);
@@ -3441,8 +3481,10 @@ export class Skills {
     // area around us (never tunnelling) for the best spot 20+ blocks away, scored by how new the
     // ground is, how good its biome is for what we're after, keeping roughly the direction we were
     // going, and staying out of water.
-    const wetAngles = (this.a.wetSpots ?? []).map((w) => Math.atan2(w.z - p.z, w.x - p.x));
-    const towardWater = (ang) => wetAngles.some((w) => Math.abs(Math.atan2(Math.sin(ang - w), Math.cos(ang - w))) < Math.PI / 3);
+    // Water we had to swim out of: close by and lately only (kept for ever, from anywhere, a few
+    // swims ruled out every way and it stood still).
+    const cones = wetCones(this.a.wetSpots, p, system.currentTick);
+    const towardWater = (ang) => towardWet(ang, cones);
     // Explored for this twice lately and found nothing (open plains, no trees for miles): ask the
     // world seed where the nearest good biome is and head that way, instead of wandering.
     const now = system.currentTick;
@@ -3469,9 +3511,12 @@ export class Skills {
           await this.packUp(gen);
           this.spotted = null;
           this.spotWant = want;
+          const from0 = { ...this.sim.location };
           try { await this.travelToward(gen, { x: b.pos.x, y: b.pos.y, z: b.pos.z }, 4); } finally { this.spotWant = null; }
           if (this.spotted) { this.exploreMiss[want] = { n: 0, at: 0, since: 0 }; this.spotted = null; }
-          return;
+          // Got somewhere: done for this go. Didn't (no way that way): look round here instead.
+          if (Math.hypot(this.sim.location.x - from0.x, this.sim.location.z - from0.z) >= 8) return;
+          heading = null;
         }
       }
     }
@@ -3480,8 +3525,8 @@ export class Skills {
     const ours = new Set();       // chunks our walkable land reaches
     let land = 0;
     /** @type {{x:number,y:number,z:number,ang:number}|null} */
-    let best = null;
-    let bestScore = -Infinity;
+    let best = null, bestWet = null;
+    let bestScore = -Infinity, bestWetScore = -Infinity;
     const probe = (x, y, z, w) => {
       if (!w.standable(x, y, z)) return false;
       land++;
@@ -3491,7 +3536,7 @@ export class Skills {
       if (d < 20) return false;
       if (this.isUndergroundCached(x, y, z, cache)) return false;
       const ang = Math.atan2(dz, dx);
-      if (towardWater(ang)) return false;
+      const wet = towardWater(ang);
       let bs = biomeScore.get(ck);
       if (bs === undefined) {
         const b = want && look ? look.biomeAt(x, z, y) : null;
@@ -3503,12 +3548,14 @@ export class Skills {
       const home = this.a.homestead?.house ?? this.a.homestead?.project;
       const leash = home ? Math.max(0, Math.hypot(x - home.x, z - home.z) - 80) / 10 : 0; // stay within ~80 of home
       const sc = fresh + bs + keepGoing + Math.min(d, 40) / 40 + Math.random() * 0.3 - leash;
+      // Toward water: only if there's nowhere else (never "nowhere to go" because of it).
+      if (wet) { if (sc > bestWetScore) { bestWetScore = sc; bestWet = { x, y, z, ang }; } return false; }
       if (sc > bestScore) { bestScore = sc; best = { x, y, z, ang }; }
       return false;
     };
     await this.a.plan(this.sim.location, this.sim.location, 0, 6000, probe);
     this.check(gen);
-    best = /** @type {{x:number,y:number,z:number,ang:number}|null} */ (best);
+    best = /** @type {{x:number,y:number,z:number,ang:number}|null} */ (best ?? bestWet);
 
     // A small island (little land, water all round): what we're after isn't here, so cross.
     // Trees: none seen on our patch and none remembered on it.

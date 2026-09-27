@@ -661,7 +661,7 @@ export class Agent {
     this.waterIdle = 0;
     // Remember where we got wet so exploring stops heading this way.
     const p = this.body.getPos();
-    this.wetSpots = [...(this.wetSpots ?? []).slice(-4), { x: p.x, z: p.z }];
+    this.wetSpots = [...(this.wetSpots ?? []).slice(-4), { x: p.x, z: p.z, t }];
     this.skills.exploreAngle = undefined;
     this.suspended = this.task ?? this.suspended;
     const gen = this.newTask({ kind: 'swim_out' });
@@ -846,6 +846,13 @@ export class Agent {
             // Look where what the set-aside step needs is likely to be (biome-aware). Never for
             // stone: that's a quarry or a staircase down (core/focus.js).
             const what = { log: 'trees', sheep: 'sheep', food: 'animals' }[step.want] ?? 'supplies';
+            // Given up looking for it (explore got nowhere, core/explore.js): not again for now. For
+            // sheep that's the bed waiting; anything else, a pause rather than the same spin.
+            if (S.gaveUpLooking(step.want ?? what)) {
+              if (step.want === 'sheep') this.bedDeferredUntil = Math.max(this.bedDeferredUntil ?? 0, Date.now() + 600000);
+              else await S.wait(gen, 200);
+              break;
+            }
             const from = { ...this.sim.location };
             await S.explore(gen, what, step.want ?? null);
             // Somewhere new: steps that failed because of the spot (no room for the furnace or the

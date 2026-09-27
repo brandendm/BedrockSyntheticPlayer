@@ -125,8 +125,9 @@ export function chooseStep(main, f) {
     // (or the first thing still needed that exploring can find: never stone, we dig for that).
     // Only for something still needed (a set-aside furnace job with logs already in hand doesn't
     // want trees: that sent it 'looking for trees' in a loop, stopping at every one it saw).
-    const needOf = { log: need.logs, sheep: need.wool, food: need.food, stone: 0 };
-    const want = mainKind && needOf[mainKind] > 0 ? mainKind : need.logs > 0 ? 'log' : need.wool > 0 && f.canHunt !== false ? 'sheep' : need.food > 0 && f.canHunt !== false ? 'food' : null;
+    // (Not sheep while the bed's on hold: that's what looking for them and getting nowhere does.)
+    const needOf = { log: need.logs, sheep: f.bedDeferred ? 0 : need.wool, food: need.food, stone: 0 };
+    const want = mainKind && needOf[mainKind] > 0 ? mainKind : need.logs > 0 ? 'log' : needOf.sheep > 0 && f.canHunt !== false ? 'sheep' : need.food > 0 && f.canHunt !== false ? 'food' : null;
     return { step: 'explore', want, setAside: main.step };
   }
   return main;

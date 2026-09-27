@@ -91,3 +91,13 @@ test('a set-aside furnace job with the logs already in hand does not send it loo
   assert.equal(s.step, 'explore');
   assert.notEqual(s.want, 'log');
 });
+
+test('bed on hold (looking for sheep got nowhere): not sent looking for sheep again', () => {
+  const main = { step: 'hunt', what: 'sheep', need: 3 };
+  const deferred = new Set([stepKey(main)]);
+  const need = { stone: 0, logs: 0, wool: 3, food: 0 };
+  const looking = chooseStep(main, { inv: { ...kit }, need, seen: {}, deferred, canMineStone: true, canHunt: true });
+  assert.deepEqual([looking.step, looking.want], ['explore', 'sheep'], 'first time: go looking');
+  const onHold = chooseStep(main, { inv: { ...kit }, need, seen: {}, deferred, canMineStone: true, canHunt: true, bedDeferred: true });
+  assert.notEqual(onHold.want, 'sheep');
+});
