@@ -1443,7 +1443,9 @@ export class Agent {
     if (this.roomCache.size > 16) for (const [id, v] of this.roomCache) if (t - v.t > 400) this.roomCache.delete(id);
     const m = target.pos, need = Math.max(6.5, dist3D(me, m) + 4);
     const goalTest = (x, y, z, w) => w.standable(x, y, z) && Math.hypot(x + 0.5 - m.x, z + 0.5 - m.z) >= need
-      && Math.hypot(x + 0.5 - me.x, z + 0.5 - me.z) < Math.hypot(x + 0.5 - m.x, z + 0.5 - m.z) - 2;
+      // On our side of it: nearer us than it. ("2 nearer", as it was, can't be met by any spot at all
+      // with the creeper 2 away: "no room" just when it mattered, and it stood there for the blast.)
+      && Math.hypot(x + 0.5 - me.x, z + 0.5 - me.z) < Math.hypot(x + 0.5 - m.x, z + 0.5 - m.z);
     this.plan(me, me, 0, 400, goalTest).then((res) => { entry.ok = res.complete; entry.t = system.currentTick; entry.pending = false; })
       .catch(() => { entry.pending = false; });
     return entry.ok;

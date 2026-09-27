@@ -62,7 +62,10 @@ const SPEAR = process.env.SPEAR === '1';
 function arena({ classify: base, bot, mobs, weapon = 'stone_sword', shield = false, ticks = 1200, night = true, health = 20, blocks = 16 }) {
   // Blocks the bot puts down (a barricade) are solid to everyone from then on.
   const placed = new Set();
-  const classify = (x, y, z) => (placed.has(`${x},${y},${z}`) ? Cell.SOLID : base(x, y, z));
+  // Blocks the bot puts down, and blocks a blast took out.
+  const blown = new Set();
+  const classify = (x, y, z) => { const k = `${x},${y},${z}`; return placed.has(k) ? Cell.SOLID : blown.has(k) ? Cell.AIR : base(x, y, z); };
+  let crater = 0;
   let walls = 0;
   const rng = makeRng(7);
   const body = new SimBody({ classify }, { ...bot }, bot.yaw ?? 0, { hw: 0.3 });
@@ -141,7 +144,7 @@ function arena({ classify: base, bot, mobs, weapon = 'stone_sword', shield = fal
     if (m.type === 'creeper' && (m.roomAt ?? -1e9) + 20 <= t) {
       m.roomAt = t;
       const need = Math.max(6.5, dist3D(me, m) + 4); // 4 blocks further from it than we are now
-      m.room = findPath(classify, me, me, { maxNodes: 400, goalTest: (x, y, z, w) => w.standable(x, y, z) && Math.hypot(x + 0.5 - m.x, z + 0.5 - m.z) >= need && Math.hypot(x + 0.5 - me.x, z + 0.5 - me.z) < Math.hypot(x + 0.5 - m.x, z + 0.5 - m.z) - 2 }).complete;
+      m.room = findPath(classify, me, me, { maxNodes: 400, goalTest: (x, y, z, w) => w.standable(x, y, z) && Math.hypot(x + 0.5 - m.x, z + 0.5 - m.z) >= need && Math.hypot(x + 0.5 - me.x, z + 0.5 - me.z) < Math.hypot(x + 0.5 - m.x, z + 0.5 - m.z) }).complete; // (nearer us than it: "2 nearer" was impossible with it 2 away)
     }
     const walledNow = m.type === 'creeper' && m.room === false && !shield && tryWall(seen);
     const mv = walledNow ? { goal: null, stop: true, swing: false, block: false }
@@ -149,7 +152,7 @@ function arena({ classify: base, bot, mobs, weapon = 'stone_sword', shield = fal
       : fightMove({ me, mob: m, melee: MOBS[m.type].kind === 'melee', t, shield, canSwing: t >= nextSwing });
     if (OLD && mv.goal) { const d0 = dist3D(me, m); mv.goal = d0 > 3.3 ? standOffOld(me, m) : { x: m.x, y: m.y, z: m.z }; mv.tolerance = 0.5; }
     blocking = mv.block;
-    if (VERBOSE && process.env.TRACE) log.push(`${t}: me ${me.x.toFixed(1)},${me.y.toFixed(1)} mob ${m.x.toFixed(1)} d ${dist3D(me, m).toFixed(1)} goal ${mv.goal ? `${mv.goal.x.toFixed(1)},${mv.goal.z.toFixed(1)}` : '-'} busy ${motor.busy} st ${m.st?.phase}`);
+    if (VERBOSE && process.env.TRACE) log.push(`${t}: me ${me.x.toFixed(1)},${me.y.toFixed(1)} mob ${m.x.toFixed(1)} d ${dist3D(me, m).toFixed(1)} goal ${mv.goal ? `${mv.goal.x.toFixed(1)},${mv.goal.z.toFixed(1)}` : "-"} away ${mv.away ?? 0} now ${!!mv.now} stop ${!!mv.stop} swing ${!!mv.swing} room ${m.room} lit ${m.fuse >= 0} busy ${motor.busy}`);
     if (mv.stop) stopWalking();
     if (mv.away && (mv.now || !motor.busy)) {
       // Backing off a creeper: the nearest spot that far from it, found and walked on the spot.
@@ -315,6 +318,13 @@ function arena({ classify: base, bot, mobs, weapon = 'stone_sword', shield = fal
           if (VERBOSE) log.push(`${t}: creeper goes off at ${d.toFixed(1)} blocks`);
           hurt(dmg, m, 'creeper');
           explosions++;
+          // The crater (stone resists: a small one, ragged).
+          const r = 1.4 + rng() * 1.0;
+          for (let dx = -3; dx <= 3; dx++) for (let dy = -3; dy <= 3; dy++) for (let dz = -3; dz <= 3; dz++) {
+            if (Math.hypot(dx, dy, dz) > r * (0.75 + rng() * 0.35)) continue;
+            const bx = Math.floor(m.x) + dx, by = Math.floor(m.y) + dy, bz = Math.floor(m.z) + dz;
+            if (classify(bx, by, bz) === Cell.SOLID) { blown.add(`${bx},${by},${bz}`); crater++; }
+          }
           m.hp = 0;
         }
         continue;
@@ -323,7 +333,7 @@ function arena({ classify: base, bot, mobs, weapon = 'stone_sword', shield = fal
     }
     if (!mobs.some((m) => m.hp > 0)) break;
   }
-  return { misses, explosions, walls, foughtAtDeath, hp: Math.max(0, hp), kills, total: mobs.length, ticks: t, worstIdle, hitsTaken, blocked, gaveUp, log };
+  return { crater, misses, explosions, walls, foughtAtDeath, hp: Math.max(0, hp), kills, total: mobs.length, ticks: t, worstIdle, hitsTaken, blocked, gaveUp, log };
 }
 
 const standOffOld = (me, mob, r = 2.8) => { const dx = me.x - mob.x, dz = me.z - mob.z, l = Math.hypot(dx, dz) || 1; return { x: mob.x + dx / l * r, y: mob.y, z: mob.z + dz / l * r }; };
@@ -352,11 +362,27 @@ function quarry() {
   };
 }
 /** A 1-wide, 2-high tunnel along +x from x = 0 to 20 at y 40, closed at x = 0 (a dead end behind us). */
+/**
+ * The bot's own mine: 12 steps of 1-wide stairs down from the surface (Y 64) to Y 52, the tunnel on
+ * along +x from the bottom (2 high, to x 30), and a side branch off it at x 22 (along +z, to z 8).
+ */
+function mine() {
+  return (x, y, z) => {
+    if (y >= 64 && x <= 0) return Cell.AIR; // the surface
+    if (x <= 0) return Cell.SOLID;
+    if (z === 0 && x >= 1 && x <= 12) { const f = 64 - x; return y >= f && y < f + 3 ? Cell.AIR : y >= 64 ? Cell.AIR : Cell.SOLID; }
+    if (z === 0 && x > 12 && x <= 30) return y === 52 || y === 53 ? Cell.AIR : y >= 64 ? Cell.AIR : Cell.SOLID;
+    if (x === 22 && z > 0 && z <= 8) return y === 52 || y === 53 ? Cell.AIR : y >= 64 ? Cell.AIR : Cell.SOLID;
+    return y >= 64 ? Cell.AIR : Cell.SOLID;
+  };
+}
+
 function tunnel() {
   return (x, y, z) => (z === 0 && x >= 1 && x <= 20 && (y === 40 || y === 41) ? Cell.AIR : Cell.SOLID);
 }
 
 const SCENARIOS = {
+  'creeper drops in two steps up the quarry stairs, already inside its fuse range': () => ({ classify: mine(), weapon: ['stone_sword', 'stone_spear'], bot: { x: 12.5, y: 52, z: 0.5 }, mobs: [{ type: 'creeper', x: 10.5, y: 54, z: 0.5 }], minHp: 15 }),
   'creeper coming down the quarry steps, spear': () => ({ classify: quarry(), weapon: ['stone_sword', 'stone_spear'], bot: { x: 10.5, y: 54, z: 0.5 }, mobs: [{ type: 'creeper', aware: false, x: -1.5, y: 64, z: 0.5 }], minHp: 20 }),
   'creeper coming down the quarry steps, stone sword': () => ({ classify: quarry(), bot: { x: 10.5, y: 54, z: 0.5 }, mobs: [{ type: 'creeper', aware: false, x: -1.5, y: 64, z: 0.5 }], minHp: 20 }),
   'down a mine tunnel: skeleton then a zombie, iron sword + shield, hurt': () => ({ classify: tunnel(), bot: { x: 2.5, y: 40, z: 0.5 }, weapon: 'iron_sword', shield: true, health: 14, mobs: [{ type: 'skeleton', x: 8.5, y: 40, z: 0.5 }, { type: 'zombie', x: 11.5, y: 40, z: 0.5 }], minHp: 6 }),
@@ -459,6 +485,43 @@ if (CREEPERS) {
   console.log(`${stats.runs - stats.exploded}/${stats.runs} without an explosion (${(100 * (1 - stats.exploded / stats.runs)).toFixed(1)}%), ${stats.died} died`);
   for (const [k, [n, e]] of Object.entries(byKind)) console.log(`  ${k.padEnd(16)} ${n - e}/${n}`);
   for (const b of bad.slice(0, VERBOSE ? 60 : 12)) console.log(`  - ${b}`);
+  process.exit(0);
+}
+
+// --ambush N: creepers catching the bot in its own quarry and mine. Kinds:
+//   stairs    the bot working in the tunnel, a creeper coming down the stairs behind it
+//   dropped   a creeper suddenly on the stairs a few steps above the bot (fell in)
+//   dark      one appears in the tunnel between the bot and the way out, the bot at the dead end
+//   side      one comes out of the side branch close by
+//   climbing  the bot half way up the stairs, one coming down at it
+// The bot's kit: a stone sword and the stone spear it makes (SPEAR=0: sword only), shield sometimes.
+const AMBUSH = process.argv.includes('--ambush') ? Number(process.argv[process.argv.indexOf('--ambush') + 1] || 200) : 0;
+if (AMBUSH) {
+  const rng = makeRng(777);
+  const pick = (a) => a[Math.floor(rng() * a.length)];
+  const kinds = { stairs: [0, 0, 0], dropped: [0, 0, 0], dark: [0, 0, 0], side: [0, 0, 0], climbing: [0, 0, 0] }; // runs, exploded, died
+  let crater = 0;
+  const bad = [];
+  const stepAt = (x) => ({ x: x + 0.5, y: 64 - x, z: 0.5 });
+  for (let i = 0; i < AMBUSH; i++) {
+    const kind = pick(Object.keys(kinds));
+    let bot, cr;
+    if (kind === 'stairs') { bot = { x: 14 + Math.floor(rng() * 12) + 0.5, y: 52, z: 0.5 }; cr = stepAt(1 + Math.floor(rng() * 5)); }
+    else if (kind === 'dropped') { bot = { x: 12.5 + Math.floor(rng() * 3), y: 52, z: 0.5 }; const k = 8 + Math.floor(rng() * 3); cr = stepAt(k); }
+    else if (kind === 'dark') { bot = { x: 29.5, y: 52, z: 0.5 }; cr = { x: 29.5 - (3.5 + rng() * 4), y: 52, z: 0.5 }; cr.x = Math.floor(cr.x) + 0.5; }
+    else if (kind === 'side') { bot = { x: 20.5 + Math.floor(rng() * 4), y: 52, z: 0.5 }; cr = { x: 22.5, y: 52, z: 3.5 + Math.floor(rng() * 4) }; }
+    else { const k = 4 + Math.floor(rng() * 4); bot = stepAt(k); cr = stepAt(k - 4 - Math.floor(rng() * 3)); }
+    const weapon = process.env.SPEAR === '0' ? 'stone_sword' : ['stone_sword', 'stone_spear'];
+    const sc = { classify: mine(), bot, mobs: [{ type: 'creeper', aware: rng() < 0.6, ...cr }], weapon, shield: rng() < 0.5, health: pick([20, 20, 14]), ticks: 900 };
+    const r = arena(sc);
+    kinds[kind][0]++;
+    if (r.explosions) { kinds[kind][1]++; crater += r.crater; bad.push(`${kind}: bot ${bot.x},${bot.y}, creeper ${cr.x.toFixed(1)},${cr.y},${cr.z.toFixed(1)}${sc.shield ? ', shield' : ''} -> ${r.hp <= 0 ? 'DIED' : `${r.hp.toFixed(0)} hp`}`); }
+    if (r.hp <= 0) kinds[kind][2]++;
+  }
+  const tot = Object.values(kinds).reduce((a, k) => [a[0] + k[0], a[1] + k[1], a[2] + k[2]], [0, 0, 0]);
+  console.log(`${tot[0] - tot[1]}/${tot[0]} ambushes in the quarry without an explosion (${(100 * (1 - tot[1] / tot[0])).toFixed(1)}%), ${tot[2]} died${tot[1] ? `, ${(crater / tot[1]).toFixed(0)} blocks blown out per blast` : ''}`);
+  for (const [k, [n, e, d]] of Object.entries(kinds)) console.log(`  ${k.padEnd(9)} ${n - e}/${n}${d ? ` (${d} died)` : ''}`);
+  for (const b of bad.slice(0, VERBOSE ? 40 : 8)) console.log(`  - ${b}`);
   process.exit(0);
 }
 

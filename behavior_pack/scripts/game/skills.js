@@ -1689,12 +1689,74 @@ export class Skills {
       const r = await this.a.motor.followPath(wps);
       this.check(gen);
       if (r.status !== 'arrived') {
-        // Something's changed (a block fell in, a mob): let the path search take it from here.
-        const t = this.shaftStand(q, to);
-        return this.goNear(gen, { x: t.x + 0.5, y: t.y, z: t.z + 0.5 }, 0.8, 3);
+        // Something's changed (a creeper blew a hole in the stairs, a block fell in, a mob): past it
+        // a few steps at a time, and the stairs put right behind us.
+        return this.pastDamage(gen, q, to);
       }
     }
     return true;
+  }
+
+  /**
+   * The stairs are broken (a creeper's crater): on toward step `to` a few steps at a time (each hop
+   * close enough for goNear to dig and build its way across: one search to the far end, 40 steps
+   * off, couldn't, and it gave up; tools/sim_quarry.mjs: back up the stairs 25% of the time), and the
+   * treads that are gone put back as we pass, so the next trip is a plain walk again.
+   */
+  async pastDamage(gen, q, to) {
+    this.a.sayOnce('quarry-damage', "Something's blown a hole in my quarry stairs: getting past it and patching them.", 120000);
+    for (let hop = 0; hop < 16; hop++) {
+      this.check(gen);
+      let i = this.shaftIndexHere(q);
+      if (i === to) return true;
+      if (i < 0) i = this.nearestStep(q); // down in the crater: the nearest step
+      const dir = to > i ? 1 : -1;
+      const j = dir > 0 ? Math.min(to, i + 6) : Math.max(to, i - 6);
+      const t = this.shaftStand(q, j);
+      if (!(await this.goNear(gen, { x: t.x + 0.5, y: t.y, z: t.z + 0.5 }, 0.8, 2))) {
+        this.log(`quarry: couldn't get past the damage from step ${i} to ${j}`);
+        return false;
+      }
+      await this.repairShaft(gen, q, i, j);
+      // The rest of the way on the stairs, if they're whole from here.
+      const k = this.shaftIndexHere(q);
+      if (k === to) return true;
+      if (k >= 0) {
+        const wps = [];
+        for (let s2 = k; dir > 0 ? s2 <= to : s2 >= to; s2 += dir) { const st = this.shaftStand(q, s2); wps.push({ x: st.x + 0.5, y: st.y, z: st.z + 0.5 }); }
+        const r = await this.a.motor.followPath(wps);
+        this.check(gen);
+        if (r.status === 'arrived') return true;
+      }
+    }
+    return false;
+  }
+
+  /** The step of the quarry's stairs nearest us (in a crater beside them, say). */
+  nearestStep(q) {
+    const p = this.sim.location;
+    let best = 0, bd = Infinity;
+    for (let i = 0; i < q.steps.length; i++) {
+      const s = this.shaftStand(q, i);
+      const d = dist3D(p, { x: s.x + 0.5, y: s.y, z: s.z + 0.5 });
+      if (d < bd) { bd = d; best = i; }
+    }
+    return best;
+  }
+
+  /** Put back the treads between steps a and b that are gone (in reach from here): cheap blocks. */
+  async repairShaft(gen, q, a, b) {
+    let fixed = 0;
+    for (let s2 = Math.min(a, b); s2 <= Math.max(a, b); s2++) {
+      const [x, y, z] = q.steps[s2].split(',').map(Number);
+      const tread = { x, y, z };
+      if (!OPEN.test(this.blockAt(tread) ?? 'air') || !this.inReach(tread)) continue;
+      const f = this.feet();
+      if (tread.x === f.x && tread.z === f.z && tread.y < f.y) continue;
+      if (await this.fillFloor(gen, tread)) { fixed++; this._protected = null; }
+    }
+    if (fixed) this.log(`quarry: put back ${fixed} tread${fixed > 1 ? 's' : ''} of the stairs`);
+    return fixed;
   }
 
   /**

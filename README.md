@@ -136,6 +136,8 @@ With no orders (and after finishing any order) it works through a goal ladder.
 
 **Its things come back with it:** a simulated player leaves with the world (closing it, a server restart, `!bot despawn`) and comes back with nothing. Its pack and what it wears (durability, enchantments and names included) are written to the world every 10 s and put back when it's spawned again, only if it's empty-handed, so nothing is ever doubled. After a death they're cleared (it's all on the ground, and it goes back for it).
 
+**When a creeper blows up the quarry:** the stairs are the way in and out, but they're walked as a recorded list of steps. When that walk got stuck (a crater), one path search went for the far end, 40 steps off, and it could only dig or build its way across if that end was within 24 blocks. Three failed trips down and the quarry was abandoned. Now it gets past the damage a few steps at a time (each hop close enough to dig, pillar or bridge across), and puts the missing treads back as it passes, so the next trip is a plain walk. `node tools/sim_quarry.mjs` blasts creeper craters into a 48-step quarry: before, the bot got back up 25% of the time; now 100%, down and up, with the stairs whole again after.
+
 **Picking up where it left off:** what it's in the middle of is kept in the world file and written immediately for the house: the current step, the furnace it loaded (and how long is left), where its gear dropped when it died, and the house site. After a restart, a `/reload` or a death it says "Picking up where I left off" and carries on. The house's progress is read from the blocks actually placed, so it continues the same house on the same spot (`!bot test resume` checks exactly this). The dashboard shows the house's progress and what it still needs.
 
 **The house is a project:** once it picks a site, the site is saved in the world. It gets every block it needs before placing the first one, never mines stone within 14 blocks of the site, finishes the house before chasing sheep or torches, and never starts a second one.
@@ -234,6 +236,8 @@ npm run fuzz                     # 200 random worlds: plan + walk + replan
 npm run sim                      # the whole goal ladder played forward from nothing to done: no loops, no crafts it can't make, trips counted
 node tools/sim_combat.mjs        # combat arena: zombies, skeletons and creepers on flat ground, forest, the quarry, a mine tunnel (-v for a log, --old for the old fight code)
 node tools/sim_combat.mjs --fuzz 600   # random fights: terrain, mobs, gear, health
+node tools/sim_combat.mjs --ambush 500   # creepers catching the bot in its quarry and mine (down the stairs behind it, dropped in, in the dark tunnel, from a side branch, on the stairs)
+node tools/sim_quarry.mjs 300    # creeper craters in the quarry stairs: can it still get down and back up?
 node tools/stress_path.mjs 200   # walk dense forest on rough ground, jungle, ravines, cave mazes, hills and stairs, low tunnels, shafts, lake shores
 python -m unittest discover -s brain/tests -t .   # brain (21 tests)
 npm install; npm run typecheck # checks pack code against the real Script API typings
