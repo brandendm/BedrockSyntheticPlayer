@@ -61,7 +61,7 @@ async function spawnAgent(player) {
   // Simulated players respawn at world spawn, which can be mid-air. Pin a safe one.
   try { sim.setSpawnPoint({ dimension: where.dimension, x: Math.floor(where.x), y: Math.floor(where.y), z: Math.floor(where.z) }); } catch (e) { console.warn(`[agent] setSpawnPoint: ${e}`); }
   agent = new Agent(sim);
-  agent.say('Ready.');
+  agent.say(`Ready (build ${CONFIG.build}).`);
 }
 
 function handle(text, player) {
@@ -87,6 +87,7 @@ function handle(text, player) {
     spawnAgent(player).catch((e) => reply(player, `spawn failed: ${e}`));
     return;
   }
+  if (lower === 'version') return reply(player, `Bedrock Agent build ${CONFIG.build}`);
   if (lower === 'debug') {
     debugLog = !debugLog;
     CONFIG.debug = debugLog;

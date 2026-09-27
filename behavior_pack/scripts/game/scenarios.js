@@ -37,6 +37,7 @@
 
 import { dist3D } from '../core/mathutil.js';
 import { sendEvent } from './bridge.js';
+import { CONFIG } from '../config.js';
 import { system, world, ItemStack } from '@minecraft/server';
 import { blueprint, furnishings } from '../core/house.js';
 import { invCounts as invCountsOf, hold, container as packOf } from './inventory.js';
@@ -89,7 +90,7 @@ async function runOne(agent, player, name, arg) {
   const tp = (px, py, pz) => sim.teleport({ x: px + 0.5, y: py, z: pz + 0.5 });
   let pass = false, detail = '';
   try {
-    agent.say(`Test ${name}: starting.`);
+    agent.say(`Test ${name}: starting (build ${CONFIG.build}).`);
     switch (name) {
       case 'roof': {
         const h = arg ?? 8;
