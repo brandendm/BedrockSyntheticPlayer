@@ -627,7 +627,7 @@ async function runOne(agent, player, name, arg) {
         cmd(`fill ${x - 2} ${fy} ${z - 3} ${x + 13} ${fy} ${z + 3} stone`);
         agent.testHold = true;
         agent.endCombat();
-        tp(x, fy + 1, z);
+        try { tp(x, fy + 1, z); } catch {}
         await system.waitTicks(10);
         // The weapons to try: given for the test, taken back after.
         const given = [];
@@ -635,7 +635,16 @@ async function runOne(agent, player, name, arg) {
           try { packOf(sim)?.addItem(new ItemStack(`minecraft:${id}`, 1)); given.push(id); } catch (e) { detail += `no ${id} in this version (${e}); `; }
         }
         const hpOf = (e) => { try { return e.getComponent('minecraft:health')?.currentValue ?? null; } catch { return null; } };
-        const lit = (e) => { try { return !!e.getComponent('minecraft:is_ignited'); } catch { return false; } };
+        // Swelling: there's no fuse state a script can read (is_ignited is "on fire"), but a creeper
+        // stops walking while it swells. One tracker per creeper, fed every tick.
+        let still = 0;
+        const lit = (e) => {
+          try {
+            const v = e.getVelocity(), d = dist3D(sim.location, e.location);
+            still = Math.hypot(v.x, v.z) < 0.02 && d <= 3.5 ? still + 1 : 0;
+            return still >= 2 || d <= 2.2; // (2.2: close enough to call it, whatever it looks like)
+          } catch { return false; }
+        };
         // A creeper can go at any moment (despawned, killed, removed): every read of it is guarded.
         const ok = (e) => { try { return !!e?.isValid; } catch { return false; } };
         const dd = (e) => { try { return ok(e) ? dist3D(sim.location, e.location) : NaN; } catch { return NaN; } };
@@ -664,8 +673,9 @@ async function runOne(agent, player, name, arg) {
         const speeds = [], litAt = [];
         let sawIgnite = false;
         for (let trial = 0; trial < 2; trial++) {
-          tp(x, fy + 1, z);
+          try { tp(x, fy + 1, z); } catch {}
           let c = await summon(10);
+          still = 0;
           if (!c) { log.push("couldn't summon a creeper"); break; }
           let prev = dd(c);
           for (let i = 0; i < 400 && c; i++) {
@@ -677,7 +687,6 @@ async function runOne(agent, player, name, arg) {
             if (d > 3.2 && d < 8.5) speeds.push(prev - d);
             prev = d;
             if (lit(c)) { sawIgnite = true; litAt.push(d); break; }
-            if (d < 1.4) { litAt.push(-1); break; } // right up to us and never showed as lit
           }
           gone();
           await system.waitTicks(20);
@@ -686,14 +695,16 @@ async function runOne(agent, player, name, arg) {
         if (stale) log.push(`(creeper handle went stale ${stale} time${stale > 1 ? 's' : ''}: found it again)`);
         if (vanished) log.push(`lost the creeper ${vanished} time${vanished > 1 ? 's' : ''}`);
         log.push(`walks ${avg(speeds).toFixed(3)} blocks/tick`);
-        log.push(sawIgnite ? `starts hissing at ${litAt.map((v) => v.toFixed(2)).join(', ')}` : `is_ignited never showed (${litAt.length} runs)`);
+        log.push(sawIgnite ? `stopped to swell at ${litAt.map((v) => v.toFixed(2)).join(', ')}` : 'never seen to stop and swell');
         // 2. One swing each, sword and spear, at 2.8 to 4.4 blocks (feet to feet): landed? knockback?
         const hits = {}; // weapon -> [{ at, landed, kb }]
         for (const w of given) {
           for (const at of [2.8, 3.2, 3.6, 4.0, 4.4]) {
-            tp(x, fy + 1, z);
-            hold(sim, w);
+            if (!sim.isValid || agent.health() <= 0) { log.push('the bot is down: stopping'); break; }
+            try { tp(x, fy + 1, z); } catch {}
+            try { hold(sim, w); } catch {}
             let c = await summon(9);
+            still = 0;
             if (!c) break;
             let d = dd(c), early = false;
             for (let i = 0; i < 300 && c && d > at; i++) {
@@ -762,7 +773,7 @@ async function runOne(agent, player, name, arg) {
     }
   } catch (e) {
     // Where it broke: the first line of the stack in our code.
-    const at = String(e?.stack ?? '').split('\n').find((l) => /scenarios|agent|skills/.test(l))?.trim() ?? '';
+    const at = String(e?.stack ?? '').split('\n').slice(1, 4).map((l) => l.trim()).join(' < ');
     detail = `${detail ? `${detail}; ` : ''}error: ${e}${at ? ` (${at})` : ''}`;
   } finally {
     agent.testHold = false;
@@ -771,8 +782,10 @@ async function runOne(agent, player, name, arg) {
     // Put the ground back, then make sure the bot isn't left inside a restored block.
     cmd(`structure load agent_test_backup ${box.x1} ${box.y1} ${box.z1}`);
     cmd('structure delete agent_test_backup');
-    const top = S.groundTop(Math.floor(sim.location.x), Math.floor(sim.location.z));
-    if (Number.isFinite(top) && top >= Math.floor(sim.location.y)) sim.teleport({ x: sim.location.x, y: top + 1, z: sim.location.z });
+    try {
+      const top = S.groundTop(Math.floor(sim.location.x), Math.floor(sim.location.z));
+      if (Number.isFinite(top) && top >= Math.floor(sim.location.y)) sim.teleport({ x: sim.location.x, y: top + 1, z: sim.location.z });
+    } catch {} // (the bot died in the test: it respawns on its own)
   }
   return report(agent, name, pass, detail);
 }

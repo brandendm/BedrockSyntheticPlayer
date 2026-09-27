@@ -74,7 +74,7 @@ export const CREEPER_HOLD = 3.0; // where to stand: just outside its fuse range,
  *  - Hissing anyway: knock it back and get beyond 6 (the fuse stops), or with nowhere to go, shield up.
  * Backing off is `away`: the distance from the creeper to get to; the caller finds the nearest spot
  * it can stand on that far away (a point on the straight line back is inside the rock on stairs).
- * st keeps state between calls; lit: it's hissing (the game's is_ignited). Call it every tick.
+ * st keeps state between calls; lit: it's hissing (seen standing still to swell, game/agent.js hissing()). Call it every tick.
  */
 export function creeperFight({ me, mob, t, st, shield = false, canSwing = true, canRetreat = true, lit = false, reach = REACH_HIT, minReach = 0 }) {
   const d = dist(me, mob);

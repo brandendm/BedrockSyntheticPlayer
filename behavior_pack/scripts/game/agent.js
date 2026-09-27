@@ -87,6 +87,7 @@ export class Agent {
     this.shield = false;         // a shield in the off hand
     this.blocking = false;       // crouched behind it right now
     this.testHold = false;       // a calibration test is driving: no fighting or running of our own
+    this.swell = new Map();      // creeper id -> { still, t, since }: is it standing still, swelling?
     this.miningTrip = false;     // down the mine for iron since the plan last had us elsewhere
     this.hunting = false;        // homestead.hunt is steering the head
     this.trail = [];             // recent positions, newest last: {x, y, z, under}
@@ -515,9 +516,25 @@ export class Agent {
     this.shield = this.worn().includes('shield');
   }
 
-  /** A creeper with its fuse lit (the game's is_ignited component is there only while it hisses). */
+  /**
+   * Is this creeper swelling (fuse lit)? Scripts can't read the fuse (is_ignited is "on fire", not
+   * this: counting on it, the bot never saw one hiss). What a player sees: a creeper stops walking
+   * while it swells. So close (3.5), and its walk stopped (under 0.02 a tick, two readings running),
+   * and it stays "lit" for the 1.5 s fuse or till we're past 6. Tracked per creeper.
+   */
   hissing(e) {
-    try { return !!e.getComponent('minecraft:is_ignited'); } catch { return false; }
+    try {
+      const t = system.currentTick;
+      const v = e.getVelocity(), sp = Math.hypot(v.x, v.z);
+      const d = dist3D(this.body.getPos(), e.location);
+      const s = this.swell.get(e.id) ?? { still: 0, t: -1, since: null };
+      if (s.t !== t) { s.t = t; s.still = sp < 0.02 && d <= 3.5 ? s.still + 1 : 0; }
+      if (s.still >= 2 && s.since === null) s.since = t;
+      if (s.since !== null && (d > CREEPER_CALM || t - s.since > 40)) s.since = null;
+      this.swell.set(e.id, s);
+      if (this.swell.size > 32) for (const [id, v2] of this.swell) if (t - v2.t > 200) this.swell.delete(id);
+      return s.since !== null;
+    } catch { return false; }
   }
 
   /** Shield up (crouch) or down. */
@@ -1369,10 +1386,10 @@ export class Agent {
       mv = creeperFight({ me, mob, t, st, shield: this.shield, canSwing, canRetreat: room !== false, lit, reach, minReach });
       this.fightMove = 'creeper'; // its own spacing (creeperTick), not the melee stop
       // The combat log: every tick of a creeper fight, to calibrate tools/sim_combat.mjs against.
-      let ign = '?';
-      try { ign = e.getComponent('minecraft:is_ignited') ? '1' : '0'; } catch {}
+      let ign = '?'; // its walking speed: a swelling creeper stands still
+      try { const v = e.getVelocity(); ign = Math.hypot(v.x, v.z).toFixed(3); } catch {}
       const f2 = (v) => v.toFixed(2);
-      trace(`creeper ${e.id.slice(-4)} t${t} d${f2(d)} me${f2(me.x)},${f2(me.y)},${f2(me.z)} c${f2(mob.x)},${f2(mob.y)},${f2(mob.z)} ign${ign} lit${lit ? 1 : 0} w=${swingWith ?? 'hand'}${canSwing ? '' : '(cd)'} r${reach} -> ${mv.swing ? 'SWING ' : ''}${mv.stop ? 'stop' : mv.away ? `away${f2(mv.away)}` : mv.goal ? 'approach' : 'hold'}${mv.block ? ' block' : ''} busy${this.motor.busy ? 1 : 0}`);
+      trace(`creeper ${e.id.slice(-4)} t${t} d${f2(d)} me${f2(me.x)},${f2(me.y)},${f2(me.z)} c${f2(mob.x)},${f2(mob.y)},${f2(mob.z)} v${ign} lit${lit ? 1 : 0} w=${swingWith ?? 'hand'}${canSwing ? '' : '(cd)'} r${reach} -> ${mv.swing ? 'SWING ' : ''}${mv.stop ? 'stop' : mv.away ? `away${f2(mv.away)}` : mv.goal ? 'approach' : 'hold'}${mv.block ? ' block' : ''} busy${this.motor.busy ? 1 : 0}`);
     } else {
       if (this.heldWeapon && this.heldWeapon !== this.weaponId && this.weaponId) { hold(this.sim, this.weaponId); this.heldWeapon = this.weaponId; }
       mv = fightMove({ me, mob, melee: MOBS[target.type]?.kind === 'melee', t, shield: this.shield, canSwing });
@@ -1565,7 +1582,7 @@ export class Agent {
   }
 
   /**
-   * Is this creeper hissing? The game's is_ignited component if it has one; failing that, what its
+   * Is this creeper hissing? Seen standing still to swell (hissing()); failing that, what its
    * fuse does: it starts once we're inside 2.5 and in its sight, and runs 1.5 s unless we get past 6.
    */
   creeperLit(target, e, d, t) {
