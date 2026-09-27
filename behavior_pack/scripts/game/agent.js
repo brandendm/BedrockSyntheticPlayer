@@ -18,7 +18,7 @@ import { FULL_SLOTS } from '../core/storage.js';
 import { Homestead, FOOD_ANIMALS } from './homestead.js';
 import { Lookout } from './lookout.js';
 import { Skills, Aborted, markVisited } from './skills.js';
-import { invCounts, hold, container, usesLeft } from './inventory.js';
+import { invCounts, hold, container, usesLeft, kitOf, emptyHanded, restoreKit } from './inventory.js';
 import { WorldMemory } from './memory.js';
 import { SimBodyAdapter } from './body.js';
 import { makeClassifier, canSee, isWatery, OPENABLE } from './world.js';
@@ -72,7 +72,7 @@ export class Agent {
     this.homestead = new Homestead(this);
     this.farm = new Farm(this);
     this.lookout = new Lookout(this);
-    system.runTimeout(() => { try { this.restoreState(); } catch {} }, 40);
+    system.runTimeout(() => { try { this.restoreKit(); } catch (e) { this.kitChecked = true; console.warn(`[agent] kit: ${e}`); } try { this.restoreState(); } catch {} }, 40);
     this.badCells = new Map();   // "x,y,z" -> until (ms): cells we got stuck walking into
     this.deferred = new Map();   // stepKey -> {until (ms), step}: ladder steps that kept failing, set aside (core/focus.js)
     this.autoOpportunity = null; // the kind of side job we're on (sheep, food, log, stone), if any
@@ -86,6 +86,8 @@ export class Agent {
     this.roomCache = new Map();  // creeper id -> { ok, t, pending }: room to back off from it?
     this.shield = false;         // a shield in the off hand
     this.blocking = false;       // crouched behind it right now
+    this.testHold = false;       // a calibration test is driving: no fighting or running of our own
+    this.miningTrip = false;     // down the mine for iron since the plan last had us elsewhere
     this.hunting = false;        // homestead.hunt is steering the head
     this.trail = [];             // recent positions, newest last: {x, y, z, under}
     const follow = this.motor.followPath.bind(this.motor);
@@ -128,6 +130,7 @@ export class Agent {
     // Everything we carried is on the ground here for 5 minutes: go back for it after respawning.
     const p = this.body.getPos();
     this.deathSpot = { x: p.x, y: p.y, z: p.z, d: this.dim.id, at: Date.now() };
+    this.memory.data.kit = null; // it's all on the ground now (and gone back for): nothing to put back
     this.saveState();
     this.newTask(null);
     this.suspended = null;
@@ -136,8 +139,12 @@ export class Agent {
   }
 
   /** Called from main.js on entityHurt where we're the victim. */
-  onHurt(attacker) {
+  onHurt(attacker, cause = '', amount = 0) {
     if (attacker && attacker.id !== this.sim.id) this.attackers.set(attacker.id, system.currentTick);
+    // For the combat log (brain/logs/trace.jsonl): what hit us, how hard, from how far.
+    let who = '', d = '';
+    try { who = attacker ? attacker.typeId.replace('minecraft:', '') : ''; d = attacker ? dist3D(this.body.getPos(), attacker.location).toFixed(2) : ''; } catch {}
+    trace(`hurt: ${cause}${who ? ` by ${who}` : ''} ${Number(amount).toFixed(1)}${d ? ` at ${d}` : ''}, hp ${this.health()}, mode ${this.mode}, blocking ${this.blocking}`);
   }
 
   // ---------- main loop ----------
@@ -148,6 +155,7 @@ export class Agent {
     if (t % SURVIVE_EVERY === 0) this.survive(t);
     if (t % ENDERMAN_SCAN_EVERY === 0) this.watchEndermen();
     if (t % 40 === 0) this.equipBestWeapon();
+    if (t % 200 === 150 && this.kitChecked) this.saveKit(); // (not before the saved one's been put back)
     if (t % 20 === 0) { this.keepChunksLoaded(); markVisited(this.skills, this.body.getPos()); }
     if (t % 40 === 10) this.dropCrumb();
     if (t % 10 === 5 && this.skills.spotWant && this.motor.busy && !this.skills.spotted) {
@@ -195,7 +203,8 @@ export class Agent {
     // Dusk: drop whatever daytime job is running so the plan can send us home.
     if (t % 100 === 50) {
       const night = isNight(world.getTimeOfDay());
-      const mining = MINE_STEPS.has(this.autoStep) && this.minedUnderground();
+      const mining = MINE_STEPS.has(this.autoStep) && (this.minedUnderground() || this.onMiningTrip());
+      if (night && !this.wasNight) trace(`dusk: step ${this.autoStep}, in the mine ${mining} (underground ${this.minedUnderground()}, trip ${this.onMiningTrip()})`);
       if (night && !this.wasNight && this.task?.kind === 'auto' && !mining && !['go_home', 'shelter', 'build_house'].includes(this.autoStep)) this.startAuto();
       this.wasNight = night;
     }
@@ -274,6 +283,24 @@ export class Agent {
       at: Date.now(),
     };
     this.memory.save();
+  }
+
+  /**
+   * Its pack and what it wears, kept in the world (every 10 s): a simulated player leaves with the
+   * world and comes back empty-handed, so a server restart or a rejoin used to cost it everything.
+   */
+  saveKit() {
+    try { this.memory.data.kit = { ...kitOf(this.sim), at: Date.now() }; this.memory.save(); } catch (e) { console.warn(`[agent] save kit: ${e}`); }
+  }
+
+  /** Back on with it, if this is a fresh spawn (nothing on us: never doubled up). */
+  restoreKit() {
+    this.kitChecked = true;
+    const kit = this.memory.data.kit;
+    if (!kit || (!kit.slots?.length && !Object.keys(kit.worn ?? {}).length)) return;
+    if (!emptyHanded(this.sim)) return;
+    const n = restoreKit(this.sim, kit);
+    if (n) { this.say(`Got my things back (${n} stacks).`); this.equipBestWeapon(); }
   }
 
   restoreState() {
@@ -501,6 +528,7 @@ export class Agent {
   }
 
   survive(t) {
+    if (this.testHold) return; // a calibration test is driving
     for (const [id, at] of this.attackers) if (t - at > ATTACKER_MEMORY_TICKS) this.attackers.delete(id);
     if (this.lastSeen.size > 200) for (const [id, at] of this.lastSeen) if (t - at > 200) this.lastSeen.delete(id);
     const mobs = this.scanMobs(this.mode === 'none' ? 16 : 24);
@@ -754,6 +782,9 @@ export class Agent {
         const tableDist = near && S.usable(near) ? 0 : known && S.usable(known.pos) ? 0 : near ? dist3D(this.sim.location, near) : known ? known.dist : Infinity;
         const tableDy = near || !known ? 0 : known.pos.y - this.sim.location.y;
         const step = this.planStep(inv, tableDist, tableDy);
+        // A mining trip lasts till the plan has us doing something that isn't done down the mine.
+        if (step.step === 'get_iron') this.miningTrip = true;
+        else if (!MINE_STEPS.has(step.step) && step.step !== 'shelter') this.miningTrip = false;
         const key = step.step + (step.items ? step.items.join() : '') + (step.count ?? '') + (step.what ?? '') + (step.why ?? '');
         repeats = key === last ? repeats + 1 : 0;
         last = key;
@@ -1057,8 +1088,10 @@ export class Agent {
     // home in the dark (then all the way back down in the morning) wastes the night. Keep mining if
     // that's what the day's plan says to do; anything else (home, the farm, the furnace) waits for the
     // usual night plan.
-    if (!dayTime && isNight(world.getTimeOfDay()) && this.minedUnderground()) {
+    const inMine = !dayTime && isNight(world.getTimeOfDay()) && (this.minedUnderground() || this.onMiningTrip());
+    if (inMine) {
       const day = this.planStep(inv, tableDist, tableDy, { opportunities: false, dayTime: true });
+      trace(`night in the mine: the day's plan is ${day.step}`);
       // Anything that's done down here (the camp's furnace and table, putting gear on) carries on.
       if (MINE_STEPS.has(day.step) && !(day.step === 'craft' && day.needsTable && !(tableDist <= 16))) {
         this.sayOnce('mine-night', "It's night, but I'm down the mine: carrying on here.", 600000);
@@ -1071,10 +1104,17 @@ export class Agent {
         this.sayOnce('mine-night', "It's night, but I'm down the mine: carrying on here.", 600000);
         return { step: 'get_iron', need: short, why: 'iron gear (night in the mine)' };
       }
+      // Pack full (getIron already tossed what stone it could): hole up down here till morning, then
+      // take it home by daylight.
+      if (day.step === 'store') {
+        this.sayOnce('mine-full', "My pack's full and it's night: staying down the mine till morning.", 600000);
+        return { step: 'shelter', why: 'pack full, night in the mine' };
+      }
+      trace(`night in the mine: nothing to do down here (${day.step}), going home`);
     }
     const night = !dayTime && isNight(world.getTimeOfDay());
     /** @type {any} */
-    let step = nextStep({ inv, tableDist, tableDy, exposedStoneKnown: this.knownSurfaceStone });
+    let step = nextStep({ inv, tableDist, tableDy, exposedStoneKnown: this.knownSurfaceStone, spears: Skills.itemExists('stone_spear') });
     if (step.step === 'done') step = settleStep({ ...this.settleFacts(inv, tableDist), ...(dayTime ? { time: 6000 } : {}) });
     // Moved in: a farm, iron, iron gear (core/advance.js).
     if (step.step === 'done' && this.homestead.house) step = advanceStep(this.advanceFacts(inv, tableDist));
@@ -1093,6 +1133,16 @@ export class Agent {
     // The ladder's step against everything else still needed that's cheap right now.
     if (opportunities && !night) step = chooseStep(step, this.focusFacts(inv));
     return step;
+  }
+
+  /**
+   * On a mining trip: iron mining started down our mine and nothing's brought us back up since. A
+   * moment's position (half way up the quarry steps under open sky, a pick-up walk) isn't the test:
+   * a trip is a trip until the plan takes us home in daylight.
+   */
+  onMiningTrip() {
+    if (!this.miningTrip) return false;
+    try { return this.skills.nearQuarry(this.sim.location, 96) && Object.keys(invCounts(this.sim)).some((id) => /_pickaxe$/.test(id)); } catch { return false; }
   }
 
   /** Underground in our quarry or its mine (not just any cave), with a pickaxe to keep going. */
@@ -1315,8 +1365,14 @@ export class Agent {
       ws.push({ id: this.weaponId, ...weaponReach(this.weaponId), readyAt: this.nextSwing });
       const w = pickCreeperSwing(ws, d, t);
       swingWith = w.id; reach = w.reach; minReach = w.minReach; canSwing = w.ready; spearSwing = isSpear(w.id); cooldown = w.cooldown;
-      mv = creeperFight({ me, mob, t, st, shield: this.shield, canSwing, canRetreat: room !== false, lit: this.creeperLit(target, e, d, t), reach, minReach });
+      const lit = this.creeperLit(target, e, d, t);
+      mv = creeperFight({ me, mob, t, st, shield: this.shield, canSwing, canRetreat: room !== false, lit, reach, minReach });
       this.fightMove = 'creeper'; // its own spacing (creeperTick), not the melee stop
+      // The combat log: every tick of a creeper fight, to calibrate tools/sim_combat.mjs against.
+      let ign = '?';
+      try { ign = e.getComponent('minecraft:is_ignited') ? '1' : '0'; } catch {}
+      const f2 = (v) => v.toFixed(2);
+      trace(`creeper ${e.id.slice(-4)} t${t} d${f2(d)} me${f2(me.x)},${f2(me.y)},${f2(me.z)} c${f2(mob.x)},${f2(mob.y)},${f2(mob.z)} ign${ign} lit${lit ? 1 : 0} w=${swingWith ?? 'hand'}${canSwing ? '' : '(cd)'} r${reach} -> ${mv.swing ? 'SWING ' : ''}${mv.stop ? 'stop' : mv.away ? `away${f2(mv.away)}` : mv.goal ? 'approach' : 'hold'}${mv.block ? ' block' : ''} busy${this.motor.busy ? 1 : 0}`);
     } else {
       if (this.heldWeapon && this.heldWeapon !== this.weaponId && this.weaponId) { hold(this.sim, this.weaponId); this.heldWeapon = this.weaponId; }
       mv = fightMove({ me, mob, melee: MOBS[target.type]?.kind === 'melee', t, shield: this.shield, canSwing });
@@ -1420,6 +1476,7 @@ export class Agent {
         this.swingCheck = null;
         let hp = sc.hp0;
         try { hp = sc.e.getComponent('minecraft:health')?.currentValue ?? hp; } catch {}
+        trace(`creeper swing ${sc.spear ? 'spear' : 'sword'} at ${sc.d.toFixed(2)}: ${hp < sc.hp0 ? `hit ${sc.hp0}->${hp}` : 'MISSED'}`);
         if (hp >= sc.hp0) {
           this.nextSwing = t;
           if (sc.spear) { this.spearNext = t; if (sc.d > REACH_HIT) this.spearMisses = (this.spearMisses ?? 0) + 1; }

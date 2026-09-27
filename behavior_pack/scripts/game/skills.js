@@ -1,7 +1,8 @@
 // Things the agent knows how to do with its hands: find blocks, mine, pick up drops, place, craft,
 // dig down to stone. Every skill is async, takes the task generation `gen`, and bails out as soon
 // as the agent switches task (a fight, a command) so nothing keeps running in the background.
-import { system, Direction, BlockTypes, BlockVolume } from '@minecraft/server';
+import { system, world, Direction, BlockTypes, BlockVolume, ItemTypes } from '@minecraft/server';
+import { isNight } from '../core/settle.js';
 import { EYE_HEIGHT } from '../core/motor.js';
 import { smoothPath, Cell, isWalkMove, isGround } from '../core/pathfinder.js';
 import { dist3D } from '../core/mathutil.js';
@@ -1190,6 +1191,12 @@ export class Skills {
       this.check(gen);
     }
     for (const item of items) {
+      // An item this game version doesn't have (spears are new): say so, never spend the inputs on it.
+      if (!Skills.itemExists(item)) {
+        this.a.sayOnce(`no-item-${item}`, `This game doesn't have ${item.replace(/_/g, ' ')}s: skipping it.`, 3600000);
+        this.log(`craft: ${item} isn't an item in this version`);
+        continue;
+      }
       const plan = planCrafts(invCounts(this.sim), [item]);
       if (plan.logsShort || plan.missing) return false;
       for (const step of plan.steps) {
@@ -1838,6 +1845,11 @@ export class Skills {
 
   // ---------- iron: down to the iron layer, branch mine, mine the veins ----------
 
+  /** Is this an item in the running game (by id without the prefix)? */
+  static itemExists(id) {
+    try { return !!ItemTypes.get(`minecraft:${id}`); } catch { return true; }
+  }
+
   /** Ore we mine when we come across it (with a pickaxe that gets a drop from it). */
   static isOre(id) { return /_ore$/.test(id) && !/^(nether_gold|quartz)/.test(id); }
 
@@ -1863,6 +1875,8 @@ export class Skills {
     const roomy = () => { const c = container(this.sim); return !c || c.emptySlotsCount > 1 || !this.a.homestead?.chests().length || Date.now() - (this.a.memory.data.chestFullAt ?? 0) < 600000; };
     const more = () => this.rawIron() < goal && system.currentTick - t0 < maxS * 20 && pick() && roomy();
     if (!pick()) { this.log('iron: no pickaxe'); return false; }
+    // Night down the mine and the pack's full: make room here rather than go home to the chest.
+    if (!roomy() && isNight(world.getTimeOfDay())) await this.dumpJunk(gen, true);
     // 1. Iron in sight.
     const seen = (await this.scan((id) => /iron_ore$/.test(id), { radius: 16, below: 6, above: 8, limit: 8 }))
       .filter((b) => !this.a.memory.isUnreachable(b) && this.sees(b));
@@ -2333,10 +2347,12 @@ export class Skills {
    * Keep room in the pack: toss the stone we'll never use when the pack's nearly full (a strip mine
    * turns up stacks of it). Keeps 2 stacks of cobblestone and 1 of deepslate cobble for building.
    */
-  async dumpJunk(gen) {
+  async dumpJunk(gen, hard = false) {
     const c = container(this.sim);
     if (!c || c.emptySlotsCount > 3) return 0;
-    const keep = { cobblestone: 128, cobbled_deepslate: 64 };
+    // hard: night in the mine with a full pack. Keep a stack of cobblestone, toss the rest, rather
+    // than walk home in the dark to the chest.
+    const keep = hard ? { cobblestone: 64 } : { cobblestone: 128, cobbled_deepslate: 64 };
     const junk = /^(andesite|diorite|granite|tuff|gravel|dirt|cobbled_deepslate|cobblestone|calcite|flint)$/;
     const seen = {};
     let tossed = 0;

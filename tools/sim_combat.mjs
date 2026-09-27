@@ -11,6 +11,7 @@
 import { MotorController, EYE_HEIGHT } from '../behavior_pack/scripts/core/motor.js';
 import { findPath, searchJob, smoothPath, Cell } from '../behavior_pack/scripts/core/pathfinder.js';
 import { decide, MOBS, weaponDamage, REACH_HIT } from '../behavior_pack/scripts/core/threat.js';
+import { readFileSync } from 'node:fs';
 import { fightMove, creeperMove, creeperFight, Stalemate, pickRefuge, barricadeCells, awayPath, weaponReach, creeperWeapon, bestWeapon, pickCreeperSwing } from '../behavior_pack/scripts/core/tactics.js';
 import { makeRng, dist3D } from '../behavior_pack/scripts/core/mathutil.js';
 import { SimBody } from '../tests/helpers.js';
@@ -40,13 +41,19 @@ function runPath(classify, from, to, tol, maxNodes = 1500) {
 }
 
 // Knockback from a hit, in half blocks (4: two blocks). KB=2 to check nothing hangs on the guess.
+// Measured in the game (`!bot test creeper` -> tools/calibration.json) where we have it; the guesses
+// otherwise. { creeperSpeed, fuseStart, fuseStop, knockback: { sword, spear }, reachFeet: { sword, spear } }
+const CAL = (() => { try { return JSON.parse(readFileSync(new URL('./calibration.json', import.meta.url), 'utf8')); } catch { return {}; } })();
 const KNOCKBACK_STEPS = Number(process.env.KB ?? 4);
+// Knockback in blocks for a weapon (calibrated), else the half-block steps above.
+const knockbackFor = (spear) => CAL.knockback?.[spear ? 'spear' : 'sword'] ?? KNOCKBACK_STEPS * 0.5;
+const FUSE_START = CAL.fuseStart ?? 2.5, FUSE_STOP = CAL.fuseStop ?? 6;
 // The game, not an idealised one: a path planned in the game arrives LAG ticks later (the search runs
 // as a job); the body coasts after a stop (ground friction, 0.546 a tick); a swing lands only if the
 // mob's hitbox is within 3 blocks of our eye (a miss still costs the swing). CSPEED: creeper walk,
 // blocks a tick.
 const LAG = Number(process.env.LAG ?? 3);
-const CSPEED = Number(process.env.CSPEED ?? 0.1);
+const CSPEED = Number(process.env.CSPEED ?? CAL.creeperSpeed ?? 0.13);
 // STALE_OK=1: a path that lands after a stop still runs (what the game did before the fix).
 const STALE_OK = process.env.STALE_OK === '1';
 const SPEAR = process.env.SPEAR === '1';
@@ -153,8 +160,11 @@ function arena({ classify: base, bot, mobs, weapon = 'stone_sword', shield = fal
       route(mv.goal, mv.tolerance, mv.urgent, 1500, mv.sync, mv.walk);
     }
     const pw = m.type === 'creeper' ? cw(m) : prof(m), spear = pw.reach > 3.5;
+    // Out of reach: measured in the game (feet to feet) if calibrated, else eye to the mob's box.
     const eyeReach = spear ? 4.125 : 3, tooNear = spear && dist3D(me, m) < 2;
-    if (mv.swing && facingMob(m) && (reachTo(m) > eyeReach || tooNear)) { nextSwing = t + pw.cooldown; misses++; if (VERBOSE) log.push(`${t}: swing at ${m.type} misses (${reachTo(m).toFixed(2)} from the eye)`); }
+    const calReach = CAL.reachFeet?.[spear ? 'spear' : 'sword'];
+    const outOfReach = calReach ? dist3D(me, m) > calReach + 0.05 : reachTo(m) > eyeReach;
+    if (mv.swing && facingMob(m) && (outOfReach || tooNear)) { nextSwing = t + pw.cooldown; misses++; if (VERBOSE) log.push(`${t}: swing at ${m.type} misses (${reachTo(m).toFixed(2)} from the eye)`); }
     else if (mv.swing && facingMob(m) && m.iframe <= t) {
       m.hp -= pw.damage > 1 ? pw.damage : 1; m.iframe = t + 10; nextSwing = t + 10;
       if (spear) spearNext = t + pw.cooldown;
@@ -163,7 +173,7 @@ function arena({ classify: base, bot, mobs, weapon = 'stone_sword', shield = fal
       const dx = m.x - me.x, dz = m.z - me.z, l = Math.hypot(dx, dz) || 1;
       // (Knockback has an upward kick: it can carry a mob up one step, as up the quarry stairs.)
       let rose = false;
-      for (let k = 0; k < KNOCKBACK_STEPS; k++) {
+      for (let k = 0; k < Math.round(knockbackFor(spear) / 0.5); k++) {
         const nx = m.x + dx / l * 0.5, nz = m.z + dz / l * 0.5;
         const open = (y) => classify(Math.floor(nx), y, Math.floor(nz)) === Cell.AIR && classify(Math.floor(nx), y + 1, Math.floor(nz)) === Cell.AIR;
         if (open(Math.floor(m.y))) { m.x = nx; m.z = nz; }
@@ -298,8 +308,8 @@ function arena({ classify: base, bot, mobs, weapon = 'stone_sword', shield = fal
         const sight = clear(classify, { x: m.x, y: m.y + 1.5, z: m.z }, { x: me.x, y: me.y + 1.2, z: me.z });
         // Bedrock's creeper: the fuse starts inside 2.5 blocks of us with us in sight, and stops
         // beyond 6 or once it loses sight of us (its target_nearby_sensor).
-        if (m.fuse < 0 && d <= 2.5 && sight) { m.fuse = t + 30; if (VERBOSE) log.push(`${t}: creeper hisses at ${d.toFixed(1)}`); }
-        if (m.fuse >= 0 && (d > 6 || !sight)) { m.fuse = -1; if (VERBOSE) log.push(`${t}: creeper calms down at ${d.toFixed(1)}`); }
+        if (m.fuse < 0 && d <= FUSE_START && sight) { m.fuse = t + 30; if (VERBOSE) log.push(`${t}: creeper hisses at ${d.toFixed(1)}`); }
+        if (m.fuse >= 0 && (d > FUSE_STOP || !sight)) { m.fuse = -1; if (VERBOSE) log.push(`${t}: creeper calms down at ${d.toFixed(1)}`); }
         if (m.fuse >= 0 && t >= m.fuse) {
           const dmg = Math.max(0, 25 * (1 - d / 6)) * (sight ? 1 : 0.3);
           if (VERBOSE) log.push(`${t}: creeper goes off at ${d.toFixed(1)} blocks`);

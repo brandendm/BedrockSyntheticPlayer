@@ -211,7 +211,7 @@ function handle(text, player) {
     return;
   }
   if (lower === 'despawn') {
-    if (agent?.sim.isValid) agent.sim.disconnect();
+    if (agent?.sim.isValid) { try { agent.saveKit(); } catch {} agent.sim.disconnect(); } // its things come back with it on the next spawn
     agent = null;
     return;
   }
@@ -242,7 +242,7 @@ system.afterEvents.scriptEventReceive.subscribe((ev) => {
 // Remember who hits us: provoked neutral mobs become threats, and we hit back at the right one.
 world.afterEvents.entityHurt.subscribe((ev) => {
   if (!agent || ev.hurtEntity.id !== agent.sim.id) return;
-  agent.onHurt(ev.damageSource.damagingEntity);
+  agent.onHurt(ev.damageSource.damagingEntity, ev.damageSource.cause, ev.damage);
 });
 
 // Dead simulated players don't respawn on their own.

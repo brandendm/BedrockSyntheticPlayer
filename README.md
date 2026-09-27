@@ -132,7 +132,9 @@ With no orders (and after finishing any order) it works through a goal ladder.
 - **Weapon:** the most damage per hit, since Bedrock has no attack cooldown. So a sword beats an axe of the same material (axes hit one less). A spear counts by its damage over its forced cooldown: less than a sword for fighting, but it's the one held against creepers (above). A weapon about to break is used last.
 - **Low on air:** under water with less than half its air left, it drops everything and swims for air. If it's sealed in, it digs up to reach air.
 
-**In the mine:** ore in the floor of its own tunnel or a quarry step gets mined too, and the hole is filled back in with a cheap block, so the floor stays level. (It used to skip it as protected: iron under its feet stayed while the iron in the wall got taken.) A vein is mined nearest block first from where the bot stands, with one pick-up at the end rather than a walk after every drop. Iron it has seen but not mined, and a branch it was halfway along, are kept in the world. The next trip goes back for them first instead of starting a new branch past them. At night down the mine it stays: mining, smelting and crafting at the mine camp, putting gear on. If the day's plan wants something up top while iron is still short, it mines on till morning.
+**In the mine:** ore in the floor of its own tunnel or a quarry step gets mined too, and the hole is filled back in with a cheap block, so the floor stays level. (It used to skip it as protected: iron under its feet stayed while the iron in the wall got taken.) A vein is mined nearest block first from where the bot stands, with one pick-up at the end rather than a walk after every drop. Iron it has seen but not mined, and a branch it was halfway along, are kept in the world. The next trip goes back for them first instead of starting a new branch past them. At night down the mine it stays: mining, smelting and crafting at the mine camp, putting gear on. If the day's plan wants something up top while iron is still short, it mines on till morning. A mining trip counts from the moment iron mining starts down the mine until the plan has it doing something else (not wherever it happens to be standing at dusk). With a full pack at night it tosses surplus stone, and if that isn't enough it walls itself in at the end of the tunnel till morning rather than walking home in the dark.
+
+**Its things come back with it:** a simulated player leaves with the world (closing it, a server restart, `!bot despawn`) and comes back with nothing. Its pack and what it wears (durability, enchantments and names included) are written to the world every 10 s and put back when it's spawned again, only if it's empty-handed, so nothing is ever doubled. After a death they're cleared (it's all on the ground, and it goes back for it).
 
 **Picking up where it left off:** what it's in the middle of is kept in the world file and written immediately for the house: the current step, the furnace it loaded (and how long is left), where its gear dropped when it died, and the house site. After a restart, a `/reload` or a death it says "Picking up where I left off" and carries on. The house's progress is read from the blocks actually placed, so it continues the same house on the same spot (`!bot test resume` checks exactly this). The dashboard shows the house's progress and what it still needs.
 
@@ -236,6 +238,14 @@ node tools/stress_path.mjs 200   # walk dense forest on rough ground, jungle, ra
 python -m unittest discover -s brain/tests -t .   # brain (21 tests)
 npm install; npm run typecheck # checks pack code against the real Script API typings
 ```
+
+## Making the simulators match your game
+
+`tools/sim_combat.mjs` is only as good as its numbers. Three ways to feed it real ones:
+
+1. **`!bot test creeper`** (in game, somewhere open: it levels a stone lane and puts the area back afterwards; nothing explodes, since every creeper is removed the moment it starts hissing). It measures, in your world: how fast a creeper walks, how close it gets before it starts hissing (and whether the game shows that as `is_ignited`), and, for a stone sword and a stone spear swung once at 2.8, 3.2, 3.6, 4.0 and 4.4 blocks, whether the hit landed and how far it knocked the creeper back. It ends with a line `calibration.json: {...}`. Save that JSON as `tools/calibration.json` and the arena runs on your game's numbers instead of its guesses.
+2. **The combat log.** With the brain running, every tick of a real creeper fight goes to `brain/logs/trace.jsonl`: distance, both positions, whether it's hissing, what the tactic chose (wait, back off, approach), which weapon swung, whether the hit registered, and every time the bot was hurt (cause, damage, distance). When a fight goes wrong, that file shows exactly how.
+3. **Night decisions** are in the same log (`dusk: ...`, `night in the mine: ...`): if it still heads home from the mine, the reason is there.
 
 ## Verified on a live server
 

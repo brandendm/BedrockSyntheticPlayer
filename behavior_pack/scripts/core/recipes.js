@@ -234,7 +234,7 @@ export function tableStep(inv, tableDist, wantedAfter, tableDy = 0) {
  * returns { step, ... }: gather_logs {count, wanted}, craft {items, needsTable}, place_table,
  *   goto_table {dist}, get_stone {need}, done
  */
-export function nextStep({ inv, tableDist = Infinity, exposedStoneKnown, tableDy = 0 }) {
+export function nextStep({ inv, tableDist = Infinity, exposedStoneKnown, tableDy = 0, spears = true }) {
   const cobble = count(inv, (id) => TOOL_STONE.has(id));
   const hasWoodPick = !!bestTool(inv, 'pickaxe');
   const hasStonePick = ['stone', 'iron', 'diamond', 'netherite'].some((t) => has(inv, `${t}_pickaxe`));
@@ -253,7 +253,7 @@ export function nextStep({ inv, tableDist = Infinity, exposedStoneKnown, tableDy
   // fist), shovel (dirt, sand, gravel), spear (creepers, from 4 blocks out: one cobblestone). Each is
   // only made if we don't have one as good already.
   const better = (kind) => ['stone', 'copper', 'iron', 'diamond', 'netherite'].some((t) => has(inv, `${t}_${kind}`));
-  const stoneKit = /** @type {Array<[string, number]>} */ ([['pickaxe', 3], ['sword', 2], ['axe', 3], ['shovel', 1], ['spear', 1]]).filter(([k]) => !better(k));
+  const stoneKit = /** @type {Array<[string, number]>} */ ([['pickaxe', 3], ['sword', 2], ['axe', 3], ['shovel', 1], ['spear', 1]]).filter(([k]) => !better(k) && (spears || k !== 'spear'));
   const kitCobble = stoneKit.reduce((a, [, n]) => a + n, 0);
   if (stoneKit.length && cobble < kitCobble) return { step: 'get_stone', need: kitCobble - cobble };
   if (stoneKit.length) {

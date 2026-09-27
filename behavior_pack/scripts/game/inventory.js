@@ -1,5 +1,5 @@
 // Inventory helpers for the SimulatedPlayer. Ids passed around without the "minecraft:" prefix.
-import { ItemStack, EntityComponentTypes } from '@minecraft/server';
+import { ItemStack, EntityComponentTypes, EquipmentSlot, EnchantmentTypes } from '@minecraft/server';
 
 const strip = (id) => id.replace('minecraft:', '');
 
@@ -28,7 +28,7 @@ export function findSlot(sim, id) {
   return -1;
 }
 
-const isTool = (id) => /_(pickaxe|shovel|axe|sword|hoe)$/.test(id);
+const isTool = (id) => /_(pickaxe|shovel|axe|sword|hoe|spear)$/.test(id);
 
 /** Hold an item (moving it into the hotbar if needed), or null for a bare hand. Returns the slot. */
 export function hold(sim, id) {
@@ -78,6 +78,62 @@ export function usesLeft(sim, pred) {
       const d = it.getComponent('minecraft:durability');
       n += d ? d.maxDurability - d.damage : 1;
     } catch { n += 1; }
+  }
+  return n;
+}
+
+// ---------- the kit, kept in the world ----------
+// A simulated player leaves with the world (closing it, the server stopping) and comes back empty.
+// What it carries and wears is written to the world's memory and put back when it's spawned again.
+
+const WORN = ['Head', 'Chest', 'Legs', 'Feet', 'Offhand'];
+
+/** One stack as plain data: id, count, wear, enchantments, name. */
+function itemData(it) {
+  const d = { id: it.typeId, n: it.amount };
+  try { const dur = it.getComponent('minecraft:durability'); if (dur?.damage) d.dmg = dur.damage; } catch {}
+  try {
+    const en = it.getComponent('minecraft:enchantable')?.getEnchantments() ?? [];
+    if (en.length) d.en = en.map((e) => [e.type.id, e.level]);
+  } catch {}
+  if (it.nameTag) d.name = it.nameTag;
+  return d;
+}
+
+function itemFrom(d) {
+  const it = new ItemStack(d.id, d.n);
+  try { if (d.dmg) { const dur = it.getComponent('minecraft:durability'); if (dur) dur.damage = d.dmg; } } catch {}
+  try {
+    if (d.en?.length) it.getComponent('minecraft:enchantable')?.addEnchantments(d.en.map(([id, level]) => ({ type: EnchantmentTypes.get(id), level })).filter((e) => e.type));
+  } catch {}
+  if (d.name) it.nameTag = d.name;
+  return it;
+}
+
+/** { slots: [[slot, item], ...], worn: { Head: item, ... } } */
+export function kitOf(sim) {
+  const c = container(sim), slots = [], worn = {};
+  for (let i = 0; c && i < c.size; i++) { const it = c.getItem(i); if (it) slots.push([i, itemData(it)]); }
+  const eq = sim.getComponent('minecraft:equippable');
+  for (const k of WORN) { try { const it = eq?.getEquipment(EquipmentSlot[k]); if (it) worn[k] = itemData(it); } catch {} }
+  return { slots, worn };
+}
+
+/** Nothing in the pack and nothing worn: a fresh spawn. */
+export function emptyHanded(sim) {
+  const k = kitOf(sim);
+  return !k.slots.length && !Object.keys(k.worn).length;
+}
+
+/** Put a saved kit back on. Returns how many stacks went back. */
+export function restoreKit(sim, kit) {
+  const c = container(sim), eq = sim.getComponent('minecraft:equippable');
+  let n = 0;
+  for (const [slot, d] of kit.slots ?? []) {
+    try { const it = itemFrom(d); if (c && !c.getItem(slot)) c.setItem(slot, it); else c?.addItem(it); n++; } catch (e) { console.warn(`[agent] kit: ${d.id}: ${e}`); }
+  }
+  for (const [k, d] of Object.entries(kit.worn ?? {})) {
+    try { eq?.setEquipment(EquipmentSlot[k], itemFrom(d)); n++; } catch (e) { console.warn(`[agent] kit: ${d.id} (${k}): ${e}`); }
   }
   return n;
 }

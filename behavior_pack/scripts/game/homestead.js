@@ -12,6 +12,8 @@ import { siteWork, siteScore } from '../core/site.js';
 import { depositPlan, takePlan } from '../core/storage.js';
 import { invCounts, hold, take, give, container as packOf } from './inventory.js';
 import { canSee, ONE_TAP } from './world.js';
+import { barricadeCells } from '../core/tactics.js';
+import { Cell } from '../core/pathfinder.js';
 
 const strip = (id) => id.replace('minecraft:', '');
 const center = (p) => ({ x: p.x + 0.5, y: p.y + 0.5, z: p.z + 0.5 });
@@ -1143,6 +1145,7 @@ export class Homestead {
    */
   async shelter(gen) {
     const S = this.S;
+    if (this.a.onMiningTrip?.() || this.a.minedUnderground?.()) return this.mineShelter(gen);
     this.a.sayOnce('shelter', 'Night caught me without a house; holing up until morning.', 300000);
     // Three down, so the lid (one below ground level) has ground on every side to be placed against.
     const canDigIn = (x, y, z) => {
@@ -1184,6 +1187,35 @@ export class Homestead {
     }
     while (isNight(world.getTimeOfDay())) await S.wait(gen, 40);
     await S.toSurface(gen); // dig/climb back out (our own blocks are fair game)
+    return true;
+  }
+
+  /**
+   * Night down the mine with nothing to do there (the pack's full): to the end of the main tunnel (a
+   * dead end), the one way in walled off with two blocks, till morning; then the wall comes down and
+   * the plan carries on from here. Never back up top in the dark.
+   */
+  async mineShelter(gen) {
+    const S = this.S;
+    const end = S.homeQuarry()?.mine?.at;
+    if (end) await S.goNear(gen, { x: end.x + 0.5, y: end.y, z: end.z + 0.5 }, 0.6, 2);
+    const me = this.sim.location;
+    const w = this.a.classifier();
+    const at = (x, y, z) => { const c = w(x, y, z); return c === Cell.AIR ? 'open' : c === Cell.SOLID || c === Cell.STEP || c === Cell.SLAB ? 'solid' : 'other'; };
+    let cells = null;
+    for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+      cells = barricadeCells(me, { x: me.x + dx * 3, y: me.y, z: me.z + dz * 3 }, at);
+      if (cells) break;
+    }
+    const placed = [];
+    for (const c of cells ?? []) {
+      const block = cheapestPlaceable(invCounts(this.sim), plankReserve(invCounts(this.sim)));
+      if (!block) break;
+      if (await this.placeAt(gen, c, block)) { placed.push(c); S.markPlaced(c); }
+    }
+    this.a.sayOnce('mine-shelter', placed.length ? 'Walled myself in at the end of the mine till morning.' : 'Keeping to the end of the mine till morning.', 300000);
+    while (isNight(world.getTimeOfDay())) await S.wait(gen, 40);
+    for (const c of placed) await S.mine(gen, c, { collect: true, force: true });
     return true;
   }
 }

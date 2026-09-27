@@ -29,15 +29,19 @@
 //   leap          a 1-wide, 2-deep trench across a walled corridor: jump it, don't climb through
 //   bridge        a 3-wide, 7-deep chasm across a walled corridor (16 dirt given): bridge it
 //   husk          a husk walks up: fight it from the edge of reach (reports the closest it got)
+//   creeper       calibration, nothing explodes: a creeper's walk speed and the distance it starts
+//                 hissing at (the bot stands still; the creeper is removed the moment it hisses),
+//                 then a stone sword and a stone spear swung once each at 3, 3.5 and 4 blocks: did
+//                 it land, how far did it knock it back. The numbers tools/sim_combat.mjs guesses.
 // The bot keeps whatever it's carrying; give it a pickaxe or sword first to test with one.
 
 import { dist3D } from '../core/mathutil.js';
 import { sendEvent } from './bridge.js';
 import { system, world, ItemStack } from '@minecraft/server';
 import { blueprint, furnishings } from '../core/house.js';
-import { invCounts as invCountsOf } from './inventory.js';
+import { invCounts as invCountsOf, hold, container as packOf } from './inventory.js';
 
-const NAMES = ['roof', 'tower', 'hole', 'pit', 'trap', 'climb', 'ledge', 'ladder', 'husk', 'sheep', 'pen', 'smelt', 'smeltlogs', 'shelter', 'house', 'resume', 'ghostlog', 'quarry', 'dark', 'replant', 'litter', 'trader', 'iron', 'farm', 'equip', 'water', 'bucketfarm', 'treetop', 'corner', 'leap', 'bridge'];
+const NAMES = ['roof', 'tower', 'hole', 'pit', 'trap', 'climb', 'ledge', 'ladder', 'husk', 'creeper', 'sheep', 'pen', 'smelt', 'smeltlogs', 'shelter', 'house', 'resume', 'ghostlog', 'quarry', 'dark', 'replant', 'litter', 'trader', 'iron', 'farm', 'equip', 'water', 'bucketfarm', 'treetop', 'corner', 'leap', 'bridge'];
 let running = false;
 
 export async function runTests(agent, player, args) {
@@ -605,6 +609,103 @@ async function runOne(agent, player, name, arg) {
         detail = `${pass ? 'down' : `still ${f.y - gy - 1} up`} in ${secs()}s`;
         break;
       }
+      case 'creeper': {
+        // A flat stone lane along +x (the test area is put back afterwards).
+        cmd(`fill ${x - 2} ${gy + 1} ${z - 3} ${x + 13} ${gy + 5} ${z + 3} air`);
+        cmd(`fill ${x - 2} ${gy} ${z - 3} ${x + 13} ${gy} ${z + 3} stone`);
+        agent.testHold = true;
+        agent.endCombat();
+        tp(x, gy + 1, z);
+        await system.waitTicks(10);
+        // The weapons to try: given for the test, taken back after.
+        const given = [];
+        for (const id of ['stone_sword', 'stone_spear']) {
+          try { packOf(sim)?.addItem(new ItemStack(`minecraft:${id}`, 1)); given.push(id); } catch (e) { detail += `no ${id} in this version (${e}); `; }
+        }
+        const hpOf = (e) => { try { return e.getComponent('minecraft:health')?.currentValue ?? null; } catch { return null; } };
+        const lit = (e) => { try { return !!e.getComponent('minecraft:is_ignited'); } catch { return false; } };
+        const dd = (e) => dist3D(sim.location, e.location);
+        const summon = async (dx) => {
+          cmd(`summon creeper ${x + dx} ${gy + 1} ${z}`);
+          await system.waitTicks(2);
+          return dim.getEntities({ type: 'minecraft:creeper', location: { x: x + dx + 0.5, y: gy + 1, z: z + 0.5 }, maxDistance: 3 })[0] ?? null;
+        };
+        const gone = (c) => { try { if (c?.isValid) c.remove(); } catch {} };
+        // Eyes on it (the motor's focus, which it holds every tick, and the body).
+        const face = (c) => { try { const l = c.location; agent.motor.setFocus({ x: l.x, y: l.y + 1, z: l.z }); sim.lookAtEntity(c); } catch {} };
+        const log = [];
+        // 1. Walk speed, and where it starts hissing. The bot stands still, looking at it.
+        const speeds = [], litAt = [];
+        let sawIgnite = false;
+        for (let trial = 0; trial < 2; trial++) {
+          tp(x, gy + 1, z);
+          const c = await summon(10);
+          if (!c) { log.push("couldn't summon a creeper"); break; }
+          let prev = dd(c);
+          for (let i = 0; i < 400 && c.isValid; i++) {
+            face(c);
+            await system.waitTicks(1);
+            if (!c.isValid) break;
+            const d = dd(c);
+            if (d > 3.2 && d < 8.5) speeds.push(prev - d);
+            prev = d;
+            if (lit(c)) { sawIgnite = true; litAt.push(d); break; }
+            if (d < 1.4) { litAt.push(-1); break; } // right up to us and never showed as lit
+          }
+          gone(c);
+          await system.waitTicks(20);
+        }
+        const avg = (a) => (a.length ? a.reduce((p, q) => p + q, 0) / a.length : NaN);
+        log.push(`walks ${avg(speeds).toFixed(3)} blocks/tick`);
+        log.push(sawIgnite ? `starts hissing at ${litAt.map((v) => v.toFixed(2)).join(', ')}` : `is_ignited never showed (${litAt.length} runs)`);
+        // 2. One swing each, sword and spear, at 2.8 to 4.4 blocks (feet to feet): landed? knockback?
+        const hits = {}; // weapon -> [{ at, landed, kb }]
+        for (const w of given) {
+          for (const at of [2.8, 3.2, 3.6, 4.0, 4.4]) {
+            tp(x, gy + 1, z);
+            hold(sim, w);
+            const c = await summon(9);
+            if (!c) break;
+            let d = dd(c), early = false;
+            for (let i = 0; i < 300 && c.isValid && d > at; i++) {
+              face(c);
+              await system.waitTicks(1);
+              d = dd(c);
+              if (lit(c)) { early = true; break; }
+            }
+            if (early || !c.isValid) { log.push(`${w} ${at}: it hissed first`); gone(c); continue; }
+            face(c);
+            const hp0 = hpOf(c), d0 = dd(c);
+            try { sim.attackEntity(c); } catch (e) { log.push(`${w}: attack threw ${e}`); }
+            await system.waitTicks(2);
+            const hp1 = c.isValid ? hpOf(c) : null;
+            let far = d0;
+            for (let k = 0; k < 16 && c.isValid; k++) { await system.waitTicks(1); if (c.isValid) far = Math.max(far, dd(c)); if (lit(c)) break; }
+            const landed = hp0 !== null && hp1 !== null && hp1 < hp0;
+            (hits[w] ??= []).push({ at: d0, landed, kb: far - d0 });
+            log.push(`${w} at ${d0.toFixed(2)}: ${landed ? `hit (${hp0}->${hp1}), knocked back ${(far - d0).toFixed(2)}` : 'MISSED'}`);
+            gone(c);
+            await system.waitTicks(w.endsWith('spear') ? 25 : 12); // the spear's own cooldown
+          }
+        }
+        for (const id of given) { const slot = packOf(sim); for (let i = 0; slot && i < slot.size; i++) { const it = slot.getItem(i); if (it?.typeId === `minecraft:${id}`) { slot.setItem(i, undefined); break; } } }
+        agent.testHold = false;
+        agent.motor.setFocus(null);
+        pass = speeds.length > 5;
+        // For tools/calibration.json (tools/sim_combat.mjs reads it): the arena on this game's numbers.
+        const kind = (w) => (w.endsWith('spear') ? 'spear' : 'sword');
+        const cal = { creeperSpeed: +avg(speeds).toFixed(3), knockback: {}, reachFeet: {} };
+        const lits = litAt.filter((v) => v > 0);
+        if (lits.length) cal.fuseStart = +Math.max(...lits).toFixed(2);
+        for (const [w, rs] of Object.entries(hits)) {
+          const ok = rs.filter((r) => r.landed);
+          if (ok.length) { cal.knockback[kind(w)] = +avg(ok.map((r) => r.kb)).toFixed(2); cal.reachFeet[kind(w)] = +Math.max(...ok.map((r) => r.at)).toFixed(2); }
+        }
+        log.push(`calibration.json: ${JSON.stringify(cal)}`);
+        detail += log.join('; ');
+        console.warn(`[test] creeper calibration: ${detail}`);
+        break;
+      }
       case 'husk': {
         tp(x, gy + 1, z);
         await system.waitTicks(10);
@@ -630,6 +731,7 @@ async function runOne(agent, player, name, arg) {
   } catch (e) {
     detail = `error: ${e}`;
   } finally {
+    agent.testHold = false;
     agent.newTask(null);
     agent.motor.stop();
     // Put the ground back, then make sure the bot isn't left inside a restored block.
