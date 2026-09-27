@@ -173,8 +173,8 @@ function arena({ classify: base, bot, mobs, weapon = 'stone_sword', shield = fal
       const dx = m.x - me.x, dz = m.z - me.z, l = Math.hypot(dx, dz) || 1;
       // (Knockback has an upward kick: it can carry a mob up one step, as up the quarry stairs.)
       let rose = false;
-      for (let k = 0; k < Math.round(knockbackFor(spear) / 0.5); k++) {
-        const nx = m.x + dx / l * 0.5, nz = m.z + dz / l * 0.5;
+      for (let k = 0; k < Math.round(knockbackFor(spear) / 0.1); k++) {
+        const nx = m.x + dx / l * 0.1, nz = m.z + dz / l * 0.1;
         const open = (y) => classify(Math.floor(nx), y, Math.floor(nz)) === Cell.AIR && classify(Math.floor(nx), y + 1, Math.floor(nz)) === Cell.AIR;
         if (open(Math.floor(m.y))) { m.x = nx; m.z = nz; }
         else if (!rose && open(Math.floor(m.y) + 1)) { m.x = nx; m.z = nz; m.y = Math.floor(m.y) + 1; rose = true; }
