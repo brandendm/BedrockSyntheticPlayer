@@ -59,6 +59,9 @@ export const WEAPON_DAMAGE = {
   trident: 9, mace: 7,
 };
 
+/** Tall melee mobs: can't get through a 1-high gap (core/tactics.js killSlotCells). Grown ones only. */
+export const SLOT_SAFE = new Set(['zombie', 'husk', 'drowned', 'zombie_villager', 'zombie_villager_v2', 'vindicator', 'wither_skeleton']);
+
 export function weaponDamage(typeId) {
   if (!typeId) return FIST_DAMAGE;
   return WEAPON_DAMAGE[typeId.replace('minecraft:', '')] ?? FIST_DAMAGE;
@@ -85,9 +88,12 @@ export function isActiveThreat(m, isNight, alert = false) {
 
 /**
  * input: { health, damage, isNight, prevMode, mobs: [{id, type, dist, visible, targetingMe, attackedMe}] }
+ * slot: we're standing behind a kill slot (core/tactics.js killSlotCells): a grown zombie on the far
+ * side can't hit us, and we can hit it through the gap. Fight it from there, hurt or not.
  * output: { mode: 'none'|'fight'|'flee', target?: id, threats: [mob], reason }
  */
-export function decide({ health, damage = FIST_DAMAGE, isNight = false, prevMode = 'none', mobs, inWater = false, shield = false }) {
+export function decide({ health, damage = FIST_DAMAGE, isNight = false, prevMode = 'none', mobs, inWater = false, shield = false, slot = false }) {
+  const held = (m) => slot && SLOT_SAFE.has(m.type) && !m.baby; // at the gap: can't get at us
   const alert = prevMode !== 'none';
   const threats = mobs.filter((m) => isActiveThreat(m, isNight, alert)).sort((a, b) => a.dist - b.dist);
   if (!threats.length) return { mode: 'none', threats, reason: 'clear' };
@@ -112,7 +118,9 @@ export function decide({ health, damage = FIST_DAMAGE, isNight = false, prevMode
   if (never) return { mode: 'flee', threats, reason: `won't fight ${never.type}` };
   // Low on health: run. Except already up close to an archer and nothing else on us: turning our
   // back on it in the open is how it gets the last few shots in; finish it.
-  if (health <= FLEE_HEALTH) {
+  // (Behind a kill slot with only zombies at it: nothing can hurt us; running is what would.)
+  const closeOnes = threats.filter((m) => m.dist <= 16 && (m.visible || m.attackedMe));
+  if (health <= FLEE_HEALTH && !(closeOnes.length && closeOnes.every(held))) {
     const close = threats.filter((m) => m.dist <= 16 && (m.visible || m.attackedMe));
     const archerOnly = close.length > 0 && close.every((m) => MOBS[m.type].kind === 'ranged');
     const nearest = close[0];
@@ -132,7 +140,7 @@ export function decide({ health, damage = FIST_DAMAGE, isNight = false, prevMode
   // (A drowned bobbing in the lake next to us is not our problem until it comes out and hits us.)
   // Archers too: one we can't get a path to (up at the mouth of the quarry, across a ravine) is no
   // fight: going for it was the staring contest. If it's hitting us, take cover instead (below).
-  const reachable = (m) => (m.attackedMe && m.canReach !== false) || (m.inWater && !inWater ? false : m.dist <= 2.5 || ((m.visible || (alert && (m.recent ?? true))) &&
+  const reachable = (m) => (held(m) && m.visible && m.dist <= 8) || (m.attackedMe && m.canReach !== false) || (m.inWater && !inWater ? false : m.dist <= 2.5 || ((m.visible || (alert && (m.recent ?? true))) &&
     (m.canReach ?? (MOBS[m.type].kind === 'ranged' || Math.abs(m.dy ?? 0) <= 4))));
   const engaged = threats.filter((m) => m.type !== 'creeper' && reachable(m) &&
     (m.attackedMe || m.dist <= (MOBS[m.type].kind === 'ranged' ? (m.targetingMe ? 16 : 4) : alert ? 16 : m.targetingMe ? 12 : 8)));
@@ -150,9 +158,9 @@ export function decide({ health, damage = FIST_DAMAGE, isNight = false, prevMode
   const ttk = engaged.reduce((s, m) => s + Math.ceil(Math.max(1, m.hp ?? MOBS[m.type].hp) / damage) * ATTACK_INTERVAL_S + walkIn(m), 0);
   // A shield takes arrows from the front and much of what's in front of us up close.
   // (Only from the front, and not while swinging: with two or more after us, less.)
-  const guard = (m) => (!shield ? 1 : (MOBS[m.type].kind === 'ranged' ? 0.4 : 0.7) + (engagedCount > 1 ? 0.2 : 0));
+  const guard = (m) => held(m) ? 0 : (!shield ? 1 : (MOBS[m.type].kind === 'ranged' ? 0.4 : 0.7) + (engagedCount > 1 ? 0.2 : 0));
   const enemyDps = engaged.reduce((s, m) => s + MOBS[m.type].dps * guard(m), 0) * KNOCKBACK;
-  const ttd = health / enemyDps;
+  const ttd = enemyDps > 0 ? health / enemyDps : Infinity;
   // Already trading blows with something right on us: turning our back is free hits for it (a
   // zombie keeps up for the first seconds, and in a tunnel for ever). Run only if clearly losing.
   const toeToToe = prevMode === 'fight' && engaged.some((m) => MOBS[m.type].kind === 'melee' && m.dist <= 3);

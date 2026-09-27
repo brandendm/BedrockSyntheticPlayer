@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { fightMove, creeperFight, creeperMove, Stalemate, pickRefuge, bestWeapon, barricadeCells, CREEPER_HOLD, CREEPER_LIGHT, CREEPER_CALM, weaponReach, pickCreeperSwing, creeperWeapon, knockbackRoom, blockOffCells, fleeJab } from '../behavior_pack/scripts/core/tactics.js';
+import { fightMove, creeperFight, creeperMove, Stalemate, pickRefuge, bestWeapon, barricadeCells, CREEPER_HOLD, CREEPER_LIGHT, CREEPER_CALM, weaponReach, pickCreeperSwing, creeperWeapon, knockbackRoom, blockOffCells, fleeJab, killSlotCells, killSlotWorth } from '../behavior_pack/scripts/core/tactics.js';
 import { HOLD_AT, REACH_HIT } from '../behavior_pack/scripts/core/threat.js';
 
 const P = (x, y, z) => ({ x, y, z });
@@ -185,4 +185,27 @@ test('flee jab: spear something catching up from out of its reach, sword it if i
   assert.equal(run([3.3, 3.3, 3.3, 3.3], ready), null, 'keeping pace, not gaining');
   assert.equal(run([4.2, 3.9, 3.6, 3.3], { ...ready, spearReady: false, swordReady: false }), null, 'nothing ready');
   assert.equal(run([4.2, 3.9, 3.6, 3.3], { ...ready, melee: false }), null, 'only melee mobs');
+});
+
+test('kill slot: across the end of a tunnel, a block at the feet (and over head height if the ceiling is higher)', () => {
+  const tunnel = (high) => (x, y, z) => (z === 0 && x >= 1 && x <= 20 && y >= 40 && y < 40 + high ? 'open' : 'solid');
+  const two = killSlotCells(P(1.5, 40, 0.5), P(9.5, 40, 0.5), tunnel(2));
+  assert.deepEqual(two.cells, [P(2, 40, 0)]);
+  assert.deepEqual(two.slot, P(2, 41, 0));
+  assert.ok(two.stand.x < 1.5, 'stand at the back of our cell');
+  assert.deepEqual(killSlotCells(P(1.5, 40, 0.5), P(9.5, 40, 0.5), tunnel(3)).cells, [P(2, 40, 0), P(2, 42, 0)]);
+  // Mid-tunnel (two ways out), open ground, or it's coming from behind: no slot.
+  assert.equal(killSlotCells(P(5.5, 40, 0.5), P(9.5, 40, 0.5), tunnel(2)), null);
+  assert.equal(killSlotCells(P(0.5, 64, 0.5), P(8.5, 64, 0.5), (x, y) => (y >= 64 ? 'open' : 'solid')), null);
+});
+
+test('kill slot worth it: zombies only, more than one or us hurt, and time to put the block down', () => {
+  const z = (dist, extra = {}) => ({ type: 'zombie', dist, ...extra });
+  assert.equal(killSlotWorth({ threats: [z(6), z(8)], health: 20 }), true);
+  assert.equal(killSlotWorth({ threats: [z(6)], health: 20 }), false);
+  assert.equal(killSlotWorth({ threats: [z(6)], health: 10 }), true);
+  assert.equal(killSlotWorth({ threats: [z(2.5), z(8)], health: 20 }), false, 'already on us');
+  assert.equal(killSlotWorth({ threats: [z(6), { type: 'spider', dist: 8 }], health: 20 }), false);
+  assert.equal(killSlotWorth({ threats: [z(6), { type: 'skeleton', dist: 8 }], health: 20 }), false);
+  assert.equal(killSlotWorth({ threats: [z(6), z(7, { baby: true })], health: 20 }), false);
 });

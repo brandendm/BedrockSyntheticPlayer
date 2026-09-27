@@ -110,3 +110,13 @@ test('a creeper we have walled off (no way to us, no sight of us, not hissing) i
   assert.equal(decide({ health: 20, damage: 6, mobs: [mob('creeper', 3, { canReach: false, visible: false, recent: false })] }).mode, 'none');
   assert.notEqual(decide({ health: 20, damage: 6, mobs: [mob('creeper', 3, { canReach: false, visible: false, recent: false, lit: true })] }).mode, 'none', 'hissing: still one to get away from');
 });
+
+test('behind a kill slot: zombies at the gap are fought, even hurt; a baby or a spider still counts', () => {
+  const zs = [mob('zombie', 2.2, { targetingMe: true }), mob('zombie', 4, { targetingMe: true }), mob('zombie', 6, { targetingMe: true })];
+  assert.equal(decide({ health: 5, damage: 4, isNight: true, mobs: zs }).mode, 'flee');
+  const d = decide({ health: 5, damage: 4, isNight: true, mobs: zs, slot: true });
+  assert.equal(d.mode, 'fight');
+  assert.equal(d.target, zs[0].id);
+  assert.equal(decide({ health: 5, damage: 4, isNight: true, mobs: [...zs, mob('spider', 3, { targetingMe: true })], slot: true }).mode, 'flee');
+  assert.equal(decide({ health: 5, damage: 4, isNight: true, mobs: [mob('zombie', 2.2, { targetingMe: true, baby: true })], slot: true }).mode, 'flee');
+});

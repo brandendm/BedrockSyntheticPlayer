@@ -6,7 +6,7 @@ import { MotorController, EYE_HEIGHT } from '../core/motor.js';
 import { searchJob, smoothPath, findPath, Cell } from '../core/pathfinder.js';
 import { dist3D, makeRng } from '../core/mathutil.js';
 import { decide, fleePoint, weaponDamage, MOBS, REACH_HIT, STOP_AT } from '../core/threat.js';
-import { fightMove, creeperFight, creeperMove, Stalemate, pickRefuge, bestWeapon, barricadeCells, SPEAR_DAMAGE, weaponReach, pickCreeperSwing, creeperWeapon, isSpear, awayPath, knockbackRoom, blockOffCells, fleeJab, CREEPER_LIGHT, CREEPER_CALM } from '../core/tactics.js';
+import { fightMove, creeperFight, creeperMove, Stalemate, pickRefuge, bestWeapon, barricadeCells, SPEAR_DAMAGE, weaponReach, pickCreeperSwing, creeperWeapon, isSpear, awayPath, knockbackRoom, blockOffCells, fleeJab, killSlotCells, killSlotWorth, CREEPER_LIGHT, CREEPER_CALM } from '../core/tactics.js';
 import { nextStep, STONE_TARGETS, TOOL_STONE, count, isLog } from '../core/recipes.js';
 import { settleStep, foodCount, FOOD_GOAL, isNight } from '../core/settle.js';
 import { goalChain } from '../core/goals.js';
@@ -92,6 +92,8 @@ export class Agent {
     this.fleeJabSt = new Map();  // mob id -> distance history, to tell who is catching up while we run
     this.jabbing = false;        // turned to jab something catching up
     this.fleeThreats = null;     // what we are running from
+    this.slot = null;            // a kill slot we put up: { cells, slot, stand, dir, block }
+    this.threatsNow = [];        // the last survive() pass's threats
     this.hunting = false;        // homestead.hunt is steering the head
     this.trail = [];             // recent positions, newest last: {x, y, z, under}
     const follow = this.motor.followPath.bind(this.motor);
@@ -434,10 +436,11 @@ export class Agent {
         pos: { x: e.location.x, y: e.location.y, z: e.location.z },
         dist: dist3D(pos, e.location),
         visible: canSee(this.dim, eye, head),
-        targetingMe, attackedMe, recent: false, dy: e.location.y - pos.y, canReach: true, inWater: !!e.isInWater, hp: undefined, lit: false,
+        targetingMe, attackedMe, recent: false, dy: e.location.y - pos.y, canReach: true, inWater: !!e.isInWater, hp: undefined, lit: false, baby: false,
       });
       const m = out[out.length - 1];
       try { m.hp = e.getComponent('minecraft:health')?.currentValue; } catch {}
+      try { m.baby = !!e.getComponent('minecraft:is_baby'); } catch {} // a baby zombie fits through a kill slot
       if (type === 'creeper') m.lit = this.hissing(e);
       m.canReach = this.canReachMe(e, pos, t);
       // A fight that went nowhere: it counts as out of reach for a minute, so we get on with things
@@ -554,7 +557,8 @@ export class Agent {
     if (this.lastSeen.size > 200) for (const [id, at] of this.lastSeen) if (t - at > 200) this.lastSeen.delete(id);
     const mobs = this.scanMobs(this.mode === 'none' ? 16 : 24);
     const inWater = this.sim.isInWater;
-    const d = decide({ health: this.health(), damage: this.damage, isNight: this.isNight(), prevMode: this.mode, mobs, inWater, shield: this.shield });
+    const d = decide({ health: this.health(), damage: this.damage, isNight: this.isNight(), prevMode: this.mode, mobs, inWater, shield: this.shield, slot: this.slotHolds() });
+    this.threatsNow = d.threats;
     // Cornered with nowhere better to run: fight the nearest thing that can be fought.
     if (d.mode === 'flee' && (this.corneredUntil ?? 0) > t && d.reason !== 'creeper' && d.reason !== 'cover') {
       const fightable = (m) => !MOBS[m.type].never && m.type !== 'creeper' && m.dist <= 8 && (m.visible || m.attackedMe);
@@ -1412,7 +1416,9 @@ export class Agent {
       trace(`creeper ${e.id.slice(-4)} t${t} d${f2(d)} me${f2(me.x)},${f2(me.y)},${f2(me.z)} c${f2(mob.x)},${f2(mob.y)},${f2(mob.z)} v${ign} lit${lit ? 1 : 0} w=${swingWith ?? 'hand'}${canSwing ? '' : '(cd)'} r${reach} -> ${mv.swing ? 'SWING ' : ''}${mv.stop ? 'stop' : mv.away ? `away${f2(mv.away)}` : mv.goal ? 'approach' : 'hold'}${mv.block ? ' block' : ''} busy${this.motor.busy ? 1 : 0}`);
     } else {
       if (this.heldWeapon && this.heldWeapon !== this.weaponId && this.weaponId) { hold(this.sim, this.weaponId); this.heldWeapon = this.weaponId; }
-      mv = fightMove({ me, mob, melee: MOBS[target.type]?.kind === 'melee', t, shield: this.shield, canSwing });
+      // Tall melee mobs coming at a dead end: a kill slot across the way in, and fight from it.
+      if (!this.slot && this.buildSlot(this.threatsNow, target)) return;
+      mv = this.slotMove(target, me, canSwing) ?? fightMove({ me, mob, melee: MOBS[target.type]?.kind === 'melee', t, shield: this.shield, canSwing });
       this.fightMove = mv.stop ? 'hold' : mv.goal && d > STOP_AT ? 'approach' : 'back';
     }
     this.setBlocking(!!mv.block);
@@ -1572,6 +1578,7 @@ export class Agent {
       const now = this.body.getPos();
       const spot = pickRefuge(now, threats, cands, sees);
       if (spot) { this.routeTo(spot, 1, true, 3000); return; }
+      if (this.buildSlot(threats, threats.filter((m) => m.dist <= 12).sort((a, b) => a.dist - b.dist)[0])) return; // cornered by zombies: a kill slot, not a sealed wall
       if (this.wallOff(threats)) return;
       const deeper = pickRefuge(now, threats, cands, sees, 0.5);
       if (deeper) { this.routeTo(deeper, 0.5, true, 1500); this.nextRoute = system.currentTick + 8; return; }
@@ -1636,6 +1643,67 @@ export class Agent {
     stopJab(); // and on
   }
 
+  /**
+   * Tall melee mobs only (grown zombies and the like), at a dead end with them coming the one way
+   * in: a block at our feet in the next cell toward them (and over head height if the ceiling's
+   * higher) leaves a 1-high gap at eye level. They can't get through it or reach us over it; we
+   * hit them through it (core/tactics.js killSlotCells). Returns true if we're putting it up.
+   */
+  buildSlot(threats, near) {
+    if (this.slot || this.walling || !near?.pos || !threats?.length) return false;
+    const ks = killSlotWorth({ threats, health: this.health() }) && killSlotCells(this.body.getPos(), near.pos, this.cellAt());
+    if (!ks) return false;
+    const block = this.homestead.materialFor('stone');
+    if (!block || (invCounts(this.sim)[block] ?? 0) < ks.cells.length) return false;
+    if (threats.some((m) => ks.cells.some((c) => Math.floor(m.pos.x) === c.x && Math.floor(m.pos.z) === c.z && Math.abs(Math.floor(m.pos.y) - c.y) <= 1))) return false;
+    this.walling = true;
+    this.setBlocking(false);
+    this.stopWalking();
+    const gen = this.taskGen;
+    const me = this.body.getPos();
+    trace(`kill slot: ${ks.cells.length} block(s) across the way in, ${threats.length} ${near.type} coming, nearest ${near.dist.toFixed(1)}`);
+    // Our box can't be in the cell the block goes in: back to the middle of ours first.
+    const back = Math.hypot(me.x - ks.stand.x, me.z - ks.stand.z) > 0.25 ? this.motor.followPath([{ ...me }, ks.stand], { walk: true }) : Promise.resolve();
+    back.then(() => this.homestead.placeFlow(gen, ks.cells.map((c) => ({ cell: c, id: block }))))
+      .then(() => {
+        const up = ks.cells.filter((c) => this.skills.blockAt(c) === block);
+        for (const c of up) this.skills.markPlaced(c);
+        if (up.some((c) => c.y === ks.stand.y)) {
+          this.slot = { ...ks, block };
+          // Down again once they're dead (it's across our own way out).
+          this.creeperWalls = [...(this.creeperWalls ?? []), { cells: up, block }];
+          this.say('Blocked the tunnel with a gap to hit them through.');
+        }
+        trace(`kill slot: up (${up.length}/${ks.cells.length})`);
+      })
+      .catch(() => {})
+      .finally(() => { this.walling = false; });
+    return true;
+  }
+
+  /** Behind our kill slot: its block still there, and we're in the cell behind it. */
+  slotHolds() {
+    const s = this.slot;
+    if (!s) return false;
+    if (this.skills.blockAt(s.cells[0]) !== s.block) { this.slot = null; return false; }
+    const me = this.body.getPos();
+    return Math.floor(me.x) === Math.floor(s.stand.x) && Math.floor(me.z) === Math.floor(s.stand.z) && Math.abs(me.y - s.stand.y) < 0.6;
+  }
+
+  /**
+   * Fighting from the kill slot: a mob on the far side of it is hit through the gap from the back of
+   * our cell (a step there if we've drifted), never walked at. Else null (fight as usual).
+   */
+  slotMove(target, me, canSwing) {
+    const s = this.slot;
+    if (!s || !this.slotHolds()) return null;
+    const beyond = (target.pos.x - s.stand.x) * s.dir.x + (target.pos.z - s.stand.z) * s.dir.z > 1;
+    if (!beyond) return null;
+    const off = Math.hypot(me.x - s.stand.x, me.z - s.stand.z);
+    if (off > 0.25 && !this.motor.busy) { this.routeSeq = (this.routeSeq ?? 0) + 1; this.motor.followPath([{ ...me }, s.stand], { walk: true }); }
+    return { stop: off <= 0.25, swing: canSwing };
+  }
+
   /** Blocks as tactics.js reads them: 'open' | 'solid' | 'other'. */
   cellAt() {
     const w = this.classifier();
@@ -1677,9 +1745,12 @@ export class Agent {
     if (!this.creeperWalls?.length) return;
     let near = [];
     try { near = this.dim.getEntities({ type: 'minecraft:creeper', location: this.sim.location, maxDistance: 16 }); } catch {}
+    // A kill slot: not while a zombie is still out there.
+    if (this.slot) try { near = near.concat(this.dim.getEntities({ families: ['monster'], location: this.sim.location, maxDistance: 16 }).filter((e) => e.typeId !== 'minecraft:creeper')); } catch {}
     if (near.length) return;
     const walls = this.creeperWalls;
     this.creeperWalls = [];
+    this.slot = null;
     for (const w of walls) {
       const ours = w.cells.filter((c) => this.skills.blockAt(c) === w.block);
       if (!ours.length || dist3D(this.sim.location, ours[0]) > 24) continue;

@@ -6,7 +6,7 @@
 //               get a path to, an arrow line that never reaches us): give it up, don't stare at it
 //   pickRefuge  where to run: far from the threats, and out of a shooter's sight if one's hitting us
 //   bestWeapon  what to hold: most damage per hit (Bedrock has no attack cooldown), worn-out last
-import { HOLD_AT, REACH_HIT, BACK_OFF, STOP_AT, standOff, MOBS, weaponDamage } from './threat.js';
+import { HOLD_AT, REACH_HIT, BACK_OFF, STOP_AT, standOff, MOBS, weaponDamage, SLOT_SAFE } from './threat.js';
 
 const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z);
 
@@ -331,10 +331,23 @@ export function bestWeapon(items) {
  */
 export function barricadeCells(me, threat, at) {
   const f = { x: Math.floor(me.x), y: Math.floor(me.y), z: Math.floor(me.z) };
-  const dirs = [[1, 0], [-1, 0], [0, 1], [0, -1]];
-  // Ways out of our cell: a neighbouring column we could step into (same level, one up, one down).
+  const w = oneWayIn(me, threat, at);
+  if (!w) return null;
+  const cells = [{ x: w.x, y: w.y, z: w.z }, { x: w.x, y: w.y + 1, z: w.z }];
+  // Stairs going up toward it: our own headroom opens onto its step too.
+  if (w.y > f.y && at(w.x, w.y + 2, w.z) === 'open') cells.push({ x: w.x, y: w.y + 2, z: w.z });
+  return cells;
+}
+
+/**
+ * The one way out of our cell (a neighbouring column we could step into: same level, one up, one
+ * down), if there's exactly one and it's the way the threat comes from; else null (open ground, a
+ * junction, or it's coming some other way). Returns { x, y, z, dx, dz }.
+ */
+export function oneWayIn(me, threat, at) {
+  const f = { x: Math.floor(me.x), y: Math.floor(me.y), z: Math.floor(me.z) };
   const ways = [];
-  for (const [dx, dz] of dirs) {
+  for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
     for (const dy of [0, 1, -1]) {
       const x = f.x + dx, y = f.y + dy, z = f.z + dz;
       if (at(x, y, z) === 'open' && at(x, y + 1, z) === 'open' && at(x, y - 1, z) === 'solid' && (dy <= 0 || at(f.x, f.y + 2, f.z) === 'open')) { ways.push({ x, y, z, dx, dz }); break; }
@@ -343,9 +356,42 @@ export function barricadeCells(me, threat, at) {
   if (ways.length !== 1) return null; // open ground, or a junction: two blocks won't shut it
   const w = ways[0];
   // It has to be the way the threat comes from.
-  if ((threat.x - me.x) * w.dx + (threat.z - me.z) * w.dz <= 0) return null;
-  const cells = [{ x: w.x, y: w.y, z: w.z }, { x: w.x, y: w.y + 1, z: w.z }];
-  // Stairs going up toward it: our own headroom opens onto its step too.
-  if (w.y > f.y && at(w.x, w.y + 2, w.z) === 'open') cells.push({ x: w.x, y: w.y + 2, z: w.z });
-  return cells;
+  return (threat.x - me.x) * w.dx + (threat.z - me.z) * w.dz > 0 ? w : null;
+}
+
+/**
+ * A kill slot: at a dead end (a tunnel's end, a 1-wide passage with the only way in toward them)
+ * with tall melee mobs coming, a block at our feet in the next cell toward them, and one over head
+ * height there if the ceiling is higher, leaves a 1-high gap at eye level. A zombie can't get
+ * through it or up onto it; pressed against it, it's 1.6+ from the middle of our cell and hits at
+ * 1.4 (Bedrock's melee box: its box grown 0.8 each way). We hit it through the gap at eye level,
+ * one at a time. No good against anything that fits through a 1-high gap (a spider, a baby zombie,
+ * a slime) or that shoots through it.
+ * at(x, y, z) -> 'open' | 'solid' | 'other'. Returns { cells, slot, stand, dir } or null:
+ * cells to fill (in order), the gap, where to stand (a little back from the middle of our cell),
+ * the unit step toward them.
+ */
+export function killSlotCells(me, threat, at) {
+  const f = { x: Math.floor(me.x), y: Math.floor(me.y), z: Math.floor(me.z) };
+  const w = oneWayIn(me, threat, at);
+  if (!w || w.y !== f.y) return null; // level with us only: on stairs the gap isn't at eye height
+  if (at(f.x, f.y - 1, f.z) !== 'solid') return null;
+  const cells = [{ x: w.x, y: w.y, z: w.z }];
+  // A higher ceiling: close it over the gap too, or a zombie steps up onto the block and walks in.
+  if (at(w.x, w.y + 2, w.z) === 'open') cells.push({ x: w.x, y: w.y + 2, z: w.z });
+  const stand = { x: f.x + 0.5 - w.dx * 0.15, y: f.y, z: f.z + 0.5 - w.dz * 0.15 };
+  return { cells, slot: { x: w.x, y: w.y + 1, z: w.z }, stand, dir: { x: w.dx, z: w.dz } };
+}
+
+/**
+ * Worth building a kill slot? Everything after us is a tall melee mob (SLOT_SAFE: no spider, no
+ * archer, no creeper at the gap), there's more than one of them or we're hurt, and the nearest is
+ * far enough off to get the blocks down first (3.5: a zombie walks that in a second).
+ * threats: [{ type, dist, baby? }] (the ones within 16).
+ */
+export function killSlotWorth({ threats, health }) {
+  const near = threats.filter((m) => m.dist <= 16);
+  if (!near.length || near.some((m) => !SLOT_SAFE.has(m.type) || m.baby)) return false;
+  if (Math.min(...near.map((m) => m.dist)) < 3.5) return false;
+  return near.length >= 2 || health <= 12;
 }

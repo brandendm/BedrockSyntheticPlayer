@@ -12,7 +12,7 @@ import { MotorController, EYE_HEIGHT } from '../behavior_pack/scripts/core/motor
 import { findPath, searchJob, smoothPath, Cell } from '../behavior_pack/scripts/core/pathfinder.js';
 import { decide, MOBS, weaponDamage, REACH_HIT } from '../behavior_pack/scripts/core/threat.js';
 import { readFileSync } from 'node:fs';
-import { fightMove, creeperMove, creeperFight, Stalemate, pickRefuge, barricadeCells, awayPath, weaponReach, creeperWeapon, bestWeapon, pickCreeperSwing, knockbackRoom, blockOffCells, fleeJab } from '../behavior_pack/scripts/core/tactics.js';
+import { fightMove, creeperMove, creeperFight, Stalemate, pickRefuge, barricadeCells, awayPath, weaponReach, creeperWeapon, bestWeapon, pickCreeperSwing, knockbackRoom, blockOffCells, fleeJab, killSlotCells, killSlotWorth } from '../behavior_pack/scripts/core/tactics.js';
 import { makeRng, dist3D } from '../behavior_pack/scripts/core/mathutil.js';
 import { SimBody } from '../tests/helpers.js';
 
@@ -61,6 +61,8 @@ const SPEAR = process.env.SPEAR === '1';
 const WALLS = process.env.WALLS !== '0';
 // FLEEJAB=0: running from something catching up, no turning to jab it.
 const FLEEJAB = process.env.FLEEJAB !== '0';
+// SLOT=0: no kill slot (a block at the feet across a dead end's way in, the gap at eye level).
+const SLOT = process.env.SLOT !== '0';
 
 // ---------- the arena ----------
 function arena({ classify: base, bot, mobs, weapon = 'stone_sword', shield = false, ticks = 1200, night = true, health = 20, blocks = 16 }) {
@@ -71,6 +73,10 @@ function arena({ classify: base, bot, mobs, weapon = 'stone_sword', shield = fal
   const classify = (x, y, z) => { const k = `${x},${y},${z}`; return placed.has(k) ? Cell.SOLID : blown.has(k) ? Cell.AIR : base(x, y, z); };
   let crater = 0;
   let walls = 0;
+  // A kill slot we built: { cells, slot, stand, dir }. Holds while its block is there and we're in the cell.
+  let slot = null, slots = 0;
+  const slotHolds = () => !!slot && placed.has(`${slot.cells[0].x},${slot.cells[0].y},${slot.cells[0].z}`) &&
+    Math.floor(body.pos.x) === Math.floor(slot.stand.x) && Math.floor(body.pos.z) === Math.floor(slot.stand.z);
   const rng = makeRng(7);
   const body = new SimBody({ classify }, { ...bot }, bot.yaw ?? 0, { hw: 0.3 });
   const motor = new MotorController(body, {}, rng);
@@ -91,6 +97,9 @@ function arena({ classify: base, bot, mobs, weapon = 'stone_sword', shield = fal
     const e = eye(), cl = (v, a, b) => Math.max(a, Math.min(b, v));
     return Math.hypot(e.x - cl(e.x, m.x - 0.3, m.x + 0.3), e.y - cl(e.y, m.y, m.y + 1.7), e.z - cl(e.z, m.z - 0.3, m.z + 0.3));
   };
+  // A swing needs a clear line from our eye to some of the mob (its legs, chest or head): no hitting
+  // through a wall we put up.
+  const canSee = (m) => [0.4, 1, 1.6].some((h) => clear(classify, eye(), { x: m.x, y: m.y + h, z: m.z }));
   const log = [];
   const stale = new Stalemate(120);
   const giveUp = new Map(); // mob id -> tick we stop counting it as reachable until
@@ -143,6 +152,18 @@ function arena({ classify: base, bot, mobs, weapon = 'stone_sword', shield = fal
     if (VERBOSE) log.push(`${t}: walled off the way in (${cells.length} blocks)`);
     return true;
   }
+  /** Cornered by tall melee mobs only: a kill slot rather than a sealed wall (then fight from it). */
+  function trySlot(threats) {
+    if (!SLOT || slot || wallQueue.length || blocks < 2) return !!slot;
+    const near = threats.filter((m) => m.dist <= 12).sort((a, b) => a.dist - b.dist)[0];
+    if (!near) return false;
+    const ks = killSlotWorth({ threats: threats.map((m) => ({ type: m.type, dist: m.dist })), health: hp }) && killSlotCells(body.pos, near.pos, at);
+    if (!ks) return false;
+    slot = ks; slots++; for (const c of ks.cells) wallQueue.push(c);
+    motor.stop();
+    if (VERBOSE) log.push(`${t}: cornered: kill slot across the way in (${ks.cells.length} blocks)`);
+    return true;
+  }
   /** One fight step against tm (a seen mob): where to go, swing, shield. */
   function act(tm, seen) {
     const me = body.pos;
@@ -158,7 +179,22 @@ function arena({ classify: base, bot, mobs, weapon = 'stone_sword', shield = fal
     // moved the last time we hit it (measured, 6 ticks on).
     if (m.type === 'creeper' && m.hitAt !== undefined && t - m.hitAt >= 6 && m.kbMoved === undefined) m.kbMoved = dist3D(me, m) - m.hitD;
     const kbPoor = m.type === 'creeper' && (knockbackRoom(me, m, at) < 1 || (m.kbMoved !== undefined && m.kbMoved < 0.6));
-    const mv = m.type === 'creeper' ? creeperFight({ me, mob: m, t, st: (m.st ??= {}), shield, canSwing: cw(m).ready, canRetreat: m.room !== false, lit: m.fuse >= 0, reach: cw(m).reach, minReach: cw(m).minReach, canWall: WALLS && blocks >= 2, kbPoor })
+    // Tall melee mobs coming at a dead end: a kill slot (a block at our feet across the way in).
+    if (SLOT && !slot && m.type !== 'creeper' && blocks >= 2 && !wallQueue.length) {
+      const near = mobs.filter((o) => o.hp > 0).map((o) => ({ type: o.type, dist: dist3D(me, o) }));
+      const ks = killSlotWorth({ threats: near, health: hp }) && killSlotCells(me, m, at);
+      if (ks) {
+        slot = ks; slots++; for (const c of ks.cells) wallQueue.push(c);
+        if (VERBOSE) log.push(`${t}: kill slot across the way in (${ks.cells.length} blocks)`);
+      }
+    }
+    // Behind the slot: stand at the back of the cell, hit whatever's at the gap.
+    const beyond = slot && ((m.x - slot.stand.x) * slot.dir.x + (m.z - slot.stand.z) * slot.dir.z) > 1;
+    const mvSlot = slot && beyond && m.type !== 'creeper' && (wallQueue.length || slotHolds())
+      ? { swing: t >= nextSwing, stop: Math.hypot(me.x - slot.stand.x, me.z - slot.stand.z) <= 0.25 } : null;
+    // (A step inside our own cell: straight there, no path search.)
+    if (mvSlot && !mvSlot.stop && !motor.busy) { routeSeq++; motor.followPath([{ ...me }, slot.stand], { walk: true }); }
+    const mv = mvSlot ? mvSlot : m.type === 'creeper' ? creeperFight({ me, mob: m, t, st: (m.st ??= {}), shield, canSwing: cw(m).ready, canRetreat: m.room !== false, lit: m.fuse >= 0, reach: cw(m).reach, minReach: cw(m).minReach, canWall: WALLS && blocks >= 2, kbPoor })
       : fightMove({ me, mob: m, melee: MOBS[m.type].kind === 'melee', t, shield, canSwing: t >= nextSwing });
     if (OLD && mv.goal) { const d0 = dist3D(me, m); mv.goal = d0 > 3.3 ? standOffOld(me, m) : { x: m.x, y: m.y, z: m.z }; mv.tolerance = 0.5; }
     blocking = mv.block;
@@ -184,7 +220,8 @@ function arena({ classify: base, bot, mobs, weapon = 'stone_sword', shield = fal
     const eyeReach = spear ? 4.125 : 3, tooNear = spear && dist3D(me, m) < 2;
     const calReach = CAL.reachFeet?.[spear ? 'spear' : 'sword'];
     const outOfReach = calReach ? dist3D(me, m) > calReach + 0.05 : reachTo(m) > eyeReach;
-    if (mv.swing && facingMob(m) && (outOfReach || tooNear)) { nextSwing = t + pw.cooldown; misses++; if (VERBOSE) log.push(`${t}: swing at ${m.type} misses (${reachTo(m).toFixed(2)} from the eye)`); }
+    if (mv.swing && facingMob(m) && !canSee(m)) { /* nothing to swing at: a wall's in the way */ }
+    else if (mv.swing && facingMob(m) && (outOfReach || tooNear)) { nextSwing = t + pw.cooldown; misses++; if (VERBOSE) log.push(`${t}: swing at ${m.type} misses (${reachTo(m).toFixed(2)} from the eye)`); }
     else if (mv.swing && facingMob(m) && m.iframe <= t) {
       m.hp -= pw.damage > 1 ? pw.damage : 1; m.iframe = t + 10; nextSwing = t + 10;
       m.hitAt = t; m.hitD = dist3D(me, m); m.kbMoved = undefined;
@@ -231,7 +268,7 @@ function arena({ classify: base, bot, mobs, weapon = 'stone_sword', shield = fal
         if (visible) m.seenAt = t;
         return { id: m.id, type: m.type, hp: m.hp, lit: m.type === 'creeper' && m.fuse >= 0, dist: d, visible, targetingMe: m.aware !== false && d <= 16, attackedMe: t - m.lastHitMe < 200, recent: visible || t - (m.seenAt ?? -1e9) < 100, dy: m.y - me.y, canReach, pos: { x: m.x, y: m.y, z: m.z }, inWater: false, ref: m };
       });
-      const d = decide({ health: hp, damage, isNight: night, prevMode: mode, mobs: seen, shield });
+      const d = decide({ health: hp, damage, isNight: night, prevMode: mode, mobs: seen, shield, slot: slotHolds() });
       if (d.mode === 'flee' && corneredUntil > t && d.reason !== 'creeper' && d.reason !== 'cover') {
         const target = d.threats.find((m) => m.type !== 'creeper' && m.dist <= 8);
         if (target) { d.mode = 'fight'; d.target = target.id; }
@@ -259,7 +296,7 @@ function arena({ classify: base, bot, mobs, weapon = 'stone_sword', shield = fal
           // Nowhere much better: wall off here, or get into the dead end nearby (a single way in)
           // and wall off there; only if neither, stand and fight.
           const deeper = spot ? null : pickRefuge(me, d.threats, cands, sees, 0.5);
-          if (!spot && !tryWall(d.threats)) {
+          if (!spot && !trySlot(d.threats) && !tryWall(d.threats)) {
             if (deeper) { route(deeper, 0.5, true, 1500); nextRoute = t + 8; }
             else corneredUntil = t + 200;
           } else if (spot) route(spot, 1, true, 3000);
@@ -282,7 +319,7 @@ function arena({ classify: base, bot, mobs, weapon = 'stone_sword', shield = fal
         const how = fleeJab({ me, mob: c.m, t, st: (c.m.fj ??= {}), melee: true, hasSpear, spearReady: t >= spearNext && t >= nextSwing, swordReady: t >= nextSwing });
         if (how) {
           motor.setFocus({ x: c.m.x, y: c.m.y + 1, z: c.m.z });
-          if (facingMob(c.m) && c.m.iframe <= t) {
+          if (facingMob(c.m) && c.m.iframe <= t && canSee(c.m)) {
             const pw = weaponReach(how === 'spear' ? creeperId : mainId);
             c.m.hp -= pw.damage; c.m.iframe = t + 10; nextSwing = t + 10; jabs++;
             if (how === 'spear') spearNext = t + pw.cooldown;
@@ -387,7 +424,7 @@ function arena({ classify: base, bot, mobs, weapon = 'stone_sword', shield = fal
     }
     if (!mobs.some((m) => m.hp > 0)) break;
   }
-  return { jabs, crater, misses, explosions, walls, foughtAtDeath, hp: Math.max(0, hp), kills, total: mobs.length, ticks: t, worstIdle, hitsTaken, blocked, gaveUp, log };
+  return { slots, jabs, crater, misses, explosions, walls, foughtAtDeath, hp: Math.max(0, hp), kills, total: mobs.length, ticks: t, worstIdle, hitsTaken, blocked, gaveUp, log };
 }
 
 const standOffOld = (me, mob, r = 2.8) => { const dx = me.x - mob.x, dz = me.z - mob.z, l = Math.hypot(dx, dz) || 1; return { x: mob.x + dx / l * r, y: mob.y, z: mob.z + dz / l * r }; };
@@ -488,6 +525,8 @@ const SCENARIOS = {
   'skeleton and a creeper, iron sword + shield': () => ({ classify: flat(), weapon: 'iron_sword', shield: true, bot: { x: 0.5, y: 64, z: 0.5 }, mobs: [{ type: 'skeleton', x: 13.5, y: 64, z: 2.5 }, { type: 'creeper', x: 7.5, y: 64, z: -4.5 }], ticks: 1200 }),
   'zombies coming down the quarry stairs': () => ({ classify: quarry(), bot: { x: 10.5, y: 54, z: 0.5, yaw: 90 }, mobs: [{ type: 'zombie', x: -2.5, y: 64, z: 0.5 }, { type: 'zombie', x: -4.5, y: 64, z: 0.5 }], ticks: 1200 }),
   'boxed in a tunnel, zombies both sides, iron sword': () => ({ classify: (x, y, z) => (z === 0 && x >= -20 && x <= 20 && (y === 40 || y === 41) ? Cell.AIR : Cell.SOLID), weapon: 'iron_sword', bot: { x: 0.5, y: 40, z: 0.5 }, mobs: [{ type: 'zombie', x: 8.5, y: 40, z: 0.5 }, { type: 'zombie', x: -8.5, y: 40, z: 0.5 }], ticks: 1200 }),
+  // A kill slot (a block at the feet across the way in, the gap at eye level): nothing gets to us.
+  'three zombies at the end of a 3-high tunnel, stone sword, 10 hp': () => ({ classify: (x, y, z) => (z === 0 && x >= 1 && x <= 20 && y >= 40 && y <= 42 ? Cell.AIR : Cell.SOLID), bot: { x: 1.5, y: 40, z: 0.5 }, health: 10, minHp: 10, mobs: [{ type: 'zombie', x: 8.5, y: 40, z: 0.5 }, { type: 'zombie', x: 11.5, y: 40, z: 0.5 }, { type: 'husk', x: 14.5, y: 40, z: 0.5 }], ticks: 1200 }),
   'two zombies down a dead-end tunnel, stone axe': () => ({ classify: tunnel(), weapon: 'stone_axe', bot: { x: 3.5, y: 40, z: 0.5 }, mobs: [{ type: 'zombie', x: 9.5, y: 40, z: 0.5 }, { type: 'zombie', x: 12.5, y: 40, z: 0.5 }], ticks: 900 }),
   'zombies in a rough forest, stone sword': () => ({ classify: forest(), bot: { x: 3.5, y: 70, z: 3.5 }, mobs: [{ type: 'zombie', x: 14.5, y: 70, z: 9.5 }, { type: 'zombie', x: -6.5, y: 70, z: 12.5 }], ticks: 1600 }),
 };
@@ -628,6 +667,29 @@ if (CHASE) {
   }
   console.log(`${runs} chases (5 hp, running): ${died} died, ${(hits / runs).toFixed(2)} hits taken each, ${(jabs / runs).toFixed(1)} jabs each, ${(hpLeft / runs).toFixed(1)} hp left on average`);
   for (const [k, [n, h, d]] of Object.entries(byKind)) console.log(`  ${k.padEnd(7)} ${n} runs, ${(h / n).toFixed(2)} hits each, ${d} died`);
+  process.exit(0);
+}
+
+// --deadend N: caught at the end of a mine tunnel (1 wide, 2 or 3 high) by 2-3 zombies, random
+// health and weapon: the way out is through them. SLOT=0: without the kill slot.
+const DEADEND = process.argv.includes('--deadend') ? Number(process.argv[process.argv.indexOf('--deadend') + 1] || 200) : 0;
+if (DEADEND) {
+  const rng = makeRng(1618);
+  const pick = (a) => a[Math.floor(rng() * a.length)];
+  let hits = 0, died = 0, slots = 0, hpLeft = 0, killed = 0, total = 0;
+  for (let i = 0; i < DEADEND; i++) {
+    const high = rng() < 0.5 ? 2 : 3;
+    const classify = (x, y, z) => (z === 0 && x >= 1 && x <= 24 && y >= 40 && y < 40 + high ? Cell.AIR : Cell.SOLID);
+    const n = 2 + Math.floor(rng() * 2);
+    const bx = 1 + Math.floor(rng() * 3);
+    const mobs = [];
+    for (let k = 0; k < n; k++) mobs.push({ type: pick(['zombie', 'zombie', 'husk']), x: bx + 6 + k * 2 + Math.floor(rng() * 3) + 0.5, y: 40, z: 0.5 });
+    const r = arena({ classify, bot: { x: bx + 0.5, y: 40, z: 0.5 }, mobs, weapon: pick(['wooden_sword', 'stone_sword', 'stone_axe', 'iron_sword']), health: 6 + Math.floor(rng() * 15), ticks: 1500 });
+    if (process.env.DUMP && i < Number(process.env.DUMP)) console.log(`#${i} high ${high} bot ${bx} mobs ${mobs.map((m) => m.x).join(',')} -> hp ${r.hp.toFixed(0)} slot ${r.slots} hits ${r.hitsTaken} kills ${r.kills}/${r.total} walls ${r.walls} ticks ${r.ticks}`);
+    hits += r.hitsTaken; slots += r.slots ? 1 : 0; hpLeft += Math.max(0, r.hp); killed += r.kills; total += r.total;
+    if (r.hp <= 0) died++;
+  }
+  console.log(`${DEADEND} dead ends, 2-3 zombies: ${died} died, ${(hits / DEADEND).toFixed(2)} hits taken each, ${(hpLeft / DEADEND).toFixed(1)} hp left on average, killed ${killed}/${total}, kill slot in ${slots}`);
   process.exit(0);
 }
 
