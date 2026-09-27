@@ -73,8 +73,28 @@ export function makeClassifier(dimension) {
     if (IMPASSABLE.test(id)) return Cell.DANGER;
     if (CLIMBABLE.test(id)) return Cell.CLIMB;
     if (PASSABLE.has(id) || PASSABLE_RE.test(id)) return Cell.AIR;
+    // Stairs the right way up and bottom slabs are walked up onto, no jump (the pathfinder's STEP
+    // and SLAB); upside-down stairs, top and double slabs are ordinary solid blocks.
+    if (STAIRS.test(id)) return halfState(b, 'upside_down_bit') ? Cell.SOLID : Cell.STEP;
+    if (SLAB.test(id) && !/double/.test(id)) return slabOnTop(b) ? Cell.SOLID : Cell.SLAB;
     return Cell.SOLID;
   };
+}
+
+const STAIRS = /_stairs$/;
+const SLAB = /_slab\d?$/;
+
+function halfState(b, name) {
+  try { return !!b.permutation.getState(name); } catch { return false; }
+}
+
+/** A slab in the top half of its block (older versions: top_slot_bit). */
+function slabOnTop(b) {
+  try {
+    const v = b.permutation.getState('minecraft:vertical_half');
+    if (v !== undefined) return v === 'top';
+  } catch {}
+  return halfState(b, 'top_slot_bit');
 }
 
 /**

@@ -227,3 +227,50 @@ test('the early give-up never gives up on a goal we can drop down to (a 3-deep p
   const r = findPath(w.classify, { x: 0, y: 64, z: 0 }, { x: 20, y: 61, z: 0 }, { maxNodes: 20000, probeAt: 5 });
   assert.equal(r.complete, true);
 });
+
+test('stairs: walked up, one after another, no jumps (a staircase in a house)', async () => {
+  const { MotorController } = await import('../behavior_pack/scripts/core/motor.js');
+  const { SimBody, runMotor } = await import('./helpers.js');
+  const { makeRng } = await import('../behavior_pack/scripts/core/mathutil.js');
+  // Along +x: column k (1..6) has a stair block at y 63+k (stand on it at 64+k), going up +x;
+  // a ceiling 3 above every standing spot, like a stairwell.
+  const stand = (x) => (x <= 0 ? 64 : x <= 6 ? 64 + x : 70);
+  const classify = (x, y, z) => {
+    if (z < -1 || z > 1) return Cell.SOLID;
+    const s = stand(x);
+    if (y === s - 1 && x >= 1 && x <= 6) return Cell.STEP;
+    if (y < s) return Cell.SOLID;
+    return y >= s + 3 ? Cell.SOLID : Cell.AIR;
+  };
+  const r = findPath(classify, { x: 0, y: 64, z: 0 }, { x: 9, y: 70, z: 0 });
+  assert.equal(r.complete, true, 'finds the way up the stairs');
+  assert.equal(r.path.filter((p) => p.move?.type === 'stair').length, 6);
+  const body = new SimBody({ classify }, { x: 0.5, y: 64, z: 0.5 }, -90, { hw: 0.3 });
+  const motor = new MotorController(body, {}, makeRng(1));
+  const { result, ticks } = await runMotor(motor, body, motor.followPath(smoothPath(classify, r.path)), 1500);
+  assert.equal(result?.status, 'arrived');
+  assert.equal(body.jumps, 0, 'walked up, never jumped');
+  assert.ok(body.pos.y >= 70);
+  assert.ok(ticks < 80, `${ticks} ticks for 9 blocks and 6 stairs`);
+});
+
+test('slabs: walked onto from the ground, but never a jump from on top of one (1.5 up)', () => {
+  // A bottom slab at x = 2, then a full block one higher at x = 3: from the slab it's a 1.5 climb.
+  const classify = (x, y, z) => {
+    if (y < 64) return Cell.SOLID;
+    if (x === 2 && y === 64) return Cell.SLAB;
+    if (x === 3 && y === 64 && z === 0) return Cell.SOLID;
+    return Cell.AIR;
+  };
+  const r = findPath(classify, { x: 0, y: 64, z: 0 }, { x: 3, y: 65, z: 0 });
+  assert.equal(r.complete, true);
+  const onSlab = r.path.findIndex((p) => p.x === 2 && p.y === 65);
+  assert.ok(onSlab < 0 || r.path[onSlab + 1]?.y !== 66, 'no jump up from the slab');
+});
+
+test('standing on a slab: the search starts from on top of it', () => {
+  const classify = (x, y, z) => (y < 63 ? Cell.SOLID : y === 63 && x === 0 && z === 0 ? Cell.STEP : y === 63 ? Cell.SOLID : Cell.AIR);
+  const r = findPath(classify, { x: 0.5, y: 63.5, z: 0.5 }, { x: 5, y: 64, z: 0 });
+  assert.equal(r.complete, true);
+  assert.equal(r.path[0].y, 64);
+});

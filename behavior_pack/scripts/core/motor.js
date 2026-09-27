@@ -288,7 +288,12 @@ export class MotorController {
       this._finish('stuck', { at: { ...pos }, waypointIndex: it.idx, fell: true });
       return null;
     }
-    const step = leap ? null : this._stepUp(pos, it);
+    // Up a stair or onto a slab: just walk into it (the game steps a body up half a block). Only if
+    // that doesn't take (a stair the other way round, a mob in the way) does it jump.
+    const nx = wps[it.idx];
+    if (nx.stair && dist2D(pos, nx) < 1.3 && this.body.isOnGround() && pos.y < nx.y - 0.6) it.stairStall = (it.stairStall ?? 0) + 1;
+    else it.stairStall = 0;
+    const step = leap || nx.stair ? null : this._stepUp(pos, it);
     const steer = leap ? leap.steer : step ? step.steer : this._lookahead(pos, it, o.steerLookahead);
     const g = this._lookahead(pos, it, o.gazeLookahead);
     const gaze = { x: g.x, y: g.y + EYE_HEIGHT - o.gazeDrop, z: g.z };
@@ -337,7 +342,7 @@ export class MotorController {
       this.body.jump();
       this.jumpCooldown = 8;
     }
-    if (next.y > pos.y + 0.5 && dist2D(pos, next) < 1.35 && canJump && lined && this.jumpCooldown === 0) {
+    if (next.y > pos.y + 0.5 && dist2D(pos, next) < 1.35 && canJump && lined && this.jumpCooldown === 0 && (!next.stair || it.stairStall > 12)) {
       this.body.jump();
       this.jumpCooldown = 8;
       if (step) it.stepJumps = (it.stepJumps ?? 0) + 1;
@@ -422,6 +427,8 @@ export class MotorController {
     // (Horizontal steps only: ladder and pillar waypoints sit straight above the last one.)
     // A gap leap counts once we've landed on the far side.
     if (w.leap) return pos.y >= w.y - 0.2 && this.body.isOnGround() && dist2D(pos, w) < 1.0;
+    // On a stair's low half or a slab we stand half a block under the waypoint's level.
+    if (w.stair) return pos.y >= w.y - 0.6 && this.body.isOnGround() && dist2D(pos, w) < 1.0;
     if (prev && w.y > prev.y + 0.5 && dist2D(prev, w) > 0.5) return pos.y >= w.y - 0.2 && this.body.isOnGround() && dist2D(pos, w) < 1.0;
     if (Math.abs(pos.y - w.y) > 0.9) return false;
     if (dist2D(pos, w) < this.o.waypointRadius) return true;

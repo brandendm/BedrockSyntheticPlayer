@@ -257,11 +257,11 @@ export class Agent {
    * picks up where it left off: the current step, where our things dropped, the furnace we loaded.
    */
   saveState() {
-    const job = this.homestead?.smeltJob;
+    const jobs = this.homestead?.jobs ?? [];
     this.memory.data.state = {
       step: this.autoStep ?? null,
       deathSpot: this.deathSpot ?? null,
-      smelt: job ? { ...job, readyInMs: Math.max(0, (job.readyAt - system.currentTick) * 50) } : null,
+      jobs: jobs.map((job) => ({ ...job, readyInMs: Math.max(0, (job.readyAt - system.currentTick) * 50) })),
       at: Date.now(),
     };
     this.memory.save();
@@ -271,9 +271,10 @@ export class Agent {
     const st = this.memory.data.state;
     if (!st) return;
     if (st.deathSpot && Date.now() - st.deathSpot.at < 280000) this.deathSpot = st.deathSpot;
-    if (st.smelt && this.homestead) {
-      const { readyInMs, ...job } = st.smelt;
-      this.homestead.smeltJob = { ...job, readyAt: system.currentTick + Math.ceil((readyInMs ?? 0) / 50) };
+    // Every furnace's job (older saves kept just the one, as `smelt`).
+    const saved = st.jobs ?? (st.smelt ? [st.smelt] : []);
+    if (saved.length && this.homestead) {
+      this.homestead.jobs = saved.map(({ readyInMs, ...job }) => ({ ...job, readyAt: system.currentTick + Math.ceil((readyInMs ?? 0) / 50) }));
     }
     const h0 = this.homestead?.project;
     if (h0 || (st.step && Date.now() - (st.at ?? 0) < 30 * 60000 && !['shelter', 'go_home', 'done'].includes(st.step))) {
@@ -723,7 +724,10 @@ export class Agent {
         const inHouseJob = ['smelt', 'collect_smelt', 'furnish', 'store'].includes(step.step) || (['craft', 'goto_table'].includes(step.step) && H.house?.table);
         if (!['go_home', 'build_house', 'repair_house', 'shelter', 'wait_smelt'].includes(step.step) && !inHouseJob && H.isHome()) await H.leaveHouse(gen);
         // (Mining is meant to be underground: iron trips and stone don't climb out between stints.)
-        if (!['get_stone', 'get_iron', 'shelter', 'go_home'].includes(step.step) && (await S.needsEscape(gen))) {
+        // Down our own mine, the camp's jobs (smelting, crafting a spare, putting on armor) happen
+        // right there: climbing out first sent it to the surface to do them.
+        const campJob = ['smelt', 'collect_smelt', 'wait_smelt', 'craft', 'goto_table', 'equip'].includes(step.step) && !!S.campFurnace() && this.minedUnderground();
+        if (!['get_stone', 'get_iron', 'shelter', 'go_home'].includes(step.step) && !campJob && (await S.needsEscape(gen))) {
           last = ''; // getting out first isn't the step failing: don't count it toward giving up on it
           await S.toSurface(gen);
           continue;
@@ -1172,7 +1176,8 @@ export class Agent {
   advanceFacts(inv, tableDist) {
     const H = this.homestead;
     const job = H.smeltJob;
-    const f = this.memory.list('furnace', this.dim.id, this.sim.location)[0];
+    const f = this.memory.list('furnace', this.dim.id, this.sim.location).filter((e) => !H.isCamp(e.pos))[0];
+    const S = this.skills;
     return {
       inv, tableDist, worn: this.worn(),
       waterNearHouse: this.memory.data.waterNearHouse ?? null,
@@ -1182,12 +1187,15 @@ export class Agent {
       smelt: job ? { ready: system.currentTick >= job.readyAt, kind: job.kind, n: job.n ?? 0, dist: dist3D(this.sim.location, job.pos) } : null,
       furnaceDist: f ? f.dist : Infinity,
       pickUses: usesLeft(this.sim, (id) => /^(stone|iron|diamond|netherite)_pickaxe$/.test(id)),
+      oreCooking: H.oreCooking(),
+      // Down at the mine camp (a table and a furnace at the foot of the quarry): craft and smelt there.
+      camp: (() => { try { return !!S.campFurnace() && S.isUnderground() && S.nearQuarry(this.sim.location, 48); } catch { return false; } })(),
     };
   }
 
   settleFacts(inv, tableDist) {
     const H = this.homestead, pos = this.sim.location, dimId = this.dim.id;
-    const f = this.memory.list('furnace', dimId, pos)[0];
+    const f = this.memory.list('furnace', dimId, pos).filter((e) => !H.isCamp(e.pos))[0]; // the house's, not the mine camp's
     const house = H.house;
     const sheepSeen = H.animalsSeen(new Set(['sheep'])).length > 0;
     const sheepKnown = this.memory.list('sheep', dimId, pos).some((m) => m.dist < 96);

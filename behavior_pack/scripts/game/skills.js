@@ -3,9 +3,9 @@
 // as the agent switches task (a fight, a command) so nothing keeps running in the background.
 import { system, Direction, BlockTypes, BlockVolume } from '@minecraft/server';
 import { EYE_HEIGHT } from '../core/motor.js';
-import { smoothPath, Cell, isWalkMove } from '../core/pathfinder.js';
+import { smoothPath, Cell, isWalkMove, isGround } from '../core/pathfinder.js';
 import { dist3D } from '../core/mathutil.js';
-import { toolFor, planCrafts, applyCraft, isLog, STONE_TARGETS, SHOVEL_BLOCKS, PICKAXE_BLOCKS, TOOL_STONE, count } from '../core/recipes.js';
+import { toolFor, planCrafts, applyCraft, isLog, isPlanks, STONE_TARGETS, SHOVEL_BLOCKS, PICKAXE_BLOCKS, TOOL_STONE, count } from '../core/recipes.js';
 import { chooseTool, breakSeconds, cheapestPlaceable, spendableBlocks, blockSourceCost, itemValue, plankReserve } from '../core/costs.js';
 import { invCounts, hold, take, give, container, findSlot } from './inventory.js';
 import { chooseSource, chooseSourceSticky, sourceKey, trustFor, trunksOf, EXPLORE_S, DIG_DOWN_S } from '../core/sourcing.js';
@@ -1132,7 +1132,7 @@ export class Skills {
           const p = { x: f.x + dx, y: f.y + dy, z: f.z + dz };
           // Air or something you place straight over (grass, flowers, snow layer), solid under,
           // and in plain view: a table set down behind a block is one we then can't use.
-          const under = cls(p.x, p.y - 1, p.z) === Cell.SOLID || /leaves$/.test(this.blockAt({ x: p.x, y: p.y - 1, z: p.z }) ?? ''); // leaves hold a block fine
+          const under = isGround(cls(p.x, p.y - 1, p.z)) || /leaves$/.test(this.blockAt({ x: p.x, y: p.y - 1, z: p.z }) ?? ''); // leaves hold a block fine
           const open = OPEN.test(this.blockAt(p) ?? '?'), reach = this.inReach(p);
           if (!under) why.floor++; else if (!open) why.taken++; else if (!reach) why.far++;
           if (under && open && reach) spots.push({ ...p, seen: this.sees({ x: p.x, y: p.y - 1, z: p.z }, true) });
@@ -1642,6 +1642,75 @@ export class Skills {
     }
   }
 
+  // ---------- the mine camp: a table and a furnace at the foot of the stairs ----------
+
+  /** The mine camp's furnace (if it's still there). */
+  campFurnace() {
+    const c = this.homeQuarry()?.camp;
+    return c && /furnace/.test(this.blockAt(c.furnace) ?? 'furnace') ? c.furnace : null;
+  }
+
+  /** Is p the camp's table or furnace (theirs to stay put)? */
+  isCampBlock(p) {
+    const c = this.quarry?.camp;
+    if (!c) return false;
+    const same = (a) => a && Math.floor(p.x) === a.x && Math.floor(p.y) === a.y && Math.floor(p.z) === a.z;
+    return same(c.furnace) || same(c.table);
+  }
+
+  /**
+   * At the foot of the quarry's stairs at the iron layer: a table and a furnace in a little alcove
+   * to the side (never on the stairs or across the branch mine's way), so spare pickaxes, iron
+   * tools and smelting all happen down here instead of a climb to the house and back. Built once,
+   * kept with the quarry. Needs a log (or 4 planks) and 8 cobblestone, or the items themselves.
+   */
+  async ensureCamp(gen) {
+    const q = this.homeQuarry();
+    if (!q || q.camp) return !!q?.camp;
+    const b = this.shaftBottom(q), f = this.feet();
+    if (b.y > Skills.IRON_Y + 1 || f.x !== b.x || f.z !== b.z || Math.abs(f.y - b.y) > 1) return false;
+    const inv = invCounts(this.sim);
+    const cobble = count(inv, (id) => TOOL_STONE.has(id));
+    const wood = inv.crafting_table || count(inv, isPlanks) >= 4 || count(inv, isLog) >= 1;
+    if (!wood || !(inv.furnace || cobble >= 8)) return false;
+    const dirs = [[1, 0], [0, 1], [-1, 0], [0, -1]];
+    // Not back up the stairs, not the way the branch mine runs (or its way back).
+    const prev = q.steps.length > 1 ? this.shaftStand(q, q.steps.length - 2) : null;
+    const back = prev ? dirs.findIndex(([dx, dz]) => dx === Math.sign(prev.x - b.x) && dz === Math.sign(prev.z - b.z)) : -1;
+    const mineDi = q.mine?.di ?? this.a.memory.data.mineDir;
+    const safe = (c) => this.isDiggable([c]) && !this.touchesLiquid(c) && !this.isProtected(c) && !FALLING.test(this.blockAt({ ...c, y: c.y + 1 }) ?? '');
+    let pick = null;
+    for (let d = 0; d < 4 && !pick; d++) {
+      if (d === back || d === mineDi || (mineDi != null && d === (mineDi + 2) % 4)) continue;
+      const [dx, dz] = dirs[d];
+      const stand = { x: b.x + dx, y: b.y, z: b.z + dz };
+      const furnace = { x: stand.x + dx, y: b.y, z: stand.z + dz };
+      const table = { x: stand.x - dz, y: b.y, z: stand.z + dx };
+      const cells = [stand, { ...stand, y: b.y + 1 }, furnace, table];
+      if (cells.every(safe) && !OPEN.test(this.blockAt({ ...stand, y: b.y - 1 }) ?? 'air')) pick = { stand, furnace, table };
+    }
+    if (!pick) { this.log('camp: no solid spot beside the foot of the stairs'); return false; }
+    this.a.say('Setting up a little camp at the foot of the stairs: a crafting table and a furnace, so I can craft and smelt down here.');
+    for (const c of [{ ...pick.stand, y: b.y + 1 }, pick.stand, pick.furnace, pick.table]) {
+      if (!OPEN.test(this.blockAt(c) ?? 'air') && !(await this.mine(gen, c))) { this.log(`camp: couldn't dig ${c.x} ${c.y} ${c.z}`); return false; }
+    }
+    await this.goNear(gen, { x: b.x + 0.5, y: b.y, z: b.z + 0.5 }, 0.5, 2);
+    const H = this.a.homestead;
+    if (!invCounts(this.sim).crafting_table && !(await this.craft(gen, ['crafting_table'], false, true))) return false;
+    if (!(await H.placeAt(gen, pick.table, 'crafting_table'))) { this.log('camp: the table didn\'t go down'); return false; }
+    this.a.memory.rememberTable(this.dim.id, pick.table);
+    if (!invCounts(this.sim).furnace && !(await this.craft(gen, ['furnace'], true, true))) return false;
+    if (!(await H.placeAt(gen, pick.furnace, 'furnace'))) { this.log('camp: the furnace didn\'t go down'); return false; }
+    this.a.memory.remember('furnace', this.dim.id, pick.furnace);
+    q.camp = { stand: pick.stand, table: pick.table, furnace: pick.furnace };
+    this.protect({ ...pick.stand, y: b.y - 1 }); // the alcove floor stays
+    this.a.memory.save();
+    this.restHands();
+    await this.lightQuarry(gen, pick.stand);
+    this.log(`camp: table ${pick.table.x} ${pick.table.y} ${pick.table.z}, furnace ${pick.furnace.x} ${pick.furnace.y} ${pick.furnace.z}`);
+    return true;
+  }
+
   /**
    * Mine ore showing around us (in reach, in view), and coal or iron in view a few steps further
    * (torches, fuel, the iron gear), then step back to where we were standing.
@@ -1735,7 +1804,8 @@ export class Skills {
     // Fell into a cave on the way (or walked down one after ore): the iron band peaks at Y 16,
     // and a branch mine far below it finds less and is harder to get out of. Back up first.
     if (this.feet().y < IRON_Y - 4 && !(await this.backToLevel(gen, IRON_Y))) return false;
-    // 3. Branch mine.
+    // 3. The camp at the foot of the stairs (once), then the branch mine.
+    await this.ensureCamp(gen).catch((e) => { if (e instanceof Aborted) throw e; this.log(`camp: ${e}`); });
     this.a.sayOnce('iron-branch', 'At the iron layer: branch mining.', 120000);
     await this.branchMine(gen, more);
     return this.rawIron() >= goal;
@@ -3217,12 +3287,12 @@ export class Skills {
     const t = mem.nearestTable(dimId, here);
     // Not one we just put down (we're about to use it: that was the place, pack, place loop).
     const fresh = this.tablePlaced && this.tablePlaced.x === t?.pos.x && this.tablePlaced.y === t?.pos.y && this.tablePlaced.z === t?.pos.z && system.currentTick - this.tablePlaced.tick < 3600;
-    if (t && t.dist <= 24 && !fresh && !atHome(t.pos) && this.blockAt(t.pos) === 'crafting_table') {
+    if (t && t.dist <= 24 && !fresh && !atHome(t.pos) && !this.isCampBlock(t.pos) && this.blockAt(t.pos) === 'crafting_table') {
       this.a.sayOnce('pack-table', 'Taking my crafting table with me.', 60000);
       if (await this.mine(gen, t.pos)) mem.forgetTable(dimId, t.pos);
       this.check(gen);
     }
-    const f = mem.list('furnace', dimId, here)[0];
+    const f = mem.list('furnace', dimId, here).filter((e) => !this.isCampBlock(e.pos))[0];
     const pickaxe = Object.keys(invCounts(this.sim)).some((id) => /_pickaxe$/.test(id));
     // Something cooking in it: nearly done, wait and take it with us; otherwise leave it cooking
     // and come back (never walk off and "collect" from across the map).

@@ -34,10 +34,27 @@ const FACES = [
 export class Homestead {
   constructor(agent) {
     this.a = agent;
-    this.smeltJob = null; // { pos, readyAt, kind }
+    /** @type {Array<{pos: any, readyAt: number, kind: string, n: number}>} a job per furnace (the house's, the mine camp's) */
+    this.jobs = [];
     /** @type {Map<string, number>} entity id -> tick we last saw it (animals(): object permanence) */
     this.seenAt = new Map();
   }
+
+  /** The furnace job nearest p (the furnace we'd use from here): what the plan looks at. */
+  jobNear(p = this.sim.location) {
+    let best = null;
+    for (const j of this.jobs) if (!best || dist3D(p, j.pos) < dist3D(p, best.pos)) best = j;
+    return best;
+  }
+  get smeltJob() { return this.jobNear(); }
+  set smeltJob(v) { this.jobs = v ? [v] : []; } // (restoring one saved job, the in-game tests)
+  jobAt(pos) { return this.jobs.find((j) => dist3D(j.pos, pos) < 0.5) ?? null; }
+  setJob(job) { this.jobs = this.jobs.filter((j) => dist3D(j.pos, job.pos) >= 0.5).concat([job]); }
+  dropJob(pos) { this.jobs = this.jobs.filter((j) => dist3D(j.pos, pos) >= 0.5); }
+  /** Raw iron in all the furnaces (ours already, for counting what's still to mine). */
+  oreCooking() { return this.jobs.filter((j) => j.kind === 'ore').reduce((a, j) => a + (j.n ?? 0), 0); }
+  /** Our mine camp's furnace or table (never carried off to the house or packed up to go exploring). */
+  isCamp(p) { return this.a.skills.isCampBlock?.(p) ?? false; }
 
   /**
    * A fact the planner asks for several times per decision (animals in sight, the house's state,
@@ -263,10 +280,17 @@ export class Homestead {
     try { return this.dim.getBlock(p)?.getComponent('minecraft:inventory')?.container ?? null; } catch { return null; }
   }
 
-  /** A furnace to use: one we remember within 32 blocks, else put ours down here. */
-  async ensureFurnace(gen) {
+  /**
+   * A furnace to use: ore at the mine camp's when we're down there; everything else (and ore up top)
+   * at one we remember (the house's), else put ours down here.
+   */
+  async ensureFurnace(gen, input = null) {
     const S = this.S;
-    const known = this.a.memory.list('furnace', this.dim.id, this.sim.location)[0];
+    const camp = S.campFurnace?.();
+    if (input === 'ore' && camp && S.isUnderground() && S.nearQuarry(this.sim.location, 48)) {
+      if (await S.reach(gen, camp) && this.furnaceAt(camp)) return camp;
+    }
+    const known = this.a.memory.list('furnace', this.dim.id, this.sim.location).filter((e) => !this.isCamp(e.pos))[0];
     // Our furnace, even a walk away: the plan counts it as ours (settle.js), so go to it rather than
     // failing here over and over. Only a furnace in the pack (none known nearby) gets put down.
     if (known && (known.dist < 128 || !invCounts(this.sim).furnace)) {
@@ -282,8 +306,11 @@ export class Homestead {
 
   /** Load the furnace and leave it working. input: 'log' (charcoal) or 'food' (raw meat). */
   async startSmelt(gen, input, n, fuelPlanks) {
-    const pos = await this.ensureFurnace(gen);
+    const pos = await this.ensureFurnace(gen, input);
     if (!pos) return false;
+    // Still cooking something else: never load over it (the plan will come back when it's done).
+    const busy = this.jobAt(pos);
+    if (busy && system.currentTick < busy.readyAt) { this.S.log('smelt: that furnace is still going'); return false; }
     const S = this.S;
     if (!(await S.reach(gen, pos))) return false; // in reach and in view, never through a wall
     await this.a.motor.lookAt(center(pos), 10, 30);
@@ -324,7 +351,7 @@ export class Homestead {
     take(this.sim, fuelId, fuelN);
     c.setItem(0, new ItemStack(`minecraft:${inId}`, k));
     c.setItem(1, new ItemStack(`minecraft:${fuelId}`, fuelN));
-    this.smeltJob = { pos, readyAt: system.currentTick + k * 200 + 20, kind: input, n: k };
+    this.setJob({ pos, readyAt: system.currentTick + k * 200 + 20, kind: input, n: k });
     this.a.saveState();
     this.a.say(`Furnace going: ${k} ${inId.replace(/_/g, ' ')} (${Math.round(k * 10)} s). I'll get on with other things.`);
     return true;
@@ -343,15 +370,19 @@ export class Homestead {
   }
 
   async collectSmelt(gen) {
-    const job = this.smeltJob;
+    // The nearest finished job (else the nearest one).
+    const near = this.smeltJob;
+    const ready = near && system.currentTick >= near.readyAt ? near : this.jobs.filter((j) => system.currentTick >= j.readyAt).sort((a, b) => dist3D(this.sim.location, a.pos) - dist3D(this.sim.location, b.pos))[0];
+    const job = ready ?? near;
     if (!job) return;
     if (!(await this.S.reach(gen, job.pos))) { this.S.log('furnace: couldn\'t get to it (in reach and in view)'); return; }
-    if (!this.furnaceAt(job.pos)) { this.smeltJob = null; this.a.saveState(); return; }
+    if (!this.furnaceAt(job.pos)) { this.dropJob(job.pos); this.a.saveState(); return; }
     await this.a.motor.lookAt(center(job.pos), 10, 30);
     this.S.check(gen);
     const got = await this.emptyFurnace(job.pos);
     const left = this.container(job.pos)?.getItem(0)?.amount ?? 0;
-    this.smeltJob = left ? { ...job, readyAt: system.currentTick + left * 200 + 20 } : null;
+    if (left) this.setJob({ ...job, readyAt: system.currentTick + left * 200 + 20 });
+    else this.dropJob(job.pos);
     this.a.saveState();
     if (got) this.a.say(`Took ${got} out of the furnace.`);
   }
@@ -367,10 +398,11 @@ export class Homestead {
 
   /** Pick the furnace back up (so it can go in the house). */
   async fetchFurnace(gen) {
-    const f = this.a.memory.list('furnace', this.dim.id, this.sim.location)[0];
+    // Never the mine camp's: that one stays down there.
+    const f = this.a.memory.list('furnace', this.dim.id, this.sim.location).filter((e) => !this.isCamp(e.pos))[0];
     if (!f || (this.house && inside(this.house, f.pos))) return false;
-    if (this.smeltJob) await this.collectSmelt(gen);
-    if (this.smeltJob) return false; // still cooking
+    if (this.jobAt(f.pos)) await this.collectSmelt(gen);
+    if (this.jobAt(f.pos)) return false; // still cooking
     if (!(await this.S.reach(gen, f.pos))) return false;
     await this.emptyFurnace(f.pos);
     const ok = await this.S.mine(gen, f.pos);
@@ -486,9 +518,10 @@ export class Homestead {
    * furnish). A furnace that's cooking is emptied first (what's in it drops and we collect it).
    */
   async moveStation(gen, p, id) {
-    if (id !== 'crafting_table' && this.smeltJob && dist3D(this.smeltJob.pos, p) < 1) {
-      if (system.currentTick >= this.smeltJob.readyAt) await this.collectSmelt(gen);
-      this.smeltJob = null;
+    const job = id !== 'crafting_table' ? this.jobAt(p) : null;
+    if (job) {
+      if (system.currentTick >= job.readyAt) await this.collectSmelt(gen);
+      this.dropJob(p);
       this.a.saveState();
     }
     this.a.sayOnce(`move-${id}`, `My ${id === 'crafting_table' ? 'crafting table' : 'furnace'} is where the house goes: moving it inside.`, 60000);

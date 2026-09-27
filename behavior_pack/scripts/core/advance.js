@@ -47,13 +47,15 @@ export function ironHave(inv, worn = []) {
 export function advanceStep(f) {
   const inv = f.inv, worn = f.worn ?? [];
   const ingots = inv.iron_ingot ?? 0, raw = (inv.raw_iron ?? 0);
-  const cooking = f.smelt?.kind === 'ore' ? f.smelt.n ?? 0 : 0; // iron in the furnace is ours already
+  // Iron in the furnaces (the house's and the mine camp's) is ours already.
+  const cooking = f.oreCooking ?? (f.smelt?.kind === 'ore' ? f.smelt.n ?? 0 : 0);
   const haveBucket = made(inv, worn, 'bucket');
 
   // A finished furnace near us: empty it (the iron is what everything below waits on). Not from
   // down the mine while there's still iron to dig: it keeps till we're up anyway.
   const stillShort = IRON_GOAL - ironHave(inv, worn) - cooking > 0;
-  if (f.smelt?.ready && !(f.underground && stillShort) && ((f.smelt.dist ?? 0) <= 24 || f.smelt.kind === 'ore')) return { step: 'collect_smelt' };
+  // (At the mine camp the furnace is right there: collect whenever it's done.)
+  if (f.smelt?.ready && !(f.underground && stillShort && !f.camp) && ((f.smelt.dist ?? 0) <= 24 || f.smelt.kind === 'ore')) return { step: 'collect_smelt' };
 
   // Armor we made but aren't wearing: put it on (a moment, and it's the point of making it).
   if ([...ARMOR, 'shield'].some((id) => has(inv, id) && !worn.includes(id))) return { step: 'equip' };
@@ -91,7 +93,8 @@ export function advanceStep(f) {
   // Mining goes on while a batch smelts (in parallel): at the surface with raw iron and the furnace
   // free, load it before going back down, so the iron pickaxe (and the rest) come as we go rather
   // than all at the end.
-  if (!f.underground && raw >= 3 && !f.smelt && planFuel(inv, 'raw_iron', raw)) return smeltOre(f, raw, raw);
+  // Down at the mine camp the same: its furnace, with the coal we've just mined.
+  if ((!f.underground || f.camp) && raw >= 3 && !f.smelt && planFuel(inv, 'raw_iron', raw)) return smeltOre(f, raw, raw);
   // Only what's still unaccounted for is short.
   const short = Math.max(0, IRON_GOAL - ironHave(inv, worn) - cooking);
   if (short > 0) return ironTrip(f, short, 'iron gear');
@@ -116,8 +119,14 @@ function ironTrip(f, need, why) {
   // Wear counts, not just how many: two pickaxes with a handful of uses left between them are no
   // spare at all. A trip is ~160 blocks of stairs to Y 16 plus the mine: 200 uses to set off with.
   const wornOut = f.pickUses != null && f.pickUses < 200;
-  const short = f.underground ? pickaxes(inv) < 1 : pickaxes(inv) < want || wornOut;
-  if (short && count(inv, (id) => id === 'cobblestone' || id === 'cobbled_deepslate') >= 3) return craftStep(inv, ['stone_pickaxe'], f.tableDist);
+  // At the mine camp there's a table: spares get made down there too, from the cobblestone we're mining.
+  const short = f.underground && !f.camp ? pickaxes(inv) < 1 : pickaxes(inv) < want || wornOut;
+  if (short && count(inv, (id) => id === 'cobblestone' || id === 'cobbled_deepslate') >= 3) {
+    const c = craftStep(inv, ['stone_pickaxe'], f.tableDist);
+    // Down the mine with no wood for a handle: carry on with the pickaxe we have, rather than climb
+    // all the way out for a log.
+    if (!(f.underground && c.step === 'gather_logs')) return c;
+  }
   // Torches for the mine before going down (made from what coal we have, no table needed): a dark
   // tunnel is where mobs spawn, and making them down there needs sticks we may not have left.
   if (!f.underground && (inv.torch ?? 0) < 8 && (inv.coal ?? 0) + (inv.charcoal ?? 0) > 0) {

@@ -61,23 +61,55 @@ export class SimBody {
     const c = this.w.classify(x, y, z);
     return c !== 0 && c !== 2 && c !== 5; // not air, water or ladder
   }
+  /**
+   * The block's collision boxes, [x0, y0, z0, x1, y1, z1] relative to its corner: a full cube, a
+   * bottom slab (SLAB, 7), or stairs (STEP, 6): a slab plus the back half on top, the back being the
+   * way the world's stairFacing(x, y, z) says the stairs go up ({x, z}; +x if it doesn't say).
+   */
+  shapes(x, y, z) {
+    const c = this.w.classify(x, y, z);
+    if (c === 7) return [[0, 0, 0, 1, 0.5, 1]];
+    if (c === 6) {
+      const f = this.w.stairFacing?.(x, y, z) ?? { x: 1, z: 0 };
+      const back = f.x > 0 ? [0.5, 0.5, 0, 1, 1, 1] : f.x < 0 ? [0, 0.5, 0, 0.5, 1, 1] : f.z > 0 ? [0, 0.5, 0.5, 1, 1, 1] : [0, 0.5, 0, 1, 1, 0.5];
+      return [[0, 0, 0, 1, 0.5, 1], back];
+    }
+    return this.solid(x, y, z) ? [[0, 0, 0, 1, 1, 1]] : [];
+  }
   /** The box with its feet at (x, y, z) overlaps no solid block. */
   fits(x, y, z) {
     const h = Math.max(this.hw, 1e-3), e = 1e-4;
-    for (let bx = Math.floor(x - h + e); bx <= Math.floor(x + h - e); bx++)
-      for (let bz = Math.floor(z - h + e); bz <= Math.floor(z + h - e); bz++)
-        for (let by = Math.floor(y + e); by <= Math.floor(y + 1.8 - e); by++)
-          if (this.solid(bx, by, bz)) return false;
+    const x0 = x - h + e, x1 = x + h - e, z0 = z - h + e, z1 = z + h - e, y0 = y + e, y1 = y + 1.8 - e;
+    for (let bx = Math.floor(x0); bx <= Math.floor(x1); bx++)
+      for (let bz = Math.floor(z0); bz <= Math.floor(z1); bz++)
+        for (let by = Math.floor(y0) - 1; by <= Math.floor(y1); by++)
+          for (const [a, b, c, d, f, g] of this.shapes(bx, by, bz)) {
+            if (x0 < bx + d && x1 > bx + a && y0 < by + f && y1 > by + b && z0 < bz + g && z1 > bz + c) return false;
+          }
     return true;
+  }
+  /** Lowest height at or above y (within `up`) where the box fits: for landing and stepping up. */
+  settle(x, y, z, up) {
+    for (const c of [y, Math.floor(y) + 0.5, Math.floor(y) + 1, Math.floor(y) + 1.5].filter((v) => v >= y - 1e-9 && v - y <= up + 1e-9).sort((a, b) => a - b)) {
+      if (this.fits(x, c, z)) return c;
+    }
+    return null;
   }
   step() {
     const p = this.pos;
     if (this.cmd) {
       const sp = (this.sprint ? 0.28 : 0.216) * this.cmd.s;
       const nx = p.x + this.cmd.dx * sp, nz = p.z + this.cmd.dz * sp;
-      // Walking into a knee-high lip auto-steps nothing (that's what jumping is for); slide per axis.
-      if (this.fits(nx, p.y, p.z)) p.x = nx;
-      if (this.fits(p.x, p.y, nz)) p.z = nz;
+      // Slide per axis. On the ground, a lip up to 0.5625 high (a slab, a stair) is stepped up onto,
+      // as the game does; a full block needs a jump.
+      const stepTo = (tx, tz) => {
+        if (this.fits(tx, p.y, tz)) return p.y;
+        return this.onGround ? this.settle(tx, p.y, tz, 0.5625) : null;
+      };
+      let ny0 = stepTo(nx, p.z);
+      if (ny0 != null) { p.x = nx; p.y = ny0; }
+      ny0 = stepTo(p.x, nz);
+      if (ny0 != null) { p.z = nz; p.y = ny0; }
       this.moves.push({ ...this.cmd });
     }
     // Vertical: gravity, land on the first solid block below any part of the box.
@@ -86,8 +118,7 @@ export class SimBody {
     this.vy = (this.vy - 0.08) * 0.98; // Minecraft: move by the velocity, then apply gravity
     const ny = p.y + vy;
     if (vy <= 0 && !this.fits(p.x, ny, p.z)) {
-      p.y = Math.floor(ny) + 1; // land on top of the block
-      if (!this.fits(p.x, p.y, p.z)) p.y = Math.ceil(ny);
+      p.y = this.settle(p.x, ny, p.z, 1.5) ?? Math.floor(ny) + 1; // land on top of the block (or half block)
       this.vy = 0;
       this.onGround = true;
     } else if (vy > 0 && !this.fits(p.x, ny, p.z)) {

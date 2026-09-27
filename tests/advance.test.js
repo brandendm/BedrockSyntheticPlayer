@@ -101,3 +101,21 @@ test('iron to smelt and nothing to burn: wood for fuel first, not a furnace job 
   assert.deepEqual(s.wanted, ['furnace fuel']);
   assert.equal(advanceStep({ inv: { ...inv, coal: 5 }, tableDist: 0, waterNearHouse: true, farm: { tiles: 24, planted: 24, ripe: 0 } }).step, 'smelt');
 });
+
+test('mine camp: smelting, collecting and spare pickaxes happen down there; without one, not', async () => {
+  const { advanceStep } = await import('../behavior_pack/scripts/core/advance.js');
+  const farm = { tiles: 24, planted: 24, ripe: 0 };
+  const kit = { stone_pickaxe: 1, stone_sword: 1, stone_axe: 1, stone_shovel: 1, stone_hoe: 1, bucket: 1, torch: 16 };
+  const down = { tableDist: 0, waterNearHouse: true, farm, underground: true };
+  // Raw iron and coal down the mine: at the camp, into its furnace; without a camp, keep mining.
+  assert.equal(advanceStep({ ...down, camp: true, inv: { ...kit, raw_iron: 5, coal: 3 } }).step, 'smelt');
+  assert.equal(advanceStep({ ...down, camp: false, inv: { ...kit, raw_iron: 5, coal: 3 } }).step, 'get_iron');
+  // A finished batch at the camp: collect it (it's right there), even with iron still to dig.
+  const ready = { ready: true, kind: 'ore', n: 3, dist: 20 };
+  assert.equal(advanceStep({ ...down, camp: true, smelt: ready, oreCooking: 3, inv: kit }).step, 'collect_smelt');
+  assert.notEqual(advanceStep({ ...down, camp: false, smelt: ready, oreCooking: 3, inv: kit }).step, 'collect_smelt');
+  // One pickaxe left and cobblestone in hand: a spare at the camp's table, not without one.
+  assert.deepEqual(advanceStep({ ...down, camp: true, inv: { ...kit, cobblestone: 20, stick: 4 } }).items, ['stone_pickaxe']);
+  assert.equal(advanceStep({ ...down, camp: true, inv: { ...kit, cobblestone: 20 } }).step, 'get_iron', 'no wood for a handle: keep mining, no climb out for a log');
+  assert.equal(advanceStep({ ...down, camp: false, inv: { ...kit, cobblestone: 20 } }).step, 'get_iron');
+});

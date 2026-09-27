@@ -19,7 +19,15 @@ export const Cell = Object.freeze({
   DANGER: 3,   // lava, fire, cactus, magma... never enter, never stand on
   UNKNOWN: 4,  // unloaded chunk: treat as impassable
   CLIMB: 5,    // ladder, vines: open to walk into, and you can go up and down in it
+  STEP: 6,     // stairs the right way up: stood on like ground, and walked up onto from the level
+               // below without a jump (the front half is half a block; Bedrock steps up 0.5625)
+  SLAB: 7,     // a bottom slab: ground half a block high. Walked onto from full-height ground; but
+               // standing on it we're half a block low, so the next level up is out of a jump's reach
 });
+
+/** Something to stand on: a full block, stairs, a bottom slab. */
+export const isGround = (c) => c === Cell.SOLID || c === Cell.STEP || c === Cell.SLAB;
+const isHalf = (c) => c === Cell.STEP || c === Cell.SLAB;
 
 const DIRS = [
   [1, 0], [-1, 0], [0, 1], [0, -1],
@@ -36,6 +44,7 @@ export const DEFAULT_COSTS = Object.freeze({
   swim: 2.5,        // extra per block: swimming is ~2x slower and mobs get free hits
   climb: 1.8,       // per block up or down a ladder (~2.4 blocks/s vs 4.3 walking)
   leap: 0.9,        // extra for jumping a gap (on top of the 2 blocks walked)
+  stair: 0.15,      // extra for walking up a stair or onto a slab (no jump)
 });
 
 /**
@@ -68,7 +77,7 @@ export class WorldView {
     return c === Cell.AIR || c === Cell.CLIMB;
   }
   standable(x, y, z) {
-    return this.get(x, y - 1, z) === Cell.SOLID && this.open(x, y, z) && this.open(x, y + 1, z);
+    return isGround(this.get(x, y - 1, z)) && this.open(x, y, z) && this.open(x, y + 1, z);
   }
   /** Holding on to a ladder or vine. */
   climbable(x, y, z) {
@@ -150,8 +159,16 @@ export function* neighbors(w, x, y, z, costs = DEFAULT_COSTS) {
       yield enter(nx, y, nz, costs.walk);
       continue;
     }
-    // Step up (a jump, or climbing out of water onto the bank): needs headroom above us
-    if (w.open(x, y + 2, z) && w.standable(nx, y + 1, nz)) {
+    // Up a stair or onto a slab: walked, not jumped, and hardly slower than the flat. It still wants
+    // a block of room over where we stand: the body rises half a block while it's still here.
+    const below = w.get(x, y - 1, z);
+    if (!inWater && below !== Cell.SLAB && isHalf(w.get(nx, y, nz)) && w.open(x, y + 2, z) && w.standable(nx, y + 1, nz)) {
+      yield [nx, y + 1, nz, costs.walk + costs.stair, { type: 'stair', breaks: [], place: false }];
+      continue;
+    }
+    // Step up (a jump, or climbing out of water onto the bank): needs headroom above us. Not from on
+    // top of a slab: that's a 1.5 block climb.
+    if (below !== Cell.SLAB && w.open(x, y + 2, z) && w.standable(nx, y + 1, nz)) {
       yield [nx, y + 1, nz, costs.walk + costs.stepUp + (inWater ? 0.5 : 0)];
       continue;
     }
@@ -159,7 +176,7 @@ export function* neighbors(w, x, y, z, costs = DEFAULT_COSTS) {
     // headroom all the way (the arc peaks ~1.25 up), and only over a gap we'd survive falling
     // into (ground or water within 3 blocks): a missed jump costs a climb, never a life.
     if (!inWater && costs.leap != null && w.open(nx, y, nz) && w.open(nx, y + 1, nz) && w.open(nx, y + 2, nz) &&
-        w.open(x, y + 2, z) && !w.occupiable(nx, y - 1, nz) && w.get(nx, y - 1, nz) !== Cell.SOLID) {
+        w.open(x, y + 2, z) && !w.occupiable(nx, y - 1, nz) && !isGround(w.get(nx, y - 1, nz))) {
       const lx = x + 2 * dx, lz = z + 2 * dz;
       if (w.standable(lx, y, lz) && w.open(lx, y + 2, lz) && safeGap(w, nx, y, nz)) {
         yield [lx, y, lz, 2 * costs.walk + costs.leap, { type: 'leap', breaks: [], place: false }];
@@ -184,7 +201,7 @@ function safeGap(w, x, y, z) {
   for (let d = 1; d <= 4; d++) {
     const c = w.get(x, y - d, z);
     if (c === Cell.LIQUID) return true;
-    if (c === Cell.SOLID) return d <= 4; // landing on top of it: a fall of d-1 blocks
+    if (isGround(c)) return d <= 4; // landing on top of it: a fall of d-1 blocks
     if (c !== Cell.AIR) return false;    // lava, fire, unloaded...
   }
   return false;
@@ -212,18 +229,18 @@ export function* actionNeighbors(w, x, y, z, act, placed, onPlaced = false) {
     if (c === Cell.AIR || c === Cell.CLIMB) return 0;
     // Solid blocks, and "danger" ones the game side says can be broken (leaves: never walked
     // through, but cut through when that's the way out of a tree top).
-    if (c !== Cell.SOLID && c !== Cell.DANGER) return Infinity;
+    if (c !== Cell.SOLID && c !== Cell.DANGER && !isHalf(c)) return Infinity;
     return w.breakCost(cx, cy, cz);
   };
   // Standing on ground, or on the block we just put down (the world view doesn't know about it).
   // onPlaced: true, or the move that put it there ({type: 'pillar'|'bridge', ...}).
-  const onGround = !!onPlaced || w.get(x, y - 1, z) === Cell.SOLID;
+  const onGround = !!onPlaced || isGround(w.get(x, y - 1, z));
   const lastType = /** @type {any} */ (onPlaced)?.type ?? null;
   if (!onGround) return;
   for (const [dx, dz] of DIRS.slice(0, 4)) {
     const nx = x + dx, nz = z + dz;
     // Dig through to the next block on the same level.
-    if (w.get(nx, y - 1, nz) === Cell.SOLID) {
+    if (isGround(w.get(nx, y - 1, nz))) {
       const a = cellCost(nx, y, nz), b = cellCost(nx, y + 1, nz);
       if (a + b > 0 && a + b < Infinity) {
         const breaks = [];
@@ -234,7 +251,7 @@ export function* actionNeighbors(w, x, y, z, act, placed, onPlaced = false) {
     }
     // Dig a step up: headroom above us, then the two blocks in front, one level up.
     const floorUp = w.get(nx, y, nz);
-    if (floorUp === Cell.SOLID) {
+    if (isGround(floorUp)) {
       const h = cellCost(x, y + 2, z), a = cellCost(nx, y + 1, nz), b = cellCost(nx, y + 2, nz);
       if (h + a + b > 0 && h + a + b < Infinity) {
         const breaks = [];
@@ -253,7 +270,7 @@ export function* actionNeighbors(w, x, y, z, act, placed, onPlaced = false) {
     for (const [dx, dz] of DIRS.slice(0, 4)) {
       const nx = x + dx, nz = z + dz;
       const below = w.get(nx, y - 1, nz);
-      const gap = below === Cell.LIQUID || (below === Cell.AIR && w.get(nx, y - 2, nz) !== Cell.SOLID);
+      const gap = below === Cell.LIQUID || (below === Cell.AIR && !isGround(w.get(nx, y - 2, nz)));
       if (gap && w.open(nx, y, nz) && w.open(nx, y + 1, nz)) {
         yield [nx, y, nz, 1 + (act.placeCost + 0.5) * u, { type: 'bridge', breaks: [], place: true }];
       }
@@ -269,7 +286,7 @@ export function* actionNeighbors(w, x, y, z, act, placed, onPlaced = false) {
   // Dig straight down onto solid ground (never into a drop, never onto lava).
   if (act.digDown !== false) {
     const f = cellCost(x, y - 1, z);
-    if (f > 0 && f < Infinity && w.get(x, y - 2, z) === Cell.SOLID) {
+    if (f > 0 && f < Infinity && isGround(w.get(x, y - 2, z))) {
       yield [x, y - 1, z, 0.5 + f * u, { type: 'digDown', breaks: [[x, y - 1, z]], place: false }];
     }
   }
@@ -316,6 +333,9 @@ export function* searchJob(classify, start, goal, opts = {}) {
     };
   }
   const s = { x: Math.floor(start.x), y: Math.floor(start.y), z: Math.floor(start.z) };
+  // Standing on a slab or a stair's low half: our feet are inside its cell; the search's node is
+  // the cell above it (what we stand on is the STEP).
+  if (isHalf(w.get(s.x, s.y, s.z)) && w.open(s.x, s.y + 1, s.z)) s.y++;
   const g = { x: Math.floor(goal.x), y: Math.floor(goal.y), z: Math.floor(goal.z) };
   const key = (x, y, z) => w.k(x, y, z);
   const heuristic = heuristicFn ?? (goalTest ? () => 0 : octileHeuristic);
@@ -465,11 +485,12 @@ export function smoothPath(classify, path, halfWidth = 0.3) {
 function center(p) {
   const c = { x: p.x + 0.5, y: p.y, z: p.z + 0.5 };
   if (p.move?.type === 'leap') c.leap = true; // the motor runs and jumps for this one
+  if (p.move?.type === 'stair') c.stair = true; // the motor walks up this one, no jump
   return c;
 }
 
 /** A path step the motor walks (plain moves and gap leaps), as opposed to one that digs or builds. */
-export const isWalkMove = (p) => !p.move || p.move.type === 'leap';
+export const isWalkMove = (p) => !p.move || p.move.type === 'leap' || p.move.type === 'stair';
 
 function sameLevelRun(path, i, k) {
   for (let m = i + 1; m <= k; m++) if (path[m].y !== path[i].y) return false;
