@@ -610,12 +610,20 @@ async function runOne(agent, player, name, arg) {
         break;
       }
       case 'creeper': {
-        // A flat stone lane along +x (the test area is put back afterwards).
-        cmd(`fill ${x - 2} ${gy + 1} ${z - 3} ${x + 13} ${gy + 5} ${z + 3} air`);
-        cmd(`fill ${x - 2} ${gy} ${z - 3} ${x + 13} ${gy} ${z + 3} stone`);
+        // A sealed lane along +x: stone floor level with the highest surface round here (water and
+        // leaves count: started in a lake, the lane was built on the lake bed and the water came
+        // back in), glass walls and roof, the inside cleared. The test area is put back afterwards.
+        let fy = gy;
+        for (let lx = x - 3; lx <= x + 14; lx++) for (let lz = z - 4; lz <= z + 4; lz++) {
+          try { const top = dim.getTopmostBlock({ x: lx, z: lz }); if (top) fy = Math.max(fy, top.location.y); } catch {}
+        }
+        fy = Math.min(fy, gy + 10); // inside the backed-up box
+        cmd(`fill ${x - 3} ${fy} ${z - 4} ${x + 14} ${fy + 5} ${z + 4} glass`);
+        cmd(`fill ${x - 2} ${fy + 1} ${z - 3} ${x + 13} ${fy + 4} ${z + 3} air`);
+        cmd(`fill ${x - 2} ${fy} ${z - 3} ${x + 13} ${fy} ${z + 3} stone`);
         agent.testHold = true;
         agent.endCombat();
-        tp(x, gy + 1, z);
+        tp(x, fy + 1, z);
         await system.waitTicks(10);
         // The weapons to try: given for the test, taken back after.
         const given = [];
@@ -626,9 +634,9 @@ async function runOne(agent, player, name, arg) {
         const lit = (e) => { try { return !!e.getComponent('minecraft:is_ignited'); } catch { return false; } };
         const dd = (e) => dist3D(sim.location, e.location);
         const summon = async (dx) => {
-          cmd(`summon creeper ${x + dx} ${gy + 1} ${z}`);
+          cmd(`summon creeper ${x + dx} ${fy + 1} ${z}`);
           await system.waitTicks(2);
-          return dim.getEntities({ type: 'minecraft:creeper', location: { x: x + dx + 0.5, y: gy + 1, z: z + 0.5 }, maxDistance: 3 })[0] ?? null;
+          return dim.getEntities({ type: 'minecraft:creeper', location: { x: x + dx + 0.5, y: fy + 1, z: z + 0.5 }, maxDistance: 3 })[0] ?? null;
         };
         const gone = (c) => { try { if (c?.isValid) c.remove(); } catch {} };
         // Eyes on it (the motor's focus, which it holds every tick, and the body).
@@ -638,7 +646,7 @@ async function runOne(agent, player, name, arg) {
         const speeds = [], litAt = [];
         let sawIgnite = false;
         for (let trial = 0; trial < 2; trial++) {
-          tp(x, gy + 1, z);
+          tp(x, fy + 1, z);
           const c = await summon(10);
           if (!c) { log.push("couldn't summon a creeper"); break; }
           let prev = dd(c);
@@ -662,7 +670,7 @@ async function runOne(agent, player, name, arg) {
         const hits = {}; // weapon -> [{ at, landed, kb }]
         for (const w of given) {
           for (const at of [2.8, 3.2, 3.6, 4.0, 4.4]) {
-            tp(x, gy + 1, z);
+            tp(x, fy + 1, z);
             hold(sim, w);
             const c = await summon(9);
             if (!c) break;
