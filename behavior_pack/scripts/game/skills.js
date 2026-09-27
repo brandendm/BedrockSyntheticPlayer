@@ -4,6 +4,7 @@
 import { system, world, Direction, BlockTypes, BlockVolume, ItemTypes } from '@minecraft/server';
 import { isNight } from '../core/settle.js';
 import { wetCones, towardWet, ExploreStall } from '../core/explore.js';
+import { sweepOrder } from '../core/flow.js';
 import { EYE_HEIGHT } from '../core/motor.js';
 import { smoothPath, Cell, isWalkMove, isGround } from '../core/pathfinder.js';
 import { dist3D } from '../core/mathutil.js';
@@ -239,13 +240,16 @@ export class Skills {
    */
   async placeOn(gen, slot, neighbor, face, faceLoc, cell) {
     for (let attempt = 0; attempt < 2; attempt++) {
-      try { this.sim.lookAtBlock(attempt ? neighbor : cell); } catch {}
-      await this.wait(gen, 1);
+      // First go: from where the crosshair already is (the aim before this got it near), no snap.
+      // Didn't take: look straight at the face and try once more, the plain way.
+      if (attempt) { try { this.sim.lookAtBlock(neighbor); } catch {} await this.wait(gen, 1); }
       let ok = false;
       try { ok = attempt ? this.sim.useItemInSlotOnBlock(slot, neighbor, face) : this.sim.useItemInSlotOnBlock(slot, neighbor, face, faceLoc); } catch {}
-      await this.wait(gen, 2);
-      const id = this.blockAt(cell) ?? 'air';
-      if (ok || !OPEN.test(id)) { this.a.cellChanged?.(); await this.wait(gen, 1); if (!OPEN.test(this.blockAt(cell) ?? 'air')) return true; }
+      for (let k = 0; k < 2; k++) {
+        await this.wait(gen, 1);
+        if (!OPEN.test(this.blockAt(cell) ?? 'air')) { this.a.cellChanged?.(); return true; }
+      }
+      if (ok) { this.a.cellChanged?.(); return !OPEN.test(this.blockAt(cell) ?? 'air'); }
     }
     return false;
   }
@@ -569,7 +573,7 @@ export class Skills {
    * Break one block and pick up what drops. Gets in reach first, clears leaves in the way,
    * picks the right tool (never a pickaxe on dirt), looks at the block before swinging.
    */
-  async mine(gen, p, { collect = true, depth = 0, allowBelow = false, force = false } = {}) {
+  async mine(gen, p, { collect = true, depth = 0, allowBelow = false, force = false, next = null } = {}) {
     let id = this.blockAt(p);
     if (!id || id === 'air') return true;
     if (this.isProtected(p) && !force) return false; // a step of our own staircase or tunnel floor (force: ore in it, filled back in after)
@@ -580,7 +584,7 @@ export class Skills {
     if (!this.inReach(p) && !(await this.goNear(gen, p, 1.5))) return false;
     // Grass, a flower, litter: one tap, no tool, no settling.
     if (ONE_TAP.test(id) && !(p.x === this.feet().x && p.z === this.feet().z && p.y < this.feet().y)) {
-      const ok = await this.tap(gen, p);
+      const ok = await this.tap(gen, p, 25, next);
       if (ok && collect) await this.collect(gen, p, 4, 3, false);
       return ok;
     }
@@ -611,16 +615,20 @@ export class Skills {
     hold(this.sim, tool);
     const c = center(p);
     await this.aim(gen, c);
+    const expect = breakTicks(id, tool);
     try {
       this.sim.breakBlock(p);
-      const limit = breakTicks(id, tool) * 2 + 40;
+      const limit = expect * 2 + 40;
       for (let t = 0; t < limit; t++) {
+        // The last moments of the break: the crosshair's already moving on to the next block (the
+        // break carries on; a player's hand leads into the next swing, it doesn't stop dead).
+        if (next && t >= expect - 2) this.a.motor.setFocus(center(next));
         await this.wait(gen, 1);
         if (this.blockAt(p) !== id) break;
       }
     } finally {
       try { this.sim.stopBreakingBlock(); } catch {}
-      this.a.motor.setFocus(null);
+      this.a.motor.setFocus(next ? center(next) : null);
     }
     // Snow layers and plants: if the swing didn't take (the break ray can miss thin blocks),
     // knock it out the way a punch would, with its normal drop.
@@ -802,17 +810,14 @@ export class Skills {
    * with its checks and pick-up, was 10+). Only ones in reach. Returns how many broke.
    */
   async swipe(gen, cells, maxTicks = 200) {
-    const e = this.eye(), t0 = system.currentTick;
-    let face = 0;
-    try { face = (-this.sim.getRotation().y + 90) * Math.PI / 180; } catch {}
-    const bearing = (c) => { const a = Math.atan2(c.z + 0.5 - e.z, c.x + 0.5 - e.x) - face; return ((a % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI); };
-    const order = [...cells].sort((p, q) => bearing(p) - bearing(q));
+    const t0 = system.currentTick;
+    const order = this.sweepCells(cells, 'break');
     hold(this.sim, null); // a bare hand: no tool wear on grass
     let broke = 0;
     try {
-      for (const c of order) {
+      for (let i = 0; i < order.length; i++) {
         if (system.currentTick - t0 > maxTicks) break;
-        if (await this.tap(gen, c)) broke++;
+        if (await this.tap(gen, order[i], 25, order[i + 1] ?? null)) broke++;
       }
     } finally {
       this.a.motor.setFocus(null);
@@ -820,14 +825,56 @@ export class Skills {
     return broke;
   }
 
+  /** Where we're looking, as flow.js wants it: { yaw, pitch } in radians (yaw along +x toward +z). */
+  lookDir() {
+    try { const v = this.sim.getViewDirection(); return { yaw: Math.atan2(v.z, v.x), pitch: Math.atan2(v.y, Math.hypot(v.x, v.z)) }; } catch { return { yaw: 0, pitch: 0 }; }
+  }
+
+  /**
+   * Blocks in the order a hand sweeps across them (core/flow.js): each next one the least turn of
+   * the head from the last, edges first, top down (breaking) or bottom up with something to place
+   * against (placing). Placing: ones with nothing to go against yet come last, in their own order.
+   */
+  sweepCells(cells, mode = 'break', supported = null) {
+    const order = sweepOrder(this.eye(), this.lookDir(), cells, { mode, supported });
+    if (mode === 'place' && order.length < cells.length) {
+      const got = new Set(order.map((c) => `${c.x},${c.y},${c.z}`));
+      for (const c of cells) if (!got.has(`${c.x},${c.y},${c.z}`)) order.push(c);
+    }
+    return order;
+  }
+
+  /**
+   * Break a set of blocks one leading into the next (the crosshair moves on as each goes), not one
+   * by one with a stop and a fresh look between. optsFor(cell): mine()'s options for that block.
+   * stop(cell) -> true: stop before it. Returns how many broke.
+   */
+  async mineFlow(gen, cells, optsFor = null, stop = null) {
+    const order = this.sweepCells(cells, 'break');
+    let n = 0;
+    try {
+      for (let i = 0; i < order.length; i++) {
+        this.check(gen);
+        if (stop?.(order[i])) break;
+        if ((this.blockAt(order[i]) ?? 'air') === 'air') continue; // (already gone: snow, vines and grass still get cut)
+        if (await this.mine(gen, order[i], { ...(optsFor ? optsFor(order[i]) : {}), next: order[i + 1] ?? null })) n++;
+      }
+    } finally {
+      this.a.motor.setFocus(null);
+    }
+    return n;
+  }
+
   /** One swipe at a one-tap block: crosshair near it, hit, gone next tick. */
-  async tap(gen, c, tol = 25) {
+  async tap(gen, c, tol = 25, next = null) {
     const id = this.blockAt(c) ?? 'air';
     if (!ONE_TAP.test(id) || !this.inReach(c) || this.isProtected(c)) return false;
     const pt = { x: c.x + 0.5, y: c.y + 0.25, z: c.z + 0.5 };
     this.a.motor.setFocus(pt);
     for (let k = 0; k < 4 && this.aimError(pt) > tol; k++) await this.wait(gen, 1);
     try { this.sim.breakBlock(c); } catch {}
+    // On to the next one as it goes (the hand sweeps through; it doesn't stop on each).
+    if (next) this.a.motor.setFocus({ x: next.x + 0.5, y: next.y + 0.25, z: next.z + 0.5 });
     await this.wait(gen, 1);
     try { this.sim.stopBreakingBlock(); } catch {}
     // The break ray can miss something this thin: knock it out the way the punch would have.
@@ -2255,11 +2302,11 @@ export class Skills {
       const floor = { ...feet, y: f.y - 1 };
       if (!(await this.fillFloor(gen, floor))) return false;
     }
-    for (const c of [head, feet]) {
-      const id = this.blockAt(c) ?? 'air';
-      if (OPEN.test(id)) continue;
-      if (!(await this.mine(gen, c, { collect: Skills.isOre(id) }))) return false;
-    }
+    // Head then feet, one swing leading into the next.
+    const cut = [head, feet].filter((c) => !OPEN.test(this.blockAt(c) ?? 'air'));
+    const ores = new Set(cut.filter((c) => Skills.isOre(this.blockAt(c) ?? '')).map((c) => `${c.x},${c.y},${c.z}`));
+    await this.mineFlow(gen, cut, (c) => ({ collect: ores.has(`${c.x},${c.y},${c.z}`) }));
+    if (cut.some((c) => !OPEN.test(this.blockAt(c) ?? 'air'))) return false;
     const r = await this.a.motor.followPath([{ x: f.x + 0.5, y: f.y, z: f.z + 0.5 }, { x: feet.x + 0.5, y: f.y, z: feet.z + 0.5 }]);
     this.check(gen);
     await this.collect(gen, this.sim.location, 3, 2, false);

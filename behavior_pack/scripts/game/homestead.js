@@ -418,7 +418,7 @@ export class Homestead {
    * Put `itemId` into cell: click a solid neighbour's face toward the cell (below first, then the
    * sides, then above), like a player placing against whatever's there.
    */
-  async placeAt(gen, cell, itemId, via = null) {
+  async placeAt(gen, cell, itemId, via = null, next = null) {
     const S = this.S;
     if (!SOFT.test(S.blockAt(cell) ?? 'air')) return S.blockAt(cell) === itemId;
     const faces = via ? FACES.filter(([o]) => cell.x + o[0] === via.x && cell.y + o[1] === via.y && cell.z + o[2] === via.z) : FACES;
@@ -429,13 +429,47 @@ export class Homestead {
       if (!S.inReach(cell)) return false;
       const slot = hold(this.sim, itemId);
       if (slot < 0) return false;
-      await this.a.motor.lookAt(center(cell), 1, 8);
+      // The crosshair onto the face we'll click (near enough, as a player's hand gets there; no stop
+      // and settle), then straight on toward the next block as this one goes down.
+      const faceAt = { x: (cell.x + n.x) / 2 + 0.5, y: (cell.y + n.y) / 2 + 0.5, z: (cell.z + n.z) / 2 + 0.5 };
+      await S.aim(gen, faceAt, 15, 6);
       S.check(gen);
       const r = await S.placeOn(gen, slot, n, face, loc, cell);
+      this.a.motor.setFocus(next ? center(next) : null);
       if (r || !SOFT.test(S.blockAt(cell) ?? 'air')) return true;
       S.log(`place ${itemId} at ${cell.x} ${cell.y} ${cell.z} against ${nid} (${face}): ${r}, still ${S.blockAt(cell)}`);
     }
     return false;
+  }
+
+  /**
+   * Place a set of blocks one leading into the next, the order a hand sweeps (core/flow.js: along a
+   * course, up a course, bottom up, only against something), not one by one with a stop and look
+   * between. items: [{ cell, id, via? }]; id may be a function (the material, looked up as we go).
+   * beforeEach(item) may walk us into reach. Returns { placed, missed }.
+   */
+  async placeFlow(gen, items, beforeEach = null) {
+    const S = this.S;
+    const key = (c) => `${c.x},${c.y},${c.z}`;
+    const byKey = new Map(items.map((it) => [key(it.cell), it]));
+    const solid = (c) => !SOFT.test(S.blockAt(c) ?? 'air') && !/water|lava/.test(S.blockAt(c) ?? '');
+    const supported = (c, placed) => [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]]
+      .some(([a, b, d]) => { const n = { x: c.x + a, y: c.y + b, z: c.z + d }; return placed.has(key(n)) || solid(n); });
+    const order = S.sweepCells(items.map((it) => it.cell), 'place', supported);
+    let placed = 0, missed = 0;
+    try {
+      for (let i = 0; i < order.length; i++) {
+        S.check(gen);
+        const it = byKey.get(key(order[i]));
+        if (beforeEach) await beforeEach(it);
+        const id = typeof it.id === 'function' ? it.id() : it.id;
+        if (!id) return { placed, missed: missed + order.length - i, outOf: true };
+        if (await this.placeAt(gen, it.cell, id, it.via ?? null, order[i + 1] ?? null)) placed++; else missed++;
+      }
+    } finally {
+      this.a.motor.setFocus(null);
+    }
+    return { placed, missed };
   }
 
   /** Least valuable block of this kind we carry: 'stone' or 'planks' (either will do if one runs out). */
@@ -639,12 +673,15 @@ export class Homestead {
     // Top down, so a tree comes down trunk-last and nothing falls on us.
     // Grass and flowers first, swiped through in one go from where we stand.
     await S.swipe(gen, clearance(site, dir).filter((p) => ONE_TAP.test(S.blockAt(p) ?? 'air') && S.inReach(p)));
-    for (const p of clearance(site, dir).sort((a, b) => b.y - a.y)) {
+    const clear = [];
+    for (const p of clearance(site, dir)) {
       const id = S.blockAt(p) ?? 'air';
       if (id === 'air') continue;
       if (/^(crafting_table|furnace|lit_furnace)$/.test(id)) { await this.moveStation(gen, p, id); continue; }
-      if (SOFT.test(id) || DIGGABLE_SITE.test(id) || /leaves$/.test(id) || isLog(id)) await S.mine(gen, p, { collect: !SOFT.test(id) && !/leaves$/.test(id) });
+      if (SOFT.test(id) || DIGGABLE_SITE.test(id) || /leaves$/.test(id) || isLog(id)) clear.push(p);
     }
+    // One block leading into the next, top down within each column (a tree comes down trunk-last).
+    await S.mineFlow(gen, clear, (p) => { const id = S.blockAt(p) ?? 'air'; return { collect: !SOFT.test(id) && !/leaves$/.test(id) }; });
     // Fill dips under the floor (up to 2 deep), bottom first.
     for (const p of footing(site, dir)) {
       for (const q of [{ ...p, y: p.y - 1 }, p]) {
@@ -659,14 +696,12 @@ export class Homestead {
     }
     // Walls and roof, from the middle of the room.
     await S.goNear(gen, fur.stand, 0.4, 3);
-    let missed = 0;
-    for (const b of blueprint(site, dir)) {
-      S.check(gen);
-      const id = this.materialFor(b.material);
-      if (!id) { this.a.say("Ran out of blocks for the house; I'll get more and finish it."); this.shortfall = this.houseNeeds(site, dir); return false; }
-      if (!S.inReach(b)) await S.goNear(gen, fur.stand, 0.4, 2);
-      if (!(await this.placeAt(gen, b, id))) missed++;
-    }
+    // Course by course, one block leading into the next (placeFlow), from the middle of the room.
+    const walls = blueprint(site, dir).filter((b) => SOFT.test(S.blockAt(b) ?? 'air'));
+    const built = await this.placeFlow(gen, walls.map((b) => ({ cell: b, id: () => this.materialFor(b.material) })),
+      async (it) => { if (!S.inReach(it.cell)) await S.goNear(gen, fur.stand, 0.4, 2); });
+    if (built.outOf) { this.a.say("Ran out of blocks for the house; I'll get more and finish it."); this.shortfall = this.houseNeeds(site, dir); return false; }
+    const missed = built.missed;
     if (missed > 3) { this.a.say(`Couldn't place ${missed} blocks of the house.`); }
     this.setHouse({ x: site.x, y: site.y, z: site.z, dir, bed: false, furnace: false, table: false, level: 1 });
     this.a.memory.data.houseProject = null;
@@ -1175,14 +1210,11 @@ export class Homestead {
       const cells = [];
       for (const h of [0, 1]) for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) cells.push({ x: g.x + dx, y: g.y + h, z: g.z + dz });
       cells.push({ x: g.x, y: g.y + 2, z: g.z });
-      let placed = 0;
-      for (const c of cells) {
-        if (!SOFT.test(S.blockAt(c) ?? 'air')) { placed++; continue; }
-        const block = cheapestPlaceable(invCounts(this.sim), plankReserve(invCounts(this.sim))); // planks only if nothing else
-        if (!block) break;
-        if (await this.placeAt(gen, c, block)) { placed++; S.markPlaced(c); }
-      }
-      safe = placed === cells.length;
+      // All round, one block leading into the next (planks only if nothing else).
+      const open = cells.filter((c) => SOFT.test(S.blockAt(c) ?? 'air'));
+      await this.placeFlow(gen, open.map((c) => ({ cell: c, id: () => cheapestPlaceable(invCounts(this.sim), plankReserve(invCounts(this.sim))) })));
+      for (const c of open) if (!SOFT.test(S.blockAt(c) ?? 'air')) S.markPlaced(c);
+      safe = cells.every((c) => !SOFT.test(S.blockAt(c) ?? 'air'));
       if (!safe) this.a.say("Couldn't wall myself in; I'll keep watch until morning.");
     }
     while (isNight(world.getTimeOfDay())) await S.wait(gen, 40);
@@ -1207,15 +1239,13 @@ export class Homestead {
       cells = barricadeCells(me, { x: me.x + dx * 3, y: me.y, z: me.z + dz * 3 }, at);
       if (cells) break;
     }
-    const placed = [];
-    for (const c of cells ?? []) {
-      const block = cheapestPlaceable(invCounts(this.sim), plankReserve(invCounts(this.sim)));
-      if (!block) break;
-      if (await this.placeAt(gen, c, block)) { placed.push(c); S.markPlaced(c); }
-    }
+    const wall = (cells ?? []).filter((c) => SOFT.test(S.blockAt(c) ?? 'air'));
+    await this.placeFlow(gen, wall.map((c) => ({ cell: c, id: () => cheapestPlaceable(invCounts(this.sim), plankReserve(invCounts(this.sim))) })));
+    const placed = wall.filter((c) => !SOFT.test(S.blockAt(c) ?? 'air'));
+    for (const c of placed) S.markPlaced(c);
     this.a.sayOnce('mine-shelter', placed.length ? 'Walled myself in at the end of the mine till morning.' : 'Keeping to the end of the mine till morning.', 300000);
     while (isNight(world.getTimeOfDay())) await S.wait(gen, 40);
-    for (const c of placed) await S.mine(gen, c, { collect: true, force: true });
+    await S.mineFlow(gen, placed, () => ({ collect: true, force: true }));
     return true;
   }
 }

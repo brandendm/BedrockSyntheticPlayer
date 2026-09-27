@@ -1482,7 +1482,7 @@ export class Agent {
     const gen = this.taskGen;
     (async () => {
       let n = 0;
-      for (const c of cells) if (await this.homestead.placeAt(gen, c, block)) n++;
+      n = (await this.homestead.placeFlow(gen, cells.map((c) => ({ cell: c, id: block })))).placed;
       if (n) { this.say('Walled myself in.'); if (CONFIG.debug) console.warn(`[agent] walled off the way in (${n}/${cells.length} blocks)`); }
     })().catch(() => {}).finally(() => { this.walling = false; });
     return true;

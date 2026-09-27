@@ -526,9 +526,14 @@ export class Farm {
       tiles.push(at);
     }
     let harvested = 0, tilled = 0, planted = 0;
-    for (const t of tiles) {
+    for (let ti = 0; ti < tiles.length; ti++) {
+      const t = tiles[ti];
       S.check(gen);
       const crop = { ...t, y: t.y + 1 };
+      // The next tile: where the crosshair heads as each action here goes through (one leading into
+      // the next along the rows, the way a player runs down a field).
+      const nextTile = tiles[ti + 1] ?? null;
+      const nextTop = nextTile ? { ...nextTile, y: nextTile.y + 1 } : null;
       let b;
       try { b = this.dim.getBlock(crop); } catch { continue; }
       if (b && strip(b.typeId) === 'wheat') {
@@ -536,20 +541,21 @@ export class Farm {
         try { g = b.permutation.getState('growth') ?? 0; } catch {}
         if (g < 7) continue;
         if (!S.inReach(crop)) await S.goNear(gen, crop, 2.5, 2);
-        if (await S.mine(gen, crop, { collect: false })) harvested++;
+        if (await S.mine(gen, crop, { collect: false, next: crop })) harvested++; // (replant right here next)
       }
       const ground = S.blockAt(t) ?? '';
       if (TILLABLE.test(ground) && CLEAR.test(S.blockAt(crop) ?? 'stone')) {
         if (!S.inReach(t)) await S.goNear(gen, crop, 2.5, 2);
         // A hoe only tills with air on top: grass or a flower goes first (and may drop a seed).
         if ((S.blockAt(crop) ?? 'air') !== 'air') await S.mine(gen, crop, { collect: false });
-        if (await this.useOn(gen, this.hoe(), t)) tilled++;
+        if (await this.useOn(gen, this.hoe(), t, crop)) tilled++;
       }
       if (S.blockAt(t) === 'farmland' && (S.blockAt(crop) ?? '') === 'air' && invCounts(this.sim).wheat_seeds) {
         if (!S.inReach(t)) await S.goNear(gen, crop, 2.5, 2);
-        if (await this.useOn(gen, 'wheat_seeds', t)) planted++;
+        if (await this.useOn(gen, 'wheat_seeds', t, nextTop)) planted++;
       }
     }
+    this.a.motor.setFocus(null);
     await S.sweep(gen, { x: f.water.x, y: f.water.y + 1, z: f.water.z }, 7, null, 10);
     S.restHands();
     this.lastPlanted = this.state()?.planted ?? 0;
@@ -563,16 +569,19 @@ export class Farm {
   }
 
   /** Use an item on the top of a block (hoe on dirt, seeds on farmland). */
-  async useOn(gen, itemId, block) {
+  async useOn(gen, itemId, block, next = null) {
     if (!itemId) return false;
     const slot = hold(this.sim, itemId);
     if (slot < 0) return false;
     const before = this.S.blockAt(block), above = this.S.blockAt({ ...block, y: block.y + 1 });
-    await this.a.motor.lookAt({ x: block.x + 0.5, y: block.y + 1, z: block.z + 0.5 }, 1, 8);
+    // Crosshair near the top of it (no stop and settle), use, and on toward the next as it takes.
+    await this.S.aim(gen, { x: block.x + 0.5, y: block.y + 1, z: block.z + 0.5 }, 15, 6);
     this.S.check(gen);
     try { this.sim.useItemInSlotOnBlock(slot, block, Direction.Up, { x: 0.5, y: 1, z: 0.5 }); } catch {}
-    await this.S.wait(gen, 3);
-    return this.S.blockAt(block) !== before || this.S.blockAt({ ...block, y: block.y + 1 }) !== above;
+    if (next) this.a.motor.setFocus({ x: next.x + 0.5, y: next.y + 0.1, z: next.z + 0.5 });
+    const changed = () => this.S.blockAt(block) !== before || this.S.blockAt({ ...block, y: block.y + 1 }) !== above;
+    for (let k = 0; k < 3; k++) { await this.S.wait(gen, 1); if (changed()) return true; }
+    return false;
   }
 }
 

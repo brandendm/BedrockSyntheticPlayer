@@ -152,6 +152,14 @@ With no orders (and after finishing any order) it works through a goal ladder.
 
 **Mining and chopping without pausing:** before each block it aims (crosshair near the block, and the head keeps settling while it breaks) instead of stopping, settling to within 2.5° and holding. Chopping picks up the whole tree's logs in one sweep at the end rather than after every log. Stone comes off the face the last block uncovered, rather than a fresh look round (a scan and sight checks) after every block, and drops are gathered every few blocks. Between blocks it doesn't stand waiting on a drop at its feet; standing there picks it up anyway.
 
+**One action leading into the next** (`core/flow.js`): a run of breaking, placing or planting goes the way a player's hand moves, not one block at a time with a stop and a fresh look between.
+- **Order:** each next block is the smallest turn of the head from the last, working the edges first so no block is left stranded to jump back to. Walls go up a course at a time, like bricklaying. Breaking goes top down within a column (a tunnel is cut head then feet, and sand and gravel come down). Placing goes bottom up, and only against something already there.
+- **Lead:** in the last ticks of a break, and as a placement or a hoe or seed use lands, the crosshair is already moving to the next block.
+- **Aim:** placing aims the way mining does, near enough and settling as it goes. There's no stop, settle, hold and view-snap per block, so a block takes about 2 ticks instead of 4 plus the settle.
+- **Where:** tunnels, house walls and site clearing, barricades and shelters, grass swipes, and tilling, planting and harvesting the farm.
+
+On a 7×7 ring of house walls, the head turns about a sixth as much as in a shuffled order, with no jumps back across the wall.
+
 **One-tap blocks:** grass, flowers and leaf litter go the way a player runs a held punch through them. Each breaks the tick the crosshair is on it, in order round the bot so the head sweeps: about 2 ticks a block, bare-handed. Leaf litter is worth taking now: whatever's in reach, then on into the rest of the patch, punching it down as it comes into reach while walking (up to 64 layers, about 15 s at most). Building sites get their grass and flowers swiped the same way before the digging starts.
 
 **Tight corners and edges:** the smoothed path marks two kinds of waypoint as tight, and the bot walks onto those instead of cutting the corner past them. One is beside a drop it wouldn't survive or lava, such as the start of a 1-wide bridge over a ravine. The other is a corner where turning early would clip what the path goes round: a trunk, a bush, a leaf at head height. It also only aims past a step it's jumping up when the path carries straight on, so the jump's carry doesn't take it over the side. `tools/stress_path.mjs` walks thousands of these worlds with a real-width body; everything that has a way through arrives.
