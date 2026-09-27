@@ -28,7 +28,7 @@ test('creepers: held off at arm\'s length when it is the only thing on us (any w
 test('creepers are noticed early: in sight within 8, hissing unseen within 8, anything within 4', () => {
   assert.equal(decide({ health: 20, damage: 6, mobs: [mob('creeper', 7.5)] }).mode, 'fight', 'in sight, not known to be after us');
   assert.equal(decide({ health: 20, damage: 6, mobs: [mob('creeper', 7, { visible: false, lit: true })] }).mode, 'fight', 'heard hissing');
-  assert.notEqual(decide({ health: 20, damage: 6, mobs: [mob('creeper', 3.5, { visible: false, recent: false, canReach: false })] }).mode, 'none', 'right here, round a corner: noticed (and kept away from)');
+  assert.notEqual(decide({ health: 20, damage: 6, mobs: [mob('creeper', 3.5, { visible: false, recent: false })] }).mode, 'none', 'right here, round a corner (no path search yet): noticed');
   assert.equal(decide({ health: 20, damage: 6, mobs: [mob('creeper', 11, { targetingMe: true })] }).mode, 'fight', 'after us from 11');
   assert.equal(decide({ health: 20, damage: 6, mobs: [mob('creeper', 11)] }).mode, 'none', 'wandering, well off');
 });
@@ -104,4 +104,9 @@ test('melee spacing: close to the edge of reach, never walk into the zombie', ()
   assert.ok(STOP_AT < REACH_HIT);             // we stop inside our own reach
   const p = standOff({ x: 10, y: 64, z: 0 }, { x: 0, y: 64, z: 0 });
   assert.ok(Math.abs(p.x - 2.8) < 1e-9 && p.z === 0);
+});
+
+test('a creeper we have walled off (no way to us, no sight of us, not hissing) is left alone, even close', () => {
+  assert.equal(decide({ health: 20, damage: 6, mobs: [mob('creeper', 3, { canReach: false, visible: false, recent: false })] }).mode, 'none');
+  assert.notEqual(decide({ health: 20, damage: 6, mobs: [mob('creeper', 3, { canReach: false, visible: false, recent: false, lit: true })] }).mode, 'none', 'hissing: still one to get away from');
 });

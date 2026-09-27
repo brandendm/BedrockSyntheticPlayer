@@ -70,7 +70,9 @@ export function isActiveThreat(m, isNight, alert = false) {
   if (!info) return false;
   const provoked = m.targetingMe || m.attackedMe;
   // A creeper hissing near us is heard, seen or not; one right next to us is there, seen or not.
-  if (m.type === 'creeper' && ((m.lit && m.dist <= 8) || m.dist <= 4)) return true;
+  // (Not one we've walled off: can't get at us, can't see us, not hissing.)
+  const walledOff = m.canReach === false && m.visible === false && !m.lit;
+  if (m.type === 'creeper' && ((m.lit && m.dist <= 8) || (m.dist <= 4 && !walledOff))) return true;
   if (info.neutral) return provoked;
   if (info.neutralInDay && !isNight) return provoked;
   // Once we're already fighting or running, keep tracking mobs a bit further and around corners:
@@ -95,7 +97,7 @@ export function decide({ health, damage = FIST_DAMAGE, isNight = false, prevMode
   // Handled by keeping it at arm's length (core/tactics.js creeperFight: it never gets to light) if
   // it's the only thing on us; with company, away from it.
   const creeper = threats.find((m) => m.type === 'creeper' && (
-    m.dist <= 4 || (m.lit && m.dist <= 8) ||
+    (m.dist <= 4 && !(m.canReach === false && m.visible === false && !m.lit)) || (m.lit && m.dist <= 8) ||
     ((m.canReach ?? true) && (m.visible || m.recent) && m.dist <= (alert ? 12 : m.targetingMe ? 12 : 8))));
   if (creeper) {
     // Company that rules it out: something that would be on us while we hold the creeper off (a

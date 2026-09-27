@@ -6,7 +6,7 @@ import { MotorController, EYE_HEIGHT } from '../core/motor.js';
 import { searchJob, smoothPath, findPath, Cell } from '../core/pathfinder.js';
 import { dist3D, makeRng } from '../core/mathutil.js';
 import { decide, fleePoint, weaponDamage, MOBS, REACH_HIT, STOP_AT } from '../core/threat.js';
-import { fightMove, creeperFight, creeperMove, Stalemate, pickRefuge, bestWeapon, barricadeCells, SPEAR_DAMAGE, weaponReach, pickCreeperSwing, creeperWeapon, isSpear, awayPath, CREEPER_LIGHT, CREEPER_CALM } from '../core/tactics.js';
+import { fightMove, creeperFight, creeperMove, Stalemate, pickRefuge, bestWeapon, barricadeCells, SPEAR_DAMAGE, weaponReach, pickCreeperSwing, creeperWeapon, isSpear, awayPath, knockbackRoom, blockOffCells, CREEPER_LIGHT, CREEPER_CALM } from '../core/tactics.js';
 import { nextStep, STONE_TARGETS, TOOL_STONE, count, isLog } from '../core/recipes.js';
 import { settleStep, foodCount, FOOD_GOAL, isNight } from '../core/settle.js';
 import { goalChain } from '../core/goals.js';
@@ -788,6 +788,7 @@ export class Agent {
         S.check(gen);
         await this.recoverDrops(gen);
         await this.pickUpLoose(gen);
+        await this.takeDownWalls(gen);
         await H.maybeEat(gen);
         const inv = invCounts(this.sim);
         const near = await S.findTable(4);
@@ -1368,6 +1369,7 @@ export class Agent {
    */
   fight(target, t) {
     if (!target?.entity?.isValid) return;
+    if (this.walling) return; // putting a wall up: the placing has the hands and the eyes
     const e = target.entity;
     this.fightTarget = e;
     this.fightLast = { x: e.location.x, y: e.location.y, z: e.location.z };
@@ -1390,7 +1392,14 @@ export class Agent {
       const w = pickCreeperSwing(ws, d, t);
       swingWith = w.id; reach = w.reach; minReach = w.minReach; canSwing = w.ready; spearSwing = isSpear(w.id); cooldown = w.cooldown;
       const lit = this.creeperLit(target, e, d, t);
-      mv = creeperFight({ me, mob, t, st, shield: this.shield, canSwing, canRetreat: room !== false, lit, reach, minReach });
+      // A hit that won't send it anywhere: steps or rock right behind it (predicted), or it barely
+      // moved the last time we hit it (measured 6 ticks on).
+      if (st.hitAt !== undefined && t - st.hitAt >= 6 && st.kbMoved === undefined) st.kbMoved = d - st.hitD;
+      const kbPoor = knockbackRoom(me, mob, this.cellAt()) < 1 || (st.kbMoved !== undefined && st.kbMoved < 0.6);
+      const wallBlock = this.homestead.materialFor('stone');
+      const canWall = !!wallBlock && (invCounts(this.sim)[wallBlock] ?? 0) >= 2;
+      mv = creeperFight({ me, mob, t, st, shield: this.shield, canSwing, canRetreat: room !== false, lit, reach, minReach, canWall, kbPoor });
+      if (mv.wall) { this.wallOffCreeper(me, mob, wallBlock); return; }
       this.fightMove = 'creeper'; // its own spacing (creeperTick), not the melee stop
       // The combat log: every tick of a creeper fight, to calibrate tools/sim_combat.mjs against.
       let ign = '?'; // its walking speed: a swelling creeper stands still
@@ -1423,6 +1432,7 @@ export class Agent {
       this.nextSwing = t + (target.type === 'creeper' ? 10 : 10 + Math.floor(this.rng() * 4));
       if (spearSwing) this.spearNext = t + cooldown + 1;
       if (target.type === 'creeper' && hp0 !== null) this.swingCheck = { e, hp0, t, d, spear: spearSwing };
+      if (target.type === 'creeper') { const st = this.creeperSt.get(e.id); if (st) { st.hitAt = t; st.hitD = d; st.kbMoved = undefined; } }
     }
     // Going nowhere (no hit landed, not a block closer for 6 s): give it up for a minute. It counts
     // as out of reach, so we either get on with things or, if it's shooting us, get out of its sight.
@@ -1582,6 +1592,59 @@ export class Agent {
     // into the creeper we'd stopped short of.
     if (gen !== this.taskGen || seq !== (this.routeSeq ?? 0) || res.path.length < 2) return;
     this.motor.followPath(smoothPath(this.classifier(), res.path), { seamless: true, urgent, walk });
+  }
+
+  /** Blocks as tactics.js reads them: 'open' | 'solid' | 'other'. */
+  cellAt() {
+    const w = this.classifier();
+    return (x, y, z) => { const c = w(x, y, z); return c === Cell.AIR ? 'open' : c === Cell.SOLID || c === Cell.STEP || c === Cell.SLAB ? 'solid' : 'other'; };
+  }
+
+  /**
+   * Cornered with a creeper coming and a hit that won't move it (core/tactics.js): wall it off.
+   * Blocks across its way in, at feet and head (and higher if it's coming down at us), the straight
+   * line first, one leading into the next (placeFlow). No sight of us, no fuse; no way in.
+   */
+  wallOffCreeper(me, mob, block) {
+    if (this.walling) return;
+    const cells = blockOffCells(me, mob, this.cellAt());
+    if (!cells.length) return;
+    this.walling = true;
+    this.setBlocking(false);
+    this.stopWalking();
+    const gen = this.taskGen;
+    trace(`creeper: walling it off (${cells.length} blocks, knockback room ${knockbackRoom(me, mob, this.cellAt())}, d ${dist3D(me, mob).toFixed(2)})`);
+    this.say("Can't knock that creeper back from here: walling it off.");
+    this.homestead.placeFlow(gen, cells.map((c) => ({ cell: c, id: block })))
+      .then((r) => {
+        const up = cells.filter((c) => this.skills.blockAt(c) === block);
+        for (const c of up) this.skills.markPlaced(c);
+        // Down again once it's gone (a wall across the quarry stairs is in our own way too).
+        this.creeperWalls = [...(this.creeperWalls ?? []), { cells: up, block }];
+        trace(`creeper: wall up (${r.placed}/${cells.length})`);
+      })
+      .catch(() => {})
+      .finally(() => { this.walling = false; });
+  }
+
+  /**
+   * Walls we put up against a creeper, taken down once there's no creeper within 16 (our own
+   * blocks only: anything else in those cells is left alone).
+   */
+  async takeDownWalls(gen) {
+    if (!this.creeperWalls?.length) return;
+    let near = [];
+    try { near = this.dim.getEntities({ type: 'minecraft:creeper', location: this.sim.location, maxDistance: 16 }); } catch {}
+    if (near.length) return;
+    const walls = this.creeperWalls;
+    this.creeperWalls = [];
+    for (const w of walls) {
+      const ours = w.cells.filter((c) => this.skills.blockAt(c) === w.block);
+      if (!ours.length || dist3D(this.sim.location, ours[0]) > 24) continue;
+      trace(`creeper gone: taking the wall down (${ours.length} blocks)`);
+      for (const c of ours) if (!this.skills.inReach(c)) { await this.skills.goNear(gen, c, 3, 2); break; }
+      await this.skills.mineFlow(gen, ours.filter((c) => this.skills.inReach(c)), () => ({ collect: true }));
+    }
   }
 
   /** Stand still, and drop any path still being planned. */

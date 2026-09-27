@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { fightMove, creeperFight, creeperMove, Stalemate, pickRefuge, bestWeapon, barricadeCells, CREEPER_HOLD, CREEPER_LIGHT, CREEPER_CALM, weaponReach, pickCreeperSwing, creeperWeapon } from '../behavior_pack/scripts/core/tactics.js';
+import { fightMove, creeperFight, creeperMove, Stalemate, pickRefuge, bestWeapon, barricadeCells, CREEPER_HOLD, CREEPER_LIGHT, CREEPER_CALM, weaponReach, pickCreeperSwing, creeperWeapon, knockbackRoom, blockOffCells } from '../behavior_pack/scripts/core/tactics.js';
 import { HOLD_AT, REACH_HIT } from '../behavior_pack/scripts/core/threat.js';
 
 const P = (x, y, z) => ({ x, y, z });
@@ -142,3 +142,36 @@ test('barricade: a 1-wide tunnel with the threat down it gets two blocks; open g
 });
 
 void HOLD_AT;
+
+test('knockback room: open ground behind it is room; a riser or rock right behind it is not', () => {
+  const me = P(0.5, 64, 0.5), mob = P(3.5, 64, 0.5);
+  const flat = (x, y) => (y < 64 ? 'solid' : 'open');
+  assert.equal(knockbackRoom(me, mob, flat), 2);
+  const wallBehind = (x, y) => (y < 64 || x >= 4 ? 'solid' : 'open');
+  assert.equal(knockbackRoom(me, mob, wallBehind), 0);
+  const twoHighStep = (x, y) => (y < 64 || (x >= 4 && y < 66) ? 'solid' : 'open');
+  assert.ok(knockbackRoom(me, mob, twoHighStep) < 1, 'a 2-high riser behind it');
+});
+
+test('walling a creeper off: the column straight at it first, feet and head, one higher when it comes down at us', () => {
+  const me = P(0.5, 40, 0.5);
+  const open = (x, y) => (y < 40 ? 'solid' : 'open');
+  const level = blockOffCells(me, P(5.5, 40, 0.5), open);
+  assert.deepEqual(level.slice(0, 2), [P(1, 40, 0), P(1, 41, 0)], 'straight at it, feet then head');
+  assert.ok(level.length >= 6, 'and the diagonals either side');
+  const fromAbove = blockOffCells(me, P(4.5, 43, 0.5), open);
+  assert.deepEqual(fromAbove.slice(0, 3), [P(1, 40, 0), P(1, 41, 0), P(1, 42, 0)], 'coming down at us: it sees over two');
+  const tunnel = (x, y, z) => (y < 40 || y > 41 || z !== 0 ? 'solid' : 'open');
+  assert.deepEqual(blockOffCells(me, P(5.5, 40, 0.5), tunnel), [P(1, 40, 0), P(1, 41, 0)], 'a 1-wide tunnel: two blocks');
+});
+
+test('creeper fight: cornered, no shield, a hit would not move it: wall it off (early, once)', () => {
+  const me = P(0.5, 40, 0.5), st = {};
+  creeperFight({ me, mob: P(8, 44, 0.5), t: 0, st, canWall: true, kbPoor: true });
+  const w = creeperFight({ me, mob: P(6, 43, 0.5), t: 8, st, canWall: true, kbPoor: true });
+  assert.equal(w.wall, true);
+  assert.equal(creeperFight({ me, mob: P(5.5, 43, 0.5), t: 12, st, canWall: true, kbPoor: true }).wall, false, 'once');
+  assert.equal(creeperFight({ me, mob: P(6, 43, 0.5), t: 8, st: { lastComing: 0 }, canWall: true, kbPoor: true, shield: true }).wall, false, 'a shield: no need');
+  assert.equal(creeperFight({ me, mob: P(6, 40, 0.5), t: 8, st: { lastComing: 0 }, canWall: true, kbPoor: false }).wall, false, 'knockback works: keep it off with that');
+  assert.equal(creeperFight({ me, mob: P(6, 43, 0.5), t: 8, st: { lastComing: 0 }, canWall: false, kbPoor: true }).wall, false, 'no blocks');
+});

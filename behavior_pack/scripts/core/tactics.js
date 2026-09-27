@@ -77,9 +77,9 @@ export const CREEPER_HOLD = 3.1; // where to stand with a sword: just outside it
  * it can stand on that far away (a point on the straight line back is inside the rock on stairs).
  * st keeps state between calls; lit: it's hissing (seen standing still to swell, game/agent.js hissing()). Call it every tick.
  */
-export function creeperFight({ me, mob, t, st, shield = false, canSwing = true, canRetreat = true, lit = false, reach = REACH_HIT, minReach = 0 }) {
+export function creeperFight({ me, mob, t, st, shield = false, canSwing = true, canRetreat = true, lit = false, reach = REACH_HIT, minReach = 0, canWall = false, kbPoor = false }) {
   const d = dist(me, mob);
-  const out = { goal: null, away: 0, tolerance: 0, urgent: false, walk: true, now: false, stop: false, swing: false, block: false };
+  const out = { goal: null, away: 0, tolerance: 0, urgent: false, walk: true, now: false, stop: false, swing: false, block: false, wall: false };
   const inReach = d <= reach && d >= minReach;
   // Where to stand: just inside our reach. A sword's (3.2) barely clears its fuse (2.9); a spear's (4)
   // clears it by a block. (Knockback is 1.21 blocks, measured: it's back in 9 ticks, before a spear's
@@ -91,6 +91,15 @@ export function creeperFight({ me, mob, t, st, shield = false, canSwing = true, 
   st.hist.push({ t, d });
   if ((st.hist.length > 1 && st.hist[0].d - d > 0.25) || st.lastComing === undefined) st.lastComing = t;
   const closing = t - st.lastComing < 40;
+  // Cornered, no shield, and a hit won't send it anywhere (steps or rock right behind it, or it
+  // barely moved when we hit it): wall it off. Blocks across its way in (feet, head, and higher if
+  // it's coming down at us) take away its path and its sight of us, and a creeper's fuse needs
+  // sight. Early (a wall is a few blocks, 3 ticks each), and once.
+  if (canWall && !shield && (kbPoor || !canRetreat) && !st.walled && d <= 7 && d > 1.5 && (closing || lit)) {
+    st.walled = t;
+    out.wall = true; out.stop = true;
+    return out;
+  }
   const backOff = (to, urgent = false) => {
     out.away = to; out.urgent = urgent; out.walk = !urgent;
     out.now = !st.backing; st.backing = true;
@@ -126,6 +135,52 @@ export function awayPath(findPath, classify, me, mob, away, maxNodes = 300) {
     goalTest: (x, y, z, w) => w.standable(x, y, z) && Math.hypot(x + 0.5 - mob.x, y - mob.y, z + 0.5 - mob.z) >= away,
   });
   return r.complete && r.path.length >= 2 ? r.path : null;
+}
+
+/**
+ * Room behind a mob to be knocked into, in blocks (0-2): along the line from us through it, the
+ * columns past it that it could be pushed into (open at its feet and head, or up a 1-high step with
+ * room over it). at(x, y, z) -> 'open' | 'solid' | 'other'. Under 1: a hit won't move it much.
+ */
+export function knockbackRoom(me, mob, at) {
+  const dx = mob.x - me.x, dz = mob.z - me.z, l = Math.hypot(dx, dz) || 1;
+  const fy = Math.floor(mob.y);
+  let room = 0;
+  for (const k of [1, 2]) {
+    const x = Math.floor(mob.x + (dx / l) * k), z = Math.floor(mob.z + (dz / l) * k);
+    const level = at(x, fy, z) === 'open' && at(x, fy + 1, z) === 'open';
+    const stepUp = !level && at(x, fy + 1, z) === 'open' && at(x, fy + 2, z) === 'open';
+    if (level) room += 1; else if (stepUp) { room += 0.5; break; } else break;
+  }
+  return room;
+}
+
+/**
+ * Where to put blocks to wall off a creeper coming at us: the columns next to us toward it (straight
+ * at it first, then the two either side of that), at our feet and head, and one higher when it's
+ * coming down at us from above (else it sees over). Only open cells, never the one it's in. In the
+ * order to place them: the straight line first (that's its sight of us gone soonest).
+ * at(x, y, z) -> 'open' | 'solid' | 'other'. Returns [{ x, y, z }].
+ */
+export function blockOffCells(me, mob, at) {
+  const f = { x: Math.floor(me.x), y: Math.floor(me.y), z: Math.floor(me.z) };
+  const dx = mob.x - me.x, dz = mob.z - me.z, l = Math.hypot(dx, dz) || 1;
+  const cols = [];
+  for (const [ox, oz] of [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]]) {
+    const dot = (ox * dx + oz * dz) / (l * Math.hypot(ox, oz));
+    if (dot > 0.35) cols.push({ ox, oz, dot });
+  }
+  cols.sort((a, b) => b.dot - a.dot);
+  const above = mob.y - me.y >= 0.9;
+  const inMob = (c) => c.x === Math.floor(mob.x) && c.z === Math.floor(mob.z) && c.y >= Math.floor(mob.y) && c.y <= Math.floor(mob.y) + 1;
+  const out = [];
+  for (const { ox, oz } of cols) {
+    for (const dy of above ? [0, 1, 2] : [0, 1]) {
+      const c = { x: f.x + ox, y: f.y + dy, z: f.z + oz };
+      if (at(c.x, c.y, c.z) === 'open' && !inMob(c)) out.push(c);
+    }
+  }
+  return out;
 }
 
 /** Fight a creeper at all? Armed (a stone sword or better), healthy, and nothing else on us. */
