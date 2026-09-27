@@ -435,43 +435,46 @@ export class Farm {
     return out.sort((a, b) => b.score - a.score);
   }
 
-  /** Break grass nearby for wheat seeds (1 in 8), until `want` seeds or ~60 s. */
+  /**
+   * Wheat seeds from grass (1 in 8 drops one), until `want` seeds or ~60 s. Swiped through the way a
+   * player does it, punch held, running through the patch (skills.swipePatch): not tuft by tuft with
+   * a stop and a wait for a seed after each. Walking through picks most seeds up on the way; one
+   * pass over where the grass was gets the rest, and the swipe carries on from there if it's short.
+   */
   async gatherSeeds(gen, want) {
     const S = this.S;
     const t0 = system.currentTick;
     const seeds = () => invCounts(this.sim).wheat_seeds ?? 0;
+    // Seeds still on the ground (not picked up yet) count toward enough: they're about to be ours.
+    let lying = 0;
+    const enough = () => seeds() + lying >= want;
     let broke = 0;
-    const brokeAt = [];
-    while (seeds() < want && system.currentTick - t0 < 1800) {
-      const grass = (await S.scan((id) => GRASS.test(id), { radius: 32, below: 4, above: 4, limit: 24 }))
-        .filter((b) => !this.a.memory.isUnreachable(b));
-      if (!grass.length) break;
-      // Always the nearest tuft to where we're standing now (anything in reach first, no walk),
-      // not the order the scan found them in from where we started: that zig-zagged across the
-      // field, walking past grass right beside us.
-      const left = grass.slice(0, 24);
-      for (let k = 0; k < 12 && left.length; k++) {
-        S.check(gen);
-        const here = this.sim.location;
-        const cost = (b) => (S.inReach(b) ? 0 : Math.hypot(b.x + 0.5 - here.x, b.z + 0.5 - here.z) + Math.abs(b.y - here.y) * 1.5);
-        let bi = 0;
-        for (let i = 1; i < left.length; i++) if (cost(left[i]) < cost(left[bi])) bi = i;
-        const g = left.splice(bi, 1)[0];
-        if (!GRASS.test(S.blockAt(g) ?? '')) continue;
-        if (!S.inReach(g) && !(await S.goNear(gen, g, 2.5, 1))) { this.a.memory.markUnreachable(g, 300000); continue; }
-        if (!(await S.mine(gen, g, { collect: false }))) continue;
-        broke++;
-        brokeAt.push(g);
-        // A seed drops (1 in 8): pick it up right there, before moving on to the next tuft. (Sweeping
-        // every few tufts around wherever we'd got to left most of them behind.)
-        await this.pickUpSeedAt(gen, g);
-        if (seeds() >= want) break;
+    for (let pass = 0; pass < 6 && !enough() && system.currentTick - t0 < 1800; pass++) {
+      // (Seeds lying about counted every half second, not every swipe: it's an entity query.)
+      let countedAt = -1;
+      const done = () => {
+        if (system.currentTick - countedAt >= 10) { lying = this.seedsAround(10); countedAt = system.currentTick; }
+        return enough();
+      };
+      const r = await S.swipePatch(gen, (id) => GRASS.test(id), { radius: 8, rounds: 4, maxTicks: 400, minRest: 2, enough: done });
+      broke += r.broke;
+      // What dropped: a moment for the last ones to land and become pick-up-able, then one sweep.
+      if (r.broke) {
+        await S.wait(gen, 8);
+        const c = this.sim.location;
+        await S.sweep(gen, { x: c.x, y: c.y, z: c.z }, 10, isSeed, 12);
       }
-      // Anything missed (a seed that bounced off, one that landed as we left): every spot we broke.
-      for (const b of brokeAt.splice(0)) if (this.seedItemsNear(b, 2.5).length) await S.sweep(gen, b, 2.5, isSeed, 4);
+      lying = 0;
+      if (!r.broke) break; // no grass left round here
     }
-    S.log(`farm: broke ${broke} grass, have ${seeds()} seeds`);
+    S.log(`farm: swiped ${broke} grass, have ${seeds()} seeds`);
     return seeds();
+  }
+
+  /** Wheat seed items on the ground within r of us (dropped, not picked up yet). */
+  seedsAround(r) {
+    const c = this.sim.location;
+    return this.seedItemsNear({ x: Math.floor(c.x), y: Math.floor(c.y), z: Math.floor(c.z) }, r).reduce((n, e) => { try { return n + (e.getComponent('minecraft:item')?.itemStack?.amount ?? 1); } catch { return n; } }, 0);
   }
 
   /** Wheat seed item stacks on the ground within r of p. */
@@ -480,15 +483,6 @@ export class Farm {
       return this.dim.getEntities({ type: 'minecraft:item', location: { x: p.x + 0.5, y: p.y + 0.5, z: p.z + 0.5 }, maxDistance: r })
         .filter((e) => { try { return isSeed(strip(e.getComponent('minecraft:item')?.itemStack?.typeId ?? '')); } catch { return false; } });
     } catch { return []; }
-  }
-
-  /** Grass just broken at g: wait a moment for a seed to drop, and if one did, walk over it. */
-  async pickUpSeedAt(gen, g) {
-    for (let t = 0; t < 8 && !this.seedItemsNear(g, 2).length; t += 2) await this.S.wait(gen, 2);
-    if (!this.seedItemsNear(g, 2).length) return false;
-    const before = invCounts(this.sim).wheat_seeds ?? 0;
-    await this.S.sweep(gen, { x: g.x + 0.5, y: g.y + 0.5, z: g.z + 0.5 }, 2.5, isSeed, 4);
-    return (invCounts(this.sim).wheat_seeds ?? 0) > before;
   }
 
   /** The farm's state: tiles, planted, ripe (from the blocks; zeros if it isn't loaded). */

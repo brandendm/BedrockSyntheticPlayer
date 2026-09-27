@@ -884,42 +884,68 @@ export class Skills {
   }
 
   /**
-   * Leaf litter: fuel for next to nothing. One layer burns 0.5 items, a block holds 1-4 layers and
-   * breaks at a touch. Swiped through (see swipe) at ~2 ticks a block, so a patch is worth taking:
-   * what's in reach, then on into the rest of the patch a few steps away, punching it down as it
-   * comes into reach while we walk. Up to 64 layers (32 items of cooking), ~15 s at most.
+   * Swipe through a patch of one-tap blocks (pred: grass for seeds, leaf litter), the way a player
+   * runs through it with the punch held: everything in reach in one sweep, then on into the rest of
+   * the patch, punching what comes into reach as we walk; again from there. Stops when enough() says
+   * so, or the patch runs out (fewer than minRest left further off), or after maxTicks.
+   * Returns { broke, spots: [cells broken] } (spots: where drops will be).
+   * @param {any} gen
+   * @param {(id: string) => boolean} pred
+   * @param {{ radius?: number, rounds?: number, maxTicks?: number, minRest?: number, enough?: () => boolean }} [opts]
    */
-  async grabLitter(gen) {
-    const have = () => invCounts(this.sim).leaf_litter ?? 0;
-    if (have() >= 64) return 0;
-    const t0 = system.currentTick, isLitter = (b) => (this.blockAt(b) ?? '') === 'leaf_litter';
+  async swipePatch(gen, pred, { radius = 6, rounds = 6, maxTicks = 600, minRest = 3, enough = () => false } = {}) {
+    const t0 = system.currentTick, spots = [];
+    const isIt = (b) => pred(this.blockAt(b) ?? '');
     let broke = 0;
-    for (let round = 0; round < 4 && system.currentTick - t0 < 300 && have() + broke * 2 < 64; round++) {
-      // Litter is see-through (a sight line passes it rather than hitting it): what counts is
-      // nothing solid in the way to it.
-      const patch = (await this.scan((id) => id === 'leaf_litter', { radius: 6, below: 2, above: 2, limit: 32 }))
-        .filter((b) => canSee(this.dim, this.eye(), { x: b.x + 0.5, y: b.y + 0.1, z: b.z + 0.5 }));
+    for (let round = 0; round < rounds && system.currentTick - t0 < maxTicks && !enough(); round++) {
+      // See-through (a sight line passes grass and litter rather than hitting them): what counts is
+      // nothing solid in the way.
+      const patch = (await this.scan(pred, { radius, below: 2, above: 2, limit: 48 }))
+        .filter((b) => !this.a.memory.isUnreachable(b) && canSee(this.dim, this.eye(), { x: b.x + 0.5, y: b.y + 0.1, z: b.z + 0.5 }));
       this.check(gen);
-      broke += await this.swipe(gen, patch.filter((b) => this.inReach(b)));
-      const rest = patch.filter((b) => isLitter(b) && !this.inReach(b));
-      if (rest.length < 3) break; // the odd block further off isn't worth the walk
+      const inReach = patch.filter((b) => this.inReach(b));
+      const order = this.sweepCells(inReach, 'break');
+      hold(this.sim, null);
+      try {
+        for (let i = 0; i < order.length && !enough(); i++) {
+          if (await this.tap(gen, order[i], 25, order[i + 1] ?? null)) { broke++; spots.push(order[i]); }
+        }
+      } finally { this.a.motor.setFocus(null); }
+      if (enough()) break;
+      const rest = patch.filter((b) => isIt(b) && !this.inReach(b));
+      if (rest.length < minRest) break; // the odd block further off isn't worth the walk
       // Into the rest of the patch: walk to its nearest block, swiping at whatever comes into reach.
       const res = await this.a.plan(this.sim.location, rest[0], 1.5, 1500);
       this.check(gen);
-      if (!res.complete || res.path.length < 2) break;
+      if (!res.complete || res.path.length < 2) { this.a.memory.markUnreachable(rest[0], 120000); continue; }
       let walking = true;
       this.a.motor.followPath(smoothPath(this.a.classifier(), res.path)).finally(() => { walking = false; });
       hold(this.sim, null);
       try {
-        for (let k = 0; walking && k < 120; k++) {
-          const c = rest.find((b) => isLitter(b) && this.inReach(b));
-          if (c && await this.tap(gen, c, 35)) broke++;
+        for (let k = 0; walking && k < 160 && !enough(); k++) {
+          const c = rest.find((b) => isIt(b) && this.inReach(b));
+          if (c && await this.tap(gen, c, 35)) { broke++; spots.push(c); }
           else { this.a.motor.setFocus(null); await this.wait(gen, 1); }
         }
       } finally { this.a.motor.setFocus(null); }
     }
-    if (broke) this.log(`leaf litter: swiped ${broke} blocks for fuel in ${((system.currentTick - t0) / 20).toFixed(1)} s (had ${have()})`);
-    return broke;
+    return { broke, spots };
+  }
+
+  /**
+   * Leaf litter: fuel for next to nothing. One layer burns 0.5 items, a block holds 1-4 layers and
+   * breaks at a touch. Swiped through the whole patch (swipePatch), up to 64 layers (32 items of
+   * cooking), ~15 s at most.
+   */
+  async grabLitter(gen) {
+    const have = () => invCounts(this.sim).leaf_litter ?? 0;
+    if (have() >= 64) return 0;
+    const t0 = system.currentTick;
+    let n = 0;
+    const r = await this.swipePatch(gen, (id) => id === 'leaf_litter', { radius: 6, rounds: 4, maxTicks: 300, enough: () => have() + n * 2 >= 64 });
+    n = r.broke;
+    if (n) this.log(`leaf litter: swiped ${n} blocks for fuel in ${((system.currentTick - t0) / 20).toFixed(1)} s (had ${have()})`);
+    return n;
   }
 
   /** Log item stacks on the ground near p (valid entities only). */
