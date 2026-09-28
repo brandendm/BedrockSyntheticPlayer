@@ -9,7 +9,7 @@
 // Night overrides everything: from dusk the bot goes home (or builds the house now if it has
 // what it needs, or digs in for the night if it doesn't).
 import { count, has, isLog, isPlanks, isWool, planCrafts, tableStep, TOOL_STONE, RECIPES } from './recipes.js';
-import { materials } from './house.js';
+import { materials, NEW_LAYOUT } from './house.js';
 import { planFuel, charcoalInput } from './fuel.js';
 
 export const DUSK = 11500;      // head home (sunset is 12000, mobs from ~13000)
@@ -171,6 +171,11 @@ export function settleStep(f) {
     if (has(inv, 'chest')) return { step: 'furnish' };
     return craftStep(inv, ['chest'], f.tableDist);
   }
+  // The chest room's signs over the chests: what goes where.
+  if (f.house.signs === false) {
+    if (Object.keys(inv).some((id) => /_sign$/.test(id) && inv[id] > 0)) return { step: 'furnish' };
+    return craftStep(inv, ['oak_sign'], f.tableDist);
+  }
   // Pack nearly full: put things away before anything else takes us out again.
   if (f.packFull && f.house.chest && !f.chestFull) return { step: 'store' };
   if (f.house.lit === false && torches > 0) return { step: 'furnish' };
@@ -199,15 +204,22 @@ export function settleStep(f) {
 
 /**
  * Planks the house's fittings take, for each one not made yet: the door (6), the bed (3), a
- * crafting table for inside (4) and the chest (8). Counted with the walls, so one wood trip covers
- * the lot (getting exactly the walls' worth meant a trip back for two logs, then another for one).
+ * crafting table for inside (4), the chests (8 each: one in a cabin, four in the chest room) and
+ * the chest room's four signs (6 planks and a stick make 3). Counted with the walls, so one wood
+ * trip covers the lot (getting exactly the walls' worth meant a trip back for two logs, then
+ * another for one).
  */
-export function fittingsPlanks(inv, house = null) {
+export function fittingsPlanks(inv, house = null, layout = NEW_LAYOUT) {
   let n = 0;
   if (!has(inv, 'wooden_door') && !house?.door) n += 6;
   if (!has(inv, 'bed') && !house?.bed) n += 3;
   if (!has(inv, 'crafting_table') && !house?.table) n += 4;
-  if (!has(inv, 'chest') && !house?.chest) n += 8;
+  const chests = layout === 'chests' ? 4 : 1;
+  const signs = layout === 'chests' ? 4 : 0;
+  const chestsLeft = house?.chest ? 0 : Math.max(0, chests - (inv.chest ?? 0) - (house?.chestsPlaced ?? 0));
+  n += 8 * chestsLeft;
+  const signsLeft = house?.signs ? 0 : Math.max(0, signs - count(inv, (id) => /_sign$/.test(id)) - (house?.signsPlaced ?? 0));
+  if (signsLeft) n += 6 * Math.ceil(signsLeft / 3) + 1; // (+1: a plank's worth of sticks)
   return n;
 }
 

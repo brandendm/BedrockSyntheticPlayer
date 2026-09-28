@@ -8,7 +8,7 @@ import { chooseTool } from './costs.js';
 import { isLog } from './recipes.js';
 import { traitsOf } from './biomes.js';
 
-export const BUILD_S = 100; // placing ~70 blocks from the middle of the room
+export const BUILD_S = 170; // placing ~120 blocks (the house with its chest room) from the middle of each room
 const SOFT = /^(air|short_grass|tall_grass|fern|large_fern|dead_bush|deadbush|snow_layer|vine|.*_flower|dandelion|poppy|.*_tulip|azure_bluet|allium|blue_orchid|oxeye_daisy|cornflower|lily_of_the_valley|sweet_berry_bush|bush|leaf_litter|wildflowers|pink_petals|short_dry_grass|tall_dry_grass|firefly_bush|moss_carpet)$/;
 const GROUND = /^(dirt|grass_block|coarse_dirt|podzol|rooted_dirt|mycelium|sand|red_sand|gravel|snow|stone|andesite|diorite|granite|tuff|clay|mud|moss_block|dirt_with_roots)$/;
 const STATION = /^(crafting_table|furnace|lit_furnace)$/;

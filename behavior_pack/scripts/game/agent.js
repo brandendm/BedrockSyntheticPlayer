@@ -14,6 +14,7 @@ import { advanceStep, advanceProgress, ironHave, IRON_GOAL } from '../core/advan
 import { Farm } from './farm.js';
 import { chooseStep, needs as goalNeeds, stepKey } from '../core/focus.js';
 import { inside as houseInside } from '../core/house.js';
+import { mlgNow, ticksToLand } from '../core/fall.js';
 import { FULL_SLOTS } from '../core/storage.js';
 import { Homestead, FOOD_ANIMALS } from './homestead.js';
 import { Lookout } from './lookout.js';
@@ -93,6 +94,8 @@ export class Agent {
     this.jabbing = false;        // turned to jab something catching up
     this.fleeThreats = null;     // what we are running from
     this.dodgeUntil = 0;         // stepping out of an arrow's way until this tick
+    this.fallFrom = null;        // the highest our feet got since we left the ground
+    this.mlg = null;             // water we put down to break a fall: { t, cell, d, done }
     this.slot = null;            // a kill slot we put up: { cells, slot, stand, dir, block }
     this.threatsNow = [];        // the last survive() pass's threats
     this.hunting = false;        // homestead.hunt is steering the head
@@ -179,6 +182,7 @@ export class Agent {
     this.fightSpacingTick();
     this.fleeJabTick(t);
     this.dodgeTick(t);
+    this.fallTick(t);
     // Head locked on something while just walking (a fight or a hunt that ended mid-step): let go,
     // so we look where we're going again.
     // Head locked on a target while walking a path, with no fight going on (or the "fight" is
@@ -948,6 +952,12 @@ export class Agent {
             if (!(await S.getIron(gen, step.need))) await S.wait(gen, 20);
             break;
           case 'equip': this.equipArmor(); break;
+          case 'fill_bucket': {
+            // Water for the bucket (it breaks falls); none about: leave it 10 minutes.
+            if (!(await this.farm.fetchWater(gen))) { this.memory.data.bucketFailAt = Date.now(); this.memory.save(); }
+            else this.say('Filled my water bucket (in case of a long fall).');
+            break;
+          }
           case 'wait_smelt': await H.waitSmelt(gen); break;
           case 'build_house': await H.buildHouse(gen); break;
           case 'repair_house': await H.repairHouse(gen); break;
@@ -1233,6 +1243,7 @@ export class Agent {
       case 'get_stone': return `getting ${step.need} cobblestone${step.why && step.why !== 'later' ? ` for the ${step.why}` : ''}${side}${aside}`;
       case 'hunt': return `${step.what === 'sheep' ? 'getting wool from sheep' : step.what === 'trader' ? 'taking the wandering trader\'s leads' : 'hunting for food'}${side}${aside}`;
       case 'get_iron': return `mining for iron (${step.need} more${step.why === 'bucket' ? ', for a bucket' : ''})`;
+      case 'fill_bucket': return 'filling the water bucket (for long falls)';
       case 'smelt': return step.input === 'log' ? 'loading the furnace: logs into charcoal' : step.input === 'ore' ? 'loading the furnace: smelting iron' : 'loading the furnace: cooking food';
       case 'craft': return `crafting ${step.items.join(', ').replace(/_/g, ' ')}`;
       default: return (STEP_WORDS[step.step] ?? step.step).replace(/_/g, ' ');
@@ -1333,6 +1344,7 @@ export class Agent {
       furnaceDist: f ? f.dist : Infinity,
       pickUses: usesLeft(this.sim, (id) => /^(stone|iron|diamond|netherite)_pickaxe$/.test(id)),
       oreCooking: H.oreCooking(),
+      canFillBucket: this.dim.id !== 'minecraft:nether' && Date.now() - (this.memory.data.bucketFailAt ?? 0) > 600000,
       // Down at the mine camp (a table and a furnace at the foot of the quarry): craft and smelt there.
       camp: (() => { try { return !!S.campFurnace() && S.isUnderground() && S.nearQuarry(this.sim.location, 48); } catch { return false; } })(),
     };
@@ -1735,6 +1747,66 @@ export class Agent {
     this.dodgeUntil = t + dg.eta + 2;
     this.nextRoute = Math.max(this.nextRoute ?? 0, this.dodgeUntil);
     trace(`arrow in ${dg.eta} ticks: stepping aside`);
+  }
+
+  /**
+   * A long fall: water down on the block we'll land on, from the water bucket, as soon as it's in
+   * reach (core/fall.js; tools/sim_fall.mjs), then the water scooped back up once we're in it.
+   * Never in the Nether: water boils away there. Every tick.
+   */
+  fallTick(t) {
+    const sim = this.sim;
+    let onGround = true, inWater = false, loc = null;
+    try { onGround = sim.isOnGround; inWater = sim.isInWater; loc = sim.location; } catch { return; }
+    if (this.mlg && !this.mlg.done && (inWater || onGround) && t - this.mlg.t >= 2) this.scoopFallWater(t);
+    if (onGround || inWater || sim.isClimbing) { this.fallFrom = null; return; }
+    this.fallFrom = Math.max(this.fallFrom ?? loc.y, loc.y);
+    if ((this.mlg && !this.mlg.done && t - this.mlg.t < 40) || this.testHold) return;
+    if (this.dim.id === 'minecraft:nether' || !invCounts(sim).water_bucket) return;
+    let v;
+    try { v = sim.getVelocity(); } catch { return; }
+    if (v.y > -0.3) return; // not really falling yet (a hop, a step down)
+    // Where we'll come down: straight below where the drift takes us by then.
+    const below = (x, z) => {
+      try { return this.dim.getBlockFromRay({ x, y: loc.y, z }, { x: 0, y: -1, z: 0 }, { includeLiquidBlocks: true, includePassableBlocks: false, maxDistance: 96 })?.block ?? null; } catch { return null; }
+    };
+    let b = below(loc.x, loc.z);
+    if (!b) return;
+    const n = ticksToLand(loc.y, v.y, b.location.y + 1);
+    const b2 = below(loc.x + v.x * n, loc.z + v.z * n);
+    if (b2) b = b2;
+    const id = b.typeId.replace('minecraft:', '');
+    if (/water|lava|slime|hay_block|cobweb|powder_snow/.test(id)) return; // water already (safe), lava (nothing helps), soft landings
+    const groundY = b.location.y + 1;
+    const m = mlgNow({ fallFrom: this.fallFrom, y: loc.y, vy: v.y, groundY, health: this.health() });
+    if (!m.place) return;
+    const slot = hold(sim, 'water_bucket');
+    if (slot < 0) return;
+    this.motor.setFocus({ x: b.location.x + 0.5, y: groundY, z: b.location.z + 0.5 });
+    let ok = false;
+    try { ok = !!sim.useItemInSlotOnBlock(slot, b.location, Direction.Up); } catch {}
+    this.mlg = { t, cell: { x: b.location.x, y: groundY, z: b.location.z }, d: loc.y - groundY, done: false };
+    this.cellChanged?.();
+    trace(`falling ${(this.fallFrom - groundY).toFixed(1)} (${m.damage} damage): water down ${(loc.y - groundY).toFixed(1)} above the ground${ok ? '' : ' (the game said no)'}`);
+  }
+
+  /** Landed in the water we put down: scoop it back into the bucket (a few tries, then leave it). */
+  scoopFallWater(t) {
+    const m = this.mlg;
+    const sim = this.sim;
+    if (invCounts(sim).water_bucket || t - m.t > 60) { m.done = true; this.motor.setFocus(null); return; }
+    if ((t - m.t) % 4 !== 2) return; // every few ticks, not every one
+    const slot = hold(sim, 'bucket');
+    if (slot < 0) { m.done = true; return; }
+    this.motor.setFocus({ x: m.cell.x + 0.5, y: m.cell.y + 0.5, z: m.cell.z + 0.5 });
+    try { sim.useItemInSlotOnBlock(slot, m.cell, Direction.Up); } catch {}
+    if (!invCounts(sim).water_bucket) { try { sim.useItemInSlot(slot); } catch {} }
+    if (invCounts(sim).water_bucket) {
+      m.done = true;
+      this.motor.setFocus(null);
+      this.cellChanged?.();
+      this.say('Broke that fall with the water bucket.');
+    }
   }
 
   /** Blocks as tactics.js reads them: 'open' | 'solid' | 'other'. */

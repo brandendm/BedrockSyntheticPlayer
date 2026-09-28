@@ -9,7 +9,7 @@
 //   FIXCOUNT=0  the count as it was: anything solid where a wall or roof block goes (a trunk, low
 //               leaves, a lump of dirt) counted as already built
 import { siteWork, siteScore, BUILD_S } from '../behavior_pack/scripts/core/site.js';
-import { blueprint, clearance, footing } from '../behavior_pack/scripts/core/house.js';
+import { blueprint, clearance, footing, NEW_LAYOUT } from '../behavior_pack/scripts/core/house.js';
 import { cheapestPlaceable, plankReserve } from '../behavior_pack/scripts/core/costs.js';
 import { fittingsPlanks } from '../behavior_pack/scripts/core/settle.js';
 import { isLog, isPlanks, TOOL_STONE, count } from '../behavior_pack/scripts/core/recipes.js';
@@ -96,7 +96,7 @@ function findSite(w, f, inv, secondsLeft) {
     const x = f.x + dx, z = f.z + dz, g = w.groundTop(x, z);
     let work = 0, bad = false;
     for (let a = -2; a <= 2 && !bad; a++) for (let b = -2; b <= 2 && !bad; b++) { const h = w.groundTop(x + a, z + b); if (Math.abs(h - g) > 2) bad = true; else work += Math.abs(h - g); }
-    if (!bad) cands.push({ x, y: g + 1, z, rough: work * 1.2 + r / 4.3 });
+    if (!bad) cands.push({ x, y: g + 1, z, layout: NEW_LAYOUT, rough: work * 1.2 + r / 4.3 }); // (the house with its chest room)
   }
   cands.sort((a, b) => a.rough - b.rough);
   let best = null;

@@ -54,6 +54,7 @@ export const RECIPES = {
   bed: { out: 1, table: true, inputs: [{ match: (id) => isWool(id), n: 3, sameId: true }, { match: isPlanks, n: 3 }] },
   wooden_door: { out: 3, table: true, inputs: [{ match: isPlanks, n: 6 }] },
   chest: { out: 1, table: true, inputs: [{ match: isPlanks, n: 8 }] },
+  oak_sign: { out: 3, table: true, inputs: [{ match: isPlanks, n: 6 }, { match: 'stick', n: 1 }] }, // (for the chest room's labels)
   // Farming.
   wooden_hoe: { out: 1, table: true, inputs: [{ match: isPlanks, n: 2 }, { match: 'stick', n: 2 }] },
   stone_hoe: { out: 1, table: true, inputs: [{ match: (id) => TOOL_STONE.has(id), n: 2 }, { match: 'stick', n: 2 }] },

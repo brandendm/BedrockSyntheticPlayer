@@ -10,7 +10,7 @@
 // Priority jobs are never pre-empted: night (home, shelter), collecting a furnace that's done,
 // building/furnishing the house we started, crafting (it's instant), and the crafting table.
 import { count, has, isLog, isPlanks, isWool, TOOL_STONE } from './recipes.js';
-import { materials } from './house.js';
+import { materials, layoutOf, NEW_LAYOUT } from './house.js';
 import { FOOD_GOAL, TORCH_GOAL, foodCount, fittingsPlanks } from './settle.js';
 import { upkeepNeeds } from './advance.js';
 
@@ -46,7 +46,7 @@ export function needs(f) {
   // The fittings (door, bed, table, chest) not made yet, and once moved in, the kit for the farm
   // and the mine (hoe, spare pickaxes, iron tool handles, shield): all wood, one trip.
   const later = built ? upkeepNeeds(inv, f.worn ?? []) : { planks: 0, stone: 0 };
-  const planksNeed = housePlanks + fittingsPlanks(inv, f.house) + later.planks;
+  const planksNeed = housePlanks + fittingsPlanks(inv, f.house, f.house ? layoutOf(f.house) : NEW_LAYOUT) + later.planks; // (a house already up keeps its own layout)
   const charcoalLogs = torches >= TORCH_GOAL || f.house?.lit ? 0 : Math.ceil((TORCH_GOAL - torches) / 4);
   return {
     stone: Math.max(0, kit + furnace + houseStone + later.stone - cobble),

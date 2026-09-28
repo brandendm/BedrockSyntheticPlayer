@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { settleStep, houseShortfall, isNight } from '../behavior_pack/scripts/core/settle.js';
-import { blueprint, materials, furnishings, frame, inside, houseMissing } from '../behavior_pack/scripts/core/house.js';
+import { blueprint, materials, furnishings, frame, inside, houseMissing, standFor } from '../behavior_pack/scripts/core/house.js';
 import { planCrafts, applyCraft } from '../behavior_pack/scripts/core/recipes.js';
 
 const base = { tableDist: 0, time: 1000, furnace: null, smelt: null, house: null, sheep: false, animals: 0, bedDeferred: false };
@@ -32,15 +32,15 @@ test('cooking: only with something to burn (else the furnace job loops and gets 
 
 test('night: home if there is one, build if we can, else dig in', () => {
   assert.equal(settleStep({ ...base, time: 13000, house: { dist: 20 }, inv: {} }).step, 'go_home');
-  assert.equal(settleStep({ ...base, time: 13000, inv: { cobblestone: 30, oak_planks: 64 } }).step, 'build_house');
+  assert.equal(settleStep({ ...base, time: 13000, inv: { cobblestone: 40, oak_planks: 96 } }).step, 'build_house');
   assert.equal(settleStep({ ...base, time: 13000, inv: {} }).step, 'shelter');
   assert.ok(isNight(12000) && isNight(20000) && !isNight(23500) && !isNight(6000));
 });
 
 test('house: materials, reach from the middle, walls before roof, nothing in the door', () => {
-  const m = materials();
+  const m = materials('cabin');
   assert.deepEqual([m.stone, m.planks], [23, 46]);
-  const o = { x: 100, y: 64, z: 100 };
+  const o = { x: 100, y: 64, z: 100 }; // (saved without a layout: a cabin)
   const bp = blueprint(o, 'south');
   const stand = furnishings(o, 'south').stand;
   for (const b of bp) {
@@ -56,11 +56,12 @@ test('house: materials, reach from the middle, walls before roof, nothing in the
 });
 
 test('house shortfall and new recipes', () => {
-  // Walls and roof (46 planks) plus the fittings: door 6, bed 3, table 4, chest 8, in one trip.
-  assert.deepEqual(houseShortfall({}), { stone: 27, logs: 17 });
-  assert.deepEqual(houseShortfall({ cobblestone: 27, oak_planks: 52 }), { stone: 0, logs: 4 });
-  assert.equal(houseShortfall({ cobblestone: 27, oak_planks: 67 }), null);
-  assert.equal(houseShortfall({ cobblestone: 27, oak_planks: 52 }, null, { fittings: false }), null); // enough for a night in
+  // Walls and roof (87 planks) plus the fittings: door 6, bed 3, table 4, four chests 32, four
+  // signs 13, in one trip.
+  assert.deepEqual(houseShortfall({}), { stone: 37, logs: 37 });
+  assert.deepEqual(houseShortfall({ cobblestone: 37, oak_planks: 93 }), { stone: 0, logs: 13 });
+  assert.equal(houseShortfall({ cobblestone: 37, oak_planks: 145 }), null);
+  assert.equal(houseShortfall({ cobblestone: 37, oak_planks: 93 }, null, { fittings: false }), null); // enough for a night in
   assert.deepEqual(houseShortfall({}, { stone: 5, planks: 0 }), { stone: 5, logs: 0 }); // a started house: exact counts
   assert.equal(planCrafts({ white_wool: 2, black_wool: 1, oak_planks: 3 }, ['bed']).missing, 'bed'); // one colour only
   assert.equal(applyCraft({ white_wool: 3, black_wool: 1, oak_planks: 3 }, 'bed').inv.black_wool, 1);
@@ -164,4 +165,33 @@ test('night a long way from home: dig in there, not a walk home in the dark', ()
 test('house count: a trunk, low leaves or a lump of dirt where a wall goes is still to build; our blocks are not', () => {
   for (const id of ['air', 'short_grass', 'dark_oak_log', 'oak_leaves', 'minecraft:jungle_leaves', 'dirt', 'grass_block', 'stone', 'andesite']) assert.equal(houseMissing(id), true, id);
   for (const id of ['cobblestone', 'oak_planks', 'minecraft:spruce_planks', 'cobbled_deepslate', 'glass', 'oak_door']) assert.equal(houseMissing(id), false, id);
+});
+
+test('the house with a chest room: in reach from a room, a way through, four single chests, signs on the walls', () => {
+  const m = materials('chests');
+  assert.deepEqual([m.stone, m.planks, m.chests, m.signs], [33, 87, 4, 4]);
+  const o = { x: 100, y: 64, z: 100, layout: 'chests' };
+  const bp = blueprint(o, 'south');
+  const fur = furnishings(o, 'south');
+  const k = (p) => `${p.x},${p.y},${p.z}`;
+  const blocks = new Set(bp.map(k));
+  for (const b of bp) {
+    const s = standFor(fur, b);
+    const d = Math.hypot(b.x + 0.5 - (s.x + 0.5), b.y + 0.5 - (s.y + 1.62), b.z + 0.5 - (s.z + 0.5));
+    assert.ok(d <= 4.5, `out of reach ${JSON.stringify(b)} ${d}`);
+  }
+  // Door -> front room -> doorway -> chest room: nothing built in the way, at feet or head height.
+  const at = frame(o, 'south');
+  for (const lz of [2, 1, 0, -1, -2, -3, -4, -5]) for (const h of [0, 1]) assert.ok(!blocks.has(k(at(0, lz, h))), `blocked at lz ${lz} h ${h}`);
+  // No two chests side by side (they'd join into one double chest).
+  for (const a of fur.chests) for (const b of fur.chests) if (a !== b) assert.ok(Math.abs(a.x - b.x) + Math.abs(a.z - b.z) > 1);
+  // Each sign sits over its chest, on a wall block, and says something.
+  fur.signs.forEach((sg, i) => {
+    assert.deepEqual({ ...sg.cell, y: sg.cell.y - 1 }, fur.chests[i]);
+    assert.ok(blocks.has(k(sg.on)) && sg.text.length > 0);
+  });
+  assert.ok(inside({ ...o, dir: 'south' }, at(0, -5)) && !inside({ x: 100, y: 64, z: 100, dir: 'south' }, at(0, -5)));
+  // Walls before the roof.
+  const firstRoof = bp.findIndex((b) => b.h === 3);
+  assert.ok(bp.slice(firstRoof).every((b) => b.h === 3));
 });

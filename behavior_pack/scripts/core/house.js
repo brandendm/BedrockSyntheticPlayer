@@ -1,21 +1,34 @@
-// The starter house: a 5x5 cabin with a 3x3 room inside. Pure data, unit-tested.
+// The starter house. Pure data, unit-tested. Two layouts:
 //
-//   cobblestone corners and bottom row, plank walls, a flat plank roof, a door in the middle of
-//   the front, two small windows high up in the side walls (too high for a baby zombie to hop in;
-//   glass goes in later), a torch inside and one each side of the door. Inside: a bed along the
-//   right wall, a crafting table and a furnace in the left corners, a clear path from the door.
+//   'chests' (every house built from now on): 5 wide, 9 deep. The front room is the old cabin's
+//     3x3 (a bed along the right wall, a crafting table and a furnace in the left corners, a clear
+//     path from the door); a partition with an open doorway in the middle leads to a 3x3 chest
+//     room at the back: a chest in each corner (never side by side, so each stays a single chest
+//     of its own), a sign on the wall over each saying what goes in it, a torch on the back wall.
+//     About 32 cobblestone and 91 planks (23 logs).
+//   'cabin' (houses built before): a 5x5 with a 3x3 room, a chest in the front corner by the door
+//     (a second against the back wall when the first fills). A house saved without a layout is one
+//     of these, so the bot never tears out or "finishes" a house it already built.
 //
-// About 23 cobblestone and 46 planks (12 logs), one door, three torches. Built from inside, so
-// every block is within reach of the middle of the room and the bot is never outside at night
-// while it works. A chest goes in the front corner by the door (a second one against the back
-// wall under the torch if the first fills up). Upgrades later: glass in the windows, a slab trim.
+// Both: cobblestone corners and bottom row, plank walls, a flat plank roof, a door in the middle of
+// the front, two small windows high up in the front room's side walls (too high for a baby zombie
+// to hop in), a torch inside and one each side of the door. Built from inside: every block is in
+// reach from the middle of a room (the chest room has its own spot), so the bot is never outside
+// at night while it works.
 //
-// Local coordinates: lx across (-2..2), lz front-to-back (+2 is the front wall with the door),
-// h height above the floor (0..3, 3 = roof). World = origin + lx * right + lz * forward.
+// Local coordinates: lx across (-2..2), lz front-to-back (+2 is the front wall with the door, the
+// back wall is -2 in a cabin and -6 with the chest room), h height above the floor (0..3, 3 = the
+// roof). World = origin + lx * right + lz * forward.
 
 export const DIRS = {
   north: { x: 0, z: -1 }, south: { x: 0, z: 1 }, east: { x: 1, z: 0 }, west: { x: -1, z: 0 },
 };
+
+/** The layout new houses get. */
+export const NEW_LAYOUT = 'chests';
+/** A house's (or site's) layout: 'chests', or 'cabin' for one saved before there was a choice. */
+export const layoutOf = (o) => (o?.layout === 'chests' ? 'chests' : 'cabin');
+const backOf = (layout) => (layout === 'chests' ? -6 : -2);
 
 /** Local -> world transform for a house whose door faces `dir`. */
 export function frame(origin, dir) {
@@ -24,81 +37,135 @@ export function frame(origin, dir) {
   return (lx, lz, h = 0) => ({ x: origin.x + lx * r.x + lz * f.x, y: origin.y + h, z: origin.z + lx * r.z + lz * f.z });
 }
 
-const isCorner = (lx, lz) => Math.abs(lx) === 2 && Math.abs(lz) === 2;
-const isWall = (lx, lz) => Math.abs(lx) === 2 || Math.abs(lz) === 2;
 export const DOOR = [[0, 2, 0], [0, 2, 1]];
 export const WINDOWS = [[-2, 0, 2], [2, 0, 2]];
-const skip = (lx, lz, h) => DOOR.some(([a, b, c]) => a === lx && b === lz && c === h) || WINDOWS.some(([a, b, c]) => a === lx && b === lz && c === h);
+// The chest room's doorway: open, two high, in the middle of the partition.
+const DOORWAY = [[0, -2, 0], [0, -2, 1]];
+
+/** The layout's walls (outside and the partition) and what's left open in them. */
+function shape(layout) {
+  const back = backOf(layout);
+  const isWall = (lx, lz) => Math.abs(lx) === 2 || lz === 2 || lz === back || (layout === 'chests' && lz === -2);
+  const isCorner = (lx, lz) => Math.abs(lx) === 2 && (lz === 2 || lz === back);
+  const open = [...DOOR, ...WINDOWS, ...(layout === 'chests' ? DOORWAY : [])];
+  const skip = (lx, lz, h) => open.some(([a, b, c]) => a === lx && b === lz && c === h);
+  return { back, isWall, isCorner, skip };
+}
 
 /**
  * Every block to place, in build order: walls bottom row up, then the roof from the edges inward
  * (each roof block leans on one already placed). material: 'stone' | 'planks'.
  */
 export function blueprint(origin, dir) {
+  const layout = layoutOf(origin);
+  const { back, isWall, isCorner, skip } = shape(layout);
   const at = frame(origin, dir);
   const out = [];
   for (let h = 0; h <= 2; h++) {
-    for (let lx = -2; lx <= 2; lx++) for (let lz = -2; lz <= 2; lz++) {
+    for (let lx = -2; lx <= 2; lx++) for (let lz = back; lz <= 2; lz++) {
       if (!isWall(lx, lz) || skip(lx, lz, h)) continue;
       out.push({ ...at(lx, lz, h), lx, lz, h, material: isCorner(lx, lz) || h === 0 ? 'stone' : 'planks' });
     }
   }
   const roof = [];
-  for (let lx = -2; lx <= 2; lx++) for (let lz = -2; lz <= 2; lz++) roof.push({ lx, lz, ring: Math.max(Math.abs(lx), Math.abs(lz)) });
-  roof.sort((a, b) => b.ring - a.ring || a.lz - b.lz || a.lx - b.lx);
+  // Distance in from the nearest outside wall (the partition holds the roof up too, but the edges
+  // go first either way).
+  for (let lx = -2; lx <= 2; lx++) for (let lz = back; lz <= 2; lz++) roof.push({ lx, lz, ring: Math.min(2 - Math.abs(lx), 2 - lz, lz - back) });
+  roof.sort((a, b) => a.ring - b.ring || b.lz - a.lz || a.lx - b.lx);
   for (const c of roof) out.push({ ...at(c.lx, c.lz, 3), lx: c.lx, lz: c.lz, h: 3, material: 'planks' });
   return out;
 }
 
-/** Cells that must be clear (air or plants) before building: the whole 5x5 up to the roof, plus the doorstep. */
+/** Cells that must be clear (air or plants) before building: the whole footprint up to the roof, plus the doorstep. */
 export function clearance(origin, dir) {
-  const at = frame(origin, dir);
+  const at = frame(origin, dir), back = backOf(layoutOf(origin));
   const out = [];
-  for (let lx = -2; lx <= 2; lx++) for (let lz = -2; lz <= 3; lz++) {
+  for (let lx = -2; lx <= 2; lx++) for (let lz = back; lz <= 3; lz++) {
     if (lz === 3 && lx !== 0) continue;
     for (let h = 0; h <= 3; h++) out.push(at(lx, lz, h));
   }
   return out;
 }
 
-/** Ground cells (one below the floor) that must be solid: the 5x5 and the doorstep. */
+/** Ground cells (one below the floor) that must be solid: the footprint and the doorstep. */
 export function footing(origin, dir) {
-  const at = frame(origin, dir);
+  const at = frame(origin, dir), back = backOf(layoutOf(origin));
   const out = [];
-  for (let lx = -2; lx <= 2; lx++) for (let lz = -2; lz <= 3; lz++) {
+  for (let lx = -2; lx <= 2; lx++) for (let lz = back; lz <= 3; lz++) {
     if (lz === 3 && lx !== 0) continue;
     out.push(at(lx, lz, -1));
   }
   return out;
 }
 
+/** What goes in each chest of the chest room (core/storage.js sorts by the same keys), and its sign. */
+export const CHEST_KINDS = [
+  { kind: 'stone', sign: 'Stone\n& ores' },
+  { kind: 'wood', sign: 'Wood\n& plants' },
+  { kind: 'food', sign: 'Food\n& farm' },
+  { kind: 'misc', sign: 'Mob drops\n& other' },
+];
+
 /** Where things go inside, and where to stand to place them. */
 export function furnishings(origin, dir) {
   const at = frame(origin, dir);
-  return {
-    stand: at(0, 0),                   // middle of the room: every wall and roof block is in reach
+  const layout = layoutOf(origin);
+  const common = {
+    stand: at(0, 0),                   // middle of the front room: its walls and roof are in reach
     doorstep: at(0, 3),
     door: at(0, 2),
     table: at(-1, -1),
     furnace: at(-1, 0),
     bed: { foot: at(1, -1), head: at(1, 0), standAt: at(1, 1) }, // foot at the back, head toward the front; homestead checks both cells after placing
+    torchesOutside: [-1, 1].map((lx) => ({ on: at(lx, 2, 1), toward: at(lx, 3, 1) })),
+  };
+  if (layout === 'chests') {
+    // Chests in the chest room's corners, each with a sign on the side wall over it (facing the
+    // path down the middle); the torches on the partition (over the bed's foot) and the back wall.
+    const corners = [[-1, -5], [1, -5], [-1, -3], [1, -3]];
+    return {
+      ...common,
+      layout,
+      stands: [at(0, 0), at(0, -4)],
+      chestStand: at(0, -4),
+      torchInside: { on: at(1, -2, 1), toward: at(1, -1, 1) },
+      torchChests: { on: at(0, -6, 1), toward: at(0, -5, 1) },
+      chests: corners.map(([lx, lz]) => at(lx, lz)),
+      signs: corners.map(([lx, lz], i) => ({ cell: at(lx, lz, 1), on: at(Math.sign(lx) * 2, lz, 1), text: CHEST_KINDS[i].sign, kind: CHEST_KINDS[i].kind })),
+    };
+  }
+  return {
+    ...common,
+    layout,
+    stands: [at(0, 0)],
+    chestStand: at(0, 0),
     torchInside: { on: at(0, -2, 1), toward: at(0, -1, 1) },     // wall torch on the back wall
+    torchChests: null,
     // Chests: the front corner left of the door, then the middle of the back wall (under the torch).
     // Neither is in the way (door -> middle of the room -> bed side), and both are in reach from
     // the middle of the room. Not side by side, so each stays a single chest of its own.
     chests: [at(-1, 1), at(0, -1)],
-    torchesOutside: [-1, 1].map((lx) => ({ on: at(lx, 2, 1), toward: at(lx, 3, 1) })),
+    signs: [],
   };
 }
 
-/** Materials for the shell. */
-export function materials() {
-  const bp = blueprint({ x: 0, y: 0, z: 0 }, 'north');
+/** The spot to build or reach `cell` from: whichever room's middle is nearer. */
+export function standFor(fur, cell) {
+  let best = fur.stand, bd = Infinity;
+  for (const s of fur.stands ?? [fur.stand]) { const d = Math.hypot(cell.x - s.x, cell.z - s.z); if (d < bd) { bd = d; best = s; } }
+  return best;
+}
+
+/** Materials for the shell (a new house's unless `layout` says otherwise). */
+export function materials(layout = NEW_LAYOUT) {
+  const bp = blueprint({ x: 0, y: 0, z: 0, layout }, 'north');
   return {
     stone: bp.filter((b) => b.material === 'stone').length,
     planks: bp.filter((b) => b.material === 'planks').length,
     doors: 1,
-    torches: 3,
+    torches: layout === 'chests' ? 4 : 3,
+    chests: layout === 'chests' ? 4 : 1,
+    signs: layout === 'chests' ? 4 : 0,
   };
 }
 
@@ -108,7 +175,7 @@ export function inside(house, p) {
   const r = { x: -f.z, z: f.x };
   const dx = Math.floor(p.x) - house.x, dz = Math.floor(p.z) - house.z;
   const lx = dx * r.x + dz * r.z, lz = dx * f.x + dz * f.z;
-  return Math.abs(lx) <= 2 && Math.abs(lz) <= 2 && Math.floor(p.y) >= house.y - 1 && Math.floor(p.y) <= house.y + 3;
+  return Math.abs(lx) <= 2 && lz <= 2 && lz >= backOf(layoutOf(house)) && Math.floor(p.y) >= house.y - 1 && Math.floor(p.y) <= house.y + 3;
 }
 
 // What the site gets cleared of before the walls go up (homestead.buildHouse): plants and air,

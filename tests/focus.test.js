@@ -10,7 +10,7 @@ test('needs: counts wool for the bed, logs and stone for the house, net of what 
   assert.equal(n.wool, 3);
   assert.ok(n.stone >= 20, `stone ${n.stone}`);
   assert.ok(n.logs >= 10, `logs ${n.logs}`);
-  const n2 = needs(base({ inv: { ...kit, white_wool: 3, cobblestone: 64, oak_log: 40, torch: 8, wooden_door: 1 } }));
+  const n2 = needs(base({ inv: { ...kit, white_wool: 3, cobblestone: 64, oak_log: 50, torch: 8, wooden_door: 1 } }));
   assert.equal(n2.wool, 0);
   assert.equal(n2.stone, 0);
   assert.equal(n2.logs, 0);

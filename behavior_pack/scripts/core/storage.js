@@ -7,7 +7,7 @@
 // amounts, goes in the chest: mob drops, odd stone, ores it has no use for yet, the spare
 // cobblestone a quarry turns up.
 import { isLog, isPlanks, isWool } from './recipes.js';
-import { FOODS } from './settle.js';
+import { FOODS, RAW } from './settle.js';
 
 /** Free pack slots at or below this: time to put things away (a strip mine fills 36 slots fast). */
 export const FULL_SLOTS = 4;
@@ -65,6 +65,36 @@ export function takePlan(chest, want) {
       const k = Math.min(left, have - (out[id] ?? 0));
       if (k > 0) { out[id] = (out[id] ?? 0) + k; left -= k; }
     }
+  }
+  return out;
+}
+
+// ---------- the chest room: what goes in which chest (core/house.js CHEST_KINDS, same order) ----------
+
+const STONE_KIND = /^(cobblestone|cobbled_deepslate|stone|deepslate|andesite|diorite|granite|tuff|calcite|blackstone|basalt|gravel|sand|red_sand|sandstone|dirt|coarse_dirt|clay|clay_ball|flint|obsidian|netherrack)$|_ore$|^raw_|_ingot$|^(coal|charcoal|diamond|emerald|lapis_lazuli|redstone|quartz|amethyst_shard|copper_ingot|gold_nugget|iron_nugget)$/;
+const WOOD_KIND = /(_log|_wood|_planks|_sapling|_leaves|_slab|_stairs)$|^(stick|mangrove_propagule|bamboo|sugar_cane|cactus|vine|kelp|dried_kelp_block|.*_flower|dandelion|poppy|.*_tulip|leaf_litter|moss_block|pumpkin|melon|cocoa_beans)$/;
+const FOOD_KIND = /^(wheat|wheat_seeds|pumpkin_seeds|melon_seeds|beetroot_seeds|beetroot|potato|carrot|egg|sugar|milk_bucket|bowl|apple|sweet_berries|bone_meal)$/;
+
+/** Which chest an item goes in: 'stone' | 'wood' | 'food' | 'misc' (mob drops and everything else). */
+export function chestKindOf(id) {
+  if (id in FOODS || id in RAW || FOOD_KIND.test(id)) return 'food';
+  if (STONE_KIND.test(id)) return 'stone';
+  if (WOOD_KIND.test(id)) return 'wood';
+  return 'misc';
+}
+
+/**
+ * Split a deposit plan ({ id: count }) over labelled chests: kinds[i] is chest i's kind. Each item
+ * goes to its kind's chest; a kind with no chest goes in the 'misc' one (else the first).
+ * Returns [{ id: count }] per chest. (Overflow when a chest is full is the caller's: the next.)
+ */
+export function sortIntoChests(plan, kinds) {
+  const out = kinds.map(() => ({}));
+  const misc = Math.max(0, kinds.indexOf('misc'));
+  for (const [id, n] of Object.entries(plan)) {
+    const i = kinds.indexOf(chestKindOf(id));
+    const to = out[i >= 0 ? i : misc];
+    to[id] = (to[id] ?? 0) + n;
   }
   return out;
 }

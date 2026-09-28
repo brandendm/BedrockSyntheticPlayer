@@ -46,6 +46,7 @@ export function ironHave(inv, worn = []) {
  *   smelt: null | { ready, kind, dist }        a furnace job
  *   furnaceDist: number                        our furnace (Infinity if none)
  *   seeds: number                              wheat seeds (in inv too; convenience)
+ *   canFillBucket: boolean                     water to fill it from (not the Nether, no recent failure)
  * }
  */
 export function advanceStep(f) {
@@ -63,6 +64,12 @@ export function advanceStep(f) {
 
   // Armor we made but aren't wearing: put it on (a moment, and it's the point of making it).
   if ([...ARMOR, 'shield'].some((id) => has(inv, id) && !worn.includes(id))) return { step: 'equip' };
+
+  // A water bucket in the pack, always: it breaks a long fall (game/agent.js fallTick). Filled up
+  // top when it's empty (after the farm's pool, after a fall it couldn't scoop back). Not down the
+  // mine (it would climb out for it), not in the Nether (water boils away), not if the last try
+  // found no water (f.canFillBucket).
+  if (has(inv, 'bucket') && !has(inv, 'water_bucket') && !f.underground && f.canFillBucket === true) return { step: 'fill_bucket' };
 
   // Hungry and wheat in hand: bread.
   if (foodCount(inv) < 3 && (inv.wheat ?? 0) >= 3) return craftStep(inv, ['bread'], f.tableDist);

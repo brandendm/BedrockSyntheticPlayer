@@ -54,7 +54,7 @@ function run({ name, waterNearHouse = true, sheep = true, oppo = true }) {
     }
     if (step.step === 'done' && s.house) {
       step = advanceStep({ inv, tableDist: s.tableDist, worn: s.worn, waterNearHouse: s.waterNearHouse, farmBlocked: false, underground: false,
-        farm: s.farm, smelt: s.smelt && { ...s.smelt, dist: 3 }, furnaceDist: 3 });
+        farm: s.farm, smelt: s.smelt && { ...s.smelt, dist: 3 }, furnaceDist: 3, canFillBucket: true });
     }
     if (oppo) {
       const need = needs({ inv, haveFurnace: !!s.furnace || !!inv.furnace || !!s.house?.furnace, house: houseState(), project: !!s.project, shortfall: s.project ? shortfall() : null, worn: s.worn });
@@ -133,6 +133,7 @@ function run({ name, waterNearHouse = true, sheep = true, oppo = true }) {
       case 'make_farm': s.farm = { tiles: 24, planted: 24, ripe: 0 }; take((id) => id === 'wheat_seeds', 0); break;
       case 'tend_farm': s.farm = { ...s.farm, planted: s.farm.tiles, ripe: 0 }; add('wheat', 6); break;
       case 'get_iron': add('raw_iron', Math.min(step.need, 12)); break;
+      case 'fill_bucket': add('bucket', -1); add('water_bucket', 1); break;
       case 'equip': for (const id of Object.keys(s.inv)) if (/^iron_(helmet|chestplate|leggings|boots)$|^shield$/.test(id)) { s.worn.push(id); add(id, -1); } break;
       case 'store': break;
       case 'done': return { name, steps: i, trips, problems, inv: s.inv };

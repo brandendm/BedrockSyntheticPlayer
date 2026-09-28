@@ -42,7 +42,7 @@ import { system, world, ItemStack } from '@minecraft/server';
 import { blueprint, furnishings } from '../core/house.js';
 import { invCounts as invCountsOf, hold, container as packOf } from './inventory.js';
 
-const NAMES = ['roof', 'tower', 'hole', 'pit', 'trap', 'climb', 'ledge', 'ladder', 'husk', 'creeper', 'sheep', 'pen', 'smelt', 'smeltlogs', 'shelter', 'house', 'resume', 'ghostlog', 'quarry', 'dark', 'replant', 'litter', 'trader', 'iron', 'farm', 'equip', 'water', 'bucketfarm', 'treetop', 'corner', 'leap', 'bridge'];
+const NAMES = ['roof', 'tower', 'hole', 'pit', 'trap', 'climb', 'ledge', 'ladder', 'husk', 'creeper', 'sheep', 'pen', 'smelt', 'smeltlogs', 'shelter', 'house', 'resume', 'ghostlog', 'quarry', 'dark', 'replant', 'litter', 'trader', 'iron', 'farm', 'equip', 'water', 'bucketfarm', 'treetop', 'corner', 'leap', 'bridge', 'fall'];
 let running = false;
 
 export async function runTests(agent, player, args) {
@@ -152,14 +152,15 @@ async function runOne(agent, player, name, arg) {
         break;
       }
       case 'house': {
-        cmd(`fill ${x - 7} ${gy - 2} ${z - 7} ${x + 7} ${gy} ${z + 7} dirt`);
-        cmd(`fill ${x - 7} ${gy} ${z - 7} ${x + 7} ${gy} ${z + 7} grass_block`);
-        cmd(`fill ${x - 7} ${gy + 1} ${z - 7} ${x + 7} ${gy + 8} ${z + 7} air`);
-        tp(x, gy + 1, z);
+        // (The whole backed-up area: the house with its chest room is 9 deep.)
+        cmd(`fill ${x - 8} ${gy - 2} ${z - 8} ${x + 14} ${gy} ${z + 8} dirt`);
+        cmd(`fill ${x - 8} ${gy} ${z - 8} ${x + 14} ${gy} ${z + 8} grass_block`);
+        cmd(`fill ${x - 8} ${gy + 1} ${z - 8} ${x + 14} ${gy + 8} ${z + 8} air`);
+        tp(x + 3, gy + 1, z);
         const H = agent.homestead, oldHouse = agent.memory.data.house;
         agent.memory.data.house = null;
         const inv = sim.getComponent('minecraft:inventory').container;
-        for (const [id, n] of /** @type {Array<[string, number]>} */ ([['cobblestone', 30], ['oak_planks', 60], ['wooden_door', 1], ['torch', 4], ['bed', 1], ['furnace', 1], ['crafting_table', 1]])) inv.addItem(new ItemStack(`minecraft:${id}`, n));
+        for (const [id, n] of /** @type {Array<[string, number]>} */ ([['cobblestone', 40], ['oak_planks', 64], ['oak_planks', 64], ['wooden_door', 1], ['torch', 6], ['bed', 1], ['furnace', 1], ['crafting_table', 1], ['chest', 4], ['oak_sign', 4]])) inv.addItem(new ItemStack(`minecraft:${id}`, n));
         await system.waitTicks(20);
         const gen = agent.newTask({ kind: 'test' });
         let built = false;
@@ -180,7 +181,10 @@ async function runOne(agent, player, name, arg) {
           world.setTimeOfDay(23400);
           await night;
           outOk = await H.leaveHouse(agent.newTask({ kind: 'test' })).catch(() => false);
-          detail = `${placed}/${total} blocks in ${tBuilt}s, door ${doorOk ? 'yes' : 'no'}, bed ${bedOk ? 'yes' : 'no'}, table ${h.table ? 'yes' : 'no'}, furnace ${h.furnace ? 'yes' : 'no'}; night: ${homeOk ? 'inside' : 'NOT inside'}, ${sleptOk ? 'slept' : 'no sleep'}, ${outOk ? 'out the door in the morning' : 'stuck inside'}`;
+          const st = H.houseStateNow();
+          let label = '';
+          try { label = dim.getBlock(fur.signs[0]?.cell)?.getComponent('minecraft:sign')?.getText?.() ?? ''; } catch {}
+          detail = `${placed}/${total} blocks in ${tBuilt}s, door ${doorOk ? 'yes' : 'no'}, bed ${bedOk ? 'yes' : 'no'}, table ${h.table ? 'yes' : 'no'}, furnace ${h.furnace ? 'yes' : 'no'}, chests ${st.chestsPlaced}/${fur.chests.length}, signs ${st.signsPlaced}/${fur.signs.length}${label ? ` ("${label.replace(/\n/g, ' ')}")` : ''}; night: ${homeOk ? 'inside' : 'NOT inside'}, ${sleptOk ? 'slept' : 'no sleep'}, ${outOk ? 'out the door in the morning' : 'stuck inside'}`;
           pass = built && placed >= total - 2 && doorOk && bedOk && homeOk && outOk;
         } else if (!detail) detail = 'no house built (no site?)';
         world.setTimeOfDay(1000);
@@ -474,6 +478,29 @@ async function runOne(agent, player, name, arg) {
         try { const b = dim.getBlock({ x: -55, y: 62, z: 21 }); probe = b ? `${b.typeId} depth ${b.permutation.getState('liquid_depth')}` : 'unloaded'; } catch (e) { probe = `${e}`; }
         pass = kept.length > 0;
         detail = `at ${p0.x} ${p0.y} ${p0.z}: raw ${raw.length}, kept ${kept.length}${kept[0] ? ` nearest ${kept[0].x} ${kept[0].y} ${kept[0].z}` : ''}; the pool block: ${probe}; fast scan off: ${S.constructor.noFastScan}`;
+        break;
+      }
+      case 'fall': {
+        // Dropped from high up over flat ground with a water bucket: does the water go down in time,
+        // and does the bucket come back full? arg: the height (default 16, at most 17).
+        const h = Math.min(17, arg ?? 16);
+        const inv = sim.getComponent('minecraft:inventory').container;
+        if (!invCountsOf(sim).water_bucket) {
+          for (let i = 0; i < inv.size; i++) if (inv.getItem(i)?.typeId === 'minecraft:bucket') { inv.setItem(i, undefined); break; }
+          inv.addItem(new ItemStack('minecraft:water_bucket', 1));
+        }
+        cmd(`fill ${x - 3} ${gy} ${z - 3} ${x + 3} ${gy} ${z + 3} stone`);
+        cmd(`fill ${x - 3} ${gy + 1} ${z - 3} ${x + 3} ${gy + h + 1} ${z + 3} air`);
+        agent.testHold = false;
+        agent.fallFrom = null; agent.mlg = null;
+        tp(x, gy + 1 + h, z);
+        const hpBefore = agent.health();
+        for (let i = 0; i < 100 && !(agent.mlg?.done); i++) await system.waitTicks(2);
+        await system.waitTicks(10);
+        const lost = Math.max(0, hpBefore - agent.health());
+        const refilled = !!invCountsOf(sim).water_bucket;
+        pass = lost === 0 && refilled;
+        detail = `fell ${h} blocks (${Math.max(0, h - 3)} damage without water): lost ${lost} hp; water ${agent.mlg ? `down ${agent.mlg.d?.toFixed(1) ?? '?'} above the ground` : 'never placed'}; bucket ${refilled ? 'full again' : 'not refilled'}`;
         break;
       }
       case 'equip': {

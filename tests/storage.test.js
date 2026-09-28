@@ -1,8 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { depositPlan, keepCount, takePlan } from '../behavior_pack/scripts/core/storage.js';
+import { depositPlan, keepCount, takePlan, chestKindOf, sortIntoChests } from '../behavior_pack/scripts/core/storage.js';
 import { settleStep } from '../behavior_pack/scripts/core/settle.js';
-import { furnishings, blueprint } from '../behavior_pack/scripts/core/house.js';
+import { furnishings, blueprint, CHEST_KINDS } from '../behavior_pack/scripts/core/house.js';
 import { planCrafts } from '../behavior_pack/scripts/core/recipes.js';
 import { upkeepNeeds } from '../behavior_pack/scripts/core/advance.js';
 
@@ -80,4 +80,16 @@ test('moved in: the hoe, spare pickaxes, iron tool handles and the shield counte
   assert.ok(need.planks >= 6 + 8, `planks ${need.planks}`); // shield 6 + ~15 sticks (8 planks)
   const kitted = upkeepNeeds({ iron_pickaxe: 1, stone_pickaxe: 1, iron_sword: 1, iron_axe: 1, iron_shovel: 1, stone_hoe: 1, shield: 1 });
   assert.deepEqual(kitted, { planks: 0, stone: 0 });
+});
+
+test('chest room: each thing in the chest its sign says', () => {
+  for (const [id, kind] of [['cobblestone', 'stone'], ['andesite', 'stone'], ['coal', 'stone'], ['raw_copper', 'stone'], ['diamond', 'stone'],
+    ['oak_log', 'wood'], ['spruce_planks', 'wood'], ['oak_sapling', 'wood'], ['stick', 'wood'],
+    ['cooked_beef', 'food'], ['beef', 'food'], ['wheat_seeds', 'food'], ['wheat', 'food'], ['apple', 'food'],
+    ['rotten_flesh', 'misc'], ['bone', 'misc'], ['string', 'misc'], ['gunpowder', 'misc'], ['spider_eye', 'misc']]) assert.equal(chestKindOf(id), kind, id);
+  const kinds = CHEST_KINDS.map((k) => k.kind);
+  const per = sortIntoChests({ cobblestone: 64, oak_log: 10, rotten_flesh: 5, bread: 3, tuff: 12 }, kinds);
+  assert.deepEqual(per, [{ cobblestone: 64, tuff: 12 }, { oak_log: 10 }, { bread: 3 }, { rotten_flesh: 5 }]);
+  // No chest of a kind (a cabin's plain chests): into the 'misc' one, else the first.
+  assert.deepEqual(sortIntoChests({ oak_log: 3 }, ['stone', 'misc']), [{}, { oak_log: 3 }]);
 });
