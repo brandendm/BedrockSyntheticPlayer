@@ -52,3 +52,6 @@ export const EntityComponentTypes = { Inventory: 'minecraft:inventory', Equippab
 export const EquipmentSlot = { Head: 'Head', Chest: 'Chest', Legs: 'Legs', Feet: 'Feet', Offhand: 'Offhand', Mainhand: 'Mainhand' };
 export const EnchantmentTypes = { get: () => undefined };
 export const BlockPermutation = { resolve: (id) => ({ type: { id } }) };
+export const BlockTypes = { get: (id) => ({ id }) };
+export const ItemTypes = { get: (id) => ({ id }) };
+export class BlockVolume { constructor(from, to) { this.from = from; this.to = to; } }

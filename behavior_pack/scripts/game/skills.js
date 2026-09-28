@@ -67,6 +67,9 @@ export class Skills {
   constructor(agent) {
     this.a = agent;
     this.placed = new Set(); // blocks we put down ourselves (pillars): fair game to dig out again
+    this.ourDrops = new Map(); // item entities our breaks made, watched by id until picked up (invalid)
+    /** @type {{x:number,y:number,z:number,at:number}[]} */
+    this.dropSpots = []; // recent breaks, rescanned for drops that spawn a tick late
     this.getDownStats = { hops: 0, digs: 0 };
     /** @type {Map<string, number>} item entity id -> tick it's written off until (couldn't get to it) */
     this.unreachableItems = new Map();
@@ -1042,6 +1045,70 @@ export class Skills {
     return n;
   }
 
+  /**
+   * The item entities a break of ours just made (the drop spawns as the block goes): their ids, so
+   * we know exactly which items on the ground are ours and whether they've come in (an item picked
+   * up is gone). Nothing is waited on.
+   */
+  noteDrops(p) {
+    if (this.ourDrops.size > 200) this.ourDrops.clear();
+    // The drop can land a tick after the break, so the last few spots are looked at again later.
+    if (p) this.dropSpots = [...(this.dropSpots ?? []).slice(-5), { x: p.x, y: p.y, z: p.z, at: system.currentTick }];
+    const now = system.currentTick;
+    this.dropSpots = (this.dropSpots ?? []).filter((s) => now - s.at <= 40);
+    for (const s of this.dropSpots) {
+      try {
+        for (const e of this.dim.getEntities({ type: 'minecraft:item', location: { x: s.x + 0.5, y: s.y + 0.5, z: s.z + 0.5 }, maxDistance: 2.5 })) {
+          if (!this.ourDrops.has(e.id)) this.ourDrops.set(e.id, { e, at: now });
+        }
+      } catch {}
+    }
+  }
+
+  /**
+   * Our drops lying out of pickup range: landed (not still falling or bouncing), further than
+   * ~1.4 from us, within maxD. Gone ones (picked up, merged, despawned) are forgotten.
+   */
+  strayDrops(maxD = 4) {
+    const out = [];
+    this.noteDrops(null); // catch late spawns from the last breaks
+    if (!this.ourDrops.size) return out;
+    const here = this.sim.location;
+    for (const [id, d] of this.ourDrops) {
+      let loc, v;
+      try { if (!d.e.isValid) { this.ourDrops.delete(id); continue; } loc = d.e.location; v = d.e.getVelocity(); } catch { this.ourDrops.delete(id); continue; }
+      if (Math.hypot(v.x, v.y, v.z) > 0.05) continue; // still coming down
+      const dist = Math.hypot(loc.x - here.x, loc.z - here.z);
+      if (dist > 1.4 && dist <= maxD && Math.abs(loc.y - here.y) <= 1.5) out.push({ id, loc, dist });
+    }
+    return out.sort((a, b) => a.dist - b.dist);
+  }
+
+  /**
+   * Chopping, between logs: a drop of ours lying off to the side gets picked up by stepping onto it,
+   * but only when the next log (`next`) is still in reach from there, so the chopping carries straight
+   * on (a player walking by would have them otherwise). Further ones wait for the tree's last sweep,
+   * unless a player's close.
+   */
+  async grabStrayOnTheWay(gen, next) {
+    let playerNear = false;
+    try { playerNear = this.dim.getPlayers({ location: this.sim.location, maxDistance: 12 }).some((pl) => pl.id !== this.sim.id); } catch {}
+    const stray = this.strayDrops(playerNear ? 6 : 3.5);
+    for (const s of stray) {
+      const spot = { x: s.loc.x, y: Math.floor(s.loc.y + 0.1), z: s.loc.z };
+      const eye = { x: spot.x, y: spot.y + 1.62, z: spot.z };
+      const reachNext = Math.hypot(next.x + 0.5 - eye.x, next.y + 0.5 - eye.y, next.z + 0.5 - eye.z) <= 4.5;
+      if (!reachNext && !playerNear) continue;
+      const res = await this.a.plan(this.sim.location, spot, 0.8, 200);
+      this.check(gen);
+      if (!res.complete) continue;
+      if (res.path.length >= 2) await this.a.motor.followPath(res.path.map((c) => ({ x: c.x + 0.5, y: c.y, z: c.z + 0.5 })), { walk: true });
+      this.check(gen);
+      return true; // one at a time, then back to the chopping
+    }
+    return false;
+  }
+
   /** Log item stacks on the ground near p (valid entities only). */
   logItemsNear(p, r) {
     try {
@@ -1310,13 +1377,12 @@ export class Skills {
         this.a.memory.markUnreachable(trunk, 300000);
         return { chopped: 0, unreachable: true };
       }
+      // A log of ours that landed out of pickup range: stepped onto on the way to this one, if this
+      // one's still in reach from there (no stop, no search, no waiting on drops that aren't there).
+      await this.grabStrayOnTheWay(gen, b);
       if (await this.mine(gen, b, { collect: false })) {
         chopped++;
-        // Logs that landed off to the side (a few blocks, not up in the leaves): picked up as we go,
-        // not left lying about for the end of the tree (a player walking by takes them). The ones at
-        // our feet come in by themselves. A second or two, nothing far.
-        await this.wait(gen, 2); // (landing)
-        await this.sweep(gen, this.sim.location, 4, isLog, 2, false);
+        this.noteDrops(b); // (which items this break made: watched until they're in the pack)
       }
     }
     if (chopped) this.memVisits.clear(); // trips paid off: nothing to hold against those memories
