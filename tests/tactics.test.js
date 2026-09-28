@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { fightMove, creeperFight, creeperMove, Stalemate, pickRefuge, bestWeapon, barricadeCells, CREEPER_HOLD, CREEPER_LIGHT, CREEPER_CALM, weaponReach, pickCreeperSwing, creeperWeapon, knockbackRoom, blockOffCells, fleeJab, killSlotCells, killSlotWorth, dodgeArrow, arrowHits, aimBow, bowFight } from '../behavior_pack/scripts/core/tactics.js';
+import { fightMove, creeperFight, creeperMove, Stalemate, pickRefuge, bestWeapon, barricadeCells, CREEPER_HOLD, CREEPER_LIGHT, CREEPER_CALM, weaponReach, pickCreeperSwing, creeperWeapon, knockbackRoom, blockOffCells, fleeJab, killSlotCells, killSlotWorth, dodgeArrow, arrowHits, aimBow, bowFight, blastDamage } from '../behavior_pack/scripts/core/tactics.js';
 import { HOLD_AT, REACH_HIT } from '../behavior_pack/scripts/core/threat.js';
 
 const P = (x, y, z) => ({ x, y, z });
@@ -165,15 +165,29 @@ test('walling a creeper off: the column straight at it first, feet and head, one
   assert.deepEqual(blockOffCells(me, P(5.5, 40, 0.5), tunnel), [P(1, 40, 0), P(1, 41, 0)], 'a 1-wide tunnel: two blocks');
 });
 
-test('creeper fight: cornered, no shield, a hit would not move it: wall it off (early, once)', () => {
+test('creeper fight: cornered, no shield, a hit would not move it: one block against the blast (once), and fight on', () => {
   const me = P(0.5, 40, 0.5), st = {};
-  creeperFight({ me, mob: P(8, 44, 0.5), t: 0, st, canWall: true, kbPoor: true });
-  const w = creeperFight({ me, mob: P(6, 43, 0.5), t: 8, st, canWall: true, kbPoor: true });
-  assert.equal(w.wall, true);
-  assert.equal(creeperFight({ me, mob: P(5.5, 43, 0.5), t: 12, st, canWall: true, kbPoor: true }).wall, false, 'once');
-  assert.equal(creeperFight({ me, mob: P(6, 43, 0.5), t: 8, st: { lastComing: 0 }, canWall: true, kbPoor: true, shield: true }).wall, false, 'a shield: no need');
-  assert.equal(creeperFight({ me, mob: P(6, 40, 0.5), t: 8, st: { lastComing: 0 }, canWall: true, kbPoor: false }).wall, false, 'knockback works: keep it off with that');
-  assert.equal(creeperFight({ me, mob: P(6, 43, 0.5), t: 8, st: { lastComing: 0 }, canWall: false, kbPoor: true }).wall, false, 'no blocks');
+  creeperFight({ me, mob: P(7, 44, 0.5), t: 0, st, canWall: true, kbPoor: true });
+  const w = creeperFight({ me, mob: P(5.5, 43, 0.5), t: 8, st, canWall: true, kbPoor: true });
+  assert.equal(w.guard, true);
+  assert.equal(w.wall, false, 'not a wall');
+  assert.equal(creeperFight({ me, mob: P(5, 43, 0.5), t: 12, st, canWall: true, kbPoor: true }).guard, false, 'once');
+  assert.equal(creeperFight({ me, mob: P(5.5, 43, 0.5), t: 8, st: { lastComing: 0 }, canWall: true, kbPoor: true, shield: true }).guard, false, 'a shield: no need');
+  assert.equal(creeperFight({ me, mob: P(5.5, 40, 0.5), t: 8, st: { lastComing: 0 }, canWall: true, kbPoor: false }).guard, false, 'knockback works: keep it off with that');
+  assert.equal(creeperFight({ me, mob: P(5.5, 43, 0.5), t: 8, st: { lastComing: 0 }, canWall: false, kbPoor: true }).guard, false, 'no blocks');
+  // The old way, still there: wall it off.
+  const st2 = {};
+  creeperFight({ me, mob: P(8, 44, 0.5), t: 0, st: st2, canWall: true, kbPoor: true, walls: true });
+  assert.equal(creeperFight({ me, mob: P(6, 43, 0.5), t: 8, st: st2, canWall: true, kbPoor: true, walls: true }).wall, true);
+});
+
+test('a block right in front takes most of a creeper blast', () => {
+  const open = () => true;
+  const blocked = (cellX) => (a, b) => { for (let i = 1; i < 40; i++) { const x = a.x + (b.x - a.x) * i / 40, y = a.y + (b.y - a.y) * i / 40; if (Math.floor(x) === cellX && Math.floor(y) === 40) return false; } return true; };
+  const feet = P(0.5, 40, 0.5), creeper = P(2.5, 40.05, 0.5);
+  const bare = blastDamage(creeper, feet, open), guarded = blastDamage(creeper, feet, blocked(1));
+  assert.ok(bare > 20, `bare ${bare}`);
+  assert.ok(guarded < bare / 3, `guarded ${guarded} vs ${bare}`);
 });
 
 test('flee jab: spear something catching up from out of its reach, sword it if it is on us, leave one that is not gaining', () => {

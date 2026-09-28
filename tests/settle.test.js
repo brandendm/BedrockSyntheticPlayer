@@ -26,8 +26,10 @@ test('ladder: easy meat only when animals are right here and food is low', () =>
 test('cooking: only with something to burn (else the furnace job loops and gets set aside)', () => {
   const house = { bed: false, table: true, furnace: true, door: true, lit: true, dist: 3 };
   const inv = { ...tools, mutton: 3, torch: 8 };
-  assert.notEqual(settleStep({ ...base, house, furnace: { inHouse: true }, inv }).step, 'smelt');
-  assert.equal(settleStep({ ...base, house, furnace: { inHouse: true }, inv: { ...inv, oak_planks: 1 } }).step, 'smelt');
+  assert.notEqual(settleStep({ ...base, house, furnace: { inHouse: true, dist: 3 }, inv }).step, 'smelt');
+  assert.equal(settleStep({ ...base, house, furnace: { inHouse: true, dist: 3 }, inv: { ...inv, oak_planks: 1 } }).step, 'smelt');
+  // (not an 80-block walk home to cook)
+  assert.notEqual(settleStep({ ...base, house, furnace: { inHouse: true, dist: 81 }, inv: { ...inv, oak_planks: 1 } }).step, 'smelt');
 });
 
 test('night: home if there is one, build if we can, else dig in', () => {
@@ -194,4 +196,13 @@ test('the house with a chest room: in reach from a room, a way through, four sin
   // Walls before the roof.
   const firstRoof = bp.findIndex((b) => b.h === 3);
   assert.ok(bp.slice(firstRoof).every((b) => b.h === 3));
+});
+
+test('beds off: no bed, no sheep for one, the night sat out at home awake', () => {
+  const kit = { stone_pickaxe: 1, stone_sword: 1, stone_axe: 1, stone_shovel: 1, torch: 8, cooked_beef: 8 };
+  const house = { dist: 3, door: true, bed: false, table: true, furnace: true, chest: true, signs: true, lit: true, litOutside: true };
+  const b = { tableDist: 0, time: 1000, furnace: { dist: 3, inHouse: true }, smelt: null, sheep: true, animals: 0, bedDeferred: false, armed: true };
+  assert.equal(settleStep({ ...b, house, inv: kit }).step, 'hunt');
+  assert.equal(settleStep({ ...b, house, inv: kit, beds: false }).step, 'done');
+  assert.equal(settleStep({ ...b, time: 13000, house, inv: kit, beds: false }).sleep, false);
 });

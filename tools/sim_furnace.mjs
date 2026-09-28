@@ -68,7 +68,9 @@ function makeGame() {
     log: (m) => log.push(`${system.currentTick}: ${m}`),
     check() {},
     async wait(gen, n) { system.advance(n); },
-    async reach(gen, p) { if (d3(bot.location, { x: p.x + 0.5, y: p.y, z: p.z + 0.5 }) > 3) walkTo({ x: p.x + 1.5, y: p.y, z: p.z + 0.5 }); return true; },
+    // One path search gets ~40 blocks; further takes travelToward first.
+    async reach(gen, p) { const d = d3(bot.location, { x: p.x + 0.5, y: p.y, z: p.z + 0.5 }); if (d > 40) return false; if (d > 3) walkTo({ x: p.x + 1.5, y: p.y, z: p.z + 0.5 }); return true; },
+    async travelToward(gen, p) { walkTo({ x: p.x + 4.5, y: p.y, z: p.z + 0.5 }); return true; },
     async place(gen, id) {
       if (id !== 'furnace') return null;
       const p = { x: Math.floor(bot.location.x) + 1, y: Math.floor(bot.location.y), z: Math.floor(bot.location.z) };
@@ -84,7 +86,8 @@ function makeGame() {
       furnaces.delete(key(p));
       return true;
     },
-    blockAt: (p) => { const f = furnaces.get(key(p)); return f ? (f.burn > 0 ? 'lit_furnace' : 'furnace') : 'air'; },
+    // (Out of loading range the game can't say what's there: null.)
+    blockAt: (p) => { if (hd(bot.location, p) > loadedRange) return null; const f = furnaces.get(key(p)); return f ? (f.burn > 0 ? 'lit_furnace' : 'furnace') : 'air'; },
     campFurnace: () => camp,
     isCampBlock: (p) => !!camp && key(p) === key(camp),
     isUnderground: () => bot.location.y < 50,
@@ -257,6 +260,18 @@ const house = { x: 5, y: 64, z: 5 };
   system.advance(20 * 60); // the charcoal's long done (the house is within 64: it cooked)
   const fact = g.smeltFact();
   check('charcoal done at the house, ore cooking at the camp, bot at the camp', true, `the plan sees one job: the ${fact.kind} one (${fact.ready ? 'ready' : 'not ready'}); ${g.H.jobs.filter((j) => system.currentTick >= j.readyAt).length} of ${g.H.jobs.length} jobs are ready`, g);
+}
+
+// 10. Out hunting 81 blocks from the house with raw mutton: cook it at the house furnace (as seen in
+// game: the walk fell short, the furnace's chunk wasn't loaded, and it forgot the house furnace).
+{
+  const g = makeGame();
+  g.addFurnace(house);
+  g.bot.location = { x: 86.5, y: 64, z: 5.5 };
+  g.give('mutton', 6); g.give('oak_planks', 6);
+  const ok = await g.H.startSmelt(gen, 'food', 6, 0);
+  const still = g.a.memory.list('furnace', g.dim.id, g.bot.location).length;
+  check('81 blocks from the house furnace, raw meat to cook', ok && still === 1, `${ok ? 'cooking at the house' : 'failed'}; remembers ${still} furnace(s)`, g);
 }
 
 const bad = results.filter((r) => !r.ok).length;

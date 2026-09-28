@@ -14,6 +14,7 @@ import { invCounts, hold, take, give, container as packOf } from './inventory.js
 import { canSee, ONE_TAP } from './world.js';
 import { barricadeCells } from '../core/tactics.js';
 import { Cell } from '../core/pathfinder.js';
+import { trace } from './bridge.js';
 
 const strip = (id) => id.replace('minecraft:', '');
 const center = (p) => ({ x: p.x + 0.5, y: p.y + 0.5, z: p.z + 0.5 });
@@ -53,6 +54,11 @@ export class Homestead {
   jobAt(pos) { return this.jobs.find((j) => dist3D(j.pos, pos) < 0.5) ?? null; }
   setJob(job) { this.jobs = this.jobs.filter((j) => dist3D(j.pos, job.pos) >= 0.5).concat([job]); }
   dropJob(pos) { this.jobs = this.jobs.filter((j) => dist3D(j.pos, pos) >= 0.5); }
+  /** The house's wall and roof cells ("x,y,z"), empty with no house. */
+  houseCells() {
+    const h = this.house;
+    return new Set(h ? blueprint(h, h.dir).map((b) => `${b.x},${b.y},${b.z}`) : []);
+  }
   /** A batch still cooking in the furnace at pos. */
   busy(pos) { const j = this.jobAt(pos); return !!j && system.currentTick < j.readyAt; }
   /**
@@ -329,9 +335,15 @@ export class Homestead {
     // furnace in the pack, that one goes down (it used to try the busy one over and over).
     const known = this.furnaceFor(input);
     if (known?.pos && (known.dist < 128 || !invCounts(this.sim).furnace)) {
+      // A long way off: most of the way first (one path search doesn't reach 80 blocks).
+      if (known.dist > 40) await S.travelToward(gen, known.pos, Math.ceil(known.dist / 40) + 1);
       await S.reach(gen, known.pos);
       if (this.furnaceAt(known.pos)) return known.pos;
-      this.a.memory.forgetNear('furnace', this.dim.id, known.pos, 0.5);
+      // Forgotten only when we can see it's gone: not because the walk fell short or its chunk
+      // isn't loaded (that forgot the house furnace from 81 blocks off, and every smelt after failed).
+      const id = S.blockAt(known.pos);
+      if (id !== null && id !== undefined) this.a.memory.forgetNear('furnace', this.dim.id, known.pos, 0.5);
+      else return null;
     }
     if (!invCounts(this.sim).furnace) return null;
     const p = await S.place(gen, 'furnace');
@@ -684,7 +696,7 @@ export class Homestead {
     this.shortfall = need;
     const logs = Math.ceil(need.planks / 4);
     this.a.say(need.stone || need.planks
-      ? `House spot picked at ${site.x} ${site.y} ${site.z}. Still need ${need.stone} cobblestone and ${need.planks} planks (${logs} logs), counting the door, bed, table and chest.`
+      ? `House spot picked at ${site.x} ${site.y} ${site.z}. Still need ${need.stone} cobblestone and ${need.planks} planks (${logs} logs), counting the door, bed, table, chests and signs.`
       : `House spot picked at ${site.x} ${site.y} ${site.z}; I have everything for it.`);
     return true;
   }
@@ -748,7 +760,18 @@ export class Homestead {
     const built = await this.placeFlow(gen, walls.map((b) => ({ cell: b, id: () => this.materialFor(b.material) })),
       async (it) => { if (!S.inReach(it.cell)) await S.goNear(gen, standFor(fur, it.cell), 0.4, 2); });
     if (built.outOf) { this.a.say("Ran out of blocks for the house; I'll get more and finish it."); this.shortfall = this.houseNeeds(site, dir); return false; }
-    const missed = built.missed;
+    // What the sweep couldn't place (35 blocks of the first chest-room house): one at a time from
+    // the nearer room's middle, then from right by it, the way a repair goes (that got 33 of them).
+    let missed = 0;
+    for (const b of blueprint(site, dir).filter((c) => SOFT.test(S.blockAt(c) ?? 'air'))) {
+      S.check(gen);
+      const id = this.materialFor(b.material);
+      if (!id) break;
+      if (!S.inReach(b)) await S.goNear(gen, standFor(fur, b), 0.4, 2);
+      if (!S.inReach(b)) await S.goNear(gen, b, 2, 2);
+      if (!(await this.placeAt(gen, b, id))) { missed++; trace(`house: couldn't place ${b.material} lx ${b.lx} lz ${b.lz} h ${b.h} (${b.x} ${b.y} ${b.z}) from ${Math.round(this.sim.location.x)} ${Math.round(this.sim.location.y)} ${Math.round(this.sim.location.z)}`); }
+    }
+    if (built.missed) trace(`house: the sweep missed ${built.missed}, the second pass left ${missed}`);
     if (missed > 3) { this.a.say(`Couldn't place ${missed} blocks of the house.`); }
     this.setHouse({ x: site.x, y: site.y, z: site.z, dir, layout: site.layout, bed: false, furnace: false, table: false, level: 1 });
     this.a.memory.data.houseProject = null;
@@ -819,6 +842,7 @@ export class Homestead {
       if (!S.inReach(b)) await S.goNear(gen, standFor(fur, b), 0.6, 2);
       if (!S.inReach(b)) await S.goNear(gen, b, 2, 2);
       if (await this.placeAt(gen, b, id)) fixed++;
+      else trace(`house repair: couldn't place ${b.material} (${b.x} ${b.y} ${b.z}) from ${Math.round(this.sim.location.x)} ${Math.round(this.sim.location.y)} ${Math.round(this.sim.location.z)}`);
     }
     S.restHands();
     const left = this.houseDamage().length;
@@ -1201,7 +1225,8 @@ export class Homestead {
     // Both chests full: don't come back to try again for a while (the plan would ask every round).
     this.a.memory.data.chestFullAt = left ? Date.now() : 0;
     this.a.memory.save();
-    this.a.say(stored ? `Put ${stored} things away in the chest${left ? ` (${left} didn't fit)` : ''}.` : 'The chest is full.');
+    const where = fur.layout === 'chests' ? 'the chest room' : 'the chest';
+    this.a.say(stored ? `Put ${stored} things away in ${where}${left ? ` (${left} didn't fit)` : ''}.` : `${fur.layout === 'chests' ? 'The chests are' : 'The chest is'} full.`);
     return stored > 0;
   }
 
@@ -1291,16 +1316,18 @@ export class Homestead {
   /** Go home for the night, shut the door, sleep if there's a bed, come out in the morning. */
   async nightAtHome(gen) {
     const h = this.house;
+    const sleep = this.a.bedsOn?.() !== false; // (beds off: sit the night out inside, awake)
     this.a.sayOnce('gohome', 'Getting dark, heading home.', 300000);
     if (!(await this.enterHouse(gen))) return false;
     const fur = furnishings(h, h.dir);
     // Home for the night anyway: put away what we don't need to carry before bed.
     if (this.chests().length && Object.keys(depositPlan(invCounts(this.sim))).length) await this.storeItems(gen);
-    if (h.bed) await this.S.goNear(gen, fur.bed.standAt, 0.5, 2);
+    if (h.bed && sleep) await this.S.goNear(gen, fur.bed.standAt, 0.5, 2);
+    else await this.S.goNear(gen, fur.stand, 0.5, 2);
     let tries = 0;
     while (isNight(world.getTimeOfDay())) {
       // Beds only work once it's properly dark (from about 12540).
-      if (h.bed && !this.sim.isSleeping && world.getTimeOfDay() >= 12600 && tries++ < 20) {
+      if (h.bed && sleep && !this.sim.isSleeping && world.getTimeOfDay() >= 12600 && tries++ < 20) {
         try { this.sim.interactWithBlock(fur.bed.foot, Direction.Up); } catch {}
       }
       await this.S.wait(gen, 40);

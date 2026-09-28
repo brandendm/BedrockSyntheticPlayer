@@ -6,7 +6,7 @@ import { MotorController, EYE_HEIGHT } from '../core/motor.js';
 import { searchJob, smoothPath, findPath, Cell } from '../core/pathfinder.js';
 import { dist3D, makeRng } from '../core/mathutil.js';
 import { decide, fleePoint, weaponDamage, MOBS, REACH_HIT, STOP_AT } from '../core/threat.js';
-import { fightMove, creeperFight, creeperMove, Stalemate, pickRefuge, bestWeapon, barricadeCells, SPEAR_DAMAGE, weaponReach, pickCreeperSwing, creeperWeapon, isSpear, awayPath, knockbackRoom, blockOffCells, fleeJab, killSlotCells, killSlotWorth, dodgeArrow, CREEPER_LIGHT, CREEPER_CALM } from '../core/tactics.js';
+import { fightMove, creeperFight, creeperMove, Stalemate, pickRefuge, bestWeapon, barricadeCells, SPEAR_DAMAGE, weaponReach, pickCreeperSwing, creeperWeapon, isSpear, awayPath, knockbackRoom, blockOffCells, guardCell, fleeJab, killSlotCells, killSlotWorth, dodgeArrow, CREEPER_LIGHT, CREEPER_CALM } from '../core/tactics.js';
 import { nextStep, STONE_TARGETS, TOOL_STONE, count, isLog } from '../core/recipes.js';
 import { settleStep, foodCount, FOOD_GOAL, isNight } from '../core/settle.js';
 import { goalChain } from '../core/goals.js';
@@ -412,6 +412,16 @@ export class Agent {
     } catch {
       return 20;
     }
+  }
+
+  /**
+   * Sleeping at night, and so a bed and sheep hunted for it (`!bot beds on|off`, kept in the world;
+   * CONFIG.beds is the default). Off: the night is sat out at home, awake.
+   */
+  bedsOn() { return this.memory.data.settings?.beds ?? CONFIG.beds ?? true; }
+  setBeds(on) {
+    this.memory.data.settings = { ...(this.memory.data.settings ?? {}), beds: !!on };
+    this.memory.save();
   }
 
   isNight() {
@@ -1217,6 +1227,7 @@ export class Agent {
       project: !!H.project,
       shortfall: H.project ? H.houseNeeds(H.project, H.project.dir) : null,
       worn: this.worn(),
+      beds: this.bedsOn(),
     };
     return {
       inv,
@@ -1365,6 +1376,7 @@ export class Agent {
       sheep: sheepSeen || sheepKnown,
       animals: H.animalsSeen(FOOD_ANIMALS, 16).length,
       bedDeferred: (this.bedDeferredUntil ?? 0) > Date.now(),
+      beds: this.bedsOn(),
       armed: SWORD_OK.test(Object.keys(inv).join(' ')),
       hungry: H.hunger() <= 10,
       farmRipe: (this.farm.state()?.ripe ?? 0) >= 3,
@@ -1409,6 +1421,7 @@ export class Agent {
       // Spear and sword both: the spear's jab from 4 when it's ready, the sword up close while it
       // recharges (switching is instant; the spear's cooldown is its own).
       const ws = [];
+      if (this.spearReachOk === false && t >= (this.spearOffUntil ?? Infinity)) { this.spearReachOk = true; this.spearMisses = 0; }
       if (this.spearId && this.spearReachOk !== false) ws.push({ id: this.spearId, ...weaponReach(this.spearId), readyAt: Math.max(this.spearNext ?? 0, this.nextSwing) });
       ws.push({ id: this.weaponId, ...weaponReach(this.weaponId), readyAt: this.nextSwing });
       const w = pickCreeperSwing(ws, d, t);
@@ -1420,8 +1433,9 @@ export class Agent {
       const kbPoor = knockbackRoom(me, mob, this.cellAt()) < 1 || (st.kbMoved !== undefined && st.kbMoved < 0.6);
       const wallBlock = this.homestead.materialFor('stone');
       const canWall = !!wallBlock && (invCounts(this.sim)[wallBlock] ?? 0) >= 2;
-      mv = creeperFight({ me, mob, t, st, shield: this.shield, canSwing, canRetreat: room !== false, lit, reach, minReach, canWall, kbPoor });
+      mv = creeperFight({ me, mob, t, st, shield: this.shield, canSwing, canRetreat: room !== false, lit, reach, minReach, canWall, kbPoor, walls: CONFIG.creeperWalls === true, company: (this.threatsNow ?? []).some((m) => m.id !== target.id && m.dist <= 16) });
       if (mv.wall) { this.wallOffCreeper(me, mob, wallBlock); return; }
+      if (mv.guard) this.guardAgainstBlast(me, mob, wallBlock); // (and fight on)
       this.fightMove = 'creeper'; // its own spacing (creeperTick), not the melee stop
       // The combat log: every tick of a creeper fight, to calibrate tools/sim_combat.mjs against.
       let ign = '?'; // its walking speed: a swelling creeper stands still
@@ -1432,7 +1446,7 @@ export class Agent {
       if (this.heldWeapon && this.heldWeapon !== this.weaponId && this.weaponId) { hold(this.sim, this.weaponId); this.heldWeapon = this.weaponId; }
       // Tall melee mobs coming at a dead end: a kill slot across the way in, and fight from it.
       if (!this.slot && this.buildSlot(this.threatsNow, target)) return;
-      mv = this.slotMove(target, me, canSwing) ?? fightMove({ me, mob, melee: MOBS[target.type]?.kind === 'melee', t, shield: this.shield, canSwing });
+      mv = this.slotMove(target, me, canSwing) ?? fightMove({ me, mob, melee: MOBS[target.type]?.kind === 'melee', t, shield: this.shield, canSwing, type: target.type });
       this.fightMove = mv.stop ? 'hold' : mv.goal && d > STOP_AT ? 'approach' : 'back';
     }
     this.setBlocking(!!mv.block);
@@ -1448,7 +1462,10 @@ export class Agent {
       this.nextRoute = t + 6;
       this.routeTo(mv.goal, mv.tolerance, mv.urgent, 1500, mv.walk);
     }
-    if (mv.swing && d <= reach && d >= minReach && canSwing && this.facing(chest, 25)) {
+    // (Never through a block: a wall we just put up, the rock of a step.)
+    let clearShot = true;
+    try { clearShot = canSee(this.dim, this.sim.getHeadLocation(), chest); } catch {}
+    if (mv.swing && d <= reach && d >= minReach && canSwing && clearShot && this.facing(chest, 25)) {
       this.setBlocking(false);
       if (swingWith !== this.heldWeapon) { hold(this.sim, swingWith); this.heldWeapon = swingWith; }
       let hp0 = null;
@@ -1457,7 +1474,8 @@ export class Agent {
       // A creeper can be hurt again 10 ticks after a hit; a spear has its own, longer cooldown.
       this.nextSwing = t + (target.type === 'creeper' ? 10 : 10 + Math.floor(this.rng() * 4));
       if (spearSwing) this.spearNext = t + cooldown + 1;
-      if (target.type === 'creeper' && hp0 !== null) this.swingCheck = { e, hp0, t, d, spear: spearSwing };
+      // (fresh: past the 10 ticks after a hit that land, when a creeper can't be hurt anyway)
+      if (target.type === 'creeper' && hp0 !== null) this.swingCheck = { e, hp0, t, d, spear: spearSwing, fresh: t - (this.creeperHitAt ?? -1e9) >= 10 };
       if (target.type === 'creeper') { const st = this.creeperSt.get(e.id); if (st) { st.hitAt = t; st.hitD = d; st.kbMoved = undefined; } }
     }
     // Going nowhere (no hit landed, not a block closer for 6 s): give it up for a minute. It counts
@@ -1541,12 +1559,18 @@ export class Agent {
         trace(`creeper swing ${sc.spear ? 'spear' : 'sword'} at ${sc.d.toFixed(2)}: ${hp < sc.hp0 ? `hit ${sc.hp0}->${hp}` : 'MISSED'}`);
         if (hp >= sc.hp0) {
           this.nextSwing = t;
-          if (sc.spear) { this.spearNext = t; if (sc.d > REACH_HIT) this.spearMisses = (this.spearMisses ?? 0) + 1; }
+          // A miss that says something about the spear's reach: a clear swing, the creeper hurtable.
+          // (Swings at one behind the wall we'd just put up counted, and put the spear away for good.)
+          if (sc.spear) { this.spearNext = t; if (sc.d > REACH_HIT && sc.fresh) this.spearMisses = (this.spearMisses ?? 0) + 1; }
           if ((this.spearMisses ?? 0) >= 3 && this.spearReachOk !== false) {
             this.spearReachOk = false;
-            this.say("My spear isn't reaching the creepers from out there: sword only.");
+            this.spearOffUntil = t + 6000; // 5 minutes, then it gets another chance
+            this.say("My spear isn't reaching the creepers from out there: sword only for a while.");
           }
-        } else if (sc.spear && sc.d > REACH_HIT) this.spearMisses = 0;
+        } else {
+          this.creeperHitAt = sc.t;
+          if (sc.spear && sc.d > REACH_HIT) this.spearMisses = 0;
+        }
       }
       if (t % SURVIVE_EVERY !== 0) {
         const l = e.location;
@@ -1727,16 +1751,19 @@ export class Agent {
    */
   dodgeTick(t) {
     if ((this.mode !== 'fight' && this.mode !== 'flee') || (this.dodgeUntil ?? 0) > t) return;
+    // Arrows, and a witch's splash potions (they splash round where they land: a wider berth).
     let ents = [];
-    try { ents = this.dim.getEntities({ type: 'minecraft:arrow', location: this.sim.location, maxDistance: 24 }); } catch { return; }
+    try {
+      for (const type of ['minecraft:arrow', 'minecraft:splash_potion', 'minecraft:lingering_potion']) ents = ents.concat(this.dim.getEntities({ type, location: this.sim.location, maxDistance: 24 }));
+    } catch { return; }
     if (!ents.length) return;
     const arrows = [];
     for (const e of ents) {
       try {
         const v = e.getVelocity();
-        if (Math.hypot(v.x, v.y, v.z) < 0.3) continue; // stuck in something
+        if (Math.hypot(v.x, v.y, v.z) < (e.typeId === 'minecraft:arrow' ? 0.3 : 0.05)) continue; // stuck in something
         if (this.blocking && this.facing(e.location, 60)) continue;
-        arrows.push({ id: e.id, pos: e.location, vel: v });
+        arrows.push({ id: e.id, pos: e.location, vel: v, grow: e.typeId === 'minecraft:arrow' ? 0.25 : 1.2 });
       } catch {}
     }
     if (!arrows.length) return;
@@ -1843,6 +1870,29 @@ export class Agent {
   }
 
   /**
+   * Cornered with a creeper a hit won't move (core/tactics.js creeperFight's guard): one block at our
+   * feet toward it, placed in a moment, and the fight goes on over the top of it. If it does go off,
+   * the block takes most of the blast. Down again with the walls once it's gone.
+   */
+  guardAgainstBlast(me, mob, block) {
+    if (this.walling || !block) return;
+    const c = guardCell(me, mob, this.cellAt());
+    if (!c) return;
+    this.walling = true;
+    const gen = this.taskGen;
+    trace(`creeper: a block against the blast at ${c.x} ${c.y} ${c.z}, d ${dist3D(me, mob).toFixed(2)}`);
+    this.homestead.placeAt(gen, c, block)
+      .then((ok) => {
+        if (ok && this.skills.blockAt(c) === block) {
+          this.skills.markPlaced(c);
+          this.creeperWalls = [...(this.creeperWalls ?? []), { cells: [c], block }];
+        }
+      })
+      .catch(() => {})
+      .finally(() => { this.walling = false; });
+  }
+
+  /**
    * Walls we put up against a creeper, taken down once there's no creeper within 16 (our own
    * blocks only: anything else in those cells is left alone).
    */
@@ -1857,7 +1907,9 @@ export class Agent {
     this.creeperWalls = [];
     this.slot = null;
     for (const w of walls) {
-      const ours = w.cells.filter((c) => this.skills.blockAt(c) === w.block);
+      // (Never one that went into a hole in the house: taking it down would reopen the hole.)
+      const houseCells = this.homestead.houseCells();
+      const ours = w.cells.filter((c) => this.skills.blockAt(c) === w.block && !houseCells.has(`${c.x},${c.y},${c.z}`));
       if (!ours.length || dist3D(this.sim.location, ours[0]) > 24) continue;
       trace(`creeper gone: taking the wall down (${ours.length} blocks)`);
       for (const c of ours) if (!this.skills.inReach(c)) { await this.skills.goNear(gen, c, 3, 2); break; }
@@ -1933,6 +1985,10 @@ export class Agent {
           if (this.autoEnabled) { this.autoDone = false; this.nextAutoTry = 0; }
           else if (this.task?.kind === 'auto') { this.newTask(null); this.motor.stop(); }
           this.say(this.autoEnabled ? 'Carrying on by myself.' : 'Waiting for orders.');
+          break;
+        case 'beds':
+          this.setBeds(a.on !== false);
+          this.say(a.on !== false ? 'Sleeping at night again (a bed, and sheep for one if I need it).' : "No sleeping: I'll sit the nights out at home, and won't hunt sheep for a bed.");
           break;
         case 'goto': this.startGoto(this.resolveY(a), a.tolerance ?? 0); break;
         case 'come': {

@@ -12,7 +12,7 @@ import { MotorController, EYE_HEIGHT } from '../behavior_pack/scripts/core/motor
 import { findPath, searchJob, smoothPath, Cell } from '../behavior_pack/scripts/core/pathfinder.js';
 import { decide, MOBS, weaponDamage, REACH_HIT } from '../behavior_pack/scripts/core/threat.js';
 import { readFileSync } from 'node:fs';
-import { fightMove, creeperMove, creeperFight, Stalemate, pickRefuge, barricadeCells, awayPath, weaponReach, creeperWeapon, bestWeapon, pickCreeperSwing, knockbackRoom, blockOffCells, fleeJab, killSlotCells, killSlotWorth, dodgeArrow, bowFight, aimBow, bowPower, BOW_FULL } from '../behavior_pack/scripts/core/tactics.js';
+import { fightMove, creeperMove, creeperFight, Stalemate, pickRefuge, barricadeCells, awayPath, weaponReach, creeperWeapon, bestWeapon, pickCreeperSwing, knockbackRoom, blockOffCells, fleeJab, killSlotCells, killSlotWorth, dodgeArrow, guardCell, blastDamage, bowFight, aimBow, bowPower, BOW_FULL } from '../behavior_pack/scripts/core/tactics.js';
 import { makeRng, dist3D } from '../behavior_pack/scripts/core/mathutil.js';
 import { SimBody } from '../tests/helpers.js';
 
@@ -59,6 +59,11 @@ const STALE_OK = process.env.STALE_OK === '1';
 const SPEAR = process.env.SPEAR === '1';
 // WALLS=0: no walling a creeper off (what the game did before it).
 const WALLS = process.env.WALLS !== '0';
+// Cornered by a creeper a hit won't move: GUARD=1 (default) one block at our feet toward it and fight
+// on; GUARD=0 wall it off (what the game did before).
+const GUARD = process.env.GUARD !== '0';
+// WITCHFLEE=1: witches run from, never fought (what the game did before).
+if (process.env.WITCHFLEE === '1') MOBS.witch.never = true;
 // FLEEJAB=0: running from something catching up, no turning to jab it.
 const FLEEJAB = process.env.FLEEJAB !== '0';
 // SLOT=0: no kill slot (a block at the feet across a dead end's way in, the gap at eye level).
@@ -134,7 +139,10 @@ function arena({ classify: base, bot, mobs, weapon = 'stone_sword', shield = fal
   mobs.forEach((m, i) => { m.id = `${m.type}${i}`; m.hp = MOBS[m.type].hp; m.cool = 0; m.fuse = -1; m.lastHitMe = -1e9; m.path = null; m.pi = 0; m.iframe = 0; });
   // Sneaking (shield up) slows the body to 0.3.
   const move0 = body.move.bind(body);
-  body.move = (dx, dz, s) => move0(dx, dz, (blocking ? s * 0.3 : s) * (drawStart >= 0 ? 0.2 : 1)); // (drawing a bow: a fifth)
+  // A witch's potions on us: slowness (-15% speed), weakness (-4 melee damage), poison (1 a second-ish, never below 1).
+  const fx = { slowUntil: -1, weakUntil: -1, poisonUntil: -1 };
+  let potionsThrown = 0, potionHits = 0, potionHp = 0;
+  body.move = (dx, dz, s) => move0(dx, dz, (blocking ? s * 0.3 : s) * (drawStart >= 0 ? 0.2 : 1) * (tNow() < fx.slowUntil ? 0.85 : 1)); // (drawing a bow: a fifth)
   const eye = () => ({ x: body.pos.x, y: body.pos.y + EYE_HEIGHT, z: body.pos.z });
   const facingMob = (m) => {
     const yaw = Math.atan2(-(m.x - body.pos.x), m.z - body.pos.z) * 180 / Math.PI;
@@ -223,8 +231,8 @@ function arena({ classify: base, bot, mobs, weapon = 'stone_sword', shield = fal
       ? { swing: t >= nextSwing, stop: Math.hypot(me.x - slot.stand.x, me.z - slot.stand.z) <= 0.25 } : null;
     // (A step inside our own cell: straight there, no path search.)
     if (mvSlot && !mvSlot.stop && !motor.busy) { routeSeq++; motor.followPath([{ ...me }, slot.stand], { walk: true }); }
-    let mv = mvSlot ? mvSlot : m.type === 'creeper' ? creeperFight({ me, mob: m, t, st: (m.st ??= {}), shield, canSwing: cw(m).ready, canRetreat: m.room !== false, lit: m.fuse >= 0, reach: cw(m).reach, minReach: cw(m).minReach, canWall: WALLS && blocks >= 2, kbPoor })
-      : fightMove({ me, mob: m, melee: MOBS[m.type].kind === 'melee', t, shield, canSwing: t >= nextSwing });
+    let mv = mvSlot ? mvSlot : m.type === 'creeper' ? creeperFight({ me, mob: m, t, st: (m.st ??= {}), shield, canSwing: cw(m).ready, canRetreat: m.room !== false, lit: m.fuse >= 0, reach: cw(m).reach, minReach: cw(m).minReach, canWall: WALLS && blocks >= (GUARD ? 1 : 2), kbPoor, walls: !GUARD, company: mobs.some((o) => o !== m && o.hp > 0 && dist3D(me, o) <= 16) })
+      : fightMove({ me, mob: m, melee: MOBS[m.type].kind === 'melee', t, shield, canSwing: t >= nextSwing, type: m.type });
     if (OLD && mv.goal) { const d0 = dist3D(me, m); mv.goal = d0 > 3.3 ? standOffOld(me, m) : { x: m.x, y: m.y, z: m.z }; mv.tolerance = 0.5; }
     blocking = mv.block;
     if (t < dodgeUntil) mv = { ...mv, stop: false, away: 0, goal: null }; // (mid-dodge: the feet are the dodge's)
@@ -235,6 +243,12 @@ function arena({ classify: base, bot, mobs, weapon = 'stone_sword', shield = fal
       for (const c of cells) wallQueue.push(c);
       walls++;
       if (VERBOSE) log.push(`${t}: walling off the creeper (${cells.length} blocks, knockback room ${knockbackRoom(me, m, at)}, d ${dist3D(me, m).toFixed(1)})`);
+    }
+    if (mv.guard) {
+      // One block at our feet toward it, then on with the fight.
+      const c = guardCell(me, m, at);
+      if (c) { wallQueue.push(c); walls++; }
+      if (VERBOSE) log.push(`${t}: a block against the blast ${c ? `at ${c.x},${c.y},${c.z}` : '(nowhere to put it)'}, d ${dist3D(me, m).toFixed(1)}`);
     }
     if (mv.stop) stopWalking();
     if (mv.away && (mv.now || !motor.busy)) {
@@ -253,7 +267,8 @@ function arena({ classify: base, bot, mobs, weapon = 'stone_sword', shield = fal
     if (mv.swing && facingMob(m) && !canSee(m)) { /* nothing to swing at: a wall's in the way */ }
     else if (mv.swing && facingMob(m) && (outOfReach || tooNear)) { nextSwing = t + pw.cooldown; misses++; if (VERBOSE) log.push(`${t}: swing at ${m.type} misses (${reachTo(m).toFixed(2)} from the eye)`); }
     else if (mv.swing && facingMob(m) && m.iframe <= t) {
-      m.hp -= pw.damage > 1 ? pw.damage : 1; m.iframe = t + 10; nextSwing = t + 10;
+      const raw = pw.damage > 1 ? pw.damage : 1;
+      m.hp -= t < fx.weakUntil ? Math.max(0, raw - 4) : raw; m.iframe = t + 10; nextSwing = t + 10;
       m.hitAt = t; m.hitD = dist3D(me, m); m.kbMoved = undefined;
       if (spear) spearNext = t + pw.cooldown;
       if (VERBOSE) log.push(`${t}: hit ${m.type} at ${dist3D(me, m).toFixed(1)} (hp ${m.hp})`);
@@ -277,10 +292,12 @@ function arena({ classify: base, bot, mobs, weapon = 'stone_sword', shield = fal
       if (VERBOSE) log.push(`${t}: giving up on ${m.id} (no progress)`);
     }
   }
-  let jabs = 0, dodges = 0, arrowsShot = 0, arrowHits = 0, dodgeUntil = -1;
+  let jabs = 0, dodges = 0, arrowsShot = 0, arrowHits = 0, dodgeUntil = -1, blastHp = 0;
   const arrows = []; // { pos, vel, from, age }
+  const potions = []; // a witch's: { pos, vel, kind, from, age }
   let vel = { x: 0, z: 0 };
   let t = 0, fightRef = null, explosions = 0, coast = 0, coastDir = { x: 0, z: 0 };
+  const tNow = () => t;
   for (; t < ticks && hp > 0; t++) {
     const alive = mobs.filter((m) => m.hp > 0);
     const me = body.pos;
@@ -343,8 +360,8 @@ function arena({ classify: base, bot, mobs, weapon = 'stone_sword', shield = fal
       worstIdle = Math.max(worstIdle, idleWhileHunted);
     }
     // An arrow coming at us: a step aside (it's aimed where we are). Seen a tick after it's loosed.
-    if (DODGE && !HITSCAN && (mode === 'fight' || mode === 'flee') && arrows.length) {
-      const seenArrows = arrows.filter((a) => a.age >= 1 && !(blocking && facingMob(a.from)));
+    if (DODGE && !HITSCAN && (mode === 'fight' || mode === 'flee') && (arrows.length || potions.length)) {
+      const seenArrows = [...arrows.filter((a) => a.age >= 1 && !(blocking && facingMob(a.from))), ...potions.filter((a) => a.age >= 1).map((a) => ({ ...a, grow: 1.2 }))];
       const dg = seenArrows.length ? dodgeArrow({ me, arrows: seenArrows, at }) : null;
       if (dg && t >= dodgeUntil) {
         dodges++;
@@ -444,6 +461,34 @@ function arena({ classify: base, bot, mobs, weapon = 'stone_sword', shield = fal
       const d = dist3D(me, m);
       m.v = m.px === undefined ? { x: 0, z: 0 } : { x: m.x - m.px, z: m.z - m.pz }; m.px = m.x; m.pz = m.z;
       const info = MOBS[m.type];
+      if (m.type === 'witch') {
+        const sight = clear(classify, { x: m.x, y: m.y + 1.5, z: m.z }, { x: me.x, y: me.y + 1.0, z: me.z });
+        // Drinking (32 ticks, nothing else): a healing potion when it's hurt, 5% a tick (Minecraft's witch).
+        if ((m.drinkUntil ?? -1) > t) { if (t === m.drinkUntil - 1) m.hp = Math.min(MOBS.witch.hp, m.hp + 4); continue; }
+        if (m.hp < MOBS.witch.hp && rng() < 0.05) { m.drinkUntil = t + 32; if (VERBOSE) log.push(`${t}: witch drinks (hp ${m.hp})`); continue; }
+        if (t >= m.cool && d <= 10 && sight) {
+          m.cool = t + 60;
+          const kind = d >= 8 && t >= fx.slowUntil ? 'slowness' : hp >= 8 && t >= fx.poisonUntil ? 'poison' : d <= 3 && t >= fx.weakUntil && rng() < 0.25 ? 'weakness' : 'harming';
+          // Where we'll be next tick, at our body, arced up 0.2 a block, 0.75 a tick, spread 8.
+          const from = { x: m.x, y: m.y + 1.5, z: m.z };
+          const lx = me.x + vel.x - m.x, lz = me.z + vel.z - m.z, h = Math.hypot(lx, lz);
+          const dy = me.y + 1.62 - 1.1 - m.y + h * 0.2;
+          const l = Math.hypot(lx, dy, lz) || 1;
+          const g = () => { let u = 0; for (let i = 0; i < 6; i++) u += rng(); return (u - 3) * 0.0075 * 8; };
+          potions.push({ pos: from, vel: { x: (lx / l + g()) * 0.75, y: (dy / l + g()) * 0.75, z: (lz / l + g()) * 0.75 }, kind, from: m, age: 0 });
+          potionsThrown++;
+          if (VERBOSE) log.push(`${t}: witch throws ${kind} from ${d.toFixed(1)}`);
+        }
+        // Closes in to within 9 with a clear throw, then stands.
+        if (!(d <= 9 && sight)) {
+          if (t % 10 === 0) { const r = runPath(classify, m, me, 1, 500); m.path = r.path.length >= 2 ? r.path : null; m.pi = 1; }
+          if (m.path && m.pi < m.path.length) {
+            const w = m.path[m.pi], tx = w.x + 0.5, tz = w.z + 0.5, dx = tx - m.x, dz = tz - m.z, l = Math.hypot(dx, dz);
+            if (l < 0.17) { m.x = tx; m.z = tz; m.y = w.y; m.pi++; } else { m.x += dx / l * 0.17; m.z += dz / l * 0.17; if (Math.abs(w.y - m.y) >= 1 && l < 0.6) m.y = w.y; }
+          }
+        }
+        continue;
+      }
       if (info.kind === 'ranged') {
         // Stands its ground and shoots every 2 s when it can see us (arrow line: its eye to our chest).
         // An arrow hits the first thing in its way: a zombie between us takes it.
@@ -490,8 +535,11 @@ function arena({ classify: base, bot, mobs, weapon = 'stone_sword', shield = fal
         if (m.fuse < 0 && d <= FUSE_START && sight) { m.fuse = t + 30; if (VERBOSE) log.push(`${t}: creeper hisses at ${d.toFixed(1)}`); }
         if (m.fuse >= 0 && (d > FUSE_STOP || !sight)) { m.fuse = -1; if (VERBOSE) log.push(`${t}: creeper calms down at ${d.toFixed(1)}`); }
         if (m.fuse >= 0 && t >= m.fuse) {
-          const dmg = Math.max(0, 25 * (1 - d / 6)) * (sight ? 1 : 0.3);
-          if (VERBOSE) log.push(`${t}: creeper goes off at ${d.toFixed(1)} blocks`);
+          // Minecraft's blast: how much of us its rays reach from its feet (OLDBLAST=1: the old guess).
+          const dmg = process.env.OLDBLAST === '1' ? Math.max(0, 25 * (1 - d / 6)) * (sight ? 1 : 0.3)
+            : blastDamage({ x: m.x, y: m.y + 0.05, z: m.z }, me, (a, b) => clear(classify, a, b));
+          blastHp += blocking && facingMob(m) ? 0 : dmg;
+          if (VERBOSE) log.push(`${t}: creeper goes off at ${d.toFixed(1)} blocks (${dmg.toFixed(1)} damage)`);
           hurt(dmg, m, 'creeper');
           explosions++;
           // The crater (stone resists: a small one, ragged).
@@ -507,6 +555,35 @@ function arena({ classify: base, bot, mobs, weapon = 'stone_sword', shield = fal
       }
       if (d <= 1.6 && t >= m.cool) { m.cool = t + 20; hurt(info.dps, m, m.type); }
     }
+    // ---- a witch's potions: they burst on whatever they hit, and splash everything within 4 ----
+    for (let k = potions.length - 1; k >= 0; k--) {
+      const a = potions[k];
+      let at = null;
+      for (let i = 1; i <= 4 && !at; i++) {
+        const x = a.pos.x + a.vel.x * i / 4, y = a.pos.y + a.vel.y * i / 4, z = a.pos.z + a.vel.z * i / 4;
+        const c = classify(Math.floor(x), Math.floor(y), Math.floor(z));
+        const inBox = (o, hw, ht) => Math.abs(x - o.x) <= hw + 0.125 && Math.abs(z - o.z) <= hw + 0.125 && y >= o.y - 0.125 && y <= o.y + ht + 0.125;
+        if (c === Cell.SOLID || c === Cell.STEP || c === Cell.SLAB || inBox(body.pos, 0.3, 1.8) || (a.age > 2 && mobs.some((o) => o !== a.from && o.hp > 0 && inBox(o, 0.3, 1.9)))) at = { x, y, z, direct: inBox(body.pos, 0.3, 1.8) };
+      }
+      if (at || a.age++ > 80) {
+        potions.splice(k, 1);
+        if (!at) continue;
+        const dd = Math.hypot(at.x - body.pos.x, at.y - (body.pos.y + 0.9), at.z - body.pos.z);
+        const i = at.direct ? 1 : Math.max(0, 1 - dd / 4);
+        if (i > 0) {
+          potionHits++;
+          if (a.kind === 'harming') { hp -= 6 * i; potionHp += 6 * i; hitsTaken++; }
+          else if (a.kind === 'poison') fx.poisonUntil = Math.max(fx.poisonUntil, t + Math.round(900 * i));
+          else if (a.kind === 'slowness') fx.slowUntil = Math.max(fx.slowUntil, t + Math.round(1800 * i));
+          else if (a.kind === 'weakness') fx.weakUntil = Math.max(fx.weakUntil, t + Math.round(1800 * i));
+          if (VERBOSE) log.push(`${t}: ${a.kind} splashes us (${(i * 100).toFixed(0)}%)`);
+        }
+        continue;
+      }
+      a.pos = { x: a.pos.x + a.vel.x, y: a.pos.y + a.vel.y, z: a.pos.z + a.vel.z };
+      a.vel = { x: a.vel.x * 0.99, y: a.vel.y * 0.99 - 0.05, z: a.vel.z * 0.99 };
+    }
+    if (t < fx.poisonUntil && t % 25 === 0 && hp > 1) { hp -= 1; potionHp += 1; }
     // ---- arrows in flight: into rock, a mob in the way, or us (the shield, if it's up at them) ----
     for (let k = arrows.length - 1; k >= 0; k--) {
       const a = arrows[k];
@@ -540,7 +617,7 @@ function arena({ classify: base, bot, mobs, weapon = 'stone_sword', shield = fal
     }
     if (!mobs.some((m) => m.hp > 0)) break;
   }
-  return { bowShots, bowHits, arrowsLeft, dodges, arrowsShot, arrowHits, slots, jabs, crater, misses, explosions, walls, foughtAtDeath, hp: Math.max(0, hp), kills, total: mobs.length, ticks: t, worstIdle, hitsTaken, blocked, gaveUp, log };
+  return { potionsThrown, potionHits, potionHp, blastHp, bowShots, bowHits, arrowsLeft, dodges, arrowsShot, arrowHits, slots, jabs, crater, misses, explosions, walls, foughtAtDeath, hp: Math.max(0, hp), kills, total: mobs.length, ticks: t, worstIdle, hitsTaken, blocked, gaveUp, log };
 }
 
 const standOffOld = (me, mob, r = 2.8) => { const dx = me.x - mob.x, dz = me.z - mob.z, l = Math.hypot(dx, dz) || 1; return { x: mob.x + dx / l * r, y: mob.y, z: mob.z + dz / l * r }; };
@@ -619,6 +696,8 @@ const SCENARIOS = {
   'down a mine tunnel: skeleton then a zombie, iron sword + shield, hurt': () => ({ classify: tunnel(), bot: { x: 2.5, y: 40, z: 0.5 }, weapon: 'iron_sword', shield: true, health: 14, mobs: [{ type: 'skeleton', x: 8.5, y: 40, z: 0.5 }, { type: 'zombie', x: 11.5, y: 40, z: 0.5 }], minHp: 6 }),
   'down a mine tunnel: skeleton behind two zombies, stone sword': () => ({ classify: tunnel(), bot: { x: 3.5, y: 40, z: 0.5 }, mobs: [{ type: 'skeleton', x: 9.5, y: 40, z: 0.5 }, { type: 'zombie', x: 12.5, y: 40, z: 0.5 }, { type: 'zombie', x: 15.5, y: 40, z: 0.5 }], minHp: 1 }),
   'zombie, open field, bow': () => ({ classify: flat(), weapon: ['bow', 'stone_sword'], bot: { x: 0.5, y: 64, z: 0.5 }, mobs: [{ type: 'zombie', x: 12.5, y: 64, z: 0.5 }] }),
+  'witch and a zombie, open field, stone sword': () => ({ classify: flat(), bot: { x: 0.5, y: 64, z: 0.5 }, mobs: [{ type: 'witch', x: 11.5, y: 64, z: 0.5 }, { type: 'zombie', x: 9.5, y: 64, z: 6.5 }], ticks: 1500 }),
+  'witch, open field, stone sword': () => ({ classify: flat(), bot: { x: 0.5, y: 64, z: 0.5 }, mobs: [{ type: 'witch', x: 11.5, y: 64, z: 0.5 }], ticks: 1500 }),
   'creeper walking in, bow': () => ({ classify: flat(), weapon: ['bow', 'stone_sword'], bot: { x: 0.5, y: 64, z: 0.5 }, mobs: [{ type: 'creeper', x: 14.5, y: 64, z: 0.5 }] }),
   'skeleton in the open, bow': () => ({ classify: flat(), weapon: ['bow', 'stone_sword'], bot: { x: 0.5, y: 64, z: 0.5 }, mobs: [{ type: 'skeleton', x: 14.5, y: 64, z: 0.5 }] }),
   'zombie, open field, stone sword': () => ({ classify: flat(), bot: { x: 0.5, y: 64, z: 0.5 }, mobs: [{ type: 'zombie', x: 10.5, y: 64, z: 0.5 }] }),
@@ -716,7 +795,7 @@ if (CREEPERS) {
     const key = `${terrain}${company.length ? '+company' : ''}`;
     byKind[key] ??= [0, 0]; byKind[key][0]++;
     if (r.explosions) { stats.exploded++; byKind[key][1]++; bad.push(`${r.hp <= 0 ? 'DIED' : `${r.hp.toFixed(0)} hp`}: ${desc}`); }
-    if (r.hp <= 0) stats.died++;
+    if (r.hp <= 0) { stats.died++; if (process.env.DUMPDIED) console.log(`  died: ${desc}${r.walls ? ' (block/wall used)' : ''}, blast ${r.blastHp.toFixed(1)}`); }
   }
   console.log(`${stats.runs - stats.exploded}/${stats.runs} without an explosion (${(100 * (1 - stats.exploded / stats.runs)).toFixed(1)}%), ${stats.died} died`);
   for (const [k, [n, e]] of Object.entries(byKind)) console.log(`  ${k.padEnd(16)} ${n - e}/${n}`);
@@ -738,7 +817,7 @@ if (CORNERED) {
   const rng = makeRng(31337);
   const kinds = { deadend: [0, 0, 0], wide: [0, 0, 0], low: [0, 0, 0] };
   const bad = [];
-  let walls = 0;
+  let walls = 0, killed = 0, lost = 0, blast = 0;
   for (let i = 0; i < CORNERED; i++) {
     const kind = Object.keys(kinds)[i % 3];
     const J = jagged(rng, kind);
@@ -747,11 +826,12 @@ if (CORNERED) {
     const r = arena(sc);
     kinds[kind][0]++;
     walls += r.walls ? 1 : 0;
+    killed += r.kills; lost += 20 - Math.max(0, r.hp); blast += r.blastHp;
     if (r.explosions) { kinds[kind][1]++; bad.push(`${kind} #${i}: ${r.hp <= 0 ? 'DIED' : `${r.hp.toFixed(0)} hp`}${r.walls ? ' (walled)' : ''}`); }
     if (r.hp <= 0) kinds[kind][2]++;
   }
   const tot = Object.values(kinds).reduce((a, k) => [a[0] + k[0], a[1] + k[1], a[2] + k[2]], [0, 0, 0]);
-  console.log(`${tot[0] - tot[1]}/${tot[0]} cornered at the foot of jagged steps without an explosion (${(100 * (1 - tot[1] / tot[0])).toFixed(1)}%), ${tot[2]} died, walled off in ${walls}`);
+  console.log(`${tot[0] - tot[1]}/${tot[0]} cornered at the foot of jagged steps without an explosion (${(100 * (1 - tot[1] / tot[0])).toFixed(1)}%), ${tot[2]} died, ${GUARD ? 'a block against the blast' : 'walled off'} in ${walls}; creeper killed ${killed}/${tot[0]}, ${(lost / tot[0]).toFixed(1)} hp lost a fight (${(blast / tot[0]).toFixed(1)} of it blast)`);
   for (const [k, [n, e, d]] of Object.entries(kinds)) console.log(`  ${k.padEnd(8)} ${n - e}/${n}${d ? ` (${d} died)` : ''}`);
   for (const b of bad.slice(0, VERBOSE ? 30 : 6)) console.log(`  - ${b}`);
   process.exit(0);
@@ -856,6 +936,33 @@ if (WEAPONS) {
   const cols = ['stone_sword', 'iron_sword', 'stone_sword+stone_spear', 'bow+stone_sword', 'bow+iron_sword'];
   console.log(`  ${''.padEnd(26)} ${cols.map((c) => c.replace('stone_', 's.').replace('iron_', 'i.').replace('+s.spear', '+spear').padStart(14)).join('')}`);
   for (const [sk, row] of Object.entries(bySet)) console.log(`  ${sk.padEnd(26)} ${cols.map((c) => { const [n, l, d] = row[c] ?? [0, 0, 0]; return (n ? `${(l / n).toFixed(1)} (${d})${process.env.KILLS ? ` ${row[c][3]}/${row[c][4]} a${row[c][5]}` : ''}` : '-').padStart(process.env.KILLS ? 24 : 14); }).join('')}`);
+  process.exit(0);
+}
+
+// --witch N: a witch (sometimes with a zombie) on flat ground, in a forest, at the quarry mouth;
+// random weapon, health, a shield some of the time. WITCHFLEE=1: run from witches (as before).
+const WITCH = process.argv.includes('--witch') ? Number(process.argv[process.argv.indexOf('--witch') + 1] || 200) : 0;
+if (WITCH) {
+  const rng = makeRng(8888);
+  const pick = (a) => a[Math.floor(rng() * a.length)];
+  let died = 0, lost = 0, killed = 0, total = 0, thrown = 0, hitBy = 0, potHp = 0, secs = 0;
+  const by = {};
+  for (let i = 0; i < WITCH; i++) {
+    const terrain = pick(['flat', 'forest', 'quarry']);
+    const classify = terrain === 'flat' ? flat() : terrain === 'forest' ? forest() : quarry();
+    const company = rng() < 0.3;
+    let bot, mobs = [];
+    if (terrain === 'quarry') { bot = { x: 10.5, y: 54, z: 0.5 }; mobs.push({ type: 'witch', x: 0.5, y: 64, z: 0.5 }); if (company) mobs.push({ type: 'zombie', x: -1.5, y: 64, z: 1.5 }); }
+    else { bot = { x: 1.5, y: 70, z: 0.5 }; const a = rng() * Math.PI * 2, r = 9 + rng() * 5; mobs.push({ type: 'witch', x: 1.5 + Math.cos(a) * r, y: 70, z: 0.5 + Math.sin(a) * r }); if (company) mobs.push({ type: 'zombie', x: 1.5 + Math.cos(a + 1) * r, y: 70, z: 0.5 + Math.sin(a + 1) * r }); }
+    const health = pick([20, 20, 14]);
+    const r = arena({ classify, bot: ground(classify, bot), mobs: mobs.map((m) => ground(classify, m)), weapon: pick(['stone_sword', 'stone_sword', 'iron_sword']), shield: rng() < 0.3, health, ticks: 1500 });
+    if (r.hp <= 0) died++;
+    lost += health - Math.max(0, r.hp); killed += r.kills; total += r.total; thrown += r.potionsThrown; hitBy += r.potionHits; potHp += r.potionHp; secs += r.ticks / 20;
+    const k = `${terrain}${company ? '+zombie' : ''}`;
+    by[k] ??= [0, 0, 0, 0]; by[k][0]++; by[k][1] += health - Math.max(0, r.hp); if (r.hp <= 0) by[k][2]++; by[k][3] += r.kills === r.total ? 1 : 0;
+  }
+  console.log(`${WITCH} witch encounters${process.env.WITCHFLEE === '1' ? ' (running from witches)' : ''}: ${died} died, ${(lost / WITCH).toFixed(1)} hp lost each, killed ${killed}/${total}, ${thrown} potions thrown, ${hitBy} splashed us (${(potHp / WITCH).toFixed(1)} hp each), ${(secs / WITCH).toFixed(0)} s each`);
+  for (const [k, [n, l, d, w]] of Object.entries(by)) console.log(`  ${k.padEnd(14)} ${n} runs, ${(l / n).toFixed(1)} hp lost, ${d} died, won ${w}`);
   process.exit(0);
 }
 

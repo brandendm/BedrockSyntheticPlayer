@@ -120,3 +120,10 @@ test('behind a kill slot: zombies at the gap are fought, even hurt; a baby or a 
   assert.equal(decide({ health: 5, damage: 4, isNight: true, mobs: [...zs, mob('spider', 3, { targetingMe: true })], slot: true }).mode, 'flee');
   assert.equal(decide({ health: 5, damage: 4, isNight: true, mobs: [mob('zombie', 2.2, { targetingMe: true, baby: true })], slot: true }).mode, 'flee');
 });
+
+test('a witch is fought, not run from: it follows and throws from 10 blocks', () => {
+  const w = mob('witch', 9, { targetingMe: true });
+  assert.equal(decide({ health: 20, damage: 5, isNight: true, mobs: [w] }).mode, 'fight');
+  // With a zombie too, where the race is close: still fight (running only gives it more throws).
+  assert.equal(decide({ health: 20, damage: 5, isNight: true, mobs: [w, mob('zombie', 7, { targetingMe: true })] }).mode, 'fight');
+});

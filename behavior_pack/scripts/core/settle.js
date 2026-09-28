@@ -39,6 +39,7 @@ export const isNight = (time) => time >= DUSK && time < DAWN;
  *   sheep: boolean                        sheep in sight or remembered nearby
  *   animals: number                       food animals in sight within ~16 blocks
  *   bedDeferred: boolean                  looked for sheep recently and found none
+ *   beds: boolean                         sleeping at night (and so a bed, and sheep for it); default on
  * }
  * returns { step, ... }
  */
@@ -60,7 +61,7 @@ export function settleStep(f) {
   // Night first.
   if (isNight(f.time)) {
     // Home unless it's a long walk in the dark (mobs all the way): then dig in where we are.
-    if (f.house && (f.house.dist ?? 0) <= FAR_FROM_HOME) return { step: 'go_home', sleep: true };
+    if (f.house && (f.house.dist ?? 0) <= FAR_FROM_HOME) return { step: 'go_home', sleep: f.beds !== false };
     if (f.house) return { step: 'shelter' };
     // Walls, roof and a door are enough for a night in: the rest of the fittings can wait for day.
     const need = houseShortfall(inv, null, { fittings: false });
@@ -80,7 +81,9 @@ export function settleStep(f) {
   }
 
   // Still need wool and a sheep's right here: that first (it won't wait; the furnace will).
-  const needWool = !has(inv, 'bed') && !f.house?.bed && wool(inv) < 3;
+  // (Beds off, `!bot beds off`: no sleeping, so no bed and no sheep hunted for one.)
+  const bedsOn = f.beds !== false;
+  const needWool = bedsOn && !has(inv, 'bed') && !f.house?.bed && wool(inv) < 3;
   const sheepNow = f.armed !== false && needWool && f.sheep && !f.bedDeferred;
   // A finished furnace waits for us (it keeps its output): collect when we're near it anyway,
   // or when we're out of food and it's cooking some. Not a walk home in the middle of a sheep
@@ -113,7 +116,7 @@ export function settleStep(f) {
   if (armed && f.animals > 0 && foodCount(inv) < FOOD_GOAL && !sheepNow) return { step: 'hunt', what: 'food' };
 
   // 2. Bed.
-  const haveBed = has(inv, 'bed') || !!f.house?.bed;
+  const haveBed = !bedsOn || has(inv, 'bed') || !!f.house?.bed;
   if (!haveBed) {
     if (wool(inv) >= 3) return craftStep(inv, ['bed'], f.tableDist);
     if (armed && f.sheep && !f.bedDeferred) return { step: 'hunt', what: 'sheep', need: 3 - wool(inv) };
@@ -148,7 +151,7 @@ export function settleStep(f) {
     if (has(inv, 'wooden_door')) return { step: 'furnish' };
     return craftStep(inv, ['wooden_door'], f.tableDist);
   }
-  if (!f.house.bed) {
+  if (!f.house.bed && bedsOn) {
     if (has(inv, 'bed') || f.house.bedMisplaced) return { step: 'furnish' };
     if (wool(inv) >= 3) return craftStep(inv, ['bed'], f.tableDist);
     if (armed && f.sheep && !f.bedDeferred) return { step: 'hunt', what: 'sheep', need: 3 - wool(inv) };
@@ -183,12 +186,14 @@ export function settleStep(f) {
   // Only with something to burn (else it loops failing, sets the furnace job aside and wanders).
   const rawId = Object.keys(RAW).filter((id) => (inv[id] ?? 0) >= 2).sort((a, b) => inv[b] - inv[a])[0];
   const keepSticks = Math.max(0, Math.ceil((TORCH_GOAL - torches) / 4));
-  if (!f.smelt && rawId && planFuel(inv, rawId, inv[rawId], { keepSticks })) return { step: 'smelt', input: 'food', n: Object.keys(RAW).reduce((a, id) => a + (inv[id] ?? 0), 0), fuelPlanks: 0 };
+  // (A furnace nearby, or one to put down: not an 80-block walk home to cook in the middle of the day.)
+  const furnaceHandy = has(inv, 'furnace') || (f.furnace?.dist ?? Infinity) <= 48;
+  if (!f.smelt && rawId && furnaceHandy && planFuel(inv, rawId, inv[rawId], { keepSticks })) return { step: 'smelt', input: 'food', n: Object.keys(RAW).reduce((a, id) => a + (inv[id] ?? 0), 0), fuelPlanks: 0 };
   // Not done while something's still missing: no sheep for the bed yet (go and find some:
   // grassland, see core/biomes.js), or the charcoal for the torches is still cooking.
   // Torches by the door first if we have them: seconds of work here, before a long sheep search.
   if (f.house.litOutside === false && torches > 0) return { step: 'light_outside' };
-  if (!f.house.bed && armed) return { step: 'explore', want: 'sheep' };
+  if (!f.house.bed && bedsOn && armed) return { step: 'explore', want: 'sheep' };
   if (f.house.lit === false) return f.smelt ? { step: 'wait_smelt' } : { step: 'gather_logs', count: count(inv, isLog) + 2, wanted: ['torch'] };
   // Torches either side of the door (fewer mobs spawning at the doorstep).
   if (f.house.litOutside === false) {

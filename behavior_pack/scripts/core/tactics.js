@@ -28,16 +28,21 @@ export function fightMove({ me, mob, melee, t, shield = false, canSwing = true, 
   const out = { goal: null, tolerance: 0, urgent: false, now: false, stop: false, swing: false, block: false };
   const inReach = d <= REACH_HIT;
   out.swing = inReach && canSwing;
+  // A witch: its potions are thrown from up to 10 away, every 3 s, and splash whatever we do (a
+  // shield doesn't help). Run in, weaving (it leads us only a tick), and stay on it: close up it
+  // mostly has time to drink (heal) between our hits if we give it room.
+  const witch = type === 'witch';
   if (d > STOP_AT) {
     out.goal = { x: mob.x, y: mob.y, z: mob.z };
     out.tolerance = HOLD_AT - 0.2;
-    out.urgent = d > 7;
+    out.urgent = d > 7 || witch;
     // A skeleton: don't run straight down the arrow line; weave a little while it's far off.
     if (kind === 'ranged' && d > 6) {
       const side = Math.sin(t / 10) * 2.5, nx = -(mob.z - me.z) / d, nz = (mob.x - me.x) / d;
       out.goal = { x: mob.x + nx * side, y: mob.y, z: mob.z + nz * side };
       out.tolerance = HOLD_AT + 0.5;
     }
+    if (witch && d > 6) out.tolerance = REACH_HIT - 0.6;
   } else if (melee && d < BACK_OFF) {
     out.goal = standOff(me, mob, HOLD_AT + 0.3);
     out.tolerance = 0.6;
@@ -45,13 +50,12 @@ export function fightMove({ me, mob, melee, t, shield = false, canSwing = true, 
   // Shield up between our own swings when something's about to hit us: a melee mob closing in, or
   // an archer at range while we can't hit back (arrows come in a line: facing it stops them). Down
   // for the swing itself (a raised shield in Bedrock lowers when you attack).
-  if (shield && !out.swing) {
+  if (shield && !out.swing && !witch) {
     if (melee && d < REACH_HIT + 0.5) out.block = true;
     // Walking in on an archer behind the shield: slow (a crouch), but its arrows stop at the shield
     // instead of costing half our hearts on the way.
     if (kind === 'ranged' && d > REACH_HIT) { out.block = true; out.urgent = false; }
   }
-  void type;
   return out;
 }
 
@@ -76,10 +80,15 @@ export const CREEPER_HOLD = 3.1; // where to stand with a sword: just outside it
  * Backing off is `away`: the distance from the creeper to get to; the caller finds the nearest spot
  * it can stand on that far away (a point on the straight line back is inside the rock on stairs).
  * st keeps state between calls; lit: it's hissing (seen standing still to swell, game/agent.js hissing()). Call it every tick.
+ * company: other hostile mobs about (then a cornered fight walls it off rather than one block).
  */
-export function creeperFight({ me, mob, t, st, shield = false, canSwing = true, canRetreat = true, lit = false, reach = REACH_HIT, minReach = 0, canWall = false, kbPoor = false }) {
+export function creeperFight({ me, mob, t, st, shield = false, canSwing = true, canRetreat = true, lit = false, reach = REACH_HIT, minReach = 0, canWall = false, kbPoor = false, walls = false, company = false }) {
   const d = dist(me, mob);
-  const out = { goal: null, away: 0, tolerance: 0, urgent: false, walk: true, now: false, stop: false, swing: false, block: false, wall: false };
+  // Other mobs about (a zombie coming down the same stairs): the wall, which keeps them all out; a
+  // single block against the blast lets the zombie through (tools/sim_combat.mjs --creepers: 14
+  // deaths in 800 with the block alone, 8 with the wall, all of them to zombies at the quarry).
+  if (company) walls = true;
+  const out = { goal: null, away: 0, tolerance: 0, urgent: false, walk: true, now: false, stop: false, swing: false, block: false, wall: false, guard: false };
   const inReach = d <= reach && d >= minReach;
   // Where to stand: just inside our reach. A sword's (3.2) barely clears its fuse (2.9); a spear's (4)
   // clears it by a block. (Knockback is 1.21 blocks, measured: it's back in 9 ticks, before a spear's
@@ -91,11 +100,20 @@ export function creeperFight({ me, mob, t, st, shield = false, canSwing = true, 
   st.hist.push({ t, d });
   if ((st.hist.length > 1 && st.hist[0].d - d > 0.25) || st.lastComing === undefined) st.lastComing = t;
   const closing = t - st.lastComing < 40;
+  // Cornered, no shield, and a hit won't send it anywhere: one block at our feet toward it, and
+  // fight on. A blast's damage is how much of us its rays reach from its feet (Minecraft's
+  // exposure): a block right in front of us stops most of them, and we still hit it over the top.
+  // (Walling it off, `walls`, kept it from going off but stopped the fight: the creeper stayed,
+  // the wall had to come down again, and one went into a hole in the house.)
+  if (!walls && canWall && !shield && (kbPoor || !canRetreat) && !st.guarded && d <= 6 && d > 1.2 && (closing || lit)) {
+    st.guarded = t;
+    out.guard = true;
+  }
   // Cornered, no shield, and a hit won't send it anywhere (steps or rock right behind it, or it
   // barely moved when we hit it): wall it off. Blocks across its way in (feet, head, and higher if
   // it's coming down at us) take away its path and its sight of us, and a creeper's fuse needs
   // sight. Early (a wall is a few blocks, 3 ticks each), and once.
-  if (canWall && !shield && (kbPoor || !canRetreat) && !st.walled && d <= 7 && d > 1.5 && (closing || lit)) {
+  if (walls && canWall && !shield && (kbPoor || !canRetreat) && !st.walled && d <= 7 && d > 1.5 && (closing || lit)) {
     st.walled = t;
     out.wall = true; out.stop = true;
     return out;
@@ -181,6 +199,34 @@ export function blockOffCells(me, mob, at) {
     }
   }
   return out;
+}
+
+/**
+ * The one block against a creeper's blast (creeperFight's `guard`): at our feet, in the column next
+ * to us most straight toward it (then the diagonals either side), open and not where it stands.
+ * at(x, y, z) -> 'open' | 'solid' | 'other'. Returns { x, y, z } or null.
+ */
+export function guardCell(me, mob, at) {
+  return blockOffCells(me, mob, at).find((c) => c.y === Math.floor(me.y)) ?? null;
+}
+
+/**
+ * Minecraft's explosion damage to a body standing at `feet` (0.6 wide, 1.8 tall) from a blast at
+ * `origin` with `power` (a creeper: 3): (i^2 + i) / 2 * 7 * 2 * power + 1, i = (1 - dist / (2 *
+ * power)) x exposure, exposure the share of rays from the blast to points over the body that get
+ * there. clear(a, b): nothing solid between. The arena's blast (tools/sim_combat.mjs).
+ */
+export function blastDamage(origin, feet, clear, power = 3) {
+  const dist = Math.hypot(feet.x - origin.x, feet.y - origin.y, feet.z - origin.z);
+  if (dist >= 2 * power) return 0;
+  let seen = 0, n = 0;
+  for (let a = 0; a <= 1; a += 0.25) for (let b = 0; b <= 1; b += 1 / 7) for (let c = 0; c <= 1; c += 0.25) {
+    const p = { x: feet.x - 0.3 + 0.6 * a, y: feet.y + 1.8 * b, z: feet.z - 0.3 + 0.6 * c };
+    n++;
+    if (clear(origin, p)) seen++;
+  }
+  const i = (1 - dist / (2 * power)) * (seen / n);
+  return i <= 0 ? 0 : ((i * i + i) / 2) * 7 * 2 * power + 1;
 }
 
 /**
@@ -402,13 +448,14 @@ export function killSlotWorth({ threats, health }) {
  * (2+ ticks: from standing, a player covers ~0.25 in 2 ticks and ~0.6 in 4), the way to step:
  * sideways to its flight, off its line (the side it would miss on), onto open ground. A skeleton
  * aims where we are when it looses, so a step aside is a miss.
- * arrows: [{ id?, pos, vel }] (blocks, blocks a tick); me: our feet. at(x, y, z) -> 'open' |
+ * arrows: [{ id?, pos, vel, grow? }] (blocks, blocks a tick; grow: how near counts as a hit,
+ * 0.25 for an arrow, more for a witch's splash potion); me: our feet. at(x, y, z) -> 'open' |
  * 'solid' | 'other'. Returns { dir: {x, z}, eta, id } (eta: ticks until it would hit) or null.
  */
 export function dodgeArrow({ me, arrows, at }) {
   let best = null;
   for (const a of arrows) {
-    const hit = arrowHits(me, a.pos, a.vel);
+    const hit = arrowHits(me, a.pos, a.vel, a.grow ?? 0.25); // (a splash potion: grow ~1, it splashes round where it lands)
     if (!hit || hit.k < 2) continue; // not coming at us, or too late to move
     if (!best || hit.k < best.hit.k) best = { a, hit };
   }
@@ -434,8 +481,8 @@ export function dodgeArrow({ me, arrows, at }) {
  * Where an arrow meets our box (0.6 wide, 1.8 tall, feet at me; grown by the arrow's own 0.25), if
  * it does in the next 30 ticks: { k (ticks), at (the arrow then) } or null.
  */
-export function arrowHits(me, pos, vel) {
-  const p = { ...pos }, v = { ...vel }, r = 0.3 + 0.25;
+export function arrowHits(me, pos, vel, grow = 0.25) {
+  const p = { ...pos }, v = { ...vel }, r = 0.3 + grow;
   for (let k = 1; k <= 30; k++) {
     // In small steps: at 1.6 a tick it would jump right over a 0.6-wide box.
     for (let i = 1; i <= 4; i++) {

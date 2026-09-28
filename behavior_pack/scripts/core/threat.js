@@ -37,7 +37,7 @@ export const MOBS = {
   magma_cube: { hp: 8, dps: 3, kind: 'melee' },
   phantom: { hp: 20, dps: 2, kind: 'melee' },
   creeper: { hp: 20, dps: 20, kind: 'explode' },
-  witch: { hp: 26, dps: 3, kind: 'ranged', never: true },
+  witch: { hp: 26, dps: 1.5, kind: 'ranged', potions: true }, // fought: rushed and hit (core/tactics.js fightMove), its potions dodged (a splash mostly lands wide: ~1.2 a second in the arena, and running only gives it more throws)
   pillager: { hp: 24, dps: 3, kind: 'ranged' },
   vindicator: { hp: 24, dps: 10, kind: 'melee', never: true },
   evoker: { hp: 24, dps: 6, kind: 'ranged', never: true },
@@ -164,7 +164,11 @@ export function decide({ health, damage = FIST_DAMAGE, isNight = false, prevMode
   // Already trading blows with something right on us: turning our back is free hits for it (a
   // zombie keeps up for the first seconds, and in a tunnel for ever). Run only if clearly losing.
   const toeToToe = prevMode === 'fight' && engaged.some((m) => MOBS[m.type].kind === 'melee' && m.dist <= 3);
-  const margin = toeToToe ? COMMITTED_MARGIN : prevMode === 'fight' ? KEEP_FIGHTING_MARGIN : FIGHT_MARGIN;
+  // A witch in range: running gives it more throws (it follows, and throws from 10 blocks), so it's
+  // fought unless we'd clearly lose (tools/sim_combat.mjs --witch: running from one was the
+  // deadliest thing to do with it).
+  const outranged = engaged.some((m) => MOBS[m.type].potions && m.dist <= 16);
+  const margin = Math.max(toeToToe ? COMMITTED_MARGIN : prevMode === 'fight' ? KEEP_FIGHTING_MARGIN : FIGHT_MARGIN, outranged ? 1 : 0);
   const why = `kill ${ttk.toFixed(1)}s vs die ${ttd.toFixed(1)}s`;
 
   // In water we swing slowly, can't dodge and drowned out-swim us: get to land first.

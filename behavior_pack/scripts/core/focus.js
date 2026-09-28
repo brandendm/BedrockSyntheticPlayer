@@ -41,7 +41,7 @@ export function needs(f) {
   // House: the site's exact count when we've started one (already net of what we carry).
   const houseStone = built ? 0 : f.project && f.shortfall ? f.shortfall.stone + cobble : HOUSE.stone + 4;
   const housePlanks = built ? 0 : f.project && f.shortfall ? f.shortfall.planks + planks : HOUSE.planks;
-  const bed = has(inv, 'bed') || !!f.house?.bed;
+  const bed = f.beds === false || has(inv, 'bed') || !!f.house?.bed; // (beds off: no wool wanted)
   const torches = inv.torch ?? 0;
   // The fittings (door, bed, table, chest) not made yet, and once moved in, the kit for the farm
   // and the mine (hoe, spare pickaxes, iron tool handles, shield): all wood, one trip.
