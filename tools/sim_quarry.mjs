@@ -108,6 +108,82 @@ function newTrip(w, a, b) {
   return { ok: i === b, how: i === b ? (hops ? `through the damage in ${hops} hop${hops > 1 ? 's' : ''}` : 'walked') : 'gave up', hops, placed, rebuilt };
 }
 
+// ---------- --leave: getting out the way the game does, with the blocks it will spend ----------
+// skills.leaveQuarry: back to the foot of the stairs, walkShaft up; broken: pastDamage (6 steps a
+// hop; each hop goNear: a walk search, then within 24 one dig-and-build search whose block budget is
+// skills.blockCount(): what it carries less the reserve: 27 cobblestone for the house until the
+// house is up); the treads it passed put back (one block each, from the same budget). Failing
+// that: skills.actionEscape (a dig-and-build search to anywhere on the surface: a new hole), then a
+// staircase of its own (always works with a pickaxe, the least graceful).
+// Short of blocks for a hop, it digs a few out of the quarry's wall first (it's stone; the house's
+// cobblestone stays held back). LEAVE=old: without that (what the game did before).
+if (process.argv.includes('--leave')) {
+  const GATHER = !['old', 'noreserve'].includes(process.env.LEAVE ?? '');
+  // LEAVE=noreserve: nothing held back for the house while down the quarry (stone all round).
+  const NORESERVE = process.env.LEAVE === 'noreserve';
+  const rngL = makeRng(777);
+  const stats = { stairs: 0, escape: 0, dug: 0, fixed: 0, spent: 0, reserveOk: 0, gathered: 0, secs: 0 };
+  const byCarry = {};
+  for (let n = 0; n < N; n++) {
+    const r = makeRng(rngL.int(1, 1e9));
+    const w = quarryWorld();
+    const booms = 1 + (r() < 0.4 ? 1 : 0) + (r() < 0.15 ? 1 : 0);
+    for (let b = 0; b < booms; b++) {
+      const st = stand(r.int(1, STEPS - 1));
+      blast(w, { x: st.x + r.range(-1, 1), y: st.y + r.range(0, 1.5), z: r.range(-1, 1) }, r() < 0.3 ? r.range(2.0, 3.5) : r.range(R0, R1), r);
+    }
+    const carry = [6, 15, 30, 45, 64][r.int(0, 4)];
+    const houseYet = r() < 0.5;
+    const reserve = houseYet && !NORESERVE ? 27 : 0; // no house yet: its cobblestone is kept back
+    let cobble = carry, secs = 0, gathered = 0;
+    const spendable = () => Math.max(0, cobble - reserve);
+    const walkS = (path) => path.length / 4.3;
+    let i = STEPS, how = null;
+    // Walk the stairs up; stuck: past the damage a hop at a time.
+    i = walkSteps(w, STEPS, 0); secs += (STEPS - i) / 4.3;
+    for (let hop = 0; hop < 16 && i !== 0 && !how; hop++) {
+      const j = Math.max(0, i - 6);
+      const from = stand(i), to = stand(j);
+      const walk = findPath(w.classify, from, to, { tolerance: 0.8, maxNodes: 8000 });
+      let path = walk.complete ? walk.path : null;
+      if (!path) {
+        if (GATHER && spendable() < 8) { const k = reserve + 8 - cobble; cobble += k; gathered += k; secs += k * 0.85; } // (to 8 over what's held back)
+        const act = findPath(w.classify, from, to, { tolerance: 0.8, maxNodes: 6000, actions: ACTIONS(spendable()) });
+        if (act.complete) path = act.path;
+      }
+      if (!path) { how = 'stuck'; break; }
+      const breaks = path.reduce((a, p) => a + (p.move?.breaks?.length ?? 0), 0), places = path.filter((p) => p.move?.place).length;
+      apply(w, path); cobble += breaks - places; secs += walkS(path) + breaks * 0.85 + places * 0.8;
+      // repairShaft: the treads passed, one block each while there are blocks to spend.
+      for (let s2 = j; s2 <= i; s2++) {
+        const t = stand(s2);
+        if (w.classify(t.x, t.y - 1, t.z) !== Cell.SOLID && spendable() > 0) { w.set(t.x, t.y - 1, t.z, Cell.SOLID); cobble--; stats.fixed++; secs += 0.8; }
+      }
+      i = walkSteps(w, j, 0); secs += (j - i) / 4.3;
+    }
+    if (i === 0) { stats.stairs++; how = 'stairs'; }
+    else {
+      // actionEscape: anywhere on the surface, digging and building (15000 nodes).
+      const from = stand(i);
+      const esc = findPath(w.classify, from, from, { maxNodes: 15000, actions: ACTIONS(spendable()), goalTest: (x, y, z) => y >= TOP && standable(w, { x, y, z }) });
+      if (esc.complete) { stats.escape++; how = 'escape'; secs += walkS(esc.path) + esc.path.reduce((a, p) => a + (p.move?.breaks?.length ?? 0), 0) * 0.85; }
+      else { stats.dug++; how = 'new staircase'; secs += (TOP - from.y) * 3 * 0.85; }
+    }
+    stats.spent += carry - cobble; stats.gathered += gathered; stats.secs += secs;
+    if (houseYet && cobble < Math.min(carry, 27)) stats.reserveOk++; // (counts house cobblestone spent)
+    const k = `${carry} cobblestone, ${houseYet ? 'no house yet (27 kept back)' : 'house built'}`;
+    const o = (byCarry[k] ??= { n: 0, stairs: 0, escape: 0, dug: 0 });
+    o.n++; o[how === 'stairs' ? 'stairs' : how === 'escape' ? 'escape' : 'dug']++;
+    if (VERBOSE && how !== 'stairs') console.log(`#${n}: ${k}, ${booms} blast(s): ${how} (stuck at step ${i})`);
+  }
+  const pc = (x) => `${(100 * x / N).toFixed(0)}%`;
+  console.log(`${N} damaged quarries, leaving from the bottom${GATHER ? ' (short of blocks: dig some out of the wall first)' : NORESERVE ? ' (nothing held back for the house down here)' : ''}:`);
+  console.log(`  up its own stairs ${pc(stats.stairs)}, a new way dug to the surface ${pc(stats.escape)}, a staircase of its own ${pc(stats.dug)}`);
+  console.log(`  treads put back ${(stats.fixed / N).toFixed(1)} a quarry, blocks spent ${(stats.spent / N).toFixed(1)}${GATHER ? `, dug out of the wall ${(stats.gathered / N).toFixed(1)}` : ''}, about ${(stats.secs / N).toFixed(0)} s, house's cobblestone used up getting out ${pc(stats.reserveOk)}`);
+  for (const [k, o] of Object.entries(byCarry).sort()) console.log(`  ${k.padEnd(44)} ${String(o.n).padStart(3)}: stairs ${String(o.stairs).padStart(3)}, new way ${String(o.escape).padStart(2)}, own staircase ${o.dug}`);
+  process.exit(0);
+}
+
 const rng = makeRng(20260927);
 const stats = { old: { down: 0, up: 0 }, new: { down: 0, up: 0 }, again: 0 };
 const bad = [];

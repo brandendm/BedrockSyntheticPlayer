@@ -1789,6 +1789,10 @@ export class Skills {
       const dir = to > i ? 1 : -1;
       const j = dir > 0 ? Math.min(to, i + 6) : Math.max(to, i - 6);
       const t = this.shaftStand(q, j);
+      // Short of blocks to build across the gap and put the treads back (the house's cobblestone is
+      // held back): dig a few out of the quarry's wall first; it's stone. (tools/sim_quarry.mjs
+      // --leave: up its own stairs 97% of the time without this, 100% with it, ~5 s more.)
+      if (this.blockCount() < 8 && toolFor('stone', invCounts(this.sim))) await this.gatherBlocks(gen, 8, false);
       if (!(await this.goNear(gen, { x: t.x + 0.5, y: t.y, z: t.z + 0.5 }, 0.8, 2))) {
         this.log(`quarry: couldn't get past the damage from step ${i} to ${j}`);
         return false;

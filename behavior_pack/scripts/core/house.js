@@ -110,3 +110,17 @@ export function inside(house, p) {
   const lx = dx * r.x + dz * r.z, lz = dx * f.x + dz * f.z;
   return Math.abs(lx) <= 2 && Math.abs(lz) <= 2 && Math.floor(p.y) >= house.y - 1 && Math.floor(p.y) <= house.y + 3;
 }
+
+// What the site gets cleared of before the walls go up (homestead.buildHouse): plants and air,
+// natural ground, trees.
+const CLEARED = /^(air|short_grass|tall_grass|fern|large_fern|dead_bush|deadbush|snow_layer|vine|.*_flower|dandelion|poppy|.*_tulip|azure_bluet|allium|blue_orchid|oxeye_daisy|cornflower|lily_of_the_valley|sweet_berry_bush|bush|leaf_litter|wildflowers|pink_petals|short_dry_grass|tall_dry_grass|dirt|grass_block|coarse_dirt|podzol|sand|red_sand|gravel|snow|stone|andesite|diorite|granite|tuff|clay|mud|.*_leaves|.*_log|.*_stem|.*_wood)$/;
+
+/**
+ * Does a wall or roof block still have to go in here (id: what's there now)? Anything the clearing
+ * takes out first does: a trunk or low leaves where the roof goes, a lump of dirt in a wall's
+ * place. (Counting those as built came up short in a forest: 1 in 4 houses there ran out halfway.)
+ * Our own cobblestone and planks don't.
+ */
+export function houseMissing(id) {
+  return CLEARED.test(String(id ?? 'air').replace(/^minecraft:/, ''));
+}

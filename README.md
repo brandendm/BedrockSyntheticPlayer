@@ -161,11 +161,18 @@ A creeper with another creeper or a zombie close by is run from. It notices them
 
 **When a creeper blows up the quarry:** the stairs are the way in and out, but they're walked as a recorded list of steps. When that walk got stuck (a crater), one path search went for the far end, 40 steps off, and it could only dig or build its way across if that end was within 24 blocks. Three failed trips down and the quarry was abandoned. Now it gets past the damage a few steps at a time (each hop close enough to dig, pillar or bridge across), and puts the missing treads back as it passes, so the next trip is a plain walk. `node tools/sim_quarry.mjs` blasts creeper craters into a 48-step quarry: before, the bot got back up 25% of the time; now 100%, down and up, with the stairs whole again after.
 
+**Leaving a damaged quarry with few blocks:** building across a crater only uses blocks it can spare. Until the house is up, its 27 cobblestone are held back. With 6 cobblestone and no house yet, it had nothing to build with, and 1 time in 7 it dug a new way out instead of using its own stairs. Now, when it has fewer than 8 blocks to spare at the damage, it digs a few out of the quarry wall first (it's stone). `node tools/sim_quarry.mjs 300 --leave` follows the game's escape chain with its real block limits: up its own stairs 100% of the time (97% before, `LEAVE=old`), about 22 s, the house's cobblestone untouched. Using the house's cobblestone instead (`LEAVE=noreserve`) gets 99%, but spends it in 29% of runs.
+
 **Exploring without getting stuck** (`core/explore.js`): water it had to swim out of only keeps it from exploring that way if it's within 48 blocks and from the last 5 minutes. Before, every swim counted for ever, from anywhere; a few swims in different directions ruled out every way there was, and it stood in one spot saying it was looking further out. If water rules out everything, it goes across rather than nowhere. A trek toward a better biome that goes nowhere falls back to looking round locally. Three looks in a row that end where they began, and it treks 48 blocks a new way. Six, and it stops looking for that thing for 10 minutes and says so (for sheep, the bed waits) and gets on with everything else.
 
 **Picking up where it left off:** what it's in the middle of is kept in the world file and written immediately for the house: the current step, the furnace it loaded (and how long is left), where its gear dropped when it died, and the house site. After a restart, a `/reload` or a death it says "Picking up where I left off" and carries on. The house's progress is read from the blocks actually placed, so it continues the same house on the same spot (`!bot test resume` checks exactly this). The dashboard shows the house's progress and what it still needs.
 
 **The house is a project:** once it picks a site, the site is saved in the world. It gets every block it needs before placing the first one, never mines stone within 14 blocks of the site, finishes the house before chasing sheep or torches, and never starts a second one.
+
+**Counting a house in the woods:** a wall or roof spot with a tree trunk, low leaves or a lump of dirt in it was counted as already built, both for what to fetch and for how many logs to turn into planks. The clearing then takes those out, so it came up short partway. `node tools/sim_house.mjs` plays the game's site choice and build on plains, ordinary forest, dense dark-oak forest and a jungle edge:
+- **Before:** 74–90% of houses in the three wooded kinds ran short partway (8–12 blocks each), and more than half then needed a second wood trip for the door, bed, table and chest.
+- **Now** (`core/house.js` `houseMissing`): none run short, and none need that second trip.
+- **Dense forest** is the slow one: about 27 s of clearing and 6 logs cut per site. With a short afternoon left, 6 in 100 can't be cleared and built before dusk wherever it looks.
 
 **Leaves:** it never walks on top of or through tree canopies; it goes around them.
 
@@ -276,6 +283,8 @@ node tools/sim_combat.mjs --archers 300  # 1-2 skeletons on flat ground, in a fo
 node tools/sim_combat.mjs --weapons 150  # the same fights with each loadout: swords, an axe, sword + spear, bow + sword
 node tools/sim_combat.mjs --ambush 500   # creepers catching the bot in its quarry and mine (down the stairs behind it, dropped in, in the dark tunnel, from a side branch, on the stairs)
 node tools/sim_quarry.mjs 300    # creeper craters in the quarry stairs: can it still get down and back up?
+node tools/sim_quarry.mjs 300 --leave  # getting out of a damaged quarry the game's way, with the blocks it may spend (LEAVE=old: before)
+node tools/sim_house.mjs 400     # the house on plains, forest, dense dark-oak forest, jungle edge: site, clearing, does it run short? (FIXCOUNT=0: the old count)
 node tools/stress_path.mjs 200   # walk dense forest on rough ground, jungle, ravines, cave mazes, hills and stairs, low tunnels, shafts, lake shores
 python -m unittest discover -s brain/tests -t .   # brain (21 tests)
 npm install; npm run typecheck # checks pack code against the real Script API typings

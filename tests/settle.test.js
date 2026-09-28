@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { settleStep, houseShortfall, isNight } from '../behavior_pack/scripts/core/settle.js';
-import { blueprint, materials, furnishings, frame, inside } from '../behavior_pack/scripts/core/house.js';
+import { blueprint, materials, furnishings, frame, inside, houseMissing } from '../behavior_pack/scripts/core/house.js';
 import { planCrafts, applyCraft } from '../behavior_pack/scripts/core/recipes.js';
 
 const base = { tableDist: 0, time: 1000, furnace: null, smelt: null, house: null, sheep: false, animals: 0, bedDeferred: false };
@@ -159,4 +159,9 @@ test('night a long way from home: dig in there, not a walk home in the dark', ()
   const house = { door: true, bed: true, table: true, furnace: true, lit: true };
   assert.equal(settleStep({ ...base, time: 14000, house: { ...house, dist: 40 }, inv: {} }).step, 'go_home');
   assert.equal(settleStep({ ...base, time: 14000, house: { ...house, dist: 300 }, inv: {} }).step, 'shelter');
+});
+
+test('house count: a trunk, low leaves or a lump of dirt where a wall goes is still to build; our blocks are not', () => {
+  for (const id of ['air', 'short_grass', 'dark_oak_log', 'oak_leaves', 'minecraft:jungle_leaves', 'dirt', 'grass_block', 'stone', 'andesite']) assert.equal(houseMissing(id), true, id);
+  for (const id of ['cobblestone', 'oak_planks', 'minecraft:spruce_planks', 'cobbled_deepslate', 'glass', 'oak_door']) assert.equal(houseMissing(id), false, id);
 });

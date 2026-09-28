@@ -6,7 +6,7 @@ import { standOff } from '../core/threat.js';
 import { isLog, isPlanks, TOOL_STONE, count } from '../core/recipes.js';
 import { FOODS, RAW, isNight, TORCH_GOAL, fittingsPlanks } from '../core/settle.js';
 import { planFuel, burnsFor, charcoalInput } from '../core/fuel.js';
-import { blueprint, clearance, footing, furnishings, inside } from '../core/house.js';
+import { blueprint, clearance, footing, furnishings, inside, houseMissing } from '../core/house.js';
 import { cheapestPlaceable, plankReserve } from '../core/costs.js';
 import { siteWork, siteScore } from '../core/site.js';
 import { depositPlan, takePlan } from '../core/storage.js';
@@ -575,7 +575,7 @@ export class Homestead {
     const p = this.project;
     if (!p) return null;
     let placed = 0, total = 0;
-    for (const b of blueprint(p, p.dir)) { total++; if (!SOFT.test(this.S.blockAt(b) ?? 'air')) placed++; }
+    for (const b of blueprint(p, p.dir)) { total++; if (!houseMissing(this.S.blockAt(b) ?? 'air')) placed++; } // (a trunk there isn't a wall)
     return { placed, total };
   }
 
@@ -595,7 +595,10 @@ export class Homestead {
     if (this.S.blockAt(site) === null) return this[cacheKey] ?? { stone: 0, planks: 0 };
     let stone = 0, planks = 0;
     const missing = (p) => { const id = this.S.blockAt(p); return id !== null && SOFT.test(id); }; // unloaded: unknown
-    for (const b of blueprint(site, dir)) if (missing(b)) b.material === 'stone' ? stone++ : planks++;
+    // A wall or roof block's place with a trunk, low leaves or a lump of dirt in it is cleared
+    // first: still to build (counted as built, a house in the woods ran out halfway: tools/sim_house.mjs).
+    const toBuild = (p) => { const id = this.S.blockAt(p); return id !== null && houseMissing(id); };
+    for (const b of blueprint(site, dir)) if (toBuild(b)) b.material === 'stone' ? stone++ : planks++;
     // Filler under the floor: the hole, and the one under it if it's two deep (both get filled).
     for (const p of footing(site, dir)) if (missing(p)) { stone++; if (missing({ ...p, y: p.y - 1 })) stone++; }
     const inv = invCounts(this.sim);
@@ -615,7 +618,7 @@ export class Homestead {
   /** Craft enough planks (from logs) for what's left of the house's plank blocks. */
   async plankUp(gen, site, dir) {
     let planksLeft = 0;
-    for (const b of blueprint(site, dir)) if (b.material === 'planks' && SOFT.test(this.S.blockAt(b) ?? 'air')) planksLeft++;
+    for (const b of blueprint(site, dir)) if (b.material === 'planks' && houseMissing(this.S.blockAt(b) ?? 'air')) planksLeft++; // (leaves where the roof goes too)
     for (let i = 0; i < 20; i++) {
       const inv = invCounts(this.sim);
       if (count(inv, isPlanks) >= planksLeft || count(inv, isLog) === 0) break;
