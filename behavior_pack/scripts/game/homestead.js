@@ -53,6 +53,38 @@ export class Homestead {
   jobAt(pos) { return this.jobs.find((j) => dist3D(j.pos, pos) < 0.5) ?? null; }
   setJob(job) { this.jobs = this.jobs.filter((j) => dist3D(j.pos, job.pos) >= 0.5).concat([job]); }
   dropJob(pos) { this.jobs = this.jobs.filter((j) => dist3D(j.pos, pos) >= 0.5); }
+  /** A batch still cooking in the furnace at pos. */
+  busy(pos) { const j = this.jobAt(pos); return !!j && system.currentTick < j.readyAt; }
+  /**
+   * The job the plan goes by from here: one that's done within 24 (go and empty it), else the one at
+   * the furnace we'd use here (the camp's down the mine; up top the one furnaceFor picks), else the
+   * nearest. (Only ever the nearest, it once walked down the mine to wait on the ore while the house
+   * furnace stood free for charcoal: tools/sim_furnace.mjs.)
+   */
+  planJob(p = this.sim.location) {
+    const now = system.currentTick;
+    const ready = this.jobs.filter((j) => now >= j.readyAt && dist3D(p, j.pos) <= 24).sort((a, b) => dist3D(p, a.pos) - dist3D(p, b.pos))[0];
+    if (ready) return ready;
+    const S = this.S;
+    const camp = S.campFurnace?.();
+    let here = null;
+    let ff = null;
+    try { ff = camp && S.isUnderground() && S.nearQuarry(p, 48) ? { pos: camp } : this.furnaceFor(null, p); } catch { ff = null; }
+    if (ff) return ff.pos ? this.jobAt(ff.pos) : null; // (the one in the pack: nothing cooking in it)
+    return this.jobNear(p);
+  }
+  /**
+   * The furnace to use from here for `input` (not the mine camp's: ensureFurnace sends ore there
+   * itself): the nearest we remember with nothing cooking, else the nearest. A furnace in the pack
+   * counts as a free one (it goes down beside us): { pack: true }. { pos, busy, dist } or null.
+   */
+  furnaceFor(input = null, p = this.sim.location) {
+    const known = this.a.memory.list('furnace', this.dim.id, p).filter((e) => !this.isCamp(e.pos));
+    const free = known.find((e) => !this.busy(e.pos) && e.dist < 128);
+    if (!free && known.length && (invCounts(this.sim).furnace ?? 0) > 0) return { pos: null, pack: true, busy: false, dist: 0 }; // (all busy: the pack's)
+    const pick = free ?? known[0];
+    return pick ? { pos: pick.pos, busy: this.busy(pick.pos), dist: pick.dist } : null;
+  }
   /** Raw iron in all the furnaces (ours already, for counting what's still to mine). */
   oreCooking() { return this.jobs.filter((j) => j.kind === 'ore').reduce((a, j) => a + (j.n ?? 0), 0); }
   /** Our mine camp's furnace or table (never carried off to the house or packed up to go exploring). */
@@ -292,10 +324,11 @@ export class Homestead {
     if (input === 'ore' && camp && S.isUnderground() && S.nearQuarry(this.sim.location, 48)) {
       if (await S.reach(gen, camp) && this.furnaceAt(camp)) return camp;
     }
-    const known = this.a.memory.list('furnace', this.dim.id, this.sim.location).filter((e) => !this.isCamp(e.pos))[0];
     // Our furnace, even a walk away: the plan counts it as ours (settle.js), so go to it rather than
-    // failing here over and over. Only a furnace in the pack (none known nearby) gets put down.
-    if (known && (known.dist < 128 || !invCounts(this.sim).furnace)) {
+    // failing here over and over. One with nothing cooking first; if they're all busy and there's a
+    // furnace in the pack, that one goes down (it used to try the busy one over and over).
+    const known = this.furnaceFor(input);
+    if (known?.pos && (known.dist < 128 || !invCounts(this.sim).furnace)) {
       await S.reach(gen, known.pos);
       if (this.furnaceAt(known.pos)) return known.pos;
       this.a.memory.forgetNear('furnace', this.dim.id, known.pos, 0.5);
@@ -382,8 +415,18 @@ export class Homestead {
     await this.a.motor.lookAt(center(job.pos), 10, 30);
     this.S.check(gen);
     const got = await this.emptyFurnace(job.pos);
-    const left = this.container(job.pos)?.getItem(0)?.amount ?? 0;
-    if (left) this.setJob({ ...job, readyAt: system.currentTick + left * 200 + 20 });
+    const c = this.container(job.pos);
+    const left = c?.getItem(0)?.amount ?? 0;
+    // Still some in, no fuel and not burning (someone took the fuel, planks we made fell out of a
+    // full pack): it will never finish. Take the rest back rather than wait on it for ever.
+    const dead = left > 0 && !c?.getItem(1) && this.S.blockAt(job.pos) !== 'lit_furnace';
+    if (dead) {
+      const it = c.getItem(0);
+      give(this.sim, strip(it.typeId), it.amount);
+      c.setItem(0, undefined);
+      this.dropJob(job.pos);
+      this.a.say(`The furnace ran out of fuel with ${left} still in it; took them back.`);
+    } else if (left) this.setJob({ ...job, readyAt: system.currentTick + left * 200 + 20 });
     else this.dropJob(job.pos);
     this.a.saveState();
     if (got) this.a.say(`Took ${got} out of the furnace.`);
@@ -391,7 +434,7 @@ export class Homestead {
 
   /** Stand by the furnace until the job's done (only when there's nothing else to do). */
   async waitSmelt(gen) {
-    const job = this.smeltJob;
+    const job = this.planJob() ?? this.smeltJob;
     if (!job) return;
     await this.S.reach(gen, job.pos);
     while (system.currentTick < job.readyAt) await this.S.wait(gen, 20);

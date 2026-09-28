@@ -1320,7 +1320,7 @@ export class Agent {
   /** What core/advance.js decides from. */
   advanceFacts(inv, tableDist) {
     const H = this.homestead;
-    const job = H.smeltJob;
+    const job = H.planJob(); // (the one that matters from here, not just the nearest)
     const f = this.memory.list('furnace', this.dim.id, this.sim.location).filter((e) => !H.isCamp(e.pos))[0];
     const S = this.skills;
     return {
@@ -1347,7 +1347,7 @@ export class Agent {
     return {
       inv, tableDist, time: world.getTimeOfDay(),
       furnace: f ? { dist: f.dist, inHouse: !!house && houseInside(house, f.pos) } : null,
-      smelt: H.smeltJob ? { ready: system.currentTick >= H.smeltJob.readyAt, kind: H.smeltJob.kind, dist: dist3D(pos, H.smeltJob.pos) } : null,
+      smelt: (() => { const j = H.planJob(); return j ? { ready: system.currentTick >= j.readyAt, kind: j.kind, dist: dist3D(pos, j.pos) } : null; })(),
       house: house ? { dist: dist3D(pos, house), ...H.houseState() } : null,
       repairShort: house ? H.houseNeeds(house, house.dir) : null,
       sheep: sheepSeen || sheepKnown,
