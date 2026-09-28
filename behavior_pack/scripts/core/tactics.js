@@ -395,3 +395,121 @@ export function killSlotWorth({ threats, health }) {
   if (Math.min(...near.map((m) => m.dist)) < 3.5) return false;
   return near.length >= 2 || health <= 12;
 }
+
+/**
+ * An arrow on its way to us: its flight run forward (Minecraft's arrow: drag 0.99 a tick, gravity
+ * 0.05) to see whether it goes through our box. If it will, and there's time to get out of its way
+ * (2+ ticks: from standing, a player covers ~0.25 in 2 ticks and ~0.6 in 4), the way to step:
+ * sideways to its flight, off its line (the side it would miss on), onto open ground. A skeleton
+ * aims where we are when it looses, so a step aside is a miss.
+ * arrows: [{ id?, pos, vel }] (blocks, blocks a tick); me: our feet. at(x, y, z) -> 'open' |
+ * 'solid' | 'other'. Returns { dir: {x, z}, eta, id } (eta: ticks until it would hit) or null.
+ */
+export function dodgeArrow({ me, arrows, at }) {
+  let best = null;
+  for (const a of arrows) {
+    const hit = arrowHits(me, a.pos, a.vel);
+    if (!hit || hit.k < 2) continue; // not coming at us, or too late to move
+    if (!best || hit.k < best.hit.k) best = { a, hit };
+  }
+  if (!best) return null;
+  const { a, hit } = best;
+  const vh = Math.hypot(a.vel.x, a.vel.z);
+  if (vh < 0.05) return null; // dropping straight down on us: nowhere sideways helps
+  const p = { x: -a.vel.z / vh, z: a.vel.x / vh };
+  // The side it would miss on: where we already are off its line.
+  const off = (me.x - hit.at.x) * p.x + (me.z - hit.at.z) * p.z;
+  const sides = off >= 0 ? [1, -1] : [-1, 1];
+  const fy = Math.floor(me.y);
+  const standable = (x, z) => at(x, fy, z) === 'open' && at(x, fy + 1, z) === 'open' && at(x, fy - 1, z) !== 'open';
+  for (const s of sides) {
+    const x = Math.floor(me.x + p.x * s * 0.9), z = Math.floor(me.z + p.z * s * 0.9);
+    if ((x !== Math.floor(me.x) || z !== Math.floor(me.z)) && !standable(x, z)) continue;
+    return { dir: { x: p.x * s, z: p.z * s }, eta: hit.k, id: a.id };
+  }
+  return null; // walls both sides (a 1-wide tunnel): the shield, or cover
+}
+
+/**
+ * Where an arrow meets our box (0.6 wide, 1.8 tall, feet at me; grown by the arrow's own 0.25), if
+ * it does in the next 30 ticks: { k (ticks), at (the arrow then) } or null.
+ */
+export function arrowHits(me, pos, vel) {
+  const p = { ...pos }, v = { ...vel }, r = 0.3 + 0.25;
+  for (let k = 1; k <= 30; k++) {
+    // In small steps: at 1.6 a tick it would jump right over a 0.6-wide box.
+    for (let i = 1; i <= 4; i++) {
+      const x = p.x + v.x * i / 4, y = p.y + v.y * i / 4, z = p.z + v.z * i / 4;
+      if (Math.abs(x - me.x) <= r && Math.abs(z - me.z) <= r && y >= me.y - 0.25 && y <= me.y + 1.8 + 0.25) return { k, at: { x, y, z } };
+    }
+    p.x += v.x; p.y += v.y; p.z += v.z;
+    v.x *= 0.99; v.y = v.y * 0.99 - 0.05; v.z *= 0.99;
+    if (p.y < me.y - 8) return null;
+  }
+  return null;
+}
+
+// ---------- the bow ----------
+// Minecraft's bow: an arrow leaves at 3 blocks a tick at full draw (20 ticks), less before
+// (power (f^2 + 2f) / 3 of it, f = ticks / 20); the same drag (0.99) and gravity (0.05) as any
+// arrow. Damage: the speed at impact x 2, rounded up (6 at full draw), plus a critical at full draw.
+// Drawing slows us to a fifth of walking speed.
+export const BOW_FULL = 20;
+export const bowPower = (ticks) => { const f = Math.min(1, ticks / BOW_FULL); return Math.min(1, (f * f + 2 * f) / 3); };
+
+/**
+ * Where to point the bow: at the mob's chest where it will be when the arrow gets there (its
+ * velocity, blocks a tick), raised for the drop. Refined a few times against the arrow's real
+ * flight (arrowHits). from: our eye. Returns a unit direction {x, y, z}.
+ */
+export function aimBow(from, target, vel = { x: 0, z: 0 }, speed = 3) {
+  const chest = { x: target.x, y: target.y + 1.0, z: target.z };
+  let aim = { ...chest };
+  for (let i = 0; i < 4; i++) {
+    const d = { x: aim.x - from.x, y: aim.y - from.y, z: aim.z - from.z };
+    const l = Math.hypot(d.x, d.y, d.z) || 1;
+    // Fly it: when is it level with the target (horizontally), and how far below the aim is it?
+    const h0 = Math.hypot(chest.x - from.x, chest.z - from.z);
+    let p = { ...from }, v = { x: d.x / l * speed, y: d.y / l * speed, z: d.z / l * speed }, k = 0;
+    while (Math.hypot(p.x - from.x, p.z - from.z) < h0 && k < 60) { p = { x: p.x + v.x, y: p.y + v.y, z: p.z + v.z }; v = { x: v.x * 0.99, y: v.y * 0.99 - 0.05, z: v.z * 0.99 }; k++; }
+    const lead = { x: chest.x + vel.x * k, y: chest.y, z: chest.z + vel.z * k };
+    // The drop at that range: aim that much higher (the flight's own error, corrected next pass).
+    const straightY = from.y + d.y / l * Math.hypot(p.x - from.x, p.y - from.y, p.z - from.z);
+    const drop = straightY - p.y;
+    aim = { x: lead.x, y: lead.y + Math.max(0, drop), z: lead.z };
+  }
+  const d = { x: aim.x - from.x, y: aim.y - from.y, z: aim.z - from.z };
+  const l = Math.hypot(d.x, d.y, d.z) || 1;
+  return { x: d.x / l, y: d.y / l, z: d.z / l };
+}
+
+/**
+ * A fight with the bow: shoot from out of reach, keep them out of reach, the melee weapon once
+ * something's on us anyway, or when one hit of it finishes the mob. me, mob (feet), kind: 'melee'
+ * | 'ranged' | 'explode'; sees: a clear line to it; drawn: ticks drawn so far (0: not drawing);
+ * canRetreat: somewhere to back off to; hp: the mob's health left; melee: our melee weapon's
+ * damage; st: per-mob state (backing off until there's room for a full draw).
+ * Returns { melee } (fight it with the melee weapon instead) or
+ * { draw, release, away?, goal?, tolerance?, stop? }.
+ */
+export function bowFight({ me, mob, kind, sees, drawn = 0, canRetreat = true, hp = Infinity, melee = 1, st = /** @type {{ backing?: boolean }} */ ({}) }) {
+  const d = dist(me, mob);
+  // Right on us: too late for the bow (a creeper: the arm's-length dance does better from here).
+  if ((kind === 'melee' && d <= 3.5) || (kind === 'explode' && d <= 5)) return { melee: true };
+  // Nearly dead and coming at us anyway: one swing, not another round of backing off.
+  if (kind === 'melee' && hp <= melee && d <= 7) return { melee: true };
+  // Coming in and getting close: back off (we walk 0.216, a zombie 0.155, a creeper 0.135) until
+  // there's room for a full draw before it arrives, unless the shot is nearly drawn: then loose it.
+  // (Close enough to shoot at still: a zombie hits from 1.4, a creeper lights inside 2.9; a draw
+  // lets either walk ~3.)
+  const tooNear = kind === 'melee' ? 5 : kind === 'explode' ? 6 : 0;
+  if (st.backing && (d >= tooNear + 3 || !canRetreat)) st.backing = false;
+  if ((d < tooNear && drawn < BOW_FULL - 4) || st.backing) {
+    if (canRetreat) { st.backing = true; return { draw: false, release: false, away: tooNear + 5 }; }
+    if (d <= 4.5) return { melee: true }; // backed into a corner: the melee weapon
+  }
+  if (!sees) return { draw: false, release: false, goal: { ...mob }, tolerance: 2 }; // no shot: close in to get one
+  // A shot: stand, draw, loose at full draw (or early if it's about to be on us).
+  const early = kind !== 'ranged' && d < tooNear + 1 && drawn >= 10;
+  return { draw: true, release: drawn >= BOW_FULL || early, stop: true };
+}

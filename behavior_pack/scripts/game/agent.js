@@ -6,7 +6,7 @@ import { MotorController, EYE_HEIGHT } from '../core/motor.js';
 import { searchJob, smoothPath, findPath, Cell } from '../core/pathfinder.js';
 import { dist3D, makeRng } from '../core/mathutil.js';
 import { decide, fleePoint, weaponDamage, MOBS, REACH_HIT, STOP_AT } from '../core/threat.js';
-import { fightMove, creeperFight, creeperMove, Stalemate, pickRefuge, bestWeapon, barricadeCells, SPEAR_DAMAGE, weaponReach, pickCreeperSwing, creeperWeapon, isSpear, awayPath, knockbackRoom, blockOffCells, fleeJab, killSlotCells, killSlotWorth, CREEPER_LIGHT, CREEPER_CALM } from '../core/tactics.js';
+import { fightMove, creeperFight, creeperMove, Stalemate, pickRefuge, bestWeapon, barricadeCells, SPEAR_DAMAGE, weaponReach, pickCreeperSwing, creeperWeapon, isSpear, awayPath, knockbackRoom, blockOffCells, fleeJab, killSlotCells, killSlotWorth, dodgeArrow, CREEPER_LIGHT, CREEPER_CALM } from '../core/tactics.js';
 import { nextStep, STONE_TARGETS, TOOL_STONE, count, isLog } from '../core/recipes.js';
 import { settleStep, foodCount, FOOD_GOAL, isNight } from '../core/settle.js';
 import { goalChain } from '../core/goals.js';
@@ -92,6 +92,7 @@ export class Agent {
     this.fleeJabSt = new Map();  // mob id -> distance history, to tell who is catching up while we run
     this.jabbing = false;        // turned to jab something catching up
     this.fleeThreats = null;     // what we are running from
+    this.dodgeUntil = 0;         // stepping out of an arrow's way until this tick
     this.slot = null;            // a kill slot we put up: { cells, slot, stand, dir, block }
     this.threatsNow = [];        // the last survive() pass's threats
     this.hunting = false;        // homestead.hunt is steering the head
@@ -177,6 +178,7 @@ export class Agent {
     }
     this.fightSpacingTick();
     this.fleeJabTick(t);
+    this.dodgeTick(t);
     // Head locked on something while just walking (a fight or a hunt that ended mid-step): let go,
     // so we look where we're going again.
     // Head locked on a target while walking a path, with no fight going on (or the "fight" is
@@ -1422,6 +1424,8 @@ export class Agent {
       this.fightMove = mv.stop ? 'hold' : mv.goal && d > STOP_AT ? 'approach' : 'back';
     }
     this.setBlocking(!!mv.block);
+    // Stepping out of an arrow's way: the feet are the dodge's until it's done.
+    if ((this.dodgeUntil ?? 0) > t) mv = { ...mv, stop: false, away: 0, goal: null };
     if (mv.stop) this.stopWalking();
     if (mv.away && (mv.now || !this.motor.busy)) {
       // Backing off a creeper: the nearest spot that far from it, found and walked on the spot (a
@@ -1702,6 +1706,35 @@ export class Agent {
     const off = Math.hypot(me.x - s.stand.x, me.z - s.stand.z);
     if (off > 0.25 && !this.motor.busy) { this.routeSeq = (this.routeSeq ?? 0) + 1; this.motor.followPath([{ ...me }, s.stand], { walk: true }); }
     return { stop: off <= 0.25, swing: canSwing };
+  }
+
+  /**
+   * An arrow coming at us (fighting or running): a step aside, facing where we were (core/tactics.js
+   * dodgeArrow). A skeleton aims where we are when it looses; it doesn't lead. Not with the shield
+   * up at it: that stops it anyway. Every tick.
+   */
+  dodgeTick(t) {
+    if ((this.mode !== 'fight' && this.mode !== 'flee') || (this.dodgeUntil ?? 0) > t) return;
+    let ents = [];
+    try { ents = this.dim.getEntities({ type: 'minecraft:arrow', location: this.sim.location, maxDistance: 24 }); } catch { return; }
+    if (!ents.length) return;
+    const arrows = [];
+    for (const e of ents) {
+      try {
+        const v = e.getVelocity();
+        if (Math.hypot(v.x, v.y, v.z) < 0.3) continue; // stuck in something
+        if (this.blocking && this.facing(e.location, 60)) continue;
+        arrows.push({ id: e.id, pos: e.location, vel: v });
+      } catch {}
+    }
+    if (!arrows.length) return;
+    const dg = dodgeArrow({ me: this.body.getPos(), arrows, at: this.cellAt() });
+    if (!dg) return;
+    this.routeSeq = (this.routeSeq ?? 0) + 1;
+    this.motor.strafe(dg.dir, Math.min(8, dg.eta + 2));
+    this.dodgeUntil = t + dg.eta + 2;
+    this.nextRoute = Math.max(this.nextRoute ?? 0, this.dodgeUntil);
+    trace(`arrow in ${dg.eta} ticks: stepping aside`);
   }
 
   /** Blocks as tactics.js reads them: 'open' | 'solid' | 'other'. */

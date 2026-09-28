@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { fightMove, creeperFight, creeperMove, Stalemate, pickRefuge, bestWeapon, barricadeCells, CREEPER_HOLD, CREEPER_LIGHT, CREEPER_CALM, weaponReach, pickCreeperSwing, creeperWeapon, knockbackRoom, blockOffCells, fleeJab, killSlotCells, killSlotWorth } from '../behavior_pack/scripts/core/tactics.js';
+import { fightMove, creeperFight, creeperMove, Stalemate, pickRefuge, bestWeapon, barricadeCells, CREEPER_HOLD, CREEPER_LIGHT, CREEPER_CALM, weaponReach, pickCreeperSwing, creeperWeapon, knockbackRoom, blockOffCells, fleeJab, killSlotCells, killSlotWorth, dodgeArrow, arrowHits, aimBow, bowFight } from '../behavior_pack/scripts/core/tactics.js';
 import { HOLD_AT, REACH_HIT } from '../behavior_pack/scripts/core/threat.js';
 
 const P = (x, y, z) => ({ x, y, z });
@@ -208,4 +208,54 @@ test('kill slot worth it: zombies only, more than one or us hurt, and time to pu
   assert.equal(killSlotWorth({ threats: [z(6), { type: 'spider', dist: 8 }], health: 20 }), false);
   assert.equal(killSlotWorth({ threats: [z(6), { type: 'skeleton', dist: 8 }], health: 20 }), false);
   assert.equal(killSlotWorth({ threats: [z(6), z(7, { baby: true })], health: 20 }), false);
+});
+
+test('arrow dodge: one coming at us is stepped out of sideways; one wide of us, or too late, is not', () => {
+  const open = (x, y) => (y >= 64 ? 'open' : 'solid');
+  const me = P(0.5, 64, 0.5);
+  // A skeleton 12 blocks off along +x, aimed at our chest: 1.6 a tick toward us.
+  const arrow = { id: 'a', pos: P(12.5, 65.5, 0.5), vel: P(-1.6, 0.1, 0) };
+  assert.ok(arrowHits(me, arrow.pos, arrow.vel));
+  const dg = dodgeArrow({ me, arrows: [arrow], at: open });
+  assert.ok(dg && dg.eta >= 2);
+  assert.ok(Math.abs(dg.dir.x) < 1e-9 && Math.abs(Math.abs(dg.dir.z) - 1) < 1e-9, 'sideways to its flight');
+  // Off our line by a block and a half: no dodge.
+  assert.equal(dodgeArrow({ me, arrows: [{ ...arrow, pos: P(12.5, 65.5, 2) }], at: open }), null);
+  // About to land (next tick): too late to move.
+  assert.equal(dodgeArrow({ me, arrows: [{ ...arrow, pos: P(1.6, 65, 0.5) }], at: open }), null);
+  // A 1-wide tunnel along x: nowhere sideways to go.
+  const tunnel = (x, y, z) => (z === 0 && y >= 64 && y <= 65 ? 'open' : 'solid');
+  assert.equal(dodgeArrow({ me, arrows: [arrow], at: tunnel }), null);
+});
+
+test('bow aim: leads a walking zombie and allows for the drop, so the arrow lands', () => {
+  const from = P(0, 65.62, 0);
+  for (const [x, y, vz] of [[8, 64, 0], [25, 64, 0], [15, 70, 0], [15, 58, 0], [15, 64, 0.155]]) {
+    const a = aimBow(from, P(x, y, 0), { x: 0, z: vz }, 3);
+    // Fly it against the moving target's box.
+    let p = { ...from }, v = { x: a.x * 3, y: a.y * 3, z: a.z * 3 }, hit = false;
+    for (let k = 1; k <= 40 && !hit; k++) {
+      for (let i = 1; i <= 4; i++) {
+        const q = { x: p.x + v.x * i / 4, y: p.y + v.y * i / 4, z: p.z + v.z * i / 4 };
+        if (Math.abs(q.x - x) <= 0.55 && Math.abs(q.z - vz * k) <= 0.55 && q.y >= y - 0.25 && q.y <= y + 2.2) { hit = true; break; }
+      }
+      p = { x: p.x + v.x, y: p.y + v.y, z: p.z + v.z };
+      v = { x: v.x * 0.99, y: v.y * 0.99 - 0.05, z: v.z * 0.99 };
+    }
+    assert.ok(hit, `target at ${x},${y} moving ${vz}`);
+  }
+});
+
+test('bow fight: shoot from range, back off when a zombie gets close, the sword when it is on us or nearly dead', () => {
+  const me = P(0.5, 64, 0.5);
+  assert.deepEqual(bowFight({ me, mob: P(12.5, 64, 0.5), kind: 'melee', sees: true, drawn: 5 }).draw, true);
+  assert.equal(bowFight({ me, mob: P(12.5, 64, 0.5), kind: 'melee', sees: true, drawn: 20 }).release, true);
+  const st = {};
+  assert.ok(bowFight({ me, mob: P(4.5, 64, 0.5), kind: 'melee', sees: true, st }).away);
+  assert.ok(bowFight({ me, mob: P(6.5, 64, 0.5), kind: 'melee', sees: true, st }).away, 'keeps backing off until there is room to draw');
+  assert.ok(bowFight({ me, mob: P(8.6, 64, 0.5), kind: 'melee', sees: true, st }).draw);
+  assert.equal(bowFight({ me, mob: P(3.5, 64, 0.5), kind: 'melee', sees: true }).melee, true);
+  assert.equal(bowFight({ me, mob: P(6.5, 64, 0.5), kind: 'melee', sees: true, hp: 4, melee: 5 }).melee, true, 'one swing finishes it');
+  assert.equal(bowFight({ me, mob: P(4.5, 64, 0.5), kind: 'explode', sees: true }).melee, true);
+  assert.ok(bowFight({ me, mob: P(12.5, 64, 0.5), kind: 'melee', sees: false }).goal, 'no shot: get one');
 });

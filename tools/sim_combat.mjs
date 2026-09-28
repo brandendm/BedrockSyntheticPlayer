@@ -12,7 +12,7 @@ import { MotorController, EYE_HEIGHT } from '../behavior_pack/scripts/core/motor
 import { findPath, searchJob, smoothPath, Cell } from '../behavior_pack/scripts/core/pathfinder.js';
 import { decide, MOBS, weaponDamage, REACH_HIT } from '../behavior_pack/scripts/core/threat.js';
 import { readFileSync } from 'node:fs';
-import { fightMove, creeperMove, creeperFight, Stalemate, pickRefuge, barricadeCells, awayPath, weaponReach, creeperWeapon, bestWeapon, pickCreeperSwing, knockbackRoom, blockOffCells, fleeJab, killSlotCells, killSlotWorth } from '../behavior_pack/scripts/core/tactics.js';
+import { fightMove, creeperMove, creeperFight, Stalemate, pickRefuge, barricadeCells, awayPath, weaponReach, creeperWeapon, bestWeapon, pickCreeperSwing, knockbackRoom, blockOffCells, fleeJab, killSlotCells, killSlotWorth, dodgeArrow, bowFight, aimBow, bowPower, BOW_FULL } from '../behavior_pack/scripts/core/tactics.js';
 import { makeRng, dist3D } from '../behavior_pack/scripts/core/mathutil.js';
 import { SimBody } from '../tests/helpers.js';
 
@@ -63,6 +63,14 @@ const WALLS = process.env.WALLS !== '0';
 const FLEEJAB = process.env.FLEEJAB !== '0';
 // SLOT=0: no kill slot (a block at the feet across a dead end's way in, the gap at eye level).
 const SLOT = process.env.SLOT !== '0';
+// Arrows fly (1.6 blocks a tick, drag and gravity, a little spread; aimed where we are, no lead).
+// HITSCAN=1: they land the moment they're loosed (what the arena did before). DODGE=0: the bot
+// doesn't step out of their way.
+const HITSCAN = process.env.HITSCAN === '1';
+const DODGE = process.env.DODGE !== '0';
+// The body speeds up and slows down like a player's (each tick: 0.546 of last tick's speed plus
+// 0.454 of what it's asked for). ACCEL=0: full speed at once, and a coast after a stop.
+const ACCEL = process.env.ACCEL !== '0';
 
 // ---------- the arena ----------
 function arena({ classify: base, bot, mobs, weapon = 'stone_sword', shield = false, ticks = 1200, night = true, health = 20, blocks = 16 }) {
@@ -106,7 +114,10 @@ function arena({ classify: base, bot, mobs, weapon = 'stone_sword', shield = fal
   const reachCache = new Map();
   let kills = 0, idleWhileHunted = 0, worstIdle = 0, hitsTaken = 0, blocked = 0, gaveUp = 0;
   // Weapons: the best for a fight, a spear if we carry one for creepers. `weapon` may be a list.
-  const carried = (Array.isArray(weapon) ? weapon : [weapon]).filter(Boolean).map((id) => ({ id }));
+  const carried = (Array.isArray(weapon) ? weapon : [weapon]).filter(Boolean).filter((id) => id !== 'bow').map((id) => ({ id }));
+  // A bow (and 64 arrows): shot from out of reach (core/tactics.js bowFight), the melee weapon up close.
+  const hasBow = (Array.isArray(weapon) ? weapon : [weapon]).includes('bow');
+  let arrowsLeft = hasBow ? 64 : 0, drawStart = -1, releaseEarly = false, bowShots = 0, bowHits = 0;
   const mainId = bestWeapon(carried), creeperId = creeperWeapon(carried, mainId);
   const prof = (m) => weaponReach(m?.type === 'creeper' ? creeperId : mainId);
   const damage = weaponReach(mainId).damage > 1 ? weaponReach(mainId).damage : 1;
@@ -123,7 +134,7 @@ function arena({ classify: base, bot, mobs, weapon = 'stone_sword', shield = fal
   mobs.forEach((m, i) => { m.id = `${m.type}${i}`; m.hp = MOBS[m.type].hp; m.cool = 0; m.fuse = -1; m.lastHitMe = -1e9; m.path = null; m.pi = 0; m.iframe = 0; });
   // Sneaking (shield up) slows the body to 0.3.
   const move0 = body.move.bind(body);
-  body.move = (dx, dz, s) => move0(dx, dz, blocking ? s * 0.3 : s);
+  body.move = (dx, dz, s) => move0(dx, dz, (blocking ? s * 0.3 : s) * (drawStart >= 0 ? 0.2 : 1)); // (drawing a bow: a fifth)
   const eye = () => ({ x: body.pos.x, y: body.pos.y + EYE_HEIGHT, z: body.pos.z });
   const facingMob = (m) => {
     const yaw = Math.atan2(-(m.x - body.pos.x), m.z - body.pos.z) * 180 / Math.PI;
@@ -179,6 +190,24 @@ function arena({ classify: base, bot, mobs, weapon = 'stone_sword', shield = fal
     // moved the last time we hit it (measured, 6 ticks on).
     if (m.type === 'creeper' && m.hitAt !== undefined && t - m.hitAt >= 6 && m.kbMoved === undefined) m.kbMoved = dist3D(me, m) - m.hitD;
     const kbPoor = m.type === 'creeper' && (knockbackRoom(me, m, at) < 1 || (m.kbMoved !== undefined && m.kbMoved < 0.6));
+    // The bow: from out of reach; the melee weapon once it's on us.
+    if (hasBow && arrowsLeft > 0 && !slot) {
+      const bf = bowFight({ me, mob: m, kind: MOBS[m.type].kind, sees: canSee(m), drawn: drawStart >= 0 ? t - drawStart : 0, canRetreat: (m.noRoomUntil ?? -1) <= t, hp: m.hp, melee: damage, st: (m.bowSt ??= {}) });
+      if (VERBOSE && process.env.TRACE) log.push(`${t}: bow d ${dist3D(me, m).toFixed(1)} ${JSON.stringify(bf)} busy ${motor.busy} me ${me.x.toFixed(1)},${me.z.toFixed(1)} mob ${m.x.toFixed(1)},${m.z.toFixed(1)}`);
+      if (!bf.melee) {
+        blocking = false;
+        if (bf.draw) { if (drawStart < 0) drawStart = t; } else drawStart = -1;
+        releaseEarly = !!bf.release;
+        if (bf.stop) stopWalking();
+        if (bf.away && !motor.busy) {
+          const path = awayPath(findPath, classify, me, m, bf.away);
+          if (path) { routeSeq++; motor.followPath(smoothPath(classify, path), { seamless: true, walk: true }); }
+          else m.noRoomUntil = t + 40;
+        } else if (bf.goal && (t >= nextRoute || !motor.busy)) { nextRoute = t + 6; route(bf.goal, bf.tolerance, false, 1500); }
+        return;
+      }
+      drawStart = -1;
+    }
     // Tall melee mobs coming at a dead end: a kill slot (a block at our feet across the way in).
     if (SLOT && !slot && m.type !== 'creeper' && blocks >= 2 && !wallQueue.length) {
       const near = mobs.filter((o) => o.hp > 0).map((o) => ({ type: o.type, dist: dist3D(me, o) }));
@@ -194,10 +223,11 @@ function arena({ classify: base, bot, mobs, weapon = 'stone_sword', shield = fal
       ? { swing: t >= nextSwing, stop: Math.hypot(me.x - slot.stand.x, me.z - slot.stand.z) <= 0.25 } : null;
     // (A step inside our own cell: straight there, no path search.)
     if (mvSlot && !mvSlot.stop && !motor.busy) { routeSeq++; motor.followPath([{ ...me }, slot.stand], { walk: true }); }
-    const mv = mvSlot ? mvSlot : m.type === 'creeper' ? creeperFight({ me, mob: m, t, st: (m.st ??= {}), shield, canSwing: cw(m).ready, canRetreat: m.room !== false, lit: m.fuse >= 0, reach: cw(m).reach, minReach: cw(m).minReach, canWall: WALLS && blocks >= 2, kbPoor })
+    let mv = mvSlot ? mvSlot : m.type === 'creeper' ? creeperFight({ me, mob: m, t, st: (m.st ??= {}), shield, canSwing: cw(m).ready, canRetreat: m.room !== false, lit: m.fuse >= 0, reach: cw(m).reach, minReach: cw(m).minReach, canWall: WALLS && blocks >= 2, kbPoor })
       : fightMove({ me, mob: m, melee: MOBS[m.type].kind === 'melee', t, shield, canSwing: t >= nextSwing });
     if (OLD && mv.goal) { const d0 = dist3D(me, m); mv.goal = d0 > 3.3 ? standOffOld(me, m) : { x: m.x, y: m.y, z: m.z }; mv.tolerance = 0.5; }
     blocking = mv.block;
+    if (t < dodgeUntil) mv = { ...mv, stop: false, away: 0, goal: null }; // (mid-dodge: the feet are the dodge's)
     if (VERBOSE && process.env.TRACE) log.push(`${t}: me ${me.x.toFixed(1)},${me.y.toFixed(1)} mob ${m.x.toFixed(1)} d ${dist3D(me, m).toFixed(1)} goal ${mv.goal ? `${mv.goal.x.toFixed(1)},${mv.goal.z.toFixed(1)}` : "-"} away ${mv.away ?? 0} now ${!!mv.now} stop ${!!mv.stop} swing ${!!mv.swing} room ${m.room} lit ${m.fuse >= 0} busy ${motor.busy}`);
     if (mv.wall) {
       // Wall it off: its way in and its sight of us, one block at a time (3 ticks each).
@@ -247,7 +277,9 @@ function arena({ classify: base, bot, mobs, weapon = 'stone_sword', shield = fal
       if (VERBOSE) log.push(`${t}: giving up on ${m.id} (no progress)`);
     }
   }
-  let jabs = 0;
+  let jabs = 0, dodges = 0, arrowsShot = 0, arrowHits = 0, dodgeUntil = -1;
+  const arrows = []; // { pos, vel, from, age }
+  let vel = { x: 0, z: 0 };
   let t = 0, fightRef = null, explosions = 0, coast = 0, coastDir = { x: 0, z: 0 };
   for (; t < ticks && hp > 0; t++) {
     const alive = mobs.filter((m) => m.hp > 0);
@@ -310,6 +342,32 @@ function arena({ classify: base, bot, mobs, weapon = 'stone_sword', shield = fal
       else idleWhileHunted = 0;
       worstIdle = Math.max(worstIdle, idleWhileHunted);
     }
+    // An arrow coming at us: a step aside (it's aimed where we are). Seen a tick after it's loosed.
+    if (DODGE && !HITSCAN && (mode === 'fight' || mode === 'flee') && arrows.length) {
+      const seenArrows = arrows.filter((a) => a.age >= 1 && !(blocking && facingMob(a.from)));
+      const dg = seenArrows.length ? dodgeArrow({ me, arrows: seenArrows, at }) : null;
+      if (dg && t >= dodgeUntil) {
+        dodges++;
+        routeSeq++;
+        motor.strafe(dg.dir, Math.min(8, dg.eta + 2));
+        drawStart = -1; // (a dodge lets the bow down)
+        dodgeUntil = t + dg.eta + 2; nextRoute = dodgeUntil;
+        if (VERBOSE) log.push(`${t}: arrow in ${dg.eta} ticks: stepping aside`);
+      }
+    }
+    // Loosing the arrow: fully drawn (or early, if it's nearly on us), facing it, a clear shot.
+    if (drawStart >= 0 && (mode !== 'fight' || !fightRef || fightRef.hp <= 0)) drawStart = -1;
+    if (drawStart >= 0 && arrowsLeft > 0) {
+      const drawn = t - drawStart, m = fightRef;
+      if ((drawn >= BOW_FULL || (releaseEarly && drawn >= 10)) && facingMob(m) && canSee(m)) {
+        const speed = 3 * bowPower(drawn), dir = aimBow(eye(), m, m.v ?? { x: 0, z: 0 }, speed);
+        // A player's shot: spread 0.0075 a component.
+        const g = () => { let u = 0; for (let i = 0; i < 6; i++) u += rng(); return (u - 3) * 0.0075; };
+        arrows.push({ pos: eye(), vel: { x: (dir.x + g()) * speed, y: (dir.y + g()) * speed, z: (dir.z + g()) * speed }, from: null, mine: true, full: drawn >= BOW_FULL, age: 0 });
+        arrowsLeft--; bowShots++; drawStart = -1;
+        if (VERBOSE) log.push(`${t}: loosed at ${m.type} ${dist3D(me, m).toFixed(1)} away (drawn ${drawn})`);
+      }
+    }
     // Running from something catching up: turn and jab it (the spear from out of its reach), run on.
     if (mode === 'flee' && FLEEJAB) {
       const hasSpear = weaponReach(creeperId).reach > 3.5;
@@ -356,12 +414,26 @@ function arena({ classify: base, bot, mobs, weapon = 'stone_sword', shield = fal
       f.go();
     }
     const before = { x: body.pos.x, z: body.pos.z };
+    // (A dodge in progress keeps the fight from re-routing us back onto the arrow's line.)
+    if (t < dodgeUntil) nextRoute = Math.max(nextRoute, dodgeUntil);
     motor.tick();
     // No command this tick: the body coasts on what it had (0.546 a tick on the ground).
     let coasting = false;
-    if (!body.cmd && coast > 0.01) { body.cmd = { dx: coastDir.x, dz: coastDir.z, s: coast / 0.216 }; body.sprint = false; coasting = true; }
-    body.step();
-    if (coasting) { body.cmd = null; coast *= 0.546; }
+    if (ACCEL) {
+      const base = body.sprint ? 0.28 : 0.216;
+      const want = body.cmd ? { x: body.cmd.dx * base * body.cmd.s, z: body.cmd.dz * base * body.cmd.s } : { x: 0, z: 0 };
+      vel = { x: vel.x * 0.546 + want.x * 0.454, z: vel.z * 0.546 + want.z * 0.454 };
+      const sp = Math.hypot(vel.x, vel.z);
+      const cmd0 = body.cmd, sprint0 = body.sprint;
+      body.cmd = sp > 0.005 ? { dx: vel.x / sp, dz: vel.z / sp, s: sp / 0.216 } : null; body.sprint = false;
+      const b0 = { x: body.pos.x, z: body.pos.z };
+      body.step();
+      body.cmd = cmd0; body.sprint = sprint0;
+      // Blocked by a wall: that part of the speed is gone.
+      vel = { x: body.pos.x - b0.x, z: body.pos.z - b0.z };
+    } else if (!body.cmd && coast > 0.01) { body.cmd = { dx: coastDir.x, dz: coastDir.z, s: coast / 0.216 }; body.sprint = false; coasting = true; }
+    if (ACCEL) { /* stepped above */ } else body.step();
+    if (ACCEL) { /* no coast bookkeeping */ } else if (coasting) { body.cmd = null; coast *= 0.546; }
     else {
       const moved = Math.hypot(body.pos.x - before.x, body.pos.z - before.z);
       coast = body.cmd && moved > 0.01 ? moved : 0;
@@ -370,6 +442,7 @@ function arena({ classify: base, bot, mobs, weapon = 'stone_sword', shield = fal
     // ---- the mobs ----
     for (const m of alive) {
       const d = dist3D(me, m);
+      m.v = m.px === undefined ? { x: 0, z: 0 } : { x: m.x - m.px, z: m.z - m.pz }; m.px = m.x; m.pz = m.z;
       const info = MOBS[m.type];
       if (info.kind === 'ranged') {
         // Stands its ground and shoots every 2 s when it can see us (arrow line: its eye to our chest).
@@ -379,9 +452,21 @@ function arena({ classify: base, bot, mobs, weapon = 'stone_sword', shield = fal
           const u = ((o.x - m.x) * ax + (o.z - m.z) * az) / l2;
           return u > 0.05 && u < 0.95 && Math.hypot(m.x + ax * u - o.x, m.z + az * u - o.z) < 0.5 && Math.abs(o.y - me.y) < 2;
         })());
-        if (t >= m.cool && d <= 16 && inWay) { m.cool = t + 40; }
+        if (t >= m.cool && d <= 16 && inWay && HITSCAN) { m.cool = t + 40; }
         else if (t >= m.cool && d <= 16 && clear(classify, { x: m.x, y: m.y + 1.5, z: m.z }, { x: me.x, y: me.y + 1.0, z: me.z })) {
-          m.cool = t + 40; if (VERBOSE) log.push(`${t}: arrow from ${m.x.toFixed(2)},${m.y} to ${me.x.toFixed(2)},${me.y.toFixed(2)}`); hurt(3, m, "arrow");
+          m.cool = t + 40; if (VERBOSE) log.push(`${t}: arrow from ${m.x.toFixed(2)},${m.y} to ${me.x.toFixed(2)},${me.y.toFixed(2)}`);
+          if (HITSCAN) hurt(3, m, 'arrow');
+          else {
+            // Minecraft's skeleton: at our body a third of the way up, raised by 0.2 a block of
+            // distance for the drop, 1.6 a tick, spread 0.0075 x 6 (normal difficulty) a component.
+            const from = { x: m.x, y: m.y + 1.5, z: m.z };
+            const dx = me.x - from.x, dz = me.z - from.z, h = Math.hypot(dx, dz);
+            const dy = me.y + 0.6 - from.y + h * 0.2;
+            const l = Math.hypot(dx, dy, dz) || 1;
+            const g = () => { let u = 0; for (let i = 0; i < 6; i++) u += rng(); return (u - 3) * 0.0075 * 6; };
+            arrows.push({ pos: from, vel: { x: (dx / l + g()) * 1.6, y: (dy / l + g()) * 1.6, z: (dz / l + g()) * 1.6 }, from: m, age: 0 });
+            arrowsShot++;
+          }
         } else if (t >= m.cool && d <= 16) { m.cool = t + 40; m.missed = (m.missed ?? 0) + 1; }
         continue;
       }
@@ -422,9 +507,40 @@ function arena({ classify: base, bot, mobs, weapon = 'stone_sword', shield = fal
       }
       if (d <= 1.6 && t >= m.cool) { m.cool = t + 20; hurt(info.dps, m, m.type); }
     }
+    // ---- arrows in flight: into rock, a mob in the way, or us (the shield, if it's up at them) ----
+    for (let k = arrows.length - 1; k >= 0; k--) {
+      const a = arrows[k];
+      let gone = a.age++ > 60;
+      for (let i = 1; i <= 4 && !gone; i++) {
+        const x = a.pos.x + a.vel.x * i / 4, y = a.pos.y + a.vel.y * i / 4, z = a.pos.z + a.vel.z * i / 4;
+        const c = classify(Math.floor(x), Math.floor(y), Math.floor(z));
+        if (c === Cell.SOLID || c === Cell.STEP || c === Cell.SLAB) { gone = true; break; }
+        const inBox = (o, hw, ht) => Math.abs(x - o.x) <= hw + 0.25 && Math.abs(z - o.z) <= hw + 0.25 && y >= o.y - 0.25 && y <= o.y + ht + 0.25;
+        if (a.mine) {
+          const o = mobs.find((q) => q.hp > 0 && inBox(q, 0.3, 1.9));
+          if (!o) continue;
+          gone = true;
+          if (o.iframe > t) break;
+          const sp = Math.hypot(a.vel.x, a.vel.y, a.vel.z), base = Math.ceil(sp * 2);
+          const dmg = base + (a.full ? Math.floor(rng() * (base / 2 + 2)) : 0);
+          o.hp -= dmg; o.iframe = t + 10; bowHits++; o.lastHitByUs = t;
+          // Knocked back a little along the arrow's line (0.5), walls permitting.
+          const hl = Math.hypot(a.vel.x, a.vel.z) || 1;
+          for (let q = 0; q < 5; q++) { const nx = o.x + a.vel.x / hl * 0.1, nz = o.z + a.vel.z / hl * 0.1; if (classify(Math.floor(nx), Math.floor(o.y), Math.floor(nz)) !== Cell.AIR) break; o.x = nx; o.z = nz; }
+          if (VERBOSE) log.push(`${t}: arrow hit ${o.type} for ${dmg} (hp ${o.hp})`);
+          if (o.hp <= 0) { kills++; stale.reset(); }
+          break;
+        }
+        if (inBox(body.pos, 0.3, 1.8)) { const b0 = blocked; hurt(3, a.from, 'arrow'); if (blocked === b0) arrowHits++; gone = true; break; }
+        if (a.age > 2 && mobs.some((o) => o !== a.from && o.hp > 0 && inBox(o, 0.3, 1.9))) { gone = true; break; }
+      }
+      if (gone) { arrows.splice(k, 1); continue; }
+      a.pos = { x: a.pos.x + a.vel.x, y: a.pos.y + a.vel.y, z: a.pos.z + a.vel.z };
+      a.vel = { x: a.vel.x * 0.99, y: a.vel.y * 0.99 - 0.05, z: a.vel.z * 0.99 };
+    }
     if (!mobs.some((m) => m.hp > 0)) break;
   }
-  return { slots, jabs, crater, misses, explosions, walls, foughtAtDeath, hp: Math.max(0, hp), kills, total: mobs.length, ticks: t, worstIdle, hitsTaken, blocked, gaveUp, log };
+  return { bowShots, bowHits, arrowsLeft, dodges, arrowsShot, arrowHits, slots, jabs, crater, misses, explosions, walls, foughtAtDeath, hp: Math.max(0, hp), kills, total: mobs.length, ticks: t, worstIdle, hitsTaken, blocked, gaveUp, log };
 }
 
 const standOffOld = (me, mob, r = 2.8) => { const dx = me.x - mob.x, dz = me.z - mob.z, l = Math.hypot(dx, dz) || 1; return { x: mob.x + dx / l * r, y: mob.y, z: mob.z + dz / l * r }; };
@@ -502,6 +618,9 @@ const SCENARIOS = {
   'creeper coming down the quarry steps, stone sword': () => ({ classify: quarry(), bot: { x: 10.5, y: 54, z: 0.5 }, mobs: [{ type: 'creeper', aware: false, x: -1.5, y: 64, z: 0.5 }], minHp: 20 }),
   'down a mine tunnel: skeleton then a zombie, iron sword + shield, hurt': () => ({ classify: tunnel(), bot: { x: 2.5, y: 40, z: 0.5 }, weapon: 'iron_sword', shield: true, health: 14, mobs: [{ type: 'skeleton', x: 8.5, y: 40, z: 0.5 }, { type: 'zombie', x: 11.5, y: 40, z: 0.5 }], minHp: 6 }),
   'down a mine tunnel: skeleton behind two zombies, stone sword': () => ({ classify: tunnel(), bot: { x: 3.5, y: 40, z: 0.5 }, mobs: [{ type: 'skeleton', x: 9.5, y: 40, z: 0.5 }, { type: 'zombie', x: 12.5, y: 40, z: 0.5 }, { type: 'zombie', x: 15.5, y: 40, z: 0.5 }], minHp: 1 }),
+  'zombie, open field, bow': () => ({ classify: flat(), weapon: ['bow', 'stone_sword'], bot: { x: 0.5, y: 64, z: 0.5 }, mobs: [{ type: 'zombie', x: 12.5, y: 64, z: 0.5 }] }),
+  'creeper walking in, bow': () => ({ classify: flat(), weapon: ['bow', 'stone_sword'], bot: { x: 0.5, y: 64, z: 0.5 }, mobs: [{ type: 'creeper', x: 14.5, y: 64, z: 0.5 }] }),
+  'skeleton in the open, bow': () => ({ classify: flat(), weapon: ['bow', 'stone_sword'], bot: { x: 0.5, y: 64, z: 0.5 }, mobs: [{ type: 'skeleton', x: 14.5, y: 64, z: 0.5 }] }),
   'zombie, open field, stone sword': () => ({ classify: flat(), bot: { x: 0.5, y: 64, z: 0.5 }, mobs: [{ type: 'zombie', x: 10.5, y: 64, z: 0.5 }] }),
   'two zombies, iron sword + shield': () => ({ classify: flat(), bot: { x: 0.5, y: 64, z: 0.5 }, weapon: 'iron_sword', shield: true, mobs: [{ type: 'zombie', x: 9.5, y: 64, z: 2.5 }, { type: 'zombie', x: 10.5, y: 64, z: -3.5 }] }),
   'skeleton in the open, stone sword': () => ({ classify: flat(), bot: { x: 0.5, y: 64, z: 0.5 }, mobs: [{ type: 'skeleton', x: 12.5, y: 64, z: 0.5 }] }),
@@ -649,7 +768,7 @@ if (CHASE) {
   for (let i = 0; i < CHASE; i++) {
     const terrain = pick(['flat', 'forest', 'mine']);
     const classify = terrain === 'flat' ? flat() : terrain === 'forest' ? forest() : mine();
-    const bot = terrain === 'mine' ? { x: 24.5, y: 52, z: 0.5 } : { x: 0.5, y: 70, z: 0.5 };
+    const bot = terrain === 'mine' ? { x: 24.5, y: 52, z: 0.5 } : { x: 1.5, y: 70, z: 0.5 }; // (0,0 is a trunk in the forest)
     const n = 1 + Math.floor(rng() * 2);
     const mobs = [];
     for (let k = 0; k < n; k++) {
@@ -667,6 +786,76 @@ if (CHASE) {
   }
   console.log(`${runs} chases (5 hp, running): ${died} died, ${(hits / runs).toFixed(2)} hits taken each, ${(jabs / runs).toFixed(1)} jabs each, ${(hpLeft / runs).toFixed(1)} hp left on average`);
   for (const [k, [n, h, d]] of Object.entries(byKind)) console.log(`  ${k.padEnd(7)} ${n} runs, ${(h / n).toFixed(2)} hits each, ${d} died`);
+  process.exit(0);
+}
+
+// --archers N: 1-2 skeletons at 8-15 blocks on flat ground, in a forest, at the quarry mouth;
+// random weapon and health, a shield some of the time. DODGE=0: no stepping out of the way.
+const ARCHERS = process.argv.includes('--archers') ? Number(process.argv[process.argv.indexOf('--archers') + 1] || 200) : 0;
+if (ARCHERS) {
+  const rng = makeRng(4242);
+  const pick = (a) => a[Math.floor(rng() * a.length)];
+  let shot = 0, hit = 0, died = 0, dodges = 0, won = 0, blockedN = 0;
+  const by = {};
+  for (let i = 0; i < ARCHERS; i++) {
+    const terrain = pick(['flat', 'forest', 'quarry']);
+    const classify = terrain === 'flat' ? flat() : terrain === 'forest' ? forest() : quarry();
+    const shield = rng() < 0.3;
+    const n = 1 + (rng() < 0.4 ? 1 : 0);
+    let bot, mobs = [];
+    if (terrain === 'quarry') { bot = { x: 10.5, y: 54, z: 0.5 }; for (let k = 0; k < n; k++) mobs.push({ type: 'skeleton', x: 0.5 - k * 2, y: 64, z: 0.5 + k }); }
+    else { bot = { x: 1.5, y: 70, z: 0.5 }; /* (0,0 is a trunk in the forest) */ for (let k = 0; k < n; k++) { const a = rng() * Math.PI * 2, r = 8 + rng() * 7; mobs.push({ type: 'skeleton', x: 0.5 + Math.cos(a) * r, y: 70, z: 0.5 + Math.sin(a) * r }); } }
+    const r = arena({ classify, bot: ground(classify, bot), mobs: mobs.map((m) => ground(classify, m)), weapon: pick(['wooden_sword', 'stone_sword', 'iron_sword']), shield, health: pick([20, 20, 14, 8]), ticks: 1200 });
+    if (process.env.DUMP && i < Number(process.env.DUMP)) { console.log(`#${i} ${terrain} shield ${shield} bot ${JSON.stringify(ground(classify, bot))} mobs ${JSON.stringify(mobs.map((m) => ground(classify, m)))} -> hp ${r.hp} shot ${r.arrowsShot} hit ${r.arrowHits} dodges ${r.dodges} kills ${r.kills}/${r.total} ticks ${r.ticks}`); if (VERBOSE) console.log(r.log.slice(0, 60).join('\n')); }
+    shot += r.arrowsShot; hit += r.arrowHits; dodges += r.dodges; blockedN += r.blocked;
+    if (r.hp <= 0) died++; if (r.kills === r.total) won++;
+    const k = `${terrain}${shield ? '+shield' : ''}`;
+    by[k] ??= [0, 0, 0, 0]; by[k][0]++; by[k][1] += r.arrowsShot; by[k][2] += r.arrowHits; if (r.hp <= 0) by[k][3]++;
+  }
+  console.log(`${ARCHERS} archer fights: ${died} died, won ${won}, ${shot} arrows loosed, ${hit} hit (${(100 * hit / Math.max(1, shot)).toFixed(0)}%), ${blockedN} on the shield, ${dodges} dodges`);
+  for (const [k, [n, sh, h, d]] of Object.entries(by)) console.log(`  ${k.padEnd(14)} ${n} fights, ${(h / Math.max(1, sh) * 100).toFixed(0)}% of arrows hit, ${(h / n).toFixed(2)} hits a fight, ${d} died`);
+  process.exit(0);
+}
+
+// --weapons N: the same N fights (terrain, mobs, health) with each loadout, side by side: the
+// swords, an axe, sword + spear, and a bow (64 arrows) backed by a sword.
+const WEAPONS = process.argv.includes('--weapons') ? Number(process.argv[process.argv.indexOf('--weapons') + 1] || 200) : 0;
+if (WEAPONS) {
+  const loadouts = [['wooden_sword'], ['stone_sword'], ['stone_axe'], ['iron_sword'], ['stone_sword', 'stone_spear'], ['bow', 'wooden_sword'], ['bow', 'stone_sword'], ['bow', 'iron_sword']];
+  const sets = [['zombie'], ['zombie', 'zombie'], ['skeleton'], ['skeleton', 'zombie'], ['creeper'], ['spider'], ['zombie', 'skeleton', 'creeper']];
+  const make = (i) => {
+    const rng = makeRng(9000 + i);
+    const pick = (a) => a[Math.floor(rng() * a.length)];
+    const terrain = pick(['flat', 'flat', 'forest', 'tunnel', 'quarry']);
+    const set = pick(sets), health = pick([20, 20, 14]);
+    const classify = terrain === 'flat' ? flat() : terrain === 'forest' ? forest() : terrain === 'tunnel' ? tunnel() : quarry();
+    let bot, mobs;
+    if (terrain === 'tunnel') { bot = { x: 3.5, y: 40, z: 0.5 }; mobs = set.map((type, k) => ({ type, x: 11.5 + k * 3, y: 40, z: 0.5 })); }
+    else if (terrain === 'quarry') { bot = { x: 10.5, y: 54, z: 0.5 }; mobs = set.map((type, k) => ({ type, x: 0.5 - k, y: 64, z: 0.5 })); }
+    else { bot = { x: 1.5, y: 70, z: 0.5 }; mobs = set.map((type) => { const a = rng() * Math.PI * 2, r = 10 + rng() * 5; return { type, x: 1.5 + Math.cos(a) * r, y: 70, z: 0.5 + Math.sin(a) * r }; }); }
+    return { terrain, set, health, classify, bot: ground(classify, bot), mobs: mobs.map((m) => ground(classify, m)) };
+  };
+  const key = (w) => w.join('+');
+  const res = {}, bySet = {};
+  for (let i = 0; i < WEAPONS; i++) {
+    for (const w of loadouts) {
+      const f = make(i);
+      const r = arena({ classify: f.classify, bot: f.bot, mobs: f.mobs, weapon: w, health: f.health, ticks: 1500 });
+      const o = (res[key(w)] ??= { n: 0, died: 0, hp: 0, lost: 0, kills: 0, total: 0, ticks: 0, shots: 0, bowHits: 0, explosions: 0 });
+      o.n++; o.died += r.hp <= 0 ? 1 : 0; o.hp += Math.max(0, r.hp); o.lost += f.health - Math.max(0, r.hp); o.kills += r.kills; o.total += r.total; o.ticks += r.ticks; o.shots += r.bowShots; o.bowHits += r.bowHits; o.explosions += r.explosions;
+      const sk = f.set.join('+');
+      ((bySet[sk] ??= {})[key(w)] ??= [0, 0, 0]);
+      bySet[sk][key(w)][0]++; bySet[sk][key(w)][1] += f.health - Math.max(0, r.hp); if (r.hp <= 0) bySet[sk][key(w)][2]++;
+      if (process.env.KILLS) { bySet[sk][key(w)][3] = (bySet[sk][key(w)][3] ?? 0) + r.kills; bySet[sk][key(w)][4] = (bySet[sk][key(w)][4] ?? 0) + r.total; bySet[sk][key(w)][5] = (bySet[sk][key(w)][5] ?? 0) + r.bowShots; }
+    }
+  }
+  console.log(`${WEAPONS} fights with each loadout (flat, forest, a mine tunnel, the quarry; 1-3 mobs; 14-20 hp):`);
+  console.log(`  ${'loadout'.padEnd(26)} died  hp lost  killed      explosions  time    arrows (hit)`);
+  for (const [k, o] of Object.entries(res)) console.log(`  ${k.padEnd(26)} ${String(o.died).padStart(4)}  ${(o.lost / o.n).toFixed(1).padStart(7)}  ${`${o.kills}/${o.total}`.padStart(9)}  ${String(o.explosions).padStart(10)}  ${(o.ticks / o.n / 20).toFixed(1).padStart(4)} s  ${o.shots ? `${(o.shots / o.n).toFixed(1)} (${(100 * o.bowHits / o.shots).toFixed(0)}%)` : '-'}`);
+  console.log('  hp lost a fight (deaths), by what it faced:');
+  const cols = ['stone_sword', 'iron_sword', 'stone_sword+stone_spear', 'bow+stone_sword', 'bow+iron_sword'];
+  console.log(`  ${''.padEnd(26)} ${cols.map((c) => c.replace('stone_', 's.').replace('iron_', 'i.').replace('+s.spear', '+spear').padStart(14)).join('')}`);
+  for (const [sk, row] of Object.entries(bySet)) console.log(`  ${sk.padEnd(26)} ${cols.map((c) => { const [n, l, d] = row[c] ?? [0, 0, 0]; return (n ? `${(l / n).toFixed(1)} (${d})${process.env.KILLS ? ` ${row[c][3]}/${row[c][4]} a${row[c][5]}` : ''}` : '-').padStart(process.env.KILLS ? 24 : 14); }).join('')}`);
   process.exit(0);
 }
 

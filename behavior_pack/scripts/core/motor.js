@@ -119,6 +119,16 @@ export class MotorController {
     return this._begin({ kind: 'look', point, hold: holdTicks, held: 0, ticks: 0, timeout: timeoutTicks });
   }
 
+  /**
+   * Sidestep: walk in a world direction ({x, z}, unit) for `ticks` without turning to face it (A/D
+   * keys: the head stays on whatever it's watching, the feet go sideways at walking speed; no
+   * sprinting sideways). A reflex to something seen coming (an arrow), so a short reaction.
+   * Resolves {status: arrived|cancelled}.
+   */
+  strafe(dir, ticks, { reaction = 2 } = {}) {
+    return this._begin({ kind: 'strafe', dir, ticks, reaction });
+  }
+
   /** Briefly look at something while idle (a mob walking past, a noise). */
   glanceAt(point, ticks = 30) {
     if (!this.intent) this.glance = { point, ticks };
@@ -131,7 +141,7 @@ export class MotorController {
   _begin(intent) {
     this._finish('cancelled');
     this.glance = null;
-    this.delay = this.rng.int(...this.o.reactionTicks);
+    this.delay = intent.reaction ?? this.rng.int(...this.o.reactionTicks);
     intent.promise = new Promise((resolve) => {
       intent.resolve = resolve;
     });
@@ -178,6 +188,11 @@ export class MotorController {
       gaze = r.gaze;
       move = r.move;
       yawOverride = r.headYaw;
+    } else if (it && it.kind === 'strafe') {
+      if (this.delay <= 0 && it.ticks-- <= 0) { this._rotate(eye, this.focus ?? this.lastGaze ?? eye); this._output(eye, null, null); return this._finish('arrived'); }
+      gaze = this.lastGaze ?? { x: eye.x + it.dir.x, y: eye.y, z: eye.z + it.dir.z };
+      move = { yaw: Math.atan2(-it.dir.x, it.dir.z) / DEG, speed: 1 };
+      this._setSprint(false);
     } else if (it && it.kind === 'look') {
       gaze = it.point;
       it.ticks++;
@@ -207,6 +222,7 @@ export class MotorController {
       yawOverride = null;
     }
     this._rotate(eye, gaze, yawOverride);
+    this.lastGaze = gaze;
 
     if (this.delay > 0) {
       this.delay--;
