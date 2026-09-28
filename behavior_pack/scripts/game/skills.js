@@ -43,6 +43,10 @@ const NATURAL_IDS = [
   'netherrack', 'basalt', 'blackstone', 'soul_sand', 'soul_soil', 'magma', 'crimson_nylium', 'warped_nylium', 'end_stone',
 ];
 const NATURAL = new Set(NATURAL_IDS);
+// Our tunnels' floors (Skills.tunnels): a world property of their own.
+const TUNNELS_KEY = 'agent:tunnels';
+// Never broken, however much it's in the way.
+const UNBREAKABLE = /^(bedrock|barrier|command_block|chain_command_block|repeating_command_block|structure_block|jigsaw|end_portal_frame|end_portal|portal|end_gateway|obsidian|crying_obsidian|reinforced_deepslate|respawn_anchor|light_block.*|allow|deny|border_block)$/;
 // Nothing to stand on or bump into (air and plants you walk through).
 const OPEN = /^(air|short_grass|tall_grass|fern|large_fern|dead_bush|deadbush|snow_layer|vine|sweet_berry_bush|tall_dry_grass|short_dry_grass|bush|firefly_bush|leaf_litter|wildflowers|pink_petals|.*_flower|dandelion|poppy|.*_tulip|azure_bluet|allium|blue_orchid|oxeye_daisy|cornflower|lily_of_the_valley|light_block.*|structure_void)$/;
 // Never land on these.
@@ -67,6 +71,9 @@ export class Skills {
   constructor(agent) {
     this.a = agent;
     this.placed = new Set(); // blocks we put down ourselves (pillars): fair game to dig out again
+    // Running a job that can't be done without getting somewhere (home, the furnace, the chest): a
+    // way there that's blocked by anything breakable gets broken through (actionOpts).
+    this.essential = false;
     this.ourDrops = new Map(); // item entities our breaks made, watched by id until picked up (invalid)
     /** @type {{x:number,y:number,z:number,at:number}[]} */
     this.dropSpots = []; // recent breaks, rescanned for drops that spawn a tick late
@@ -408,7 +415,7 @@ export class Skills {
     const here = this.sim.location;
     const straight = Math.hypot(pos.x - here.x, pos.z - here.z) + Math.abs(pos.y - here.y);
     if (straight > 32 || res.cost <= straight * 1.4 + 6) return false;
-    const ar = await this.a.plan(here, pos, tolerance, 5000, null, { actions: this.actionOpts() });
+    const ar = await this.a.plan(here, pos, tolerance, 5000, null, { actions: this.actionOpts({ force: false }) });
     this.check(gen);
     const breaks = ar.path.filter((p) => !isWalkMove(p));
     if (!ar.complete || !breaks.length || ar.cost >= res.cost * 0.85) return false;
@@ -501,7 +508,7 @@ export class Skills {
   // ---------- paths that dig and build (Baritone-style) ----------
 
   /** What digging and pillaring cost right now, for the pathfinder's action moves. */
-  actionOpts() {
+  actionOpts({ force = this.essential } = {}) {
     const inv = invCounts(this.sim);
     const cheapest = cheapestPlaceable(inv, this.blockReserve(inv));
     return {
@@ -509,7 +516,11 @@ export class Skills {
         const p = { x, y, z };
         const id = this.blockAt(p) ?? 'air';
         if (OPEN.test(id)) return 0;
-        if (/water|lava/.test(id) || this.isProtected(p) || !this.isDiggable([p], { byHand: true })) return Infinity;
+        if (/water|lava/.test(id) || this.isProtected(p)) return Infinity;
+        // Something essential (home, the furnace, the chest, our things) walled off by anything at
+        // all (a player's build, a chest, glass, wool): through it. Never our own house, or what
+        // can't be broken.
+        if (!this.isDiggable([p], { byHand: true }) && !(force && !UNBREAKABLE.test(id) && !this.a.homestead?.isHouseBlock?.(p))) return Infinity;
         if (this.touchesLiquid(p) || FALLING.test(this.blockAt({ x, y: y + 1, z }) ?? '')) return Infinity;
         const t = chooseTool(id, inv, { needDrop: false });
         return t ? t.seconds + 0.25 : Infinity; // + the time to aim and swing
@@ -579,7 +590,7 @@ export class Skills {
       return Number.isFinite(top) ? Math.max(0, top + 1 - y) * 3 : 0;
     };
     for (let attempt = 0; attempt < 4; attempt++) {
-      const res = await this.a.plan(this.sim.location, this.sim.location, 0, 15000, goal, { actions: this.actionOpts(), heuristicFn });
+      const res = await this.a.plan(this.sim.location, this.sim.location, 0, 15000, goal, { actions: this.actionOpts({ force: false }), heuristicFn });
       this.check(gen);
       if (!res.complete) { this.log(`escape plan: none (${res.expanded} searched)`); return false; }
       const kinds = {};
@@ -682,9 +693,12 @@ export class Skills {
     if (hit && !ownFloor && (hit.x !== p.x || hit.y !== p.y || hit.z !== p.z)) {
       if (depth >= 2) return false;
       const hid = this.blockAt(hit);
-      if (!hid || !(/leaves|grass|fern|vine|flower|bush/.test(hid) || SHOVEL_BLOCKS.has(hid))) {
+      const soft = !!hid && (/leaves|grass|fern|vine|flower|bush/.test(hid) || SHOVEL_BLOCKS.has(hid));
+      // On an essential job, whatever's in front of it goes too (not our house, not liquid).
+      const clearIt = soft || (!!hid && this.essential && !UNBREAKABLE.test(hid) && !/water|lava/.test(hid) && !this.a.homestead?.isHouseBlock?.(hit));
+      if (!clearIt) {
         if (!(await this.goNear(gen, p, 1.5))) return false;
-      } else if (!(await this.mine(gen, hit, { collect: false, depth: depth + 1 }))) return false;
+      } else if (!(await this.mine(gen, hit, { collect: !soft, depth: depth + 1 }))) return false;
     }
 
     id = this.blockAt(p);
@@ -782,7 +796,7 @@ export class Skills {
         // Wedged between leaves and dirt, up a step: break the way to it (leaves and dirt are
         // near-free by hand) rather than leave logs behind after chopping a tree.
         if (dist3D(here, loc) <= 16) {
-          const ar = await this.a.plan(here, loc, 0.9, 4000, null, { actions: { ...this.actionOpts(), budget: Math.min(3, this.blockCount()) } });
+          const ar = await this.a.plan(here, loc, 0.9, 4000, null, { actions: { ...this.actionOpts({ force: false }), budget: Math.min(3, this.blockCount()) } });
           this.check(gen);
           if (gone()) continue;
           if (ar.complete) {
@@ -2300,7 +2314,8 @@ export class Skills {
       if (!(await this.goNear(gen, { x: at.x + 0.5, y: at.y, z: at.z + 0.5 }, 0.8, 2))) { this.log(`mine: couldn't get back to the end of the main tunnel at ${at.x} ${at.y} ${at.z}; carrying on from here`); prev = null; }
     }
     let di = prev?.di ?? mem.mineDir ?? this.stoniestDir();
-    let steps = prev?.n ?? 0, blocked = 0;
+    let steps = prev?.n ?? 0, blocked = 0, since = 0;
+    let tried = new Set();
     // A branch left half dug last trip: finish it first.
     const half = q?.branch;
     if (half && Math.abs(half.at.y - this.feet().y) <= 2 && more()) {
@@ -2325,17 +2340,32 @@ export class Skills {
       if (this.feet().y !== level && !(await this.backOntoLevel(gen, lastGood))) break;
       const [dx, dz] = dirs[di];
       if (!(await this.tunnelStep(gen, dx, dz))) {
-        di = (di + 1) % 4; // something in the way (water, lava, a drop, the house): turn
+        // Something in the way (water, lava, a drop, the house): turn, the way with less of our
+        // own tunnels in it (right on a tie), then the other way, then back.
+        tried.add(di);
+        // Branches a block or two back: turn there, so the new way runs down one of them. Turning
+        // here would run it alongside one with a single block between (the same stone seen twice).
+        const here = this.feet();
+        const o = tried.size === 1 && !this.branchAt(here, dx, dz, 0) ? [-1, -2].find((v) => this.branchAt(here, dx, dz, v)) : undefined;
+        if (o !== undefined) await this.goNear(gen, { x: here.x + dx * o + 0.5, y: here.y, z: here.z + dz * o + 0.5 }, 0.6, 2);
+        di = this.turnFrom(di, tried);
         blocked++;
         continue;
       }
+      tried = new Set();
       blocked = 0;
       steps++;
       lastGood = this.feet();
       record();
       await this.oreAround(gen, lastGood);
       if (this.caveHere()) await this.exploreCave(gen, lastGood, level, more);
-      if (steps % 3 === 0) {
+      // Branches every 3rd block, spaced off the branches already dug (a trip that started again
+      // somewhere else, a turn, a death): two solid blocks between any two, never one beside another.
+      const o = this.branchNear(lastGood, dx, dz);
+      let branchHere = false;
+      if (o !== null) since = -o;
+      else if (++since >= 3) { since = 0; branchHere = true; }
+      if (branchHere) {
         for (const side of [1, -1]) {
           if (!more()) break;
           await this.branch(gen, side * -dz, side * dx, 8, more);
@@ -2343,6 +2373,83 @@ export class Skills {
       }
     }
     record();
+  }
+
+  /**
+   * A branch of ours off the main tunnel near `at` (running (dx, dz)): its offset along the tunnel
+   * (0 here, negative behind, positive ahead, within 2), or null. Seen by its floor two blocks out
+   * to either side.
+   */
+  branchNear(at, dx, dz) {
+    for (const o of [0, -1, 1, -2, 2]) if (this.branchAt(at, dx, dz, o)) return o;
+    return null;
+  }
+
+  /** A branch of ours off the main tunnel (running (dx, dz)) at offset o from `at`, either side? */
+  branchAt(at, dx, dz, o) {
+    return [1, -1].some((s) => this.isTunnelFloor({ x: at.x + dx * o - s * dz * 2, y: at.y - 1, z: at.z + dz * o + s * dx * 2 }));
+  }
+
+  /** Which way to turn the main tunnel from `di` (tried: ways that were blocked here). */
+  turnFrom(di, tried) {
+    const dirs = [[1, 0], [0, 1], [-1, 0], [0, -1]];
+    const f = this.feet();
+    const lane = (d) => { let n = 0; for (let k = 1; k <= 8; k++) for (const w of [-2, -1, 0, 1, 2]) if (this.isTunnelFloor({ x: f.x + dirs[d][0] * k - dirs[d][1] * w, y: f.y - 1, z: f.z + dirs[d][1] * k + dirs[d][0] * w })) n++; return n; };
+    const right = (di + 1) % 4, left = (di + 3) % 4, back = (di + 2) % 4;
+    const opts = [right, left].filter((d) => !tried.has(d)).sort((a, b) => lane(a) - lane(b));
+    return opts[0] ?? back;
+  }
+
+  /**
+   * Our tunnels' floors (the branch mine's main tunnel and branches, any tunnel dug a step at a
+   * time): runs [x, y, z, dir, n] (dir 0..3 as east, south, west, north), kept in a world property
+   * of their own so a big mine is never forgotten to make room (the staircase list is capped at 300,
+   * and an old tunnel that dropped off it looked like a cave).
+   */
+  get tunnels() {
+    if (!this._tunnels) {
+      this._tunnels = [];
+      try {
+        const raw = world.getDynamicProperty(TUNNELS_KEY);
+        if (typeof raw === 'string' && raw) this._tunnels = raw.split(';').map((s) => s.split(',').map(Number)).filter((r) => r.length === 5 && r.every(Number.isFinite));
+      } catch {}
+    }
+    return this._tunnels;
+  }
+
+  saveTunnels() {
+    if (this._tunnelsDirty) return;
+    this._tunnelsDirty = true;
+    system.runTimeout(() => {
+      this._tunnelsDirty = false;
+      try { world.setDynamicProperty(TUNNELS_KEY, this.tunnels.map((r) => r.join(',')).join(';')); } catch (e) { console.warn(`[agent] tunnels save: ${e}`); }
+    }, 100);
+  }
+
+  /** A tunnel step dug: its floor (one below the feet), dug going (dx, dz). */
+  noteTunnel(floor, dx, dz) {
+    const d = [[1, 0], [0, 1], [-1, 0], [0, -1]].findIndex(([a, b]) => a === dx && b === dz);
+    if (d < 0 || this.isTunnelFloor(floor)) return;
+    const runs = this.tunnels;
+    const k = `${floor.x},${floor.y},${floor.z}`;
+    // The next block of a run that ends right behind it, dug the same way.
+    const r = runs.slice(-12).find(([x, y, z, rd, n]) => rd === d && y === floor.y && x + dx * n === floor.x && z + dz * n === floor.z);
+    if (r) r[4]++;
+    else {
+      runs.push([floor.x, floor.y, floor.z, d, 1]);
+      if (runs.length > 1500) { runs.splice(0, runs.length - 1500); this._tunnelCells = null; }
+    }
+    this._tunnelCells?.add(k);
+    this.saveTunnels();
+  }
+
+  isTunnelFloor(p) {
+    if (!this._tunnelCells) {
+      const dirs = [[1, 0], [0, 1], [-1, 0], [0, -1]];
+      this._tunnelCells = new Set();
+      for (const [x, y, z, d, n] of this.tunnels) for (let i = 0; i < n; i++) this._tunnelCells.add(`${x + dirs[d][0] * i},${y},${z + dirs[d][1] * i}`);
+    }
+    return this._tunnelCells.has(`${Math.floor(p.x)},${Math.floor(p.y)},${Math.floor(p.z)}`);
   }
 
   /**
@@ -2514,7 +2621,7 @@ export class Skills {
     this.check(gen);
     await this.collect(gen, this.sim.location, 3, 2, false);
     if (r.status !== 'arrived') return false;
-    this.protect({ x: feet.x, y: f.y - 1, z: feet.z });
+    this.noteTunnel({ x: feet.x, y: f.y - 1, z: feet.z }, dx, dz);
     await this.lightQuarry(gen, { x: f.x, y: f.y, z: f.z });
     return true;
   }
@@ -2788,7 +2895,7 @@ export class Skills {
   isProtected(p) {
     // The treads of our staircases and tunnel floors, and every step of the quarry's shaft.
     if (!this._protected) this._protected = new Set([...(this.a.memory.data.stairs ?? []), ...(this.a.memory.data.quarry?.steps ?? [])]);
-    return this._protected.has(`${Math.floor(p.x)},${Math.floor(p.y)},${Math.floor(p.z)}`);
+    return this._protected.has(`${Math.floor(p.x)},${Math.floor(p.y)},${Math.floor(p.z)}`) || this.isTunnelFloor(p);
   }
 
   /** Standing among stone (a quarry, a tunnel, a cave wall): most of the sides at feet and head height. */

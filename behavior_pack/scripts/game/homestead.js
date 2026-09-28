@@ -4,9 +4,9 @@ import { system, world, Direction, ItemStack } from '@minecraft/server';
 import { dist3D } from '../core/mathutil.js';
 import { standOff } from '../core/threat.js';
 import { isLog, isPlanks, TOOL_STONE, count } from '../core/recipes.js';
-import { FOODS, RAW, isNight, TORCH_GOAL, fittingsPlanks } from '../core/settle.js';
+import { RAW, isNight, TORCH_GOAL, fittingsPlanks, chooseFood } from '../core/settle.js';
 import { planFuel, burnsFor, charcoalInput } from '../core/fuel.js';
-import { blueprint, clearance, footing, furnishings, inside, houseMissing, standFor, layoutOf, NEW_LAYOUT } from '../core/house.js';
+import { blueprint, clearance, footing, furnishings, inside, houseMissing, standFor, layoutOf, NEW_LAYOUT, keepClear, inTheWay, frame } from '../core/house.js';
 import { cheapestPlaceable, plankReserve } from '../core/costs.js';
 import { siteWork, siteScore } from '../core/site.js';
 import { depositPlan, takePlan, sortIntoChests } from '../core/storage.js';
@@ -132,18 +132,20 @@ export class Homestead {
     try { return this.sim.getComponent('minecraft:player.hunger')?.currentValue ?? 20; } catch { return 20; }
   }
 
-  /** Eat if hungry (or hurt and not full): the food that wastes least, cooked before raw, never raw chicken unless starving. */
+  saturation() {
+    try { return this.sim.getComponent('minecraft:player.saturation')?.currentValue ?? 0; } catch { return 0; }
+  }
+
+  /**
+   * Eat if hungry (or hurt and not full): hunger and saturation that land, least wasted (core/settle.js
+   * chooseFood); raw meat waits while some's cooking close by.
+   */
   async maybeEat(gen) {
     const hunger = this.hunger(), health = this.a.health();
     if (!(hunger <= 14 || (health < 16 && hunger < 20))) return false;
     const inv = invCounts(this.sim);
-    const missing = 20 - hunger;
-    let best = null, bestScore = -Infinity;
-    for (const [id, v] of Object.entries(FOODS)) {
-      if (!inv[id] || (id === 'chicken' && hunger > 6)) continue;
-      const score = Math.min(v, missing) - 0.5 * Math.max(0, v - missing) + (id in RAW ? 0 : 1);
-      if (score > bestScore) { bestScore = score; best = id; }
-    }
+    const cookingSoon = this.jobs.some((j) => j.kind === 'food' && dist3D(this.sim.location, j.pos) <= 32);
+    const best = chooseFood(inv, { hunger, saturation: this.saturation(), health, cookingSoon });
     if (!best) return false;
     const slot = hold(this.sim, best);
     if (slot < 0) return false;
@@ -474,9 +476,11 @@ export class Homestead {
    * Put `itemId` into cell: click a solid neighbour's face toward the cell (below first, then the
    * sides, then above), like a player placing against whatever's there.
    */
-  async placeAt(gen, cell, itemId, via = null, next = null) {
+  async placeAt(gen, cell, itemId, via = null, next = null, { liquid = false } = {}) {
     const S = this.S;
-    if (!SOFT.test(S.blockAt(cell) ?? 'air')) return S.blockAt(cell) === itemId;
+    // (liquid: into water or lava, to stop it.)
+    const open = (id) => SOFT.test(id) || (liquid && /water|lava/.test(id));
+    if (!open(S.blockAt(cell) ?? 'air')) return S.blockAt(cell) === itemId;
     const faces = via ? FACES.filter(([o]) => cell.x + o[0] === via.x && cell.y + o[1] === via.y && cell.z + o[2] === via.z) : FACES;
     for (const [o, face, loc] of faces) {
       const n = { x: cell.x + o[0], y: cell.y + o[1], z: cell.z + o[2] };
@@ -492,7 +496,7 @@ export class Homestead {
       S.check(gen);
       const r = await S.placeOn(gen, slot, n, face, loc, cell);
       this.a.motor.setFocus(next ? center(next) : null);
-      if (r || !SOFT.test(S.blockAt(cell) ?? 'air')) return true;
+      if (r || !open(S.blockAt(cell) ?? 'air')) return true;
       S.log(`place ${itemId} at ${cell.x} ${cell.y} ${cell.z} against ${nid} (${face}): ${r}, still ${S.blockAt(cell)}`);
     }
     return false;
@@ -830,6 +834,7 @@ export class Homestead {
     const need = this.houseNeeds(h, h.dir);
     if (need.stone || need.planks) { this.shortfall = need; return false; }
     this.shortfall = null;
+    await this.sweepAroundHouse(gen); // a blast: what it threw out of a chest or a furnace
     this.a.sayOnce('repair', `${holes.length} block${holes.length > 1 ? 's' : ''} of my house ${holes.length > 1 ? 'are' : 'is'} missing: patching ${holes.length > 1 ? 'them' : 'it'} up.`, 60000);
     await this.plankUp(gen, h, h.dir);
     const fur = furnishings(h, h.dir);
@@ -851,12 +856,165 @@ export class Homestead {
     return left === 0;
   }
 
+  // ---------- keeping the house usable ----------
+
+  /**
+   * Our own house's blocks, never broken to get somewhere (skills.actionOpts, force): the walls and
+   * roof, and our furniture where it belongs.
+   */
+  isHouseBlock(p) {
+    const h = this.house;
+    if (!h) return false;
+    const k = `${h.x},${h.y},${h.z},${h.dir},${layoutOf(h)}`;
+    if (this._houseCells?.k !== k) {
+      const walls = new Set(blueprint(h, h.dir).map((b) => `${b.x},${b.y},${b.z}`));
+      const fittings = new Map(keepClear(h, h.dir).filter((c) => c.want).map((c) => [`${c.x},${c.y},${c.z}`, c]));
+      this._houseCells = { k, walls, fittings };
+    }
+    const key = `${Math.floor(p.x)},${Math.floor(p.y)},${Math.floor(p.z)}`;
+    if (this._houseCells.walls.has(key)) return true;
+    const c = this._houseCells.fittings.get(key);
+    return !!c && !inTheWay(c, this.S.blockAt(c) ?? 'air') && !SOFT.test(this.S.blockAt(c) ?? 'air');
+  }
+
+  /**
+   * Whatever's in the way in the house: in the rooms, the doorways, on the doorstep, or where one of
+   * our things goes (a player's blocks, sand or gravel that fell in, rubble, water). [{x,y,z,id}]
+   */
+  houseObstructions() {
+    const h = this.house;
+    if (!h || !this.houseLoaded()) return [];
+    const out = [];
+    for (const c of keepClear(h, h.dir)) {
+      const id = this.S.blockAt(c);
+      if (id === null) continue; // unreadable: unknown, not in the way
+      if (inTheWay(c, id)) out.push({ ...c, id });
+    }
+    return out;
+  }
+
+  /**
+   * Get rid of everything in the way in the house, whatever it is and whoever put it there: dug out
+   * (and picked up), water and lava blocked off and dug out. Nearest first, so it works its way in
+   * from wherever it is (through the doorway, or through the junk if that's what fills it).
+   */
+  async clearHouse(gen) {
+    const h = this.house;
+    if (!h) return false;
+    const S = this.S;
+    let blocks = this.houseObstructions();
+    if (!blocks.length) return true;
+    this.a.sayOnce('clear-house', `${blocks.length} block${blocks.length > 1 ? 's are' : ' is'} in the way in my house: clearing ${blocks.length > 1 ? 'them' : 'it'} out.`, 60000);
+    trace(`house: in the way: ${blocks.slice(0, 12).map((b) => `${b.id}@${b.x},${b.y},${b.z}${b.want ? `(${b.want} spot)` : ''}`).join(' ')}${blocks.length > 12 ? ' ...' : ''}`);
+    let cleared = 0;
+    const failed = new Set();
+    for (let n = 0; n < 200 && blocks.length; n++) {
+      S.check(gen);
+      const f = this.sim.location;
+      // Nearest first; the higher of two at the same spot first (sand and gravel fall into the gap).
+      const todo = blocks.filter((b) => !failed.has(`${b.x},${b.y},${b.z}`))
+        .sort((a, b) => Math.hypot(a.x + 0.5 - f.x, a.z + 0.5 - f.z) - Math.hypot(b.x + 0.5 - f.x, b.z + 0.5 - f.z) || b.y - a.y);
+      if (!todo.length) break;
+      const b = todo[0];
+      const id = S.blockAt(b) ?? 'air';
+      let ok = false;
+      if (/water|lava/.test(id)) ok = await this.plugAndClear(gen, b);
+      else ok = await S.mine(gen, b, { collect: true });
+      if (ok) cleared++;
+      else { failed.add(`${b.x},${b.y},${b.z}`); trace(`house: couldn't clear ${id} at ${b.x} ${b.y} ${b.z} from ${Math.round(f.x)} ${Math.round(f.y)} ${Math.round(f.z)}`); }
+      blocks = this.houseObstructions();
+    }
+    S.restHands();
+    await this.sweepAroundHouse(gen);
+    const left = this.houseObstructions().length;
+    if (cleared || left) this.a.say(left ? `Cleared ${cleared} block${cleared === 1 ? '' : 's'} out of my house; ${left} still in the way.` : `Cleared the house out (${cleared} block${cleared === 1 ? '' : 's'}).`);
+    return left === 0;
+  }
+
+  /** Water or lava where it's in the way: a block into it (that stops it), then dig the block out. */
+  async plugAndClear(gen, c) {
+    const S = this.S;
+    const inv = invCounts(this.sim);
+    const block = cheapestPlaceable(inv, plankReserve(inv));
+    if (!block) return false;
+    if (!S.inReach(c)) await S.goNear(gen, { x: c.x + 0.5, y: c.y, z: c.z + 0.5 }, 3, 2);
+    if (!(await this.placeAt(gen, c, block, null, null, { liquid: true }))) return false;
+    return S.mine(gen, c, { collect: true });
+  }
+
+  /** Items lying round the house (a chest or furnace blown up, the junk we dug out): pick them up. */
+  async sweepAroundHouse(gen) {
+    const h = this.house;
+    if (!h) return;
+    const mid = { x: h.x + 0.5, y: h.y + 0.5, z: h.z + 0.5 };
+    let n = 0;
+    try { n = this.dim.getEntities({ type: 'minecraft:item', location: mid, maxDistance: 12 }).length; } catch {}
+    if (n) await this.S.sweep(gen, mid, 12, null, 20);
+  }
+
+  /** Fire on or round the house (its planks burn and it spreads): the fire blocks, nearest the house first. */
+  houseFires() {
+    const h = this.house;
+    if (!h || !this.houseLoaded()) return [];
+    const at = frame(h, h.dir), back = layoutOf(h) === 'chests' ? -6 : -2;
+    const out = [];
+    for (let lx = -3; lx <= 3; lx++) for (let lz = back - 1; lz <= 4; lz++) for (let dy = -1; dy <= 5; dy++) {
+      const p = at(lx, lz, dy);
+      if (/^(fire|soul_fire)$/.test(this.S.blockAt(p) ?? '')) out.push(p);
+    }
+    return out;
+  }
+
+  /**
+   * The house is on fire: punch every flame out (a hit puts fire out, as a player does), nearest
+   * first, till none's left; the burnt blocks get patched by the repair after.
+   */
+  async fightFire(gen) {
+    const S = this.S;
+    let fires = this.houseFires();
+    if (!fires.length) return true;
+    this.a.say(`My house is on fire (${fires.length} flame${fires.length > 1 ? 's' : ''}): putting it out.`);
+    let out = 0, rounds = 0;
+    const t0 = system.currentTick;
+    while (fires.length && rounds++ < 60 && system.currentTick - t0 < 20 * 90) {
+      S.check(gen);
+      const f = this.sim.location;
+      fires.sort((a, b) => dist3D(f, center(a)) - dist3D(f, center(b)));
+      const c = fires[0];
+      if (!S.inReach(c)) await S.goNear(gen, { x: c.x + 0.5, y: c.y, z: c.z + 0.5 }, 2.5, 2);
+      // On the roof: from the ground by the wall, reaching up (4 up and a bit across is in reach).
+      if (!S.inReach(c)) await S.goNear(gen, { x: c.x + 0.5, y: c.y, z: c.z + 0.5 }, 4.2, 2);
+      if (await this.punchOut(gen, c)) out++;
+      fires = this.houseFires();
+    }
+    this.a.say(fires.length ? `Put out ${out}; ${fires.length} still burning I can't get to.` : `Fire's out (${out} flame${out === 1 ? '' : 's'}).`);
+    return !fires.length;
+  }
+
+  /** One punch at a fire block (it goes out; the block it's on is untouched). */
+  async punchOut(gen, c) {
+    const S = this.S;
+    if (!/fire/.test(S.blockAt(c) ?? '')) return true;
+    if (!S.inReach(c)) return false;
+    hold(this.sim, null); // a fist: no tool wear for a flame
+    await S.aim(gen, { x: c.x + 0.5, y: c.y + 0.2, z: c.z + 0.5 }, 15, 6);
+    try { this.sim.breakBlock(c); } catch {}
+    await S.wait(gen, 2);
+    try { this.sim.stopBreakingBlock(); } catch {}
+    // (The break ray can miss a flame: put it out the way the punch would have.)
+    if (/fire/.test(S.blockAt(c) ?? '')) { try { this.dim.runCommand(`setblock ${c.x} ${c.y} ${c.z} air`); } catch {} }
+    this.a.cellChanged?.();
+    return !/fire/.test(S.blockAt(c) ?? '');
+  }
+
   /** Put the door in from the item (the simulated player can't place doors itself). */
   placeDoor() {
     const h = this.house;
     if (!h || !invCounts(this.sim).wooden_door) return false;
     const fur = furnishings(h, h.dir);
     if (/door/.test(this.S.blockAt(fur.door) ?? '')) return true;
+    // (setblock replaces whatever's there: something in the doorway is cleared out first, clear_house.)
+    if (!SOFT.test(this.S.blockAt(fur.door) ?? 'air') || !SOFT.test(this.S.blockAt({ ...fur.door, y: fur.door.y + 1 }) ?? 'air')) return false;
     take(this.sim, 'wooden_door', 1);
     // Hinged so it swings out of the way: the door's facing is across the way we walk through it.
     const across = h.dir === 'north' || h.dir === 'south' ? 'east' : 'south';
@@ -879,7 +1037,7 @@ export class Homestead {
     if (!h) return null;
     // Out of range (chunks not loaded): every block reads as nothing. Keep what we last saw
     // rather than "discover" a missing door, bed and 47 missing walls from 90 blocks away.
-    if (!this.houseLoaded()) return this.lastHouseState ?? { layout: layoutOf(h), damage: 0, door: true, bed: !!h.bed, bedMisplaced: false, table: !!h.table, furnace: !!h.furnace, chest: !!h.chest, signs: true, lit: true, litOutside: true };
+    if (!this.houseLoaded()) return this.lastHouseState ?? { layout: layoutOf(h), damage: 0, blocked: 0, fire: 0, door: true, bed: !!h.bed, bedMisplaced: false, table: !!h.table, furnace: !!h.furnace, chest: !!h.chest, signs: true, lit: true, litOutside: true };
     const fur = furnishings(h, h.dir), at = (p) => this.S.blockAt(p) ?? '';
     const chestsPlaced = fur.chests.filter((c) => /chest/.test(at(c))).length;
     const signsPlaced = fur.signs.filter((sg) => /sign/.test(at(sg.cell))).length;
@@ -889,6 +1047,8 @@ export class Homestead {
       // The chest room's four chests, each with its sign (a cabin: the one by the door).
       signs: signsPlaced === fur.signs.length || this.S.constructor.itemExists?.('oak_sign') === false, // (no signs in this game: done without)
       damage: this.houseDamage().length,
+      blocked: this.houseObstructions().length, // in the way in the rooms, doorways, doorstep
+      fire: this.houseFires().length,
       door: /door/.test(at(fur.door)),
       // Both halves, in the planned cells: half a bed, or one across the wall line, isn't a bed.
       bed: /bed/.test(at(fur.bed.foot)) && /bed/.test(at(fur.bed.head)),
@@ -919,6 +1079,7 @@ export class Homestead {
     if (!h) return;
     const S = this.S;
     const fur = furnishings(h, h.dir);
+    await this.sweepAroundHouse(gen); // a chest or furnace that went (a blast, a fire): its things
     if (!inside(h, this.sim.location)) await this.enterHouse(gen);
     let inv = invCounts(this.sim);
     if (!h.table && !inv.crafting_table && (count(inv, isPlanks) >= 4 || count(inv, isLog) >= 1)) await S.craft(gen, ['crafting_table'], false);
@@ -1319,7 +1480,21 @@ export class Homestead {
     const h = this.house;
     const sleep = this.a.bedsOn?.() !== false; // (beds off: sit the night out inside, awake)
     this.a.sayOnce('gohome', 'Getting dark, heading home.', 300000);
-    if (!(await this.enterHouse(gen))) return false;
+    if (!(await this.enterHouse(gen))) {
+      // Can't get in: whatever's in the way (a player's blocks in the doorway or the room, rubble)
+      // comes out, and in we go. Still shut out after that: dig in here rather than stand outside.
+      if (this.houseObstructions().length) await this.clearHouse(gen);
+      if (!(await this.enterHouse(gen))) {
+        this.homeFails = (this.homeFails ?? 0) + 1;
+        trace(`night: can't get into the house (${this.homeFails})`);
+        if (this.homeFails < 2) return false;
+        this.homeFails = 0;
+        this.a.say("Can't get into my house: digging in here for the night.");
+        await this.shelter(gen);
+        return true;
+      }
+    }
+    this.homeFails = 0;
     const fur = furnishings(h, h.dir);
     // Home for the night anyway: put away what we don't need to carry before bed.
     if (this.chests().length && Object.keys(depositPlan(invCounts(this.sim))).length) await this.storeItems(gen);

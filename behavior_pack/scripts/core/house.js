@@ -149,6 +149,55 @@ export function furnishings(origin, dir) {
   };
 }
 
+/**
+ * Every cell of the house that has to stay usable: the rooms floor to ceiling, the doorways, the
+ * doorstep and the space over it. A cell with `want` is where something of ours goes (the table,
+ * the furnace, the bed, a chest, a sign, a torch, the door): that thing or nothing. Every other one
+ * is for walking and working in: nothing solid. Anything else found in one (a player's blocks, a
+ * creeper's crater filled with junk, a block of ours left behind) is in the way and comes out.
+ */
+export function keepClear(origin, dir) {
+  const at = frame(origin, dir), layout = layoutOf(origin), back = backOf(layout);
+  const fur = furnishings(origin, dir);
+  const k = (p) => `${p.x},${p.y},${p.z}`;
+  const want = new Map();
+  want.set(k(fur.table), 'crafting_table');
+  want.set(k(fur.furnace), 'furnace');
+  want.set(k(fur.bed.foot), 'bed');
+  want.set(k(fur.bed.head), 'bed');
+  for (const c of fur.chests) want.set(k(c), 'chest');
+  for (const s of fur.signs) want.set(k(s.cell), 'sign');
+  for (const t of [fur.torchInside, fur.torchChests, ...fur.torchesOutside].filter(Boolean)) want.set(k(t.toward), 'torch');
+  want.set(k(fur.door), 'door');
+  want.set(k({ ...fur.door, y: fur.door.y + 1 }), 'door');
+  const { isWall, skip } = shape(layout);
+  const out = [];
+  const add = (p) => { const w = want.get(k(p)); out.push(w ? { ...p, want: w } : { ...p }); };
+  for (let lx = -2; lx <= 2; lx++) for (let lz = back; lz <= 3; lz++) for (let h = 0; h <= 2; h++) {
+    if (lz === 3) { if (lx === 0 && h <= 1) add(at(lx, lz, h)); continue; } // the doorstep
+    // Inside the walls, and the openings in them we walk through (the door, the chest room's doorway).
+    if (isWall(lx, lz) && !(skip(lx, lz, h) && lx === 0)) continue;
+    add(at(lx, lz, h));
+  }
+  // The torches outside hang off the front wall over the ground either side of the door.
+  for (const t of fur.torchesOutside) if (!out.some((c) => k(c) === k(t.toward))) out.push({ ...t.toward, want: 'torch' });
+  return out;
+}
+
+/** Can something stand in a keep-clear cell without being in the way (air, plants, a torch, a carpet)? */
+export const HARMLESS = /^(air|short_grass|tall_grass|fern|large_fern|dead_bush|deadbush|snow_layer|vine|.*_flower|dandelion|poppy|.*_tulip|azure_bluet|allium|blue_orchid|oxeye_daisy|cornflower|lily_of_the_valley|sweet_berry_bush|bush|leaf_litter|wildflowers|pink_petals|short_dry_grass|tall_dry_grass|torch|wall_torch|soul_torch|.*_carpet|carpet|.*_pressure_plate|.*_button|lever|rail|redstone_wire|light_block.*|structure_void)$/;
+
+/** Is block `id` in keep-clear cell `c` in the way? (Fire is its own job: see the house's fire watch.) */
+export function inTheWay(c, id) {
+  const b = String(id ?? 'air').replace(/^minecraft:/, '');
+  if (/^(fire|soul_fire)$/.test(b)) return false;
+  if (c.want) {
+    if (b.includes(c.want === 'crafting_table' ? 'crafting_table' : c.want)) return false;
+    if (c.want === 'torch' && /torch/.test(b)) return false;
+  }
+  return !HARMLESS.test(b);
+}
+
 /** The spot to build or reach `cell` from: whichever room's middle is nearer. */
 export function standFor(fur, cell) {
   let best = fur.stand, bd = Infinity;

@@ -100,9 +100,11 @@ export function goalChain(f) {
   // 7. Move in
   goals.push({
     goal: 'Move in',
-    done: built && !f.house.damage && !!f.house.bed && !!f.house.furnace && !!f.house.table && f.house.chest !== false && !!f.house.door && !!f.house.lit && f.house.litOutside !== false,
+    done: built && !f.house.damage && !f.house.blocked && !f.house.fire && !!f.house.bed && !!f.house.furnace && !!f.house.table && f.house.chest !== false && !!f.house.door && !!f.house.lit && f.house.litOutside !== false,
     tasks: [
       check('House intact', built && !f.house.damage, ['repair_house', 'get_stone', 'gather_logs']),
+      check('Nothing in the way inside', built && !f.house.blocked, ['clear_house']),
+      check('Not on fire', built && !f.house.fire, ['fight_fire']),
       check('Door hung', f.house?.door, ['furnish', 'craft']),
       check('Crafting table inside', f.house?.table, ['furnish']),
       check('Furnace inside', f.house?.furnace, ['furnish']),

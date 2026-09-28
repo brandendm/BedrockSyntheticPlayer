@@ -30,6 +30,9 @@ import { CONFIG } from '../config.js';
 
 /** Steps done down the mine (the camp's furnace and table too): night doesn't send us home from them. */
 const MINE_STEPS = new Set(['get_iron', 'get_stone', 'smelt', 'collect_smelt', 'craft', 'equip']);
+// Steps that are the bot's home and its things: a way there walled off by anything breakable (a
+// player's build, a chest, junk) gets broken through rather than given up on.
+const ESSENTIAL_STEPS = new Set(['go_home', 'clear_house', 'fight_fire', 'repair_house', 'furnish', 'store', 'smelt', 'collect_smelt', 'wait_smelt', 'goto_table', 'light_outside', 'shelter']);
 const SURVIVE_EVERY = 4;          // ticks between threat checks (0.2 s reaction time)
 const ENDERMAN_SCAN_EVERY = 20;
 const CALM_TICKS_TO_RESUME = 40;  // threats gone this long -> resume the interrupted task
@@ -44,7 +47,7 @@ const STEP_WORDS = {
   plan_house: 'picking a spot for the house', build_house: 'building the house', repair_house: 'repairing the house', furnish: 'moving things into the house', light_outside: 'putting torches up by the door',
   check_water: 'looking for water to farm by', make_farm: 'making a wheat farm', tend_farm: 'harvesting and replanting wheat', get_iron: 'mining for iron', equip: 'putting on armor',
   store: 'putting things away in the chest',
-  go_home: 'night: going home to sleep', shelter: 'night: holed up until morning', done: 'all goals done', blocked: 'stuck on a recipe',
+  go_home: 'night: going home to sleep', shelter: 'night: holed up until morning', clear_house: 'clearing what\'s in the way in the house', fight_fire: 'putting out a fire at the house', done: 'all goals done', blocked: 'stuck on a recipe',
 };
 
 export class Agent {
@@ -225,6 +228,15 @@ export class Agent {
       if (night && !this.wasNight) trace(`dusk: step ${this.autoStep}, in the mine ${mining} (underground ${this.minedUnderground()}, trip ${this.onMiningTrip()})`);
       if (night && !this.wasNight && this.task?.kind === 'auto' && !mining && !['go_home', 'shelter', 'build_house'].includes(this.autoStep)) this.startAuto();
       this.wasNight = night;
+    }
+    // Fire at the house: drop whatever's running; the plan puts the fire first. (Not again while a
+    // fire we couldn't reach is set aside.)
+    if (t % 40 === 30 && this.mode === 'none' && this.autoEnabled && this.homestead.house && this.autoStep !== 'fight_fire' &&
+        (this.task?.kind === 'auto' || !this.task) && dist3D(this.sim.location, this.homestead.house) <= 64 &&
+        ![...this.deferred.values()].some((d) => d.step === 'fight_fire' && d.until > Date.now()) && this.homestead.houseFires().length) {
+      trace(`fire at the house: dropping ${this.autoStep}`);
+      this.autoDone = false;
+      this.startAuto();
     }
     if (this.mode === 'none' && !this.task && !this.suspended && this.autoEnabled && !this.autoDone && t >= this.nextAutoTry) {
       this.startAuto();
@@ -592,6 +604,16 @@ export class Agent {
       else { d.mode = 'none'; d.reason = 'cornered, nothing close enough to fight: carry on'; }
     }
 
+    // In bed: nobody swings a sword lying down (the game let the bot hit things from its bed). A mob
+    // that's got to us (hit us, or right by the bed; a creeper close) gets us up first, and the fight
+    // starts once we're on our feet; anything further off is the walls' business.
+    if (this.sim.isSleeping && d.mode !== 'none') {
+      const close = d.threats.some((m) => m.attackedMe || m.dist <= 2.5 || (m.type === 'creeper' && m.dist <= 5));
+      if (close) this.getOutOfBed();
+      d.mode = 'none';
+      d.reason = close ? 'getting out of bed first' : 'in bed: the walls keep it out';
+    }
+
     // No fist fights with skeletons: bare-handed that's how we kept dying. Keep working and move on.
     if (d.mode === 'fight' && this.damage <= 1.5) {
       const tgt = mobs.find((m) => m.id === d.target);
@@ -651,6 +673,13 @@ export class Agent {
       this.suspended = null;
       this.resume(s);
     }
+  }
+
+  /** Up out of bed (a mob's got to us). */
+  getOutOfBed() {
+    trace('out of bed: a mob close');
+    try { this.sim.stopInteracting(); } catch {}
+    try { this.body.jump(); } catch {}
   }
 
   endCombat() {
@@ -819,7 +848,9 @@ export class Agent {
       }
       for (;;) {
         S.check(gen);
+        S.essential = true; // (our things, before they despawn)
         await this.recoverDrops(gen);
+        S.essential = false;
         await this.pickUpLoose(gen);
         await this.takeDownWalls(gen);
         await this.skills.cleanupScaffold(gen); // pillars left standing when something took us away
@@ -855,7 +886,10 @@ export class Agent {
         // (Using what's in the house: the furnace, the table, putting things in. Walking out first and
         // back in for those was the in-and-out loop.)
         const inHouseJob = ['smelt', 'collect_smelt', 'furnish', 'store'].includes(step.step) || (['craft', 'goto_table'].includes(step.step) && H.house?.table);
-        if (!['go_home', 'build_house', 'repair_house', 'shelter', 'wait_smelt'].includes(step.step) && !inHouseJob && H.isHome()) await H.leaveHouse(gen);
+        if (!['go_home', 'build_house', 'repair_house', 'clear_house', 'fight_fire', 'shelter', 'wait_smelt'].includes(step.step) && !inHouseJob && H.isHome()) await H.leaveHouse(gen);
+        // Jobs that can't be done without getting there: a way blocked by anything breakable gets
+        // broken through (skills.actionOpts).
+        S.essential = ESSENTIAL_STEPS.has(step.step);
         // (Mining is meant to be underground: iron trips and stone don't climb out between stints.)
         // Down our own mine, the camp's jobs (smelting, crafting a spare, putting on armor) happen
         // right there: climbing out first sent it to the surface to do them.
@@ -982,6 +1016,8 @@ export class Agent {
           case 'wait_smelt': await H.waitSmelt(gen); break;
           case 'build_house': await H.buildHouse(gen); break;
           case 'repair_house': await H.repairHouse(gen); break;
+          case 'clear_house': await H.clearHouse(gen); break;
+          case 'fight_fire': await H.fightFire(gen); break;
           case 'plan_house': await H.planHouse(gen); break;
           case 'furnish': await H.furnish(gen); break;
           case 'store': await H.storeItems(gen); break;
@@ -1187,7 +1223,7 @@ export class Agent {
     if (step.step === 'done' && this.homestead.house) step = advanceStep(this.advanceFacts(inv, tableDist));
     // A wandering trader in sight and no lead yet: his two leads (for walking animals and
     // villagers home, into boats) drop when he's gone. Any time of day but night, from the start.
-    if (!night && !inv.lead && !['go_home', 'shelter', 'repair_house'].includes(step.step)) {
+    if (!night && !inv.lead && !['go_home', 'shelter', 'repair_house', 'clear_house', 'fight_fire'].includes(step.step)) {
       const t = this.homestead.animalsSeen(new Set(['wandering_trader']), 32)[0];
       if (t) return { step: 'hunt', what: 'trader', near: Math.round(t.d) };
     }
@@ -2098,6 +2134,7 @@ export class Agent {
       trace(`task: auto -> ${task?.kind ?? 'none'} (${where})`);
     }
     this.task = task;
+    if (this.skills) this.skills.essential = false; // (the auto loop sets it again for its own jobs)
     return ++this.taskGen;
   }
 

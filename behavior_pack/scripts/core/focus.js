@@ -15,7 +15,7 @@ import { FOOD_GOAL, TORCH_GOAL, foodCount, fittingsPlanks } from './settle.js';
 import { upkeepNeeds } from './advance.js';
 
 const HOUSE = materials();
-export const PRIORITY = new Set(['repair_house', 'go_home', 'shelter', 'collect_smelt', 'build_house', 'plan_house', 'furnish', 'store', 'craft', 'place_table', 'goto_table', 'wait_smelt', 'smelt', 'done']);
+export const PRIORITY = new Set(['fight_fire', 'clear_house', 'repair_house', 'go_home', 'shelter', 'collect_smelt', 'build_house', 'plan_house', 'furnish', 'store', 'craft', 'place_table', 'goto_table', 'wait_smelt', 'smelt', 'done']);
 /** How close a resource must be to be worth a detour, in blocks. */
 export const RADIUS = { sheep: 24, food: 16, log: 20, stone: 16 };
 const WORK = { sheep: 8, food: 6, log: 14, stone: 10 }; // rough effort on top of walking there (log: ~4 logs chopped)

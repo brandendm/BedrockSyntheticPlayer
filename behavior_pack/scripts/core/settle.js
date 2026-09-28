@@ -27,7 +27,45 @@ export const FOODS = {
   rabbit: 3, mutton: 2, cod: 2, salmon: 2, sweet_berries: 2, melon_slice: 2, cookie: 2, potato: 1, chicken: 2,
 };
 export const RAW = { beef: 'cooked_beef', porkchop: 'cooked_porkchop', mutton: 'cooked_mutton', chicken: 'cooked_chicken', rabbit: 'cooked_rabbit', cod: 'cooked_cod', salmon: 'cooked_salmon', potato: 'baked_potato' };
+// Saturation each gives (Minecraft's numbers): what keeps the hunger bar from dropping, and what
+// fast healing runs on. A steak is 8 hunger and 12.8 of this; raw beef is 3 and 1.8.
+export const SATURATION = {
+  cooked_beef: 12.8, cooked_porkchop: 12.8, cooked_mutton: 9.6, cooked_chicken: 7.2, cooked_rabbit: 6, cooked_cod: 6,
+  cooked_salmon: 9.6, bread: 6, baked_potato: 6, golden_carrot: 14.4, apple: 2.4, carrot: 3.6, beef: 1.8, porkchop: 1.8,
+  rabbit: 1.8, mutton: 1.2, cod: 0.4, salmon: 0.4, sweet_berries: 0.4, melon_slice: 1.2, cookie: 0.4, potato: 0.6, chicken: 1.2,
+  rotten_flesh: 0.8,
+};
 export const foodCount = (inv) => count(inv, (id) => id in FOODS);
+
+/**
+ * What to eat now: the most hunger and saturation that actually lands (the bar tops out at 20, and
+ * saturation can't go past the hunger level), less what's wasted over the top. So a snack when
+ * nearly full, a steak when properly hungry. Raw meat waits while some is cooking nearby (unless
+ * starving or hurt badly); raw chicken and rotten flesh only when starving (hunger 6 or less), rotten
+ * flesh only with nothing else. Returns an item id, or null (nothing worth eating now).
+ * @param {any} inv
+ * @param {{ hunger: number, saturation?: number, health?: number, cookingSoon?: boolean }} s
+ */
+export function chooseFood(inv, { hunger, saturation = 0, health = 20, cookingSoon = false }) {
+  const missing = 20 - hunger;
+  if (missing <= 0) return null;
+  const starving = hunger <= 6, desperate = starving || health <= 8;
+  let best = null, bestScore = -Infinity;
+  const score = (id, h) => {
+    const fill = Math.min(h, missing), waste = Math.max(0, h - missing);
+    const sat = Math.max(0, Math.min(SATURATION[id] ?? 0, hunger + fill - saturation));
+    return fill + sat - waste;
+  };
+  for (const [id, h] of Object.entries(FOODS)) {
+    if (!inv[id]) continue;
+    if (id === 'chicken' && !starving) continue;
+    if (id in RAW && cookingSoon && !desperate) continue; // the cooked one's on its way
+    const sc = score(id, h);
+    if (sc > bestScore) { bestScore = sc; best = id; }
+  }
+  if (!best && starving && inv.rotten_flesh) return 'rotten_flesh';
+  return best;
+}
 export const isNight = (time) => time >= DUSK && time < DAWN;
 
 /**
@@ -47,6 +85,12 @@ export function settleStep(f) {
   const { inv } = f;
   const torches = inv.torch ?? 0;
   const on = (k) => f.goals?.[k] !== false; // goals switched off (core/toggles.js)
+
+  // The house on fire: put it out before anything (it's gone in a minute otherwise), day or night.
+  if (f.house?.fire > 0) return { step: 'fight_fire' };
+  // Something in the way in the house (a player's blocks, rubble, water; wherever it came from):
+  // out with it, so the way in, the rooms and our things' places are usable.
+  if (f.house?.blocked > 0) return { step: 'clear_house' };
 
   // A house with holes in it (a creeper, a player): patch it before anything else, day or night;
   // with the exact blocks it's short of fetched first.
