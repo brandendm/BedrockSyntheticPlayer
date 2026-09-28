@@ -46,6 +46,7 @@ export const isNight = (time) => time >= DUSK && time < DAWN;
 export function settleStep(f) {
   const { inv } = f;
   const torches = inv.torch ?? 0;
+  const on = (k) => f.goals?.[k] !== false; // goals switched off (core/toggles.js)
 
   // A house with holes in it (a creeper, a player): patch it before anything else, day or night;
   // with the exact blocks it's short of fetched first.
@@ -65,7 +66,7 @@ export function settleStep(f) {
     if (f.house) return { step: 'shelter' };
     // Walls, roof and a door are enough for a night in: the rest of the fittings can wait for day.
     const need = houseShortfall(inv, null, { fittings: false });
-    if (!need) return { step: 'build_house' };
+    if (!need && on('house')) return { step: 'build_house' };
     return { step: 'shelter' };
   }
 
@@ -82,7 +83,7 @@ export function settleStep(f) {
 
   // Still need wool and a sheep's right here: that first (it won't wait; the furnace will).
   // (Beds off, `!bot beds off`: no sleeping, so no bed and no sheep hunted for one.)
-  const bedsOn = f.beds !== false;
+  const bedsOn = f.beds !== false && on('beds');
   const needWool = bedsOn && !has(inv, 'bed') && !f.house?.bed && wool(inv) < 3;
   const sheepNow = f.armed !== false && needWool && f.sheep && !f.bedDeferred;
   // A finished furnace waits for us (it keeps its output): collect when we're near it anyway,
@@ -100,7 +101,7 @@ export function settleStep(f) {
   }
 
   // A house we've started comes first: no wandering off after sheep with the walls half up.
-  if (f.project && !f.house) {
+  if (f.project && !f.house && on('house')) {
     const need = houseShortfall(inv, f.shortfall);
     if (need?.stone) return { step: 'get_stone', need: need.stone, why: 'house' };
     if (need?.logs) return { step: 'gather_logs', count: count(inv, isLog) + need.logs, wanted: ['house'] };
@@ -113,7 +114,7 @@ export function settleStep(f) {
   const armed = f.armed !== false;
   // Sheep first while we need wool: they're food too (mutton), other animals can wait.
   if (sheepNow && wool(inv) < 3 && !f.house) return { step: 'hunt', what: 'sheep', need: 3 - wool(inv) };
-  if (armed && f.animals > 0 && foodCount(inv) < FOOD_GOAL && !sheepNow) return { step: 'hunt', what: 'food' };
+  if (on('hunting') && armed && f.animals > 0 && foodCount(inv) < FOOD_GOAL && !sheepNow) return { step: 'hunt', what: 'food' };
 
   // 2. Bed.
   const haveBed = !bedsOn || has(inv, 'bed') || !!f.house?.bed;
@@ -125,7 +126,7 @@ export function settleStep(f) {
   // 3. Torches (charcoal smelting runs in the background).
   const fuel = (inv.charcoal ?? 0) + (inv.coal ?? 0);
   // Enough torches: 8 in hand, or the house is lit (placing them is what they're for).
-  if (torches < TORCH_GOAL && !f.house?.lit) {
+  if (on('torches') && torches < TORCH_GOAL && !f.house?.lit) {
     if (fuel > 0) return craftStep(inv, ['torch'], f.tableDist);
     if (!f.smelt) {
       const n = Math.ceil((TORCH_GOAL - torches) / 4);
@@ -138,12 +139,13 @@ export function settleStep(f) {
 
   // 4. House. Pick the spot first, so what we gather is counted block by block for that spot.
   if (!f.house) {
+    if (!on('house')) return f.smelt?.ready ? { step: 'collect_smelt' } : { step: 'done' }; // (no house: the rest is the house's)
     if (!f.project) return { step: 'plan_house' };
     const need = houseShortfall(inv, f.shortfall);
     if (need?.stone) return { step: 'get_stone', need: need.stone, why: 'house' };
     if (need?.logs) return { step: 'gather_logs', count: count(inv, isLog) + need.logs, wanted: ['house'] };
     if (!has(inv, 'wooden_door')) return craftStep(inv, ['wooden_door'], f.tableDist);
-    if (torches < HOUSE.torches && (f.smelt || fuel)) return { step: 'wait_smelt' };
+    if (on('torches') && torches < HOUSE.torches && (f.smelt || fuel)) return { step: 'wait_smelt' };
     return { step: 'build_house' };
   }
   // The house is up: a door, a bed, a table, a furnace and a torch inside before it counts as done.
@@ -180,8 +182,10 @@ export function settleStep(f) {
     return craftStep(inv, ['oak_sign'], f.tableDist);
   }
   // Pack nearly full: put things away before anything else takes us out again.
-  if (f.packFull && f.house.chest && !f.chestFull) return { step: 'store' };
-  if (f.house.lit === false && torches > 0) return { step: 'furnish' };
+  if (on('storage') && f.packFull && f.house.chest && !f.chestFull) return { step: 'store' };
+  // (Torches switched off: the house counts as lit.)
+  const lit = !on('torches') || f.house.lit !== false, litOutside = !on('torches') || f.house.litOutside !== false;
+  if (!lit && torches > 0) return { step: 'furnish' };
   // Cook raw meat while we're at it.
   // Only with something to burn (else it loops failing, sets the furnace job aside and wanders).
   const rawId = Object.keys(RAW).filter((id) => (inv[id] ?? 0) >= 2).sort((a, b) => inv[b] - inv[a])[0];
@@ -192,11 +196,11 @@ export function settleStep(f) {
   // Not done while something's still missing: no sheep for the bed yet (go and find some:
   // grassland, see core/biomes.js), or the charcoal for the torches is still cooking.
   // Torches by the door first if we have them: seconds of work here, before a long sheep search.
-  if (f.house.litOutside === false && torches > 0) return { step: 'light_outside' };
+  if (!litOutside && torches > 0) return { step: 'light_outside' };
   if (!f.house.bed && bedsOn && armed) return { step: 'explore', want: 'sheep' };
-  if (f.house.lit === false) return f.smelt ? { step: 'wait_smelt' } : { step: 'gather_logs', count: count(inv, isLog) + 2, wanted: ['torch'] };
+  if (!lit) return f.smelt ? { step: 'wait_smelt' } : { step: 'gather_logs', count: count(inv, isLog) + 2, wanted: ['torch'] };
   // Torches either side of the door (fewer mobs spawning at the doorstep).
-  if (f.house.litOutside === false) {
+  if (!litOutside) {
     if (torches > 0) return { step: 'light_outside' };
     if (fuel > 0) return craftStep(inv, ['torch'], f.tableDist);
     if (f.smelt) return { step: 'wait_smelt' };

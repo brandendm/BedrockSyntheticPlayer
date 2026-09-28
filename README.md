@@ -176,6 +176,31 @@ A creeper with another creeper or a zombie close by is run from. It notices them
 
 **Exploring without getting stuck** (`core/explore.js`): water it had to swim out of only keeps it from exploring that way if it's within 48 blocks and from the last 5 minutes. Before, every swim counted for ever, from anywhere; a few swims in different directions ruled out every way there was, and it stood in one spot saying it was looking further out. If water rules out everything, it goes across rather than nowhere. A trek toward a better biome that goes nowhere falls back to looking round locally. Three looks in a row that end where they began, and it treks 48 blocks a new way. Six, and it stops looking for that thing for 10 minutes and says so (for sheep, the bed waits) and gets on with everything else.
 
+**Goals can be switched off:** `!bot goal <name> off` (and `on`), or the checkboxes under "What it works on" on the dashboard. The names:
+- `beds`: sleeping, a bed, sheep for it;
+- `house`: without one it digs in at night;
+- `torches`;
+- `farm`;
+- `iron`: mining for iron tools and armor;
+- `hunting`: when starving it still hunts;
+- `storage`: putting things in the chests;
+- `witches`: off, it runs from them.
+
+Kept in the world; all on by default (`core/toggles.js`). Staying alive is never switched off.
+
+**The farm waits for a bucket:** iron comes first. The farm starts once the bucket's made (after the shield, iron pickaxe and sword), and the same bucket then carries the farm's water or breaks falls.
+
+**On the move:** grass for seeds and leaf litter are gathered along one route through the patch, swiped as it passes, never standing still between bits (`core/flow.js` `tourStops`). Chopping a tree, it picks up logs that land off to the side after each one, so they don't sit on the ground for someone to walk off with. It still sweeps the whole tree at the end. After placing, planting or eating the last of something, it switches what's in its hand (its weapon, else a nudge off the slot and back), so it's not left showing an item it no longer has.
+
+**Pillars it leaves:** every block it stands on to get up somewhere at the surface (a tree top, a ledge) is written down in the world until it's taken down. If something takes it away before it climbs down (a fight, the night), it comes back and breaks the pillar top-down from the ground, when it's calm and within 24 blocks. Pillars in a mine are the way back up, and stay.
+
+**Faster paths:**
+- **Sprint-jumps:** over gaps 2 and 3 wide, same level, only where a missed jump lands somewhere survivable. A 3-wide gap needs a block of run-up. It walks the 1-block jumps as before. In `tools/stress_path.mjs` `gaps` (trenches 1–3 wide): 6.1 s a crossing, against 10.6 s going round (`MAXLEAP=1`).
+- **Tight spots:** `wedge` (1-wide slots between posts, diagonal pinches, a walled 1-wide zigzag with a step up in a turn): 60 of 60 arrive, none replanned.
+- **Block shortcuts:** where the walk round is long, the dig-and-build search already takes the shortcut. Over a deep trench it drops in and builds 1–2 blocks up the far side (from a 14-block detour upward). Those steps get cleaned up like the pillars.
+
+**Thinking time:** each step now writes a profile to `brain/logs/trace.jsonl` ("step profile": how much of it was moving, planning, breaking or anything else, and the longest stand-still with the log line just before it). A tree it can't get to is written off after one failed try; it used to stay the nearest and get tried three times. `tools/sim_think.mjs`: the path searches on a tree hunt come to about 0.6 s per 4 trees, so they aren't the bottleneck. The step profile will show what is.
+
 **Sleeping is optional:** `!bot beds off` (or `!bot sleep off`) and it doesn't sleep. It needs no bed and hunts no sheep for one, and it sits the nights out at home, awake. `!bot beds on` turns it back on. The setting is kept in the world; `beds` in `config.js` is the default.
 
 **Picking up where it left off:** what it's in the middle of is kept in the world file and written immediately for the house: the current step, the furnace it loaded (and how long is left), where its gear dropped when it died, and the house site. After a restart, a `/reload` or a death it says "Picking up where I left off" and carries on. The house's progress is read from the blocks actually placed, so it continues the same house on the same spot (`!bot test resume` checks exactly this). The dashboard shows the house's progress and what it still needs.
@@ -310,6 +335,7 @@ node tools/sim_combat.mjs --ambush 500   # creepers catching the bot in its quar
 node tools/sim_quarry.mjs 300    # creeper craters in the quarry stairs: can it still get down and back up?
 node tools/sim_quarry.mjs 300 --leave  # getting out of a damaged quarry the game's way, with the blocks it may spend (LEAVE=old: before)
 node tools/sim_furnace.mjs       # the game's own furnace code against a stand-in game: jobs, several furnaces, restarts, fuel running out
+node tools/sim_think.mjs 100     # the path searches a tree hunt makes (unreachable trees on cliff tops)
 node tools/sim_fall.mjs          # breaking a fall with the water bucket: drops of 4-120 blocks
 node tools/sim_house.mjs 400     # the house on plains, forest, dense dark-oak forest, jungle edge: site, clearing, does it run short? (FIXCOUNT=0: the old count)
 node tools/stress_path.mjs 200   # walk dense forest on rough ground, jungle, ravines, cave mazes, hills and stairs, low tunnels, shafts, lake shores

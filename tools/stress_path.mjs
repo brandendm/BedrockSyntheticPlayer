@@ -12,10 +12,14 @@
 //   jungle     2x2 trunks, bushes and leaves hanging at head height
 //   holes      flat ground full of deep 1-wide shafts (jump or go round) and bumps
 //   shore      a lake to go round or swim (planner only: the test body doesn't swim)
+//   gaps       flat ground cut by trenches 1-3 wide, 3 deep, a long way round (MAXLEAP=1: only
+//              1-block leaps, as before)
+//   wedge      tight spots: 1-wide slots between posts, diagonal pinches (no corner cutting), a
+//              zigzag 1-wide passage with a step up in a turn
 //
 // Run: node tools/stress_path.mjs [N per kind] [-v]
 import { MotorController } from '../behavior_pack/scripts/core/motor.js';
-import { findPath, smoothPath, Cell } from '../behavior_pack/scripts/core/pathfinder.js';
+import { findPath, smoothPath, Cell, DEFAULT_COSTS } from '../behavior_pack/scripts/core/pathfinder.js';
 import { makeRng } from '../behavior_pack/scripts/core/mathutil.js';
 import { SimBody, runMotor } from '../tests/helpers.js';
 import { pathToFileURL } from 'node:url';
@@ -176,6 +180,40 @@ export const KINDS = {
     const ground = (x, z) => hm.get(`${x},${z}`) ?? 64;
     return { w: world(ground), start: { x: 0.5, y: 64, z: 0.5 }, goal: { x: 24, y: 64, z: r.int(-6, 6) }, tol: 0.5 };
   },
+  gaps(r) {
+    // Trenches across the way, each 1-3 wide and 3 deep (a missed jump is a climb out, not a
+    // death), the ends 12+ blocks off to either side.
+    const cut = new Map();
+    let x = 4;
+    while (x < 24) { const wdt = r.int(1, 3); for (let k = 0; k < wdt; k++) cut.set(x + k, true); x += wdt + r.int(3, 5); }
+    const ground = (gx, gz) => (cut.has(gx) && Math.abs(gz) <= 12 ? 61 : 64);
+    return { w: world(ground), start: { x: 0.5, y: 64, z: 0.5 }, goal: { x: 27, y: 64, z: r.int(-2, 2) }, tol: 0.8 };
+  },
+  wedge(r) {
+    // Posts two high making 1-wide slots and diagonal pinches; then a walled 1-wide zigzag.
+    const extra = new Map();
+    const put = (bx, bz, y0 = 64) => { extra.set(`${bx},${y0},${bz}`, Cell.SOLID); extra.set(`${bx},${y0 + 1},${bz}`, Cell.SOLID); };
+    for (let i = 0; i < 26; i++) {
+      const bx = r.int(3, 12), bz = r.int(-5, 5);
+      put(bx, bz);
+      if (r() < 0.5) put(bx + 1, bz + (r() < 0.5 ? 1 : -1)); // a diagonal pinch
+      else put(bx, bz + 2); // a 1-wide slot
+    }
+    // The zigzag: walls along both sides of a 1-wide lane from x 16 to 26, turning at 20 and 23,
+    // the floor one up after the second turn.
+    const lane = [];
+    for (let lx = 15; lx <= 20; lx++) lane.push([lx, 0]);
+    for (let lz = 1; lz <= 3; lz++) lane.push([20, lz]);
+    for (let lx = 21; lx <= 23; lx++) lane.push([lx, 3]);
+    for (let lz = 2; lz >= 0; lz--) lane.push([23, lz]);
+    for (let lx = 24; lx <= 27; lx++) lane.push([lx, 0]);
+    const inLane = new Set(lane.map(([a, b]) => `${a},${b}`));
+    for (let lx = 15; lx <= 28; lx++) for (let lz = -2; lz <= 5; lz++) if (!inLane.has(`${lx},${lz}`)) { extra.set(`${lx},64,${lz}`, Cell.SOLID); extra.set(`${lx},65,${lz}`, Cell.SOLID); extra.set(`${lx},66,${lz}`, Cell.SOLID); }
+    const raised = (gx, gz) => gx >= 24 && gz === 0 && inLane.has(`${gx},${gz}`);
+    const ground = (gx, gz) => (raised(gx, gz) ? 65 : 64);
+    for (const [a, b] of lane) if (!raised(a, b)) extra.delete(`${a},64,${b}`);
+    return { w: world(ground, extra), start: { x: 0.5, y: 64, z: 0.5 }, goal: { x: 27, y: 65, z: 0 }, tol: 0.5 };
+  },
   shore(r) {
     const cx = r.int(10, 16), rad = r.int(4, 8);
     const water = new Map();
@@ -189,6 +227,8 @@ export const KINDS = {
   },
 };
 
+const COSTS = process.env.MAXLEAP ? { ...DEFAULT_COSTS, maxLeap: Number(process.env.MAXLEAP) } : DEFAULT_COSTS;
+
 async function walk(w, start, goal, tol, seed, maxNodes = 20000) {
   const body = new SimBody(w, start, makeRng(seed).range(-180, 180), { hw: 0.3 });
   const m = new MotorController(body, {}, makeRng(seed));
@@ -197,7 +237,7 @@ async function walk(w, start, goal, tol, seed, maxNodes = 20000) {
   let res = null, replans = 0, ticks = 0, expanded = 0, ms = 0;
   for (; replans <= 3; replans++) {
     const t0 = performance.now();
-    const p = findPath(classify, body.pos, goal, { tolerance: tol, maxNodes });
+    const p = findPath(classify, body.pos, goal, { tolerance: tol, maxNodes, costs: COSTS });
     ms += performance.now() - t0; expanded += p.expanded ?? 0;
     if (!p.complete) return { status: replans ? 'lost' : 'nopath', replans, ticks, expanded, ms, at: body.pos };
     const out = await runMotor(m, body, m.followPath(smoothPath(classify, p.path)), 2500);

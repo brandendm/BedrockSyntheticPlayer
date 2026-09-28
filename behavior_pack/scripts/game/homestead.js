@@ -150,6 +150,7 @@ export class Homestead {
     this.a.sayOnce('eat', `Eating (${best.replace(/_/g, ' ')}).`, 120000);
     try { this.sim.useItemInSlot(slot); } catch { return false; }
     try { await this.S.wait(gen, 36); } finally { try { this.sim.stopUsingItem(); } catch {} }
+    this.S.afterUse(slot); // (the last bite: not still holding it)
     return true;
   }
 

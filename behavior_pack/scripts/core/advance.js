@@ -55,6 +55,7 @@ export function advanceStep(f) {
   // Iron in the furnaces (the house's and the mine camp's) is ours already.
   const cooking = f.oreCooking ?? (f.smelt?.kind === 'ore' ? f.smelt.n ?? 0 : 0);
   const haveBucket = made(inv, worn, 'bucket');
+  const on = (k) => f.goals?.[k] !== false; // (core/toggles.js)
 
   // A finished furnace near us: empty it (the iron is what everything below waits on). Not from
   // down the mine while there's still iron to dig: it keeps till we're up anyway.
@@ -77,22 +78,18 @@ export function advanceStep(f) {
   // Ripe wheat on the farm: harvest and replant (quick, and the seeds and bread keep coming).
   // Most of what's planted is ripe, or there are empty tiles and seeds to sow them with.
   // Or it needs seeing to: a tree over it, torches missing, no pool by it yet.
-  if (f.farm && (f.farm.upkeep || f.farm.ripe >= Math.max(2, Math.ceil((f.farm.planted ?? f.farm.tiles) * 0.6)) || (f.farm.planted < f.farm.tiles && (inv.wheat_seeds ?? 0) >= 4))) return { step: 'tend_farm' };
+  if (on('farm') && f.farm && (f.farm.upkeep || f.farm.ripe >= Math.max(2, Math.ceil((f.farm.planted ?? f.farm.tiles) * 0.6)) || (f.farm.planted < f.farm.tiles && (inv.wheat_seeds ?? 0) >= 4))) return { step: 'tend_farm' };
 
-  // 1. The farm (unless it just failed: iron meanwhile, the farm gets another go in 10 minutes).
-  if (!f.farm && !f.farmBlocked) {
+  // 1. The farm, once there's a bucket (from the iron, below: its water wherever the farm goes, and
+  // the fall-breaking bucket after); unless it just failed (another go in 10 minutes).
+  if (on('farm') && !f.farm && !f.farmBlocked && haveBucket) {
     if (f.waterNearHouse == null) return { step: 'check_water' };
-    if (!f.waterNearHouse && !haveBucket) {
-      if (ingots >= 3) return craftStep(inv, ['bucket'], f.tableDist);
-      if (ingots + cooking >= 3) return f.smelt?.ready ? { step: 'collect_smelt' } : { step: 'wait_smelt' };
-      if (ingots + raw + cooking >= 3) return smeltOre(f, raw, 3 - ingots - cooking);
-      return ironTrip(f, 3 - ingots - raw - cooking, 'bucket');
-    }
     if (!has(inv, 'stone_hoe') && !has(inv, 'wooden_hoe') && !has(inv, 'iron_hoe')) return craftStep(inv, ['stone_hoe'], f.tableDist);
     return { step: 'make_farm', water: f.waterNearHouse ? 'near' : 'bucket', tiles: FARM_TILES };
   }
 
-  // 2-3. Iron, then the iron things, in order, as the ingots come in.
+  // 2-3. Iron, then the iron things, in order, as the ingots come in (the goal switched off: none).
+  if (!on('iron')) return raw > 0 && !f.smelt ? smeltOre(f, raw, raw) : f.smelt ? { step: 'wait_smelt' } : { step: 'done' };
   let spare = ingots;
   for (const id of IRON_ORDER) {
     if (made(inv, worn, id)) continue;

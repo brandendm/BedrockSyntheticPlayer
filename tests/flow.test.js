@@ -36,3 +36,13 @@ test('placing only goes where there is something to put it against', () => {
   const floating = [{ x: 2, y: 70, z: 0 }];
   assert.deepEqual(sweepOrder(eye, look, floating, { mode: 'place', supported: () => false }), [], 'never one in mid-air');
 });
+
+test('a route through a patch: nearest first, each stop covering what is near it', async () => {
+  const { tourStops } = await import('../behavior_pack/scripts/core/flow.js');
+  const cells = [];
+  for (let x = 3; x <= 12; x++) for (let z = -1; z <= 1; z++) cells.push({ x, y: 64, z });
+  const stops = tourStops({ x: 0.5, y: 64, z: 0.5 }, cells, 2.5);
+  assert.ok(stops.length >= 3 && stops.length <= 5, `${stops.length} stops`);
+  for (let i = 1; i < stops.length; i++) assert.ok(stops[i].x > stops[i - 1].x, 'onward, not back and forth');
+  for (const c of cells) assert.ok(stops.some((s) => Math.hypot(c.x - s.x, c.z - s.z) <= 2.5), `${c.x},${c.z} passed within reach`);
+});

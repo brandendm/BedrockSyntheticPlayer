@@ -4,7 +4,7 @@
 import { system, world, Direction, BlockTypes, BlockVolume, ItemTypes } from '@minecraft/server';
 import { isNight } from '../core/settle.js';
 import { wetCones, towardWet, ExploreStall } from '../core/explore.js';
-import { sweepOrder } from '../core/flow.js';
+import { tourStops, sweepOrder } from '../core/flow.js';
 import { EYE_HEIGHT } from '../core/motor.js';
 import { smoothPath, Cell, isWalkMove, isGround } from '../core/pathfinder.js';
 import { dist3D } from '../core/mathutil.js';
@@ -88,6 +88,70 @@ export class Skills {
     return this.placed.has(`${p.x},${p.y},${p.z}`);
   }
 
+  /**
+   * A block we stood on to get somewhere up top (a pillar up a tree, a step onto a ledge): kept in
+   * the world's memory until it's taken down again. Getting distracted on the way down (a fight,
+   * the night coming) used to leave dirt pillars standing about. (Not down a mine: a pillar out of
+   * a pit is the way back.)
+   */
+  markScaffold(p) {
+    let under = false;
+    try { under = this.isUnderground(); } catch {}
+    if (under) return;
+    const list = (this.a.memory.data.scaffold ??= []);
+    const id = this.blockAt(p);
+    if (!id || id === 'air') return;
+    list.push({ d: this.dim.id, x: p.x, y: p.y, z: p.z, id, t: Date.now(), tries: 0 });
+    if (list.length > 200) list.splice(0, list.length - 200);
+    this.a.memory.save();
+  }
+
+  unmarkScaffold(p) {
+    const list = this.a.memory.data.scaffold;
+    if (!list?.length) return;
+    const n = list.length;
+    this.a.memory.data.scaffold = list.filter((e) => !(e.x === p.x && e.y === p.y && e.z === p.z));
+    if (this.a.memory.data.scaffold.length !== n) this.a.memory.save();
+  }
+
+  /**
+   * Take down what's left of our pillars within 24 blocks: from the ground beside each one, top
+   * down (the order a player's reach allows). A block that's since become something else is
+   * forgotten; one out of reach from the ground gets three tries, then it's left.
+   * Returns how many came down.
+   */
+  async cleanupScaffold(gen) {
+    const all = this.a.memory.data.scaffold ?? [];
+    if (!all.length) return 0;
+    const here = this.sim.location;
+    const near = all.filter((e) => e.d === this.dim.id && Math.hypot(e.x + 0.5 - here.x, e.z + 0.5 - here.z) <= 24 && Math.abs(e.y - here.y) <= 12);
+    if (!near.length) return 0;
+    const gone = near.filter((e) => { const id = this.blockAt(e); return id !== null && id !== e.id; });
+    for (const e of gone) this.unmarkScaffold(e);
+    const cols = new Map();
+    for (const e of near) if (this.blockAt(e) === e.id) { const k = `${e.x},${e.z}`; (cols.get(k) ?? cols.set(k, []).get(k)).push(e); }
+    let down = 0;
+    for (const col of cols.values()) {
+      this.check(gen);
+      col.sort((a, b) => b.y - a.y);
+      const base = col[col.length - 1];
+      // Beside it, on the ground (never on it).
+      if (!col.some((b) => this.inReach(b))) await this.goNear(gen, { x: base.x + 0.5, y: base.y, z: base.z + 0.5 }, 2.2, 2);
+      for (const b of col) {
+        const f = this.feet();
+        if (f.x === b.x && f.z === b.z) break; // standing on it: leave it for another time
+        if (!this.inReach(b)) { b.tries = (b.tries ?? 0) + 1; if (b.tries >= 3) this.unmarkScaffold(b); continue; }
+        if (await this.mine(gen, b, { collect: true })) { this.unmarkScaffold(b); down++; }
+      }
+    }
+    if (down) {
+      this.log(`scaffold: took down ${down} block${down > 1 ? 's' : ''} of an old pillar`);
+      this.a.sayOnce('scaffold', 'Taking down a pillar I left standing.', 300000);
+    }
+    this.a.memory.save();
+    return down;
+  }
+
   get sim() { return this.a.sim; }
   get dim() { return this.a.sim.dimension; }
 
@@ -101,6 +165,7 @@ export class Skills {
   }
 
   log(msg) {
+    this.lastLog = String(msg).slice(0, 120); // (the step profile says what came just before a long stand)
     trace(msg);
     if (CONFIG.debug) console.warn(`[agent] ${msg}`);
   }
@@ -247,11 +312,26 @@ export class Skills {
       try { ok = attempt ? this.sim.useItemInSlotOnBlock(slot, neighbor, face) : this.sim.useItemInSlotOnBlock(slot, neighbor, face, faceLoc); } catch {}
       for (let k = 0; k < 2; k++) {
         await this.wait(gen, 1);
-        if (!OPEN.test(this.blockAt(cell) ?? 'air')) { this.a.cellChanged?.(); return true; }
+        if (!OPEN.test(this.blockAt(cell) ?? 'air')) { this.a.cellChanged?.(); this.afterUse(slot); return true; }
       }
-      if (ok) { this.a.cellChanged?.(); return !OPEN.test(this.blockAt(cell) ?? 'air'); }
+      if (ok) { this.a.cellChanged?.(); this.afterUse(slot); return !OPEN.test(this.blockAt(cell) ?? 'air'); }
     }
     return false;
+  }
+
+  /**
+   * Just used up the last of what was in `slot` (the last block placed, the last seed, the last
+   * bite): show something else in hand, the weapon, else a nudge off the slot and back, so the
+   * hand doesn't keep showing the item that's gone.
+   */
+  afterUse(slot) {
+    try {
+      const c = container(this.sim);
+      if (!c || slot < 0 || c.getItem(slot)) return;
+      if (this.a.weaponId && findSlot(this.sim, this.a.weaponId) >= 0) { hold(this.sim, this.a.weaponId); return; }
+      this.sim.selectedSlotIndex = (slot + 1) % 9;
+      this.sim.selectedSlotIndex = slot;
+    } catch {}
   }
 
   /** Put the weapon back in hand (or an empty hand) after building or crafting. */
@@ -407,9 +487,10 @@ export class Skills {
         placed = !OPEN.test(this.blockAt(f) ?? 'air');
       }
     }
+    this.afterUse(slot);
     await this.wait(gen, 6);
     this.a.cellChanged?.();
-    if (placed) this.markPlaced(f);
+    if (placed) { this.markPlaced(f); this.markScaffold(f); }
     this.restHands();
     return placed && this.feet().y > f.y;
   }
@@ -616,6 +697,7 @@ export class Skills {
     const c = center(p);
     await this.aim(gen, c);
     const expect = breakTicks(id, tool);
+    this.a.breaking = true; // (the step profile: breaking, not thinking)
     try {
       this.sim.breakBlock(p);
       const limit = expect * 2 + 40;
@@ -627,6 +709,7 @@ export class Skills {
         if (this.blockAt(p) !== id) break;
       }
     } finally {
+      this.a.breaking = false;
       try { this.sim.stopBreakingBlock(); } catch {}
       this.a.motor.setFocus(next ? center(next) : null);
     }
@@ -903,32 +986,43 @@ export class Skills {
       const patch = (await this.scan(pred, { radius, below: 2, above: 2, limit: 48 }))
         .filter((b) => !this.a.memory.isUnreachable(b) && canSee(this.dim, this.eye(), { x: b.x + 0.5, y: b.y + 0.1, z: b.z + 0.5 }));
       this.check(gen);
-      const inReach = patch.filter((b) => this.inReach(b));
-      const order = this.sweepCells(inReach, 'break');
+      if (!patch.length) break;
+      // A route through the patch, walked without stopping (core/flow.js tourStops): everything
+      // comes into reach on the way and gets swiped on the move, the way a player runs through the
+      // grass with the button held. (It used to stand and clear what was in reach, stop, plan the
+      // next bit, walk, stop again.) What's all in reach already: swiped from here, in hand order.
+      const far = patch.filter((b) => !this.inReach(b));
+      const stops = far.length >= minRest || (round === 0 && far.length) ? tourStops(this.sim.location, far, 2.5, 8) : [];
+      let path = [];
+      let from = this.sim.location;
+      for (const st of stops) {
+        const res = await this.a.plan(from, { x: st.x + 0.5, y: st.y, z: st.z + 0.5 }, 1.5, 800);
+        this.check(gen);
+        if (!res.complete || res.path.length < 2) { this.a.memory.markUnreachable(st, 120000); continue; }
+        path = path.length ? path.concat(res.path.slice(1)) : res.path;
+        const end = res.path[res.path.length - 1];
+        from = { x: end.x + 0.5, y: end.y, z: end.z + 0.5 };
+      }
+      let walking = path.length >= 2;
+      if (walking) this.a.motor.followPath(smoothPath(this.a.classifier(), path), { walk: true }).finally(() => { walking = false; });
       hold(this.sim, null);
       try {
-        for (let i = 0; i < order.length && !enough(); i++) {
-          if (await this.tap(gen, order[i], 25, order[i + 1] ?? null)) { broke++; spots.push(order[i]); }
+        // On the move: the nearest one in reach ahead of us, swiped as we pass; nothing in reach
+        // yet, a tick of walking. Then whatever's still in reach where we end up.
+        for (let k = 0; k < 400 && !enough(); k++) {
+          const here = this.sim.location;
+          const c = patch.filter((b) => isIt(b) && this.inReach(b)).sort((a, b) => Math.hypot(a.x + 0.5 - here.x, a.z + 0.5 - here.z) - Math.hypot(b.x + 0.5 - here.x, b.z + 0.5 - here.z))[0];
+          if (c) { if (await this.tap(gen, c, walking ? 35 : 25)) { broke++; spots.push(c); } continue; }
+          if (!walking) break;
+          this.a.motor.setFocus(null);
+          await this.wait(gen, 1);
         }
       } finally { this.a.motor.setFocus(null); }
       if (enough()) break;
       const rest = patch.filter((b) => isIt(b) && !this.inReach(b));
       if (rest.length < minRest) break; // the odd block further off isn't worth the walk
-      // Into the rest of the patch: walk to its nearest block, swiping at whatever comes into reach.
-      const res = await this.a.plan(this.sim.location, rest[0], 1.5, 1500);
-      this.check(gen);
-      if (!res.complete || res.path.length < 2) { this.a.memory.markUnreachable(rest[0], 120000); continue; }
-      let walking = true;
-      this.a.motor.followPath(smoothPath(this.a.classifier(), res.path)).finally(() => { walking = false; });
-      hold(this.sim, null);
-      try {
-        for (let k = 0; walking && k < 160 && !enough(); k++) {
-          const c = rest.find((b) => isIt(b) && this.inReach(b));
-          if (c && await this.tap(gen, c, 35)) { broke++; spots.push(c); }
-          else { this.a.motor.setFocus(null); await this.wait(gen, 1); }
-        }
-      } finally { this.a.motor.setFocus(null); }
     }
+    this.restHands();
     return { broke, spots };
   }
 
@@ -1209,8 +1303,21 @@ export class Skills {
       // The rest of the trunk is out of reach: build up beside it (a cheap block under us, leaves
       // above cut away) instead of leaving the top of the tree and walking off to another one.
       if (b.y - this.feet().y > 4 && !(await this.climbForLog(gen, b))) break;
-      // No pick-up after each log: the sweep below gets the whole tree's in one go.
-      if (await this.mine(gen, b, { collect: false })) chopped++;
+      // The first log and we can't get to it: written off for 5 minutes, on to another tree. (It
+      // stayed the nearest, so the next pass picked it again: three rounds of failed searches,
+      // two walks and a dig-and-build each, before it gave up: tools/sim_think.mjs.)
+      if (!chopped && !this.inReach(b) && !(await this.goNear(gen, b, 3, 2)) && !this.inReach(b)) {
+        this.a.memory.markUnreachable(trunk, 300000);
+        return { chopped: 0, unreachable: true };
+      }
+      if (await this.mine(gen, b, { collect: false })) {
+        chopped++;
+        // Logs that landed off to the side (a few blocks, not up in the leaves): picked up as we go,
+        // not left lying about for the end of the tree (a player walking by takes them). The ones at
+        // our feet come in by themselves. A second or two, nothing far.
+        await this.wait(gen, 2); // (landing)
+        await this.sweep(gen, this.sim.location, 4, isLog, 2, false);
+      }
     }
     if (chopped) this.memVisits.clear(); // trips paid off: nothing to hold against those memories
     await this.descendPillar(gen); // built up to reach the top logs: come back down the same way
@@ -3068,6 +3175,7 @@ export class Skills {
           placed = (this.blockAt(f) ?? 'air') !== 'air';
         }
       }
+      this.afterUse(slot);
       await this.wait(gen, 6);
       if (placed) this.markPlaced(f);
       if (!placed || this.feet().y <= f.y) return climbed ? 'climbed' : 'blocked';
@@ -3345,6 +3453,7 @@ export class Skills {
       if (OPEN.test(under) || BAD_LANDING.test(under) || /water|lava/.test(under)) return;
       if (!(await this.mine(gen, below, { collect: true, allowBelow: true }))) return;
       this.placed.delete(`${below.x},${below.y},${below.z}`);
+      this.unmarkScaffold(below);
       for (let t = 0; t < 10 && this.feet().y >= f.y; t++) await this.wait(gen, 1);
     }
   }

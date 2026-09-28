@@ -64,3 +64,23 @@ export function sweepLength(eye, look, cells) {
   for (const c of cells) { const d = DIR(eye, c); n += turn(cur, d); cur = d; }
   return n;
 }
+
+/**
+ * A walk through a patch of things to swipe (grass for seeds, leaf litter): stops, nearest first,
+ * each one sweeping up everything within `cover` of it, so walking stop to stop passes within reach
+ * of the lot and the swiping happens on the move. from: our feet; cells: [{x, y, z}].
+ * Returns the stops in order (cells from the patch), at most `max`.
+ */
+export function tourStops(from, cells, cover = 2.5, max = 10) {
+  let left = cells.slice();
+  const out = [];
+  let at = from;
+  while (left.length && out.length < max) {
+    let best = null, bd = Infinity;
+    for (const c of left) { const d = Math.hypot(c.x + 0.5 - at.x, c.z + 0.5 - at.z); if (d < bd) { bd = d; best = c; } }
+    out.push(best);
+    left = left.filter((c) => Math.hypot(c.x - best.x, c.z - best.z) > cover || Math.abs(c.y - best.y) > 2);
+    at = { x: best.x + 0.5, y: best.y, z: best.z + 0.5 };
+  }
+  return out;
+}

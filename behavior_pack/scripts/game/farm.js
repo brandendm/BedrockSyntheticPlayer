@@ -574,7 +574,7 @@ export class Farm {
     try { this.sim.useItemInSlotOnBlock(slot, block, Direction.Up, { x: 0.5, y: 1, z: 0.5 }); } catch {}
     if (next) this.a.motor.setFocus({ x: next.x + 0.5, y: next.y + 0.1, z: next.z + 0.5 });
     const changed = () => this.S.blockAt(block) !== before || this.S.blockAt({ ...block, y: block.y + 1 }) !== above;
-    for (let k = 0; k < 3; k++) { await this.S.wait(gen, 1); if (changed()) return true; }
+    for (let k = 0; k < 3; k++) { await this.S.wait(gen, 1); if (changed()) { this.S.afterUse(slot); return true; } }
     return false;
   }
 }

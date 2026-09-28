@@ -25,6 +25,9 @@ export function parseLocal(text, sender) {
     case 'beds':
     case 'sleep':
       return [{ type: 'beds', on: t[1] !== 'off' }];
+    case 'goal':
+    case 'goals':
+      return [{ type: 'goal', goal: t[1] ?? '', on: t[2] !== 'off' }];
     case 'goto':
       if (t.length >= 4 && [t[1], t[2], t[3]].every((s) => Number.isFinite(n(s)))) {
         return [{ type: 'goto', x: n(t[1]), y: n(t[2]), z: n(t[3]) }];

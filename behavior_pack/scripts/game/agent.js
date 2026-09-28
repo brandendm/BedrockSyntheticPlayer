@@ -15,6 +15,7 @@ import { Farm } from './farm.js';
 import { chooseStep, needs as goalNeeds, stepKey } from '../core/focus.js';
 import { inside as houseInside } from '../core/house.js';
 import { mlgNow, ticksToLand } from '../core/fall.js';
+import { GOALS, goalsOf, goalKey } from '../core/toggles.js';
 import { FULL_SLOTS } from '../core/storage.js';
 import { Homestead, FOOD_ANIMALS } from './homestead.js';
 import { Lookout } from './lookout.js';
@@ -94,6 +95,9 @@ export class Agent {
     this.jabbing = false;        // turned to jab something catching up
     this.fleeThreats = null;     // what we are running from
     this.dodgeUntil = 0;         // stepping out of an arrow's way until this tick
+    this.breaking = false;       // a block breaking under the hand (the step profile)
+    this.planning = 0;           // path searches running
+    this.prof = null;            // the step profile being counted
     this.fallFrom = null;        // the highest our feet got since we left the ground
     this.mlg = null;             // water we put down to break a fall: { t, cell, d, done }
     this.slot = null;            // a kill slot we put up: { cells, slot, stand, dir, block }
@@ -183,6 +187,7 @@ export class Agent {
     this.fleeJabTick(t);
     this.dodgeTick(t);
     this.fallTick(t);
+    this.profileTick();
     // Head locked on something while just walking (a fight or a hunt that ended mid-step): let go,
     // so we look where we're going again.
     // Head locked on a target while walking a path, with no fight going on (or the "fight" is
@@ -419,9 +424,13 @@ export class Agent {
    * CONFIG.beds is the default). Off: the night is sat out at home, awake.
    */
   bedsOn() { return this.memory.data.settings?.beds ?? CONFIG.beds ?? true; }
-  setBeds(on) {
-    this.memory.data.settings = { ...(this.memory.data.settings ?? {}), beds: !!on };
+  setBeds(on) { this.setGoal('beds', on); }
+  /** The goals switched on and off (core/toggles.js), from the world's settings. */
+  toggles() { return goalsOf({ ...(this.memory.data.settings ?? {}), beds: this.bedsOn() }); }
+  setGoal(key, on) {
+    this.memory.data.settings = { ...(this.memory.data.settings ?? {}), [key]: !!on };
     this.memory.save();
+    this.autoDone = false; this.nextAutoTry = 0; // (re-plan now)
   }
 
   isNight() {
@@ -573,7 +582,7 @@ export class Agent {
     if (this.lastSeen.size > 200) for (const [id, at] of this.lastSeen) if (t - at > 200) this.lastSeen.delete(id);
     const mobs = this.scanMobs(this.mode === 'none' ? 16 : 24);
     const inWater = this.sim.isInWater;
-    const d = decide({ health: this.health(), damage: this.damage, isNight: this.isNight(), prevMode: this.mode, mobs, inWater, shield: this.shield, slot: this.slotHolds() });
+    const d = decide({ health: this.health(), damage: this.damage, isNight: this.isNight(), prevMode: this.mode, mobs, inWater, shield: this.shield, slot: this.slotHolds(), witches: this.toggles().witches });
     this.threatsNow = d.threats;
     // Cornered with nowhere better to run: fight the nearest thing that can be fought.
     if (d.mode === 'flee' && (this.corneredUntil ?? 0) > t && d.reason !== 'creeper' && d.reason !== 'cover') {
@@ -813,6 +822,7 @@ export class Agent {
         await this.recoverDrops(gen);
         await this.pickUpLoose(gen);
         await this.takeDownWalls(gen);
+        await this.skills.cleanupScaffold(gen); // pillars left standing when something took us away
         await H.maybeEat(gen);
         const inv = invCounts(this.sim);
         const near = await S.findTable(4);
@@ -837,6 +847,7 @@ export class Agent {
         trace(`auto: ${key}${step.opportunity ? ` (side job: ${step.opportunity})` : ''}${step.setAside ? ` (set aside: ${step.setAside})` : ''}`);
         if (CONFIG.debug) console.warn(`[agent] auto: ${key}`);
         if (this.autoStep !== step.step) { this.autoStep = step.step; this.saveState(); }
+        this.profileStep(step.step);
         this.autoOpportunity = step.opportunity ?? null;
         this.autoLabel = this.labelFor(step);
         if (step.opportunity) this.sayOpportunity(step);
@@ -1114,6 +1125,7 @@ export class Agent {
       smelting: this.homestead.smeltJob ? { secondsLeft: Math.max(0, Math.round((this.homestead.smeltJob.readyAt - system.currentTick) / 20)) } : null,
       players: world.getPlayers().filter((pl) => pl.id !== this.sim.id).map((pl) => pl.name),
       goals: this.goals(),
+      toggles: GOALS.map((g) => ({ ...g, on: this.toggles()[g.key] })),
       biome: (() => { try { return this.lookout.hereName(); } catch { return null; } })(),
       opportunity: this.task?.kind === 'auto' ? this.autoOpportunity : null,
       stepLabel: this.task?.kind === 'auto' ? this.autoLabel ?? null : null,
@@ -1228,9 +1240,11 @@ export class Agent {
       shortfall: H.project ? H.houseNeeds(H.project, H.project.dir) : null,
       worn: this.worn(),
       beds: this.bedsOn(),
+      goals: this.toggles(),
     };
     return {
       inv,
+      goals: this.toggles(),
       need: goalNeeds(facts),
       seen: { sheep, food, log: mem('log'), stone: mem('stone') },
       deferred: this.deferred,
@@ -1356,6 +1370,7 @@ export class Agent {
       pickUses: usesLeft(this.sim, (id) => /^(stone|iron|diamond|netherite)_pickaxe$/.test(id)),
       oreCooking: H.oreCooking(),
       canFillBucket: this.dim.id !== 'minecraft:nether' && Date.now() - (this.memory.data.bucketFailAt ?? 0) > 600000,
+      goals: this.toggles(),
       // Down at the mine camp (a table and a furnace at the foot of the quarry): craft and smelt there.
       camp: (() => { try { return !!S.campFurnace() && S.isUnderground() && S.nearQuarry(this.sim.location, 48); } catch { return false; } })(),
     };
@@ -1377,6 +1392,7 @@ export class Agent {
       animals: H.animalsSeen(FOOD_ANIMALS, 16).length,
       bedDeferred: (this.bedDeferredUntil ?? 0) > Date.now(),
       beds: this.bedsOn(),
+      goals: this.toggles(),
       armed: SWORD_OK.test(Object.keys(inv).join(' ')),
       hungry: H.hunger() <= 10,
       farmRipe: (this.farm.state()?.ripe ?? 0) >= 3,
@@ -1836,6 +1852,36 @@ export class Agent {
     }
   }
 
+  /**
+   * Where a step's time goes, for finding what holds the bot up (trace.jsonl, "step profile"): each
+   * tick counts as moving (the motor's walking), planning (a path search running), breaking, or
+   * other (placing, crafting, waiting, deciding, and plain standing about), with the longest
+   * stretch of "other" in a row and what the log said just before it.
+   */
+  profileStep(name) {
+    const p = this.prof;
+    if (p && p.step !== name) this.profileEnd();
+    if (!this.prof) this.prof = { step: name, ticks: 0, moving: 0, planning: 0, breaking: 0, other: 0, run: 0, worst: 0, worstAfter: '' };
+  }
+
+  profileTick() {
+    const p = this.prof;
+    if (!p || this.mode !== 'none') return;
+    p.ticks++;
+    const kind = this.motor.busy ? 'moving' : (this.planning ?? 0) > 0 ? 'planning' : this.breaking ? 'breaking' : 'other';
+    p[kind]++;
+    if (kind === 'other') { p.run++; if (p.run > p.worst) { p.worst = p.run; p.worstAfter = this.skills.lastLog ?? ''; } } else p.run = 0;
+    if (p.ticks >= 6000) this.profileEnd(); // (a long step: report every 5 minutes)
+  }
+
+  profileEnd() {
+    const p = this.prof;
+    this.prof = null;
+    if (!p || p.ticks < 100) return;
+    const pc = (n) => `${Math.round((100 * n) / p.ticks)}%`;
+    trace(`step profile: ${p.step} ${(p.ticks / 20).toFixed(0)} s: moving ${pc(p.moving)}, planning ${pc(p.planning)}, breaking ${pc(p.breaking)}, other ${pc(p.other)}; longest still ${(p.worst / 20).toFixed(1)} s, after "${p.worstAfter}"`);
+  }
+
   /** Blocks as tactics.js reads them: 'open' | 'solid' | 'other'. */
   cellAt() {
     const w = this.classifier();
@@ -1986,6 +2032,13 @@ export class Agent {
           else if (this.task?.kind === 'auto') { this.newTask(null); this.motor.stop(); }
           this.say(this.autoEnabled ? 'Carrying on by myself.' : 'Waiting for orders.');
           break;
+        case 'goal': {
+          const key = goalKey(a.goal);
+          if (!key) { this.say(`Goals: ${GOALS.map((g) => g.key).join(', ')}. Say "goal farm off", say.`); break; }
+          this.setGoal(key, a.on !== false);
+          this.say(`${GOALS.find((g) => g.key === key).label}: ${a.on !== false ? 'on' : 'off'}.`);
+          break;
+        }
         case 'beds':
           this.setBeds(a.on !== false);
           this.say(a.on !== false ? 'Sleeping at night again (a bed, and sheep for one if I need it).' : "No sleeping: I'll sit the nights out at home, and won't hunt sheep for a bed.");
@@ -2144,7 +2197,9 @@ export class Agent {
   cellChanged() { this.cells = null; this.cellGen = (this.cellGen ?? 0) + 1; }
 
   plan(from, to, tolerance, maxNodes = CONFIG.maxPathNodes, goalTest = null, extra = {}) {
-    return new Promise((resolve) => {
+    this.planning = (this.planning ?? 0) + 1;
+    return new Promise((resolve0) => {
+      const resolve = (r) => { this.planning = Math.max(0, (this.planning ?? 1) - 1); resolve0(r); };
       const base = this.classifier();
       const now = Date.now(), bad = this.badCells;
       // Places we got physically stuck at recently count as walls, so we don't try them again.

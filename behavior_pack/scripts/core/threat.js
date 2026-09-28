@@ -92,7 +92,7 @@ export function isActiveThreat(m, isNight, alert = false) {
  * side can't hit us, and we can hit it through the gap. Fight it from there, hurt or not.
  * output: { mode: 'none'|'fight'|'flee', target?: id, threats: [mob], reason }
  */
-export function decide({ health, damage = FIST_DAMAGE, isNight = false, prevMode = 'none', mobs, inWater = false, shield = false, slot = false }) {
+export function decide({ health, damage = FIST_DAMAGE, isNight = false, prevMode = 'none', mobs, inWater = false, shield = false, slot = false, witches = true }) {
   const held = (m) => slot && SLOT_SAFE.has(m.type) && !m.baby; // at the gap: can't get at us
   const alert = prevMode !== 'none';
   const threats = mobs.filter((m) => isActiveThreat(m, isNight, alert)).sort((a, b) => a.dist - b.dist);
@@ -114,7 +114,8 @@ export function decide({ health, damage = FIST_DAMAGE, isNight = false, prevMode
     if (!others && creeper.canReach !== false && !inWater) return { mode: 'fight', target: creeper.id, threats, reason: 'creeper: keep it at arm\'s length' };
     return { mode: 'flee', threats, reason: 'creeper' };
   }
-  const never = threats.find((m) => MOBS[m.type].never && m.dist <= 16);
+  // (witches: the goal switched off, `!bot goal witches off`: run from them as before)
+  const never = threats.find((m) => (MOBS[m.type].never || (m.type === 'witch' && !witches)) && m.dist <= 16);
   if (never) return { mode: 'flee', threats, reason: `won't fight ${never.type}` };
   // Low on health: run. Except already up close to an archer and nothing else on us: turning our
   // back on it in the open is how it gets the last few shots in; finish it.

@@ -345,7 +345,8 @@ export class MotorController {
     // Sprint on long, straight, level stretches, with hysteresis. When fleeing or chasing, sprint whenever roughly facing the way.
     const levelAhead = this._levelAhead(pos, it, 4);
     const moveErr = Math.abs(angleDiff(moveYaw, this.yaw));
-    if (leap || it.walk) this._setSprint(false); // a walking jump clears one block and can't overshoot the landing
+    if (leap?.sprint) this._setSprint(true); // a 2-3 block gap: a sprint-jump
+    else if (leap || it.walk) this._setSprint(false); // a walking jump clears one block and can't overshoot the landing
     else if (it.urgent) this._setSprint(remaining > 2 && moveErr < 45);
     else if (!this.sprinting && remaining > o.sprintMinRemaining && absErr < 12 && levelAhead) this._setSprint(true);
     else if (this.sprinting && (remaining < 4 || absErr > 25 || !levelAhead)) this._setSprint(false);
@@ -383,6 +384,7 @@ export class MotorController {
     const wps = it.wps;
     const next = wps[it.idx], prev = wps[it.idx - 1];
     if (!next?.leap || !prev) return null;
+    const gap = typeof next.leap === 'number' ? next.leap : 1;
     const onGround = this.body.isOnGround();
     if (onGround && pos.y < next.y - 0.5) return 'fell';
     let dx = next.x - prev.x, dz = next.z - prev.z;
@@ -391,10 +393,13 @@ export class MotorController {
     const along = rx * dx + rz * dz;
     const lateral = -rx * dz + rz * dx;
     const at = (a) => ({ x: next.x + dx * a, y: pos.y, z: next.z + dz * a });
-    if (!onGround || along > -1.1) return { steer: at(0.6), jump: false }; // in the air (or across): carry on
+    // The take-off edge is gap + 0.5 before the landing block's centre; the box keeps a foothold
+    // ~0.3 past it. One block: a walking jump. Two or three: a sprint-jump (the run-up does it).
+    const edge = -(gap + 0.5);
+    if (!onGround || along > edge + 0.4) return { steer: at(0.6), jump: false, sprint: gap > 1 }; // in the air (or across): carry on
     const aligned = Math.abs(lateral) < 0.25 && Math.abs(angleDiff(this.yaw, yawTo(pos, at(0)))) < 25;
-    if (!aligned && along > -1.8) return { steer: at(-2.3), jump: false }; // too close to the edge to fix it here
-    return { steer: at(Math.min(along + 1.2, 0.6)), jump: aligned && along > -1.55 };
+    if (!aligned && along > edge - 0.3) return { steer: at(edge - 0.8), jump: false, sprint: false }; // too close to the edge to fix it here
+    return { steer: at(Math.min(along + 1.2, 0.6)), jump: aligned && along > edge - 0.05, sprint: gap > 1 };
   }
 
   /**

@@ -43,7 +43,8 @@ export const DEFAULT_COSTS = Object.freeze({
   maxDrop: 3,
   swim: 2.5,        // extra per block: swimming is ~2x slower and mobs get free hits
   climb: 1.8,       // per block up or down a ladder (~2.4 blocks/s vs 4.3 walking)
-  leap: 0.9,        // extra for jumping a gap (on top of the 2 blocks walked)
+  leap: 0.9,        // extra for jumping a gap, per block of it (on top of the blocks walked)
+  maxLeap: 3,       // widest gap jumped: 1 walking, 2-3 with a sprint-jump
   stair: 0.15,      // extra for walking up a stair or onto a slab (no jump)
 });
 
@@ -175,11 +176,19 @@ export function* neighbors(w, x, y, z, costs = DEFAULT_COSTS) {
     // Leap a 1-block gap: running jump from the edge onto the block beyond, same level. Needs
     // headroom all the way (the arc peaks ~1.25 up), and only over a gap we'd survive falling
     // into (ground or water within 3 blocks): a missed jump costs a climb, never a life.
+    // Wider gaps (2 or 3 blocks: a trench, a stream bed, a gap in a ridge): a sprint-jump, with a
+    // block of run-up behind us for the 3. The same rule: only over a drop we'd survive.
     if (!inWater && costs.leap != null && w.open(nx, y, nz) && w.open(nx, y + 1, nz) && w.open(nx, y + 2, nz) &&
         w.open(x, y + 2, z) && !w.occupiable(nx, y - 1, nz) && !isGround(w.get(nx, y - 1, nz))) {
-      const lx = x + 2 * dx, lz = z + 2 * dz;
-      if (w.standable(lx, y, lz) && w.open(lx, y + 2, lz) && safeGap(w, nx, y, nz)) {
-        yield [lx, y, lz, 2 * costs.walk + costs.leap, { type: 'leap', breaks: [], place: false }];
+      for (let gap = 1; gap <= (costs.maxLeap ?? 3); gap++) {
+        const gx = x + gap * dx, gz = z + gap * dz;
+        // Every block of the gap open all the way up (the arc) and nothing to land on in it.
+        if (!(w.open(gx, y, gz) && w.open(gx, y + 1, gz) && w.open(gx, y + 2, gz)) || isGround(w.get(gx, y - 1, gz)) || !safeGap(w, gx, y, gz)) break;
+        const lx = x + (gap + 1) * dx, lz = z + (gap + 1) * dz;
+        if (!(w.standable(lx, y, lz) && w.open(lx, y + 2, lz))) continue;
+        if (gap === 3 && !w.standable(x - dx, y, z - dz)) break; // (no run-up: no sprint)
+        yield [lx, y, lz, (gap + 1) * costs.walk + costs.leap * gap, { type: 'leap', gap, breaks: [], place: false }];
+        break;
       }
     }
     // Drop: walk off the edge and fall straight down (into water is fine too)
@@ -420,13 +429,19 @@ export function sealedOff(w, g, tolerance, s, limit = 400) {
   // Nowhere to stand right there (a point in mid-air, a far travel target, an unloaded chunk):
   // can't tell. The search's partial path toward it is what the caller is after.
   if (!queue.length) return false;
-  const steps = [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1], [2, 0], [-2, 0], [0, 2], [0, -2], [0, 0]];
+  const steps = [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1], [2, 0], [-2, 0], [0, 2], [0, -2], [3, 0], [-3, 0], [0, 3], [0, -3], [4, 0], [-4, 0], [0, 4], [0, -4], [0, 0]];
   for (let i = 0; i < queue.length; i++) {
     const [x, y, z] = queue[i];
     if (x === s.x && y === s.y && z === s.z) return false;
     for (const [dx, dz] of steps) {
-      // Two along is a leap over a gap: only through an open gap, never through a wall.
-      if ((Math.abs(dx) === 2 || Math.abs(dz) === 2) && !(w.open(x + dx / 2, y, z + dz / 2) && w.open(x + dx / 2, y + 1, z + dz / 2))) continue;
+      // Two to four along is a leap over a gap: only through an open gap, never through a wall.
+      const far = Math.max(Math.abs(dx), Math.abs(dz));
+      if (far >= 2) {
+        const ux = Math.sign(dx), uz = Math.sign(dz);
+        let clear = true;
+        for (let k = 1; k < far && clear; k++) clear = w.open(x + ux * k, y, z + uz * k) && w.open(x + ux * k, y + 1, z + uz * k);
+        if (!clear) continue;
+      }
       for (let dy = -3; dy <= 3; dy++) {
         if (!dx && !dz && !dy) continue;
         const nx = x + dx, ny = y + dy, nz = z + dz;
@@ -517,7 +532,7 @@ function besideDrop(w, x, y, z) {
 
 function center(p) {
   const c = { x: p.x + 0.5, y: p.y, z: p.z + 0.5 };
-  if (p.move?.type === 'leap') c.leap = true; // the motor runs and jumps for this one
+  if (p.move?.type === 'leap') c.leap = p.move.gap ?? 1; // the motor runs (sprints, past 1) and jumps for this one
   if (p.move?.type === 'stair') c.stair = true; // the motor walks up this one, no jump
   return c;
 }

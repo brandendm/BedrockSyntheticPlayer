@@ -39,14 +39,15 @@ export function needs(f) {
   const furnace = f.haveFurnace ? 0 : 8;
   const built = !!f.house;
   // House: the site's exact count when we've started one (already net of what we carry).
-  const houseStone = built ? 0 : f.project && f.shortfall ? f.shortfall.stone + cobble : HOUSE.stone + 4;
-  const housePlanks = built ? 0 : f.project && f.shortfall ? f.shortfall.planks + planks : HOUSE.planks;
-  const bed = f.beds === false || has(inv, 'bed') || !!f.house?.bed; // (beds off: no wool wanted)
+  const noHouse = f.goals?.house === false; // (switched off: none to gather for)
+  const houseStone = built || noHouse ? 0 : f.project && f.shortfall ? f.shortfall.stone + cobble : HOUSE.stone + 4;
+  const housePlanks = built || noHouse ? 0 : f.project && f.shortfall ? f.shortfall.planks + planks : HOUSE.planks;
+  const bed = f.beds === false || f.goals?.beds === false || has(inv, 'bed') || !!f.house?.bed; // (beds off: no wool wanted)
   const torches = inv.torch ?? 0;
   // The fittings (door, bed, table, chest) not made yet, and once moved in, the kit for the farm
   // and the mine (hoe, spare pickaxes, iron tool handles, shield): all wood, one trip.
   const later = built ? upkeepNeeds(inv, f.worn ?? []) : { planks: 0, stone: 0 };
-  const planksNeed = housePlanks + fittingsPlanks(inv, f.house, f.house ? layoutOf(f.house) : NEW_LAYOUT) + later.planks; // (a house already up keeps its own layout)
+  const planksNeed = housePlanks + (noHouse && !built ? 0 : fittingsPlanks(inv, f.house, f.house ? layoutOf(f.house) : NEW_LAYOUT)) + later.planks; // (a house already up keeps its own layout)
   const charcoalLogs = torches >= TORCH_GOAL || f.house?.lit ? 0 : Math.ceil((TORCH_GOAL - torches) / 4);
   return {
     stone: Math.max(0, kit + furnace + houseStone + later.stone - cobble),
@@ -89,7 +90,7 @@ export function chooseStep(main, f) {
   if (need.wool > 0 && f.canHunt !== false && near('sheep') && !f.bedDeferred) {
     options.push({ kind: 'sheep', cost: seen.sheep + WORK.sheep, step: { step: 'hunt', what: 'sheep', need: need.wool } });
   }
-  if (need.food > 0 && f.canHunt !== false && near('food')) {
+  if (need.food > 0 && f.canHunt !== false && f.goals?.hunting !== false && near('food')) {
     options.push({ kind: 'food', cost: seen.food + WORK.food, step: { step: 'hunt', what: 'food' } });
   }
   if (need.logs > 0 && near('log')) {

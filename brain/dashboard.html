@@ -66,6 +66,8 @@
   .step.done { color: var(--good); }
   .step.current { background: var(--accent); color: var(--accent-ink); font-weight: 600; }
   .arrow { color: var(--muted); align-self: center; }
+  .toggles { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 6px 12px; }
+  .toggles label { display: flex; gap: 8px; align-items: center; cursor: pointer; }
   .goals { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; }
   .goal { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; }
   .goal.current { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
@@ -99,6 +101,8 @@
     <p class="nowline" id="nowline">—</p>
     <div class="chain" id="chain"></div>
     <div class="goals" id="goals"></div>
+    <h2 style="margin-top:14px">What it works on</h2>
+    <div class="toggles" id="toggles"></div>
   </section>
 
   <section>
@@ -240,6 +244,16 @@ function clock(time, day) {
   return `Day ${day} · ${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
 }
 
+// Goal switches (core/toggles.js): each box sends "goal <name> on|off"; the game saves it in the world.
+function renderToggles(s) {
+  const el = $('toggles');
+  const list = s.toggles || [];
+  if (el.dataset.sig === JSON.stringify(list)) return; // (don't rebuild under the pointer every second)
+  el.dataset.sig = JSON.stringify(list);
+  el.innerHTML = list.map((g) => `<label><input type="checkbox" data-goal="${g.key}" ${g.on ? 'checked' : ''}> ${esc(g.label)}</label>`).join('');
+  el.querySelectorAll('input[data-goal]').forEach((b) => b.onchange = () => send(`goal ${b.dataset.goal} ${b.checked ? 'on' : 'off'}`));
+}
+
 function render(d) {
   const s = d.status;
   const age = d.age_s;
@@ -248,6 +262,7 @@ function render(d) {
   const stale = age > 5;
   dot.className = 'dot ' + (!s.online ? 'off' : stale ? 'stale' : 'on');
   $('conn').textContent = !s.online ? 'bot not spawned' : stale ? `no update for ${Math.round(age)}s` : 'live';
+  try { renderToggles(s); } catch {}
   $('name').textContent = s.name || 'Scout';
   if (!s.online) return;
   $('clock').textContent = `${clock(s.time, s.day)}${s.night ? ' · night' : ''}${d.jev?.enabled ? ` · Jev $${d.jev.usd_today.toFixed(4)} today` : ''}`;
