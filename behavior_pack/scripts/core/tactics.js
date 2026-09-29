@@ -237,15 +237,74 @@ export function blastDamage(origin, feet, clear, power = 3) {
  * right on us (2.6 or less, still gaining) gets the sword instead: it's hitting us anyway.
  * st: per-mob state (its distance over the last half second). Returns 'spear' | 'sword' | null.
  */
-export function fleeJab({ me, mob, t, st, melee = true, spearReady = false, swordReady = false, hasSpear = false }) {
+export function fleeJab({ me, mob, t, st, melee = true, spearReady = false, swordReady = false, hasSpear = false, creeper = false }) {
   const d = dist(me, mob);
   st.hist = (st.hist ?? []).filter((h) => t - h.t <= 10);
   st.hist.push({ t, d });
   const gaining = st.hist.length > 1 && st.hist[0].d - d > 0.15;
+  // A creeper coming up on us while we run from the rest: the spear's jab from outside its fuse
+  // range sends it back (the knockback, not the damage, is the point), whether it's gaining or just
+  // there; a sword only if it's closing in (a hit at the edge of reach, before it's inside 2.9).
+  if (creeper) {
+    if (hasSpear && spearReady && d >= 2.4 && d <= 3.9 && (gaining || d <= 3.6)) return 'spear';
+    if (swordReady && d > 2.5 && d <= REACH_HIT - 0.1 && gaining) return 'sword';
+    return null;
+  }
   if (!melee || !gaining) return null;
   if (hasSpear && spearReady && d >= 2.4 && d <= 3.9) return 'spear';
   if (swordReady && d <= 2.6) return 'sword';
   return null;
+}
+
+/**
+ * Running from several things: which to jab, in order of asking (core/tactics.js fleeJab for each
+ * until one says jab): a creeper within 4.2 first (it's the one that ends the run: spear it back
+ * while there's the chance), then the nearest melee mob. (Asking only about the creeper, the
+ * zombies catching up went unjabbed whenever one was about: 29 deaths to zombies became 46.)
+ * threats: [{ type, d }] with d the distance now.
+ */
+export function fleeJabOrder(threats) {
+  const creeper = threats.filter((m) => m.type === 'creeper' && m.d <= 4.2).sort((a, b) => a.d - b.d)[0];
+  const melee = threats.filter((m) => MOBS[m.type]?.kind === 'melee').sort((a, b) => a.d - b.d)[0];
+  return [creeper, melee].filter(Boolean);
+}
+
+/**
+ * A route while running: cells near a creeper count as dangerous (a path round the far side of it,
+ * not past its nose). Wraps a classifier; r is the room given (horizontal, and from a block below
+ * its feet to two above). `except`: our own cell (we may already be close).
+ */
+export function avoidCreepers(classify, creepers, r = 3.5, except = null) {
+  if (!creepers.length) return classify;
+  // Never closer to one than we are now (a creeper right beside us fenced us in with its own circle:
+  // nowhere to run, and the zombies caught up), so the way away from it is always open.
+  const room = creepers.map((c) => Math.min(r, except ? Math.hypot(except.x - c.x, except.z - c.z) - 0.5 : r));
+  return (x, y, z) => {
+    if (except && x === Math.floor(except.x) && z === Math.floor(except.z)) return classify(x, y, z);
+    for (let i = 0; i < creepers.length; i++) {
+      const c = creepers[i];
+      if (y >= Math.floor(c.y) - 1 && y <= Math.floor(c.y) + 2 && Math.hypot(x + 0.5 - c.x, z + 0.5 - c.z) <= room[i]) return 3; // Cell.DANGER (core/pathfinder.js): never entered
+    }
+    return classify(x, y, z);
+  };
+}
+
+/**
+ * Tall melee mobs that can't climb (zombies and their kind): up a 3-high pillar they can't reach
+ * us, and we hit them from the top as they crowd round its foot (a player's way with a crowd of
+ * zombies in rough ground). Worth it with two or more of them on us, or one when we're hurt; not
+ * with anything that shoots, climbs (spiders) or blows up in sight, and only with the blocks.
+ */
+export const TOWER_H = 3;
+const CANT_CLIMB = new Set(['zombie', 'husk', 'drowned', 'zombie_villager', 'zombie_villager_v2', 'wither_skeleton', 'hoglin']);
+export function towerWorth({ threats, health = 20, blocks = 0, headroom = true }) {
+  if (blocks < TOWER_H || !headroom) return false; // (headroom: open sky, or at least TOWER_H + 2 clear over us: no leaves in the way)
+  // (Something that shoots within 24: up a pillar is where its arrows find us.)
+  if (threats.some((m) => m.dist <= 24 && MOBS[m.type]?.kind === 'ranged')) return false;
+  const near = threats.filter((m) => m.dist <= 12);
+  if (!near.length || near.some((m) => !CANT_CLIMB.has(m.type))) return false;
+  const close = near.filter((m) => m.dist <= 6).length;
+  return close >= 2 || (close >= 1 && health <= 10);
 }
 
 /** Fight a creeper at all? Armed (a stone sword or better), healthy, and nothing else on us. */
@@ -289,7 +348,8 @@ export function pickRefuge(me, threats, candidates, sees = null, margin = 3) {
   const shooters = threats.filter((m) => MOBS[m.type]?.kind === 'ranged');
   const score = (p, cost) => {
     let nearest = Infinity;
-    for (const t of threats) nearest = Math.min(nearest, Math.hypot(p.x - t.pos.x, (p.y - t.pos.y) * 1.5, p.z - t.pos.z));
+    // (A creeper counts as nearer than it is: the one thing we must never end up beside.)
+    for (const t of threats) nearest = Math.min(nearest, Math.hypot(p.x - t.pos.x, (p.y - t.pos.y) * 1.5, p.z - t.pos.z) / (t.type === 'creeper' ? 1.6 : 1));
     let s = Math.min(nearest, 24) - cost * 0.15;
     if (sees && shooters.length && shooters.every((m) => !sees(p, m))) s += 10; // out of the line of fire
     return s;
@@ -299,7 +359,7 @@ export function pickRefuge(me, threats, candidates, sees = null, margin = 3) {
   // Nearest-first by the run, so the line-of-sight checks (rays in game) go to the likely ones.
   // Only spots on our side of them: somewhere nearer a threat than to us is past it (down a tunnel,
   // that's running straight into the zombies).
-  const ourSide = (c) => threats.every((m) => m.dist > 10 || Math.hypot(c.x - m.pos.x, c.z - m.pos.z) > Math.hypot(c.x - me.x, c.z - me.z));
+  const ourSide = (c) => threats.every((m) => m.dist > (m.type === 'creeper' ? 14 : 10) || Math.hypot(c.x - m.pos.x, c.z - m.pos.z) > Math.hypot(c.x - me.x, c.z - me.z));
   for (const c of [...candidates].filter(ourSide).sort((a, b) => a.cost - b.cost).slice(0, 60)) {
     const s = score(c, c.cost);
     if (s > bestS) { bestS = s; best = c; }

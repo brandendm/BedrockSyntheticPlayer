@@ -12,7 +12,7 @@ import { MotorController, EYE_HEIGHT } from '../behavior_pack/scripts/core/motor
 import { findPath, searchJob, smoothPath, Cell } from '../behavior_pack/scripts/core/pathfinder.js';
 import { decide, MOBS, weaponDamage, REACH_HIT } from '../behavior_pack/scripts/core/threat.js';
 import { readFileSync } from 'node:fs';
-import { fightMove, creeperMove, creeperFight, Stalemate, pickRefuge, barricadeCells, awayPath, weaponReach, creeperWeapon, bestWeapon, pickCreeperSwing, knockbackRoom, blockOffCells, fleeJab, killSlotCells, killSlotWorth, dodgeArrow, guardCell, blastDamage, bowFight, aimBow, bowPower, BOW_FULL } from '../behavior_pack/scripts/core/tactics.js';
+import { fleeJabOrder, avoidCreepers, towerWorth, TOWER_H, fightMove, creeperMove, creeperFight, Stalemate, pickRefuge, barricadeCells, awayPath, weaponReach, creeperWeapon, bestWeapon, pickCreeperSwing, knockbackRoom, blockOffCells, fleeJab, killSlotCells, killSlotWorth, dodgeArrow, guardCell, blastDamage, bowFight, aimBow, bowPower, BOW_FULL } from '../behavior_pack/scripts/core/tactics.js';
 import { makeRng, dist3D } from '../behavior_pack/scripts/core/mathutil.js';
 import { SimBody } from '../tests/helpers.js';
 
@@ -20,6 +20,11 @@ const VERBOSE = process.argv.includes('-v');
 // --old: the fight logic as it was (aim at a point on the straight line to the mob; archers always
 // count as reachable), to check the arena reproduces what went wrong in game.
 const OLD = process.argv.includes('--old');
+// Running from several things (each can be switched off to compare): TOWER=0 no pillar up out of
+// zombies' reach; AVOID=0 routes that pass by creepers; CJAB=0 no jabbing creepers while running.
+const TOWER = process.env.TOWER !== '0', AVOID = process.env.AVOID !== '0', CJAB = process.env.CJAB !== '0';
+// CLIMB=0: running routes that only walk (no putting a block down to get up a ledge).
+const CLIMB = process.env.CLIMB !== '0';
 const ONLY = process.argv.slice(2).find((a) => !a.startsWith('-'));
 
 // ---------- line of sight over the classifier (a voxel walk) ----------
@@ -98,8 +103,20 @@ function arena({ classify: base, bot, mobs, weapon = 'stone_sword', shield = fal
   // a path planned before it is dropped when it lands (the game's routeTo does the same).
   const inFlight = [];
   let routeSeq = 0, misses = 0;
-  const route = (goal, tolerance, urgent, maxNodes, now = false, walk = false) => {
-    const r = runPath(classify, body.pos, goal, tolerance, maxNodes);
+  // A running route up a ledge: walk the flat parts, a block under our feet at each step up.
+  let climbRoute = null, climbs = 0;
+  const FLEE_ACTIONS = () => ({ breakCost: () => Infinity, placeCost: 1.5, budget: Math.min(blocks, 4), unitsPerSecond: 4.3 });
+  const route = (goal, tolerance, urgent, maxNodes, now = false, walk = false, cls = classify, climb = false) => {
+    const r = runPath(cls, body.pos, goal, tolerance, maxNodes);
+    if (climb && !r.complete) {
+      const a = findPath(cls, body.pos, goal, { tolerance, maxNodes, actions: FLEE_ACTIONS(), weight: 2 });
+      if (a.complete && a.path.some((p) => p.move?.type === 'pillar') && a.path.every((p) => !p.move || ['pillar', 'leap', 'stair'].includes(p.move.type))) {
+        routeSeq++; if (motor.busy) motor.stop();
+        climbRoute = { path: a.path, i: 1, at: t }; climbs++;
+        if (VERBOSE) log.push(`${t}: running up a ledge (${a.path.filter((p) => p.move?.type === 'pillar').length} block(s))`);
+        return;
+      }
+    }
     if (r.path.length < 2) return;
     const go = () => motor.followPath(smoothPath(classify, r.path), { seamless: true, urgent, walk });
     if (now || !LAG) go(); else inFlight.push({ at: t + LAG, go, seq: routeSeq });
@@ -151,12 +168,18 @@ function arena({ classify: base, bot, mobs, weapon = 'stone_sword', shield = fal
   };
   const hurt = (n, m, what) => {
     if (blocking && facingMob(m)) { blocked++; return; }
-    hp -= n; hitsTaken++; m.lastHitMe = t;
+    hp -= n; hitsTaken++; m.lastHitMe = t; lastHurt = what;
     if (VERBOSE) log.push(`${t}: hit by ${what} for ${n.toFixed(1)}, hp ${hp.toFixed(1)}`);
   };
   const at = (x, y, z) => { const c = classify(x, y, z); return c === Cell.AIR ? 'open' : c === Cell.SOLID || c === Cell.STEP || c === Cell.SLAB ? 'solid' : 'other'; };
   /** Cornered: wall off the way in, if it's a single 1-wide way and we have the blocks. */
   const wallQueue = [];
+  // Up a pillar out of zombies' reach (core/tactics.js towerWorth): { x, z, top, left, base, done }.
+  let lastHurt = null;
+  let tower = null, towers = 0, creeperClose = 0, creeperJabs = 0, noTowerUntil = -1;
+  const CANT = new Set(['zombie', 'husk', 'drowned', 'zombie_villager', 'wither_skeleton', 'hoglin']);
+  const towerHolds = () => !!tower?.done && Math.floor(body.pos.x) === tower.x && Math.floor(body.pos.z) === tower.z && body.pos.y >= tower.top - 0.1;
+  const towerSafe = (threats) => threats.filter((m) => m.dist <= 12).every((m) => CANT.has(m.type));
   let wallNext = 0;
   function tryWall(threats) {
     if (wallQueue.length) return true;
@@ -232,7 +255,9 @@ function arena({ classify: base, bot, mobs, weapon = 'stone_sword', shield = fal
       ? { swing: t >= nextSwing, stop: Math.hypot(me.x - slot.stand.x, me.z - slot.stand.z) <= 0.25 } : null;
     // (A step inside our own cell: straight there, no path search.)
     if (mvSlot && !mvSlot.stop && !motor.busy) { routeSeq++; motor.followPath([{ ...me }, slot.stand], { walk: true }); }
-    let mv = mvSlot ? mvSlot : m.type === 'creeper' ? creeperFight({ me, mob: m, t, st: (m.st ??= {}), shield, canSwing: cw(m).ready, canRetreat: m.room !== false, lit: m.fuse >= 0, reach: cw(m).reach, minReach: cw(m).minReach, canWall: WALLS && blocks >= (GUARD ? 1 : 2), kbPoor, walls: !GUARD, company: mobs.some((o) => o !== m && o.hp > 0 && dist3D(me, o) <= 16) })
+    // Up our pillar: stand still and hit what's at its foot.
+    const onTower = towerHolds() && m.type !== 'creeper';
+    let mv = onTower ? { swing: t >= nextSwing, stop: true } : mvSlot ? mvSlot : m.type === 'creeper' ? creeperFight({ me, mob: m, t, st: (m.st ??= {}), shield, canSwing: cw(m).ready, canRetreat: m.room !== false, lit: m.fuse >= 0, reach: cw(m).reach, minReach: cw(m).minReach, canWall: WALLS && blocks >= (GUARD ? 1 : 2), kbPoor, walls: !GUARD, company: mobs.some((o) => o !== m && o.hp > 0 && dist3D(me, o) <= 16) })
       : fightMove({ me, mob: m, melee: MOBS[m.type].kind === 'melee', t, shield, canSwing: t >= nextSwing, type: m.type });
     if (OLD && mv.goal) { const d0 = dist3D(me, m); mv.goal = d0 > 3.3 ? standOffOld(me, m) : { x: m.x, y: m.y, z: m.z }; mv.tolerance = 0.5; }
     blocking = mv.block;
@@ -323,6 +348,13 @@ function arena({ classify: base, bot, mobs, weapon = 'stone_sword', shield = fal
         const target = d.threats.find((m) => m.type !== 'creeper' && m.dist <= 8);
         if (target) { d.mode = 'fight'; d.target = target.id; }
       }
+      if (tower?.done) {
+        if (!towerSafe(d.threats)) tower = null; // something that shoots, climbs or blows up: off it, the usual way
+        else if (towerHolds()) {
+          const tgt = d.threats.filter((m) => m.type !== 'creeper' && m.dist <= 5).sort((a, b) => a.dist - b.dist)[0];
+          if (tgt) { d.mode = 'fight'; d.target = tgt.id; } else if (d.mode !== 'none') d.mode = 'none';
+        }
+      }
       if (d.mode !== mode && VERBOSE) log.push(`${t}: ${mode} -> ${d.mode} (${d.reason})`);
       mode = d.mode;
       foughtAtDeath = mode === 'fight';
@@ -336,20 +368,29 @@ function arena({ classify: base, bot, mobs, weapon = 'stone_sword', shield = fal
         const creeper = d.threats.find((m) => m.type === 'creeper');
         if (creeper && creeperMove({ me, creeper: creeper.pos, shield, lit: creeper.lit }) === 'block') {
           blocking = true; stopWalking(); motor.setFocus({ x: creeper.pos.x, y: creeper.pos.y + 1, z: creeper.pos.z });
+        } else if ((tower && !tower.done) || climbRoute) {
+          // (building it, or on the way up a ledge)
         } else if (t >= nextRoute || !motor.busy) {
           nextRoute = t + 20;
           const cands = [];
           const f = { x: Math.floor(me.x), y: Math.floor(me.y), z: Math.floor(me.z) };
-          findPath(classify, me, me, { maxNodes: 1500, goalTest: (x, y, z, w) => { if (w.standable(x, y, z)) cands.push({ x: x + 0.5, y, z: z + 0.5, cost: Math.hypot(x - f.x, z - f.z) }); return false; } });
+          const cls = AVOID && !OLD ? avoidCreepers(classify, d.threats.filter((m) => m.type === 'creeper').map((m) => m.pos), Number(process.env.AV_R ?? 3.5), me) : classify;
+          findPath(cls, me, me, { maxNodes: 1500, ...(CLIMB && !OLD ? { actions: FLEE_ACTIONS() } : {}), goalTest: (x, y, z, w) => { if (w.standable(x, y, z)) cands.push({ x: x + 0.5, y, z: z + 0.5, cost: Math.hypot(x - f.x, z - f.z) }); return false; } });
           const sees = (p, m) => clear(classify, { x: m.pos.x, y: m.pos.y + 1.6, z: m.pos.z }, { x: p.x, y: p.y + 1.2, z: p.z });
           const spot = pickRefuge(me, d.threats, cands, sees);
           // Nowhere much better: wall off here, or get into the dead end nearby (a single way in)
           // and wall off there; only if neither, stand and fight.
           const deeper = spot ? null : pickRefuge(me, d.threats, cands, sees, 0.5);
+          const towerOk = () => TOWER && !tower && !OLD && t >= noTowerUntil && towerWorth({ threats: d.threats, health: hp, blocks, headroom: [1, 2, 3, 4, 5].every((k) => classify(Math.floor(me.x), Math.floor(me.y) + k, Math.floor(me.z)) === Cell.AIR) });
           if (!spot && !trySlot(d.threats) && !tryWall(d.threats)) {
-            if (deeper) { route(deeper, 0.5, true, 1500); nextRoute = t + 8; }
+            // Nowhere to run and no way in to block: up a pillar out of their reach (zombies only).
+            if (towerOk()) {
+              tower = { x: Math.floor(me.x), z: Math.floor(me.z), top: Math.floor(me.y) + TOWER_H, left: TOWER_H, base: null, done: false };
+              towers++; stopWalking();
+              if (VERBOSE) log.push(`${t}: cornered: up a pillar out of their reach`);
+            } else if (deeper) { route(deeper, 0.5, true, 1500, false, false, cls, CLIMB && !OLD); nextRoute = t + 8; }
             else corneredUntil = t + 200;
-          } else if (spot) route(spot, 1, true, 3000);
+          } else if (spot) route(spot, 1, true, 3000, false, false, cls, CLIMB && !OLD);
         }
       } else motor.setFocus(null);
       // Standing still while something's after us and nothing's happening: the staring contest.
@@ -389,10 +430,15 @@ function arena({ classify: base, bot, mobs, weapon = 'stone_sword', shield = fal
     // Running from something catching up: turn and jab it (the spear from out of its reach), run on.
     if (mode === 'flee' && FLEEJAB) {
       const hasSpear = weaponReach(creeperId).reach > 3.5;
-      const chasers = mobs.filter((m) => m.hp > 0 && MOBS[m.type].kind === 'melee').map((m) => ({ m, d: dist3D(me, m) })).sort((a, b) => a.d - b.d);
-      const c = chasers[0];
+      const chasers = mobs.filter((m) => m.hp > 0 && (MOBS[m.type].kind === 'melee' || (CJAB && !OLD && m.type === 'creeper'))).map((m) => ({ m, type: m.type, d: dist3D(me, m) }));
+      let c = null, how = null;
+      for (const o of fleeJabOrder(chasers)) {
+        how = fleeJab({ me, mob: o.m, t, st: (o.m.fj ??= {}), melee: true, hasSpear, spearReady: t >= spearNext && t >= nextSwing, swordReady: t >= nextSwing, creeper: o.type === 'creeper' });
+        c = o;
+        if (how) break;
+      }
       if (c) {
-        const how = fleeJab({ me, mob: c.m, t, st: (c.m.fj ??= {}), melee: true, hasSpear, spearReady: t >= spearNext && t >= nextSwing, swordReady: t >= nextSwing });
+        if (how && c.type === 'creeper') creeperJabs++;
         if (how) {
           motor.setFocus({ x: c.m.x, y: c.m.y + 1, z: c.m.z });
           if (facingMob(c.m) && c.m.iframe <= t && canSee(c.m)) {
@@ -419,6 +465,27 @@ function arena({ classify: base, bot, mobs, weapon = 'stone_sword', shield = fal
       act({ ref: m, id: m.id, type: m.type, dist: dist3D(me, m), pos: { x: m.x, y: m.y, z: m.z } }, []);
     }
     // Blocks going down one at a time (a mob standing in the cell: it can't go there).
+    if (tower && !tower.done) {
+      const fy = Math.floor(body.pos.y);
+      if (motor.busy) motor.stop();
+      if (tower.left <= 0) { if (body.onGround) { if (tower.step) tower = null; else tower.done = true; } }
+      else if (body.onGround && classify(tower.x, fy + 2, tower.z) !== Cell.AIR) { tower = null; noTowerUntil = t + 200; } // a ceiling: no room
+      else if (body.onGround) { tower.base = fy; body.jump(); }
+      else if (tower.base != null && body.pos.y >= tower.base + 1.02 && classify(tower.x, tower.base, tower.z) === Cell.AIR && blocks > 0) {
+        placed.add(`${tower.x},${tower.base},${tower.z}`); blocks--; tower.left--; tower.base = null;
+      }
+    }
+    if (climbRoute && !tower) {
+      const p = climbRoute.path, i = climbRoute.i;
+      if (i >= p.length || t - climbRoute.at > 200) climbRoute = null;
+      else if (p[i].move?.type === 'pillar') { tower = { x: Math.floor(body.pos.x), z: Math.floor(body.pos.z), top: Math.floor(body.pos.y) + 1, left: 1, base: null, done: false, step: true }; climbRoute.i++; }
+      else if (!motor.busy) {
+        let j = i; while (j < p.length && p[j].move?.type !== 'pillar') j++;
+        motor.followPath(smoothPath(classify, p.slice(i - 1, j)), { seamless: true, urgent: true });
+        climbRoute.i = j;
+      }
+    }
+    for (const m of mobs) if (m.type === 'creeper' && m.hp > 0 && dist3D(body.pos, m) <= 3) creeperClose++;
     if (wallQueue.length && t >= wallNext) {
       const c = wallQueue.shift();
       const inIt = mobs.some((m) => m.hp > 0 && Math.floor(m.x) === c.x && Math.floor(m.z) === c.z && Math.floor(m.y) <= c.y && Math.floor(m.y) + 1 >= c.y);
@@ -619,7 +686,7 @@ function arena({ classify: base, bot, mobs, weapon = 'stone_sword', shield = fal
     }
     if (!mobs.some((m) => m.hp > 0)) break;
   }
-  return { closeTicks, potionsThrown, potionHits, potionHp, blastHp, bowShots, bowHits, arrowsLeft, dodges, arrowsShot, arrowHits, slots, jabs, crater, misses, explosions, walls, foughtAtDeath, hp: Math.max(0, hp), kills, total: mobs.length, ticks: t, worstIdle, hitsTaken, blocked, gaveUp, log };
+  return { climbs, killer: hp <= 0 ? lastHurt : null, towers, creeperClose, creeperJabs, closeTicks, potionsThrown, potionHits, potionHp, blastHp, bowShots, bowHits, arrowsLeft, dodges, arrowsShot, arrowHits, slots, jabs, crater, misses, explosions, walls, foughtAtDeath, hp: Math.max(0, hp), kills, total: mobs.length, ticks: t, worstIdle, hitsTaken, blocked, gaveUp, log };
 }
 
 const standOffOld = (me, mob, r = 2.8) => { const dx = me.x - mob.x, dz = me.z - mob.z, l = Math.hypot(dx, dz) || 1; return { x: mob.x + dx / l * r, y: mob.y, z: mob.z + dz / l * r }; };
@@ -686,6 +753,14 @@ function jagged(r, kind = 'deadend') {
   return { classify, bot: { x: 0.5, y: 40, z: 0.5 }, top: { x: x - 0.5, y: floors.get(x - 1), z: 0.5 } };
 }
 
+/** Rough, tall ground: terraces with 1-3 block steps between them (walls a zombie takes the long way round). */
+function cliffs(seed = 1) {
+  const r = makeRng(seed), a = r() * 6, b = r() * 6, c = r() * 6;
+  const h = (x, z) => 64 + Math.max(0, Math.round(2.2 * Math.sin(x / 4.3 + a) + 2.0 * Math.cos(z / 3.7 + b) + 1.2 * Math.sin((x - z) / 2.9 + c)));
+  return (x, y, z) => (y < h(x, z) ? Cell.SOLID : Cell.AIR);
+}
+/** A trench 3 wide and 2 deep along x, open ground either side (the way out is up its sides). */
+function trench() { return (x, y, z) => (y < (Math.abs(z) <= 1 ? 62 : 64) ? Cell.SOLID : Cell.AIR); }
 function tunnel() {
   return (x, y, z) => (z === 0 && x >= 1 && x <= 20 && (y === 40 || y === 41) ? Cell.AIR : Cell.SOLID);
 }
@@ -892,6 +967,39 @@ if (CHASE) {
   }
   console.log(`${runs} chases (5 hp, running): ${died} died, ${(hits / runs).toFixed(2)} hits taken each, ${(jabs / runs).toFixed(1)} jabs each, ${(hpLeft / runs).toFixed(1)} hp left on average`);
   for (const [k, [n, h, d]] of Object.entries(byKind)) console.log(`  ${k.padEnd(7)} ${n} runs, ${(h / n).toFixed(2)} hits each, ${d} died`);
+  process.exit(0);
+}
+
+// --pursuit N: running from a group (2-4: zombies, a spider, a creeper among them) on flat ground,
+// in a forest, on rough tall ground; hurt (running) or not. Hits taken, deaths, explosions, how long
+// a creeper was within 3 of the bot, creepers jabbed away, pillars climbed.
+const PURSUIT = process.argv.includes('--pursuit') ? Number(process.argv[process.argv.indexOf('--pursuit') + 1] || 200) : 0;
+if (PURSUIT) {
+  const rng = makeRng(31337);
+  const pick = (a) => a[Math.floor(rng() * a.length)];
+  const tot = { runs: 0, died: 0, hits: 0, blasts: 0, close: 0, cjabs: 0, towers: 0 };
+  const byT = {};
+  for (let i = 0; i < PURSUIT; i++) {
+    const terrain0 = pick(['flat', 'forest', 'cliffs', 'cliffs', 'trench']), terrain = process.env.TERRAIN ?? terrain0;
+    const classify = terrain === 'flat' ? flat() : terrain === 'forest' ? forest() : terrain === 'trench' ? trench() : cliffs(i);
+    const bot = { x: 1.5, y: 70, z: 0.5 };
+    const n = 2 + Math.floor(rng() * 3);
+    const mobs = [];
+    for (let k = 0; k < n; k++) {
+      const type = k === 0 && rng() < 0.6 ? 'creeper' : pick(['zombie', 'zombie', 'zombie', 'spider']);
+      const ang = rng() * Math.PI * 2, rr = 4 + rng() * 6;
+      // (In the trench: coming along it from both ends.)
+      mobs.push(terrain === 'trench' ? { type, x: 1.5 + (k % 2 ? -1 : 1) * (4 + rng() * 4), y: 70, z: 0.5 } : { type, x: 1.5 + Math.cos(ang) * rr, y: 70, z: 0.5 + Math.sin(ang) * rr });
+    }
+    const r = arena({ classify, bot: ground(classify, bot), mobs: mobs.map((m) => ground(classify, m)), weapon: pick([['stone_sword', 'stone_spear'], ['iron_sword', 'stone_spear'], 'stone_sword']), shield: false, health: pick([20, 10, 6]), ticks: 900, blocks: 16 });
+    if (r.killer) tot.killers = { ...(tot.killers ?? {}), [r.killer]: (tot.killers?.[r.killer] ?? 0) + 1 };
+    tot.climbs = (tot.climbs ?? 0) + r.climbs;
+    tot.runs++; tot.hits += r.hitsTaken; tot.blasts += r.explosions; tot.close += r.creeperClose; tot.cjabs += r.creeperJabs; tot.towers += r.towers; if (r.hp <= 0) tot.died++;
+    const b = (byT[terrain] ??= { runs: 0, died: 0, hits: 0, blasts: 0 }); b.runs++; b.hits += r.hitsTaken; b.blasts += r.explosions; if (r.hp <= 0) b.died++;
+  }
+  console.log(`${tot.runs} pursuits: ${tot.died} died, ${(tot.hits / tot.runs).toFixed(2)} hits taken each, ${tot.blasts} explosions, a creeper within 3 for ${(tot.close / tot.runs / 20).toFixed(2)} s a run, ${(tot.cjabs / tot.runs).toFixed(2)} creeper jabs a run, ${(tot.towers / tot.runs).toFixed(2)} pillars a run, ${(tot.climbs / tot.runs).toFixed(2)} ledges climbed a run`);
+  console.log(`  killed by: ${JSON.stringify(tot.killers ?? {})}`);
+  for (const [k, b] of Object.entries(byT)) console.log(`  ${k.padEnd(7)} ${b.runs} runs, ${b.died} died, ${(b.hits / b.runs).toFixed(2)} hits each, ${b.blasts} explosions`);
   process.exit(0);
 }
 

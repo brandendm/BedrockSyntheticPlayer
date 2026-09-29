@@ -6,7 +6,7 @@ import { MotorController, EYE_HEIGHT } from '../core/motor.js';
 import { searchJob, smoothPath, findPath, Cell, DEFAULT_COSTS } from '../core/pathfinder.js';
 import { dist3D, makeRng } from '../core/mathutil.js';
 import { decide, fleePoint, weaponDamage, MOBS, REACH_HIT, STOP_AT } from '../core/threat.js';
-import { fightMove, creeperFight, creeperMove, Stalemate, pickRefuge, bestWeapon, barricadeCells, SPEAR_DAMAGE, weaponReach, pickCreeperSwing, creeperWeapon, isSpear, awayPath, knockbackRoom, blockOffCells, guardCell, fleeJab, killSlotCells, killSlotWorth, dodgeArrow, CREEPER_LIGHT, CREEPER_CALM } from '../core/tactics.js';
+import { fleeJabOrder, avoidCreepers, towerWorth, TOWER_H, fightMove, creeperFight, creeperMove, Stalemate, pickRefuge, bestWeapon, barricadeCells, SPEAR_DAMAGE, weaponReach, pickCreeperSwing, creeperWeapon, isSpear, awayPath, knockbackRoom, blockOffCells, guardCell, fleeJab, killSlotCells, killSlotWorth, dodgeArrow, CREEPER_LIGHT, CREEPER_CALM } from '../core/tactics.js';
 import { nextStep, STONE_TARGETS, TOOL_STONE, count, isLog } from '../core/recipes.js';
 import { settleStep, foodCount, FOOD_GOAL, isNight } from '../core/settle.js';
 import { goalChain } from '../core/goals.js';
@@ -625,6 +625,16 @@ export class Agent {
       if (close) this.getOutOfBed();
       d.mode = 'none';
       d.reason = close ? 'getting out of bed first' : 'in bed: the walls keep it out';
+    }
+
+    // Up our pillar (towerUp) with only zombies and their kind about: fight from the top, never down
+    // and away. Anything that shoots, climbs or blows up in range: off it, the usual way.
+    if (this.towered && this.towerHolds()) {
+      if (d.threats.some((m) => m.dist <= 24 && (MOBS[m.type]?.kind !== 'melee' || /spider/.test(m.type)))) this.towered = null;
+      else {
+        const tgt = d.threats.filter((m) => MOBS[m.type]?.kind === 'melee' && m.dist <= 12).sort((a, b) => a.dist - b.dist)[0];
+        if (tgt) { d.mode = 'fight'; d.target = tgt.id; d.reason = 'from the top of the pillar'; }
+      }
     }
 
     // No fist fights with skeletons: bare-handed that's how we kept dying. Keep working and move on.
@@ -1597,7 +1607,10 @@ export class Agent {
       if (this.heldWeapon && this.heldWeapon !== this.weaponId && this.weaponId) { hold(this.sim, this.weaponId); this.heldWeapon = this.weaponId; }
       // Tall melee mobs coming at a dead end: a kill slot across the way in, and fight from it.
       if (!this.slot && this.buildSlot(this.threatsNow, target)) return;
-      mv = this.slotMove(target, me, canSwing) ?? fightMove({ me, mob, melee: MOBS[target.type]?.kind === 'melee', t, shield: this.shield, canSwing, type: target.type });
+      // Up our pillar: stand still and hit what's at its foot (the eye's 4.6 up: a zombie right by the
+      // pillar is in reach at ~3.4 feet to feet).
+      if (this.towerHolds() && MOBS[target.type]?.kind === 'melee') reach = 3.7;
+      mv = (this.towerHolds() && MOBS[target.type]?.kind === 'melee' ? { swing: canSwing, stop: true } : null) ?? this.slotMove(target, me, canSwing) ?? fightMove({ me, mob, melee: MOBS[target.type]?.kind === 'melee', t, shield: this.shield, canSwing, type: target.type });
       this.fightMove = mv.stop ? 'hold' : mv.goal && d > STOP_AT ? 'approach' : 'back';
     }
     this.setBlocking(!!mv.block);
@@ -1761,18 +1774,22 @@ export class Agent {
       if (w.standable(x, y, z)) cands.push({ x: x + 0.5, y, z: z + 0.5, cost: Math.hypot(x - f.x, z - f.z) });
       return false;
     };
-    this.plan(me, me, 0, 2500, probe).then(() => {
+    // Never past a creeper's nose on the way (core/tactics.js avoidCreepers), and up a ledge with a
+    // block if that's the way out (the step-ups: a trench, a terrace, rough ground).
+    const wrap = (c) => avoidCreepers(c, threats.filter((m) => m.type === 'creeper').map((m) => m.pos), 3.5, me);
+    this.plan(me, me, 0, 2500, probe, { wrap, actions: this.fleeActions() }).then(() => {
       this.findingRefuge = false;
       if (gen !== this.taskGen || this.mode !== 'flee') return;
       // Out of sight: the ray from the shooter's eye to our chest there.
       const sees = (p, m) => { try { return canSee(this.dim, m.head, { x: p.x, y: p.y + 1.2, z: p.z }); } catch { return true; } };
       const now = this.body.getPos();
       const spot = pickRefuge(now, threats, cands, sees);
-      if (spot) { this.routeTo(spot, 1, true, 3000); return; }
+      if (spot) { this.routeTo(spot, 1, true, 3000, false, wrap, true); return; }
       if (this.buildSlot(threats, threats.filter((m) => m.dist <= 12).sort((a, b) => a.dist - b.dist)[0])) return; // cornered by zombies: a kill slot, not a sealed wall
       if (this.wallOff(threats)) return;
+      if (this.towerUp(threats)) return; // nowhere to run, no way in to block: up out of their reach
       const deeper = pickRefuge(now, threats, cands, sees, 0.5);
-      if (deeper) { this.routeTo(deeper, 0.5, true, 1500); this.nextRoute = system.currentTick + 8; return; }
+      if (deeper) { this.routeTo(deeper, 0.5, true, 1500, false, wrap, true); this.nextRoute = system.currentTick + 8; return; }
       this.corneredUntil = system.currentTick + 200; // 10 s: fight back
       if (CONFIG.debug && !(this.corneredSaid > system.currentTick - 200)) console.warn('[agent] cornered: nowhere better to run');
       this.corneredSaid = system.currentTick;
@@ -1788,13 +1805,66 @@ export class Agent {
   }
 
   /** Plan and start walking, replacing any current path without a stop. */
-  async routeTo(goal, tolerance, urgent, maxNodes, walk = false) {
+  async routeTo(goal, tolerance, urgent, maxNodes, walk = false, wrap = null, climb = false) {
     const gen = this.taskGen, seq = this.routeSeq ?? 0;
-    const res = await this.plan(this.body.getPos(), goal, tolerance, maxNodes);
+    const res = await this.plan(this.body.getPos(), goal, tolerance, maxNodes, null, wrap ? { wrap } : {});
+    if (gen !== this.taskGen || seq !== (this.routeSeq ?? 0)) return;
+    // No walking way there but one with a block or two to step up on (out of a trench, up a
+    // terrace): that, a block under our feet at each step up (skills.followActionPath).
+    if (climb && !res.complete) {
+      const a = await this.plan(this.body.getPos(), goal, tolerance, maxNodes, null, { wrap, actions: this.fleeActions(), weight: 2 });
+      if (gen !== this.taskGen || seq !== (this.routeSeq ?? 0)) return;
+      if (a.complete && a.path.some((p) => p.move?.type === 'pillar') && a.path.every((p) => !p.move || ['pillar', 'leap', 'stair', 'bucketDrop'].includes(p.move.type))) {
+        trace(`running: up a ledge (${a.path.filter((p) => p.move?.type === 'pillar').length} block(s))`);
+        this.walling = true; // (the placing has the hands; flee doesn't re-route meanwhile)
+        this.stopWalking();
+        this.skills.followActionPath(this.taskGen, a.path).catch(() => false).finally(() => { this.walling = false; });
+        return;
+      }
+    }
     // Stopped (or sent elsewhere) while it planned: a path that lands after a stop walked us on
     // into the creeper we'd stopped short of.
-    if (gen !== this.taskGen || seq !== (this.routeSeq ?? 0) || res.path.length < 2) return;
+    if (res.path.length < 2) return;
     this.motor.followPath(smoothPath(this.classifier(), res.path), { seamless: true, urgent, walk });
+  }
+
+  /** Moves a running route may make: put a block down to step up a ledge (up to 4), never dig. */
+  fleeActions() {
+    return { ...this.skills.actionOpts({ force: false }), breakCost: () => Infinity, placeCost: 1.5, budget: Math.min(this.skills.blockCount(), 4) };
+  }
+
+  /**
+   * Cornered by zombies (nothing that shoots, climbs or blows up), nowhere to run and no way in to
+   * block: up a 3-high pillar where they can't reach, and hit them from the top (core/tactics.js
+   * towerWorth). Returns true if we're going up.
+   */
+  towerUp(threats) {
+    if (this.towered || this.walling || (this.noTowerUntil ?? 0) > system.currentTick) return false;
+    const f = this.skills.feet();
+    const headroom = [1, 2, 3, 4, 5].every((k) => /^air$|grass|flower/.test(this.skills.blockAt({ ...f, y: f.y + k }) ?? 'stone'));
+    if (!towerWorth({ threats, health: this.health(), blocks: this.skills.blockCount(), headroom })) return false;
+    this.walling = true;
+    this.stopWalking();
+    trace(`cornered by ${threats.length} ${threats[0]?.type}: up a pillar`);
+    this.say('Cornered: up a pillar, out of their reach.');
+    (async () => {
+      let up = 0;
+      // (Each step under whatever task is current: the switch from running to fighting mustn't stop it half built.)
+      for (let k = 0; k < TOWER_H; k++) { if (await this.skills.stepUp(this.taskGen).catch(() => false)) up++; else break; }
+      const g = this.skills.feet();
+      if (up === TOWER_H) this.towered = { x: g.x, z: g.z, top: g.y };
+      else this.noTowerUntil = system.currentTick + 200;
+    })().finally(() => { this.walling = false; });
+    return true;
+  }
+
+  /** On top of our pillar still (towerUp)? */
+  towerHolds() {
+    const tw = this.towered;
+    if (!tw) return false;
+    const f = this.skills.feet();
+    if (f.x !== tw.x || f.z !== tw.z || f.y < tw.top) { this.towered = null; return false; }
+    return true;
   }
 
   /**
@@ -1805,22 +1875,27 @@ export class Agent {
     const stopJab = () => { if (this.jabbing) { this.jabbing = false; this.motor.setFocus(null); } };
     if (this.mode !== 'flee' || !this.fleeThreats?.length) { stopJab(); return; }
     const me = this.body.getPos();
-    let best = null;
+    // A creeper coming up on us first (spear it back while there's the chance), then the nearest
+    // melee mob (core/tactics.js fleeJabOrder): each asked in turn till one's worth a jab.
+    const live = [];
     for (const m of this.fleeThreats) {
-      if (MOBS[m.type]?.kind !== 'melee' || !m.entity) continue;
+      if (!m.entity || (MOBS[m.type]?.kind !== 'melee' && m.type !== 'creeper')) continue;
       let l;
       try { if (!m.entity.isValid) continue; l = m.entity.location; } catch { continue; }
-      const d = dist3D(me, l);
-      if (!best || d < best.d) best = { m, l, d };
+      live.push({ m, l, type: m.type, d: dist3D(me, l) });
     }
-    if (!best) { stopJab(); return; }
-    if (!this.fleeJabSt.has(best.m.id)) { if (this.fleeJabSt.size > 16) this.fleeJabSt.clear(); this.fleeJabSt.set(best.m.id, {}); }
-    const how = fleeJab({
-      me, mob: best.l, t, st: this.fleeJabSt.get(best.m.id), melee: true,
-      hasSpear: !!this.spearId && this.spearReachOk !== false,
-      spearReady: t >= Math.max(this.spearNext ?? 0, this.nextSwing), swordReady: t >= this.nextSwing,
-    });
-    if (!how) { stopJab(); return; }
+    let best = null, how = null;
+    for (const o of fleeJabOrder(live)) {
+      if (!this.fleeJabSt.has(o.m.id)) { if (this.fleeJabSt.size > 16) this.fleeJabSt.clear(); this.fleeJabSt.set(o.m.id, {}); }
+      how = fleeJab({
+        me, mob: o.l, t, st: this.fleeJabSt.get(o.m.id), melee: true, creeper: o.type === 'creeper',
+        hasSpear: !!this.spearId && this.spearReachOk !== false,
+        spearReady: t >= Math.max(this.spearNext ?? 0, this.nextSwing), swordReady: t >= this.nextSwing,
+      });
+      best = o;
+      if (how) break;
+    }
+    if (!best || !how) { stopJab(); return; }
     const chest = { x: best.l.x, y: best.l.y + 1, z: best.l.z };
     this.motor.setFocus(chest);
     this.jabbing = true;
@@ -2363,7 +2438,9 @@ export class Agent {
       const base = this.classifier();
       const now = Date.now(), bad = this.badCells;
       // Places we got physically stuck at recently count as walls, so we don't try them again.
-      const classify = bad.size ? (x, y, z) => ((bad.get(`${x},${y},${z}`) ?? 0) > now ? Cell.DANGER : base(x, y, z)) : base;
+      const classify0 = bad.size ? (x, y, z) => ((bad.get(`${x},${y},${z}`) ?? 0) > now ? Cell.DANGER : base(x, y, z)) : base;
+      // (extra.wrap: a search's own view on top, e.g. cells by a creeper counted dangerous while running.)
+      const classify = extra.wrap ? extra.wrap(classify0) : classify0;
       const t0 = system.currentTick;
       // A water bucket on us (not in the Nether, not badly hurt): long drops are fine (the fall's
       // broken with the water, fallTick), so a route can go off a pillar or a cliff edge.

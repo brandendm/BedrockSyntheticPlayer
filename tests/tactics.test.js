@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { fightMove, creeperFight, creeperMove, Stalemate, pickRefuge, bestWeapon, barricadeCells, CREEPER_HOLD, CREEPER_LIGHT, CREEPER_CALM, weaponReach, pickCreeperSwing, creeperWeapon, knockbackRoom, blockOffCells, fleeJab, killSlotCells, killSlotWorth, dodgeArrow, arrowHits, aimBow, bowFight, blastDamage } from '../behavior_pack/scripts/core/tactics.js';
+import { fightMove, creeperFight, creeperMove, Stalemate, pickRefuge, bestWeapon, barricadeCells, CREEPER_HOLD, CREEPER_LIGHT, CREEPER_CALM, weaponReach, pickCreeperSwing, creeperWeapon, knockbackRoom, blockOffCells, fleeJab, killSlotCells, killSlotWorth, dodgeArrow, arrowHits, aimBow, bowFight, blastDamage, fleeJabOrder, avoidCreepers, towerWorth } from '../behavior_pack/scripts/core/tactics.js';
 import { HOLD_AT, REACH_HIT } from '../behavior_pack/scripts/core/threat.js';
 
 const P = (x, y, z) => ({ x, y, z });
@@ -272,4 +272,36 @@ test('bow fight: shoot from range, back off when a zombie gets close, the sword 
   assert.equal(bowFight({ me, mob: P(6.5, 64, 0.5), kind: 'melee', sees: true, hp: 4, melee: 5 }).melee, true, 'one swing finishes it');
   assert.equal(bowFight({ me, mob: P(4.5, 64, 0.5), kind: 'explode', sees: true }).melee, true);
   assert.ok(bowFight({ me, mob: P(12.5, 64, 0.5), kind: 'melee', sees: false }).goal, 'no shot: get one');
+});
+
+test('running: a creeper coming up on us gets the spear first; the zombies still get jabbed', () => {
+  const me = { x: 0, y: 64, z: 0 };
+  const st = {};
+  fleeJab({ me, mob: { x: 4.2, y: 64, z: 0 }, t: 0, st, creeper: true, hasSpear: true, spearReady: true });
+  assert.equal(fleeJab({ me, mob: { x: 3.5, y: 64, z: 0 }, t: 4, st, creeper: true, hasSpear: true, spearReady: true }), 'spear');
+  assert.equal(fleeJab({ me, mob: { x: 3.5, y: 64, z: 0 }, t: 5, st: {}, creeper: true, hasSpear: false, swordReady: true }), null, 'a sword only on one closing in');
+  const order = fleeJabOrder([{ type: 'zombie', d: 2 }, { type: 'creeper', d: 3.8 }, { type: 'skeleton', d: 5 }]);
+  assert.deepEqual(order.map((o) => o.type), ['creeper', 'zombie']);
+  assert.deepEqual(fleeJabOrder([{ type: 'zombie', d: 2 }, { type: 'creeper', d: 6 }]).map((o) => o.type), ['zombie']);
+});
+
+test('running: routes keep off a creeper, but never fence us in when it is right by us', () => {
+  const open = () => 0;
+  const far = avoidCreepers(open, [{ x: 6.5, y: 64, z: 0.5 }], 3.5, { x: 0.5, y: 64, z: 0.5 });
+  assert.equal(far(5, 64, 0), 3, 'next to the creeper: dangerous');
+  assert.equal(far(1, 64, 0), 0);
+  const near = avoidCreepers(open, [{ x: 2, y: 64, z: 0.5 }], 3.5, { x: 0.5, y: 64, z: 0.5 });
+  assert.equal(near(-1, 64, 0), 0, 'the way away from it stays open');
+  assert.equal(near(1, 64, 0), 3, 'nearer it than we are: not');
+});
+
+test('tower: up a pillar from zombies only, with the blocks and the headroom', () => {
+  const z = (dist) => ({ type: 'zombie', dist });
+  assert.equal(towerWorth({ threats: [z(3), z(4)], blocks: 8 }), true);
+  assert.equal(towerWorth({ threats: [z(3)], blocks: 8, health: 20 }), false, 'one zombie: fight it');
+  assert.equal(towerWorth({ threats: [z(3)], blocks: 8, health: 8 }), true, 'one, hurt');
+  assert.equal(towerWorth({ threats: [z(3), z(4)], blocks: 2 }), false, 'not enough blocks');
+  assert.equal(towerWorth({ threats: [z(3), z(4), { type: 'skeleton', dist: 20 }], blocks: 8 }), false, 'an archer: it shoots us up there');
+  assert.equal(towerWorth({ threats: [z(3), { type: 'spider', dist: 4 }], blocks: 8 }), false, 'spiders climb');
+  assert.equal(towerWorth({ threats: [z(3), z(4)], blocks: 8, headroom: false }), false, 'leaves overhead');
 });
