@@ -46,6 +46,8 @@ export const DEFAULT_COSTS = Object.freeze({
   leap: 0.9,        // extra for jumping a gap, per block of it (on top of the blocks walked)
   maxLeap: 3,       // widest gap jumped: 1 walking, 2-3 with a sprint-jump
   stair: 0.15,      // extra for walking up a stair or onto a slab (no jump)
+  bucketDrop: 0,    // with a water bucket: drops this deep are fine too (the fall's broken with water, game/agent.js fallTick); 0: off
+  bucketDropCost: 3, // extra for one (putting the water down and scooping it back up)
 });
 
 /**
@@ -192,11 +194,15 @@ export function* neighbors(w, x, y, z, costs = DEFAULT_COSTS) {
       }
     }
     // Drop: walk off the edge and fall straight down (into water is fine too)
+    // With a water bucket, much further: off a pillar or a cliff and down in one go, the water put
+    // down just before landing (only onto solid ground, the whole way down open).
     if (w.open(nx, y, nz) && w.open(nx, y + 1, nz)) {
-      for (let d = 1; d <= costs.maxDrop; d++) {
+      const deepest = Math.max(costs.maxDrop, costs.bucketDrop ?? 0);
+      for (let d = 1; d <= deepest; d++) {
         const ny = y - d;
         if (w.occupiable(nx, ny, nz)) {
-          yield enter(nx, ny, nz, costs.walk + costs.dropPerBlock * d);
+          if (d <= costs.maxDrop) yield enter(nx, ny, nz, costs.walk + costs.dropPerBlock * d);
+          else if (w.standable(nx, ny, nz)) yield [nx, ny, nz, costs.walk + costs.dropPerBlock * costs.maxDrop + (d - costs.maxDrop) * 0.1 + costs.bucketDropCost, { type: 'bucketDrop', breaks: [], place: false }];
           break;
         }
         if (!w.open(nx, ny, nz)) break; // landed on something we can't stand on
@@ -304,7 +310,12 @@ export function* actionNeighbors(w, x, y, z, act, placed, onPlaced = false) {
 function octileHeuristic(x, y, z, g) {
   const dx = Math.abs(x - g.x), dz = Math.abs(z - g.z);
   const octile = Math.max(dx, dz) + (SQRT2 - 1) * Math.min(dx, dz);
-  return octile + Math.abs(y - g.y) * 0.3;
+  if (g.y <= y) return octile + (y - g.y) * 0.3; // down: a drop's 0.3 a block
+  // Up: every block up is a step-up's 0.8 at least, and each one more than there is ground to walk
+  // while climbing is a move straight up (a ladder, a pillar: 1.8 or more), so a full block extra.
+  // (It never overestimates. At 0.3 a block up, a 25-high climb searched 52,000 nodes before building.)
+  const up = g.y - y;
+  return octile + up * 0.8 + Math.max(0, up - octile);
 }
 
 /**
@@ -538,7 +549,7 @@ function center(p) {
 }
 
 /** A path step the motor walks (plain moves and gap leaps), as opposed to one that digs or builds. */
-export const isWalkMove = (p) => !p.move || p.move.type === 'leap' || p.move.type === 'stair';
+export const isWalkMove = (p) => !p.move || p.move.type === 'leap' || p.move.type === 'stair' || p.move.type === 'bucketDrop';
 
 function sameLevelRun(path, i, k) {
   for (let m = i + 1; m <= k; m++) if (path[m].y !== path[i].y) return false;

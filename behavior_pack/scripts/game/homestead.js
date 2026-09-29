@@ -859,15 +859,16 @@ export class Homestead {
   // ---------- keeping the house usable ----------
 
   /**
-   * Our own house's blocks, never broken to get somewhere (skills.actionOpts, force): the walls and
-   * roof, and our furniture where it belongs.
+   * Our own house's blocks, never broken to get somewhere (skills.actionOpts): the walls and roof,
+   * the ground it stands on, and our furniture where it belongs.
    */
   isHouseBlock(p) {
     const h = this.house;
     if (!h) return false;
     const k = `${h.x},${h.y},${h.z},${h.dir},${layoutOf(h)}`;
     if (this._houseCells?.k !== k) {
-      const walls = new Set(blueprint(h, h.dir).map((b) => `${b.x},${b.y},${b.z}`));
+      // The walls and roof, and the ground under the house and its doorstep (the floor).
+      const walls = new Set([...blueprint(h, h.dir), ...footing(h, h.dir)].map((b) => `${b.x},${b.y},${b.z}`));
       const fittings = new Map(keepClear(h, h.dir).filter((c) => c.want).map((c) => [`${c.x},${c.y},${c.z}`, c]));
       this._houseCells = { k, walls, fittings };
     }
@@ -1502,6 +1503,10 @@ export class Homestead {
     }
     this.homeFails = 0;
     const fur = furnishings(h, h.dir);
+    // Wool for a bed and no bed yet: made here, at the house's table, and put in before sleeping.
+    const wool = Math.max(0, ...Object.entries(invCounts(this.sim)).filter(([id]) => id.endsWith('_wool')).map(([, n]) => n));
+    if (sleep && !h.bed && !invCounts(this.sim).bed && wool >= 3) await this.S.craft(gen, ['bed'], true);
+    if (sleep && !h.bed && invCounts(this.sim).bed) await this.furnish(gen);
     // Home for the night anyway: put away what we don't need to carry before bed.
     if (this.chests().length && Object.keys(depositPlan(invCounts(this.sim))).length) await this.storeItems(gen);
     if (h.bed && sleep) await this.S.goNear(gen, fur.bed.standAt, 0.5, 2);

@@ -118,6 +118,7 @@ function arena({ classify: base, bot, mobs, weapon = 'stone_sword', shield = fal
   const giveUp = new Map(); // mob id -> tick we stop counting it as reachable until
   const reachCache = new Map();
   let kills = 0, idleWhileHunted = 0, worstIdle = 0, hitsTaken = 0, blocked = 0, gaveUp = 0;
+  let closeTicks = 0;
   // Weapons: the best for a fight, a spear if we carry one for creepers. `weapon` may be a list.
   const carried = (Array.isArray(weapon) ? weapon : [weapon]).filter(Boolean).filter((id) => id !== 'bow').map((id) => ({ id }));
   // A bow (and 64 arrows): shot from out of reach (core/tactics.js bowFight), the melee weapon up close.
@@ -553,6 +554,7 @@ function arena({ classify: base, bot, mobs, weapon = 'stone_sword', shield = fal
         }
         continue;
       }
+      if (d <= 1.6) closeTicks++; // (inside its reach: where a player doesn't let a zombie be)
       if (d <= 1.6 && t >= m.cool) { m.cool = t + 20; hurt(info.dps, m, m.type); }
     }
     // ---- a witch's potions: they burst on whatever they hit, and splash everything within 4 ----
@@ -617,7 +619,7 @@ function arena({ classify: base, bot, mobs, weapon = 'stone_sword', shield = fal
     }
     if (!mobs.some((m) => m.hp > 0)) break;
   }
-  return { potionsThrown, potionHits, potionHp, blastHp, bowShots, bowHits, arrowsLeft, dodges, arrowsShot, arrowHits, slots, jabs, crater, misses, explosions, walls, foughtAtDeath, hp: Math.max(0, hp), kills, total: mobs.length, ticks: t, worstIdle, hitsTaken, blocked, gaveUp, log };
+  return { closeTicks, potionsThrown, potionHits, potionHp, blastHp, bowShots, bowHits, arrowsLeft, dodges, arrowsShot, arrowHits, slots, jabs, crater, misses, explosions, walls, foughtAtDeath, hp: Math.max(0, hp), kills, total: mobs.length, ticks: t, worstIdle, hitsTaken, blocked, gaveUp, log };
 }
 
 const standOffOld = (me, mob, r = 2.8) => { const dx = me.x - mob.x, dz = me.z - mob.z, l = Math.hypot(dx, dz) || 1; return { x: mob.x + dx / l * r, y: mob.y, z: mob.z + dz / l * r }; };
@@ -766,6 +768,30 @@ if (FUZZ) {
   console.log(JSON.stringify(stats));
   for (const b of bad.slice(0, 25)) console.log(`  - ${b}`);
   process.exit(stats.diedFighting + stats.stared ? 1 : 0);
+}
+
+// --zombies N: one or two zombies (a husk now and then) on flat ground, in a forest, down a tunnel,
+// each weapon: hits taken, and how long a zombie was inside its own reach (1.6) of the bot.
+const ZOMBIES = process.argv.includes('--zombies') ? Number(process.argv[process.argv.indexOf('--zombies') + 1] || 200) : 0;
+if (ZOMBIES) {
+  const rng = makeRng(7);
+  const pick = (a) => a[Math.floor(rng() * a.length)];
+  let hits = 0, close = 0, died = 0, kills = 0, total = 0, secs = 0;
+  for (let i = 0; i < ZOMBIES; i++) {
+    const terrain = pick(['flat', 'forest', 'tunnel']);
+    const classify = terrain === 'flat' ? flat() : terrain === 'forest' ? forest() : tunnel();
+    const bot = terrain === 'tunnel' ? { x: 1.5, y: 40, z: 0.5 } : { x: 0.5, y: 70, z: 0.5 };
+    const n = 1 + (rng() < 0.4 ? 1 : 0);
+    const mobs = [];
+    for (let k = 0; k < n; k++) {
+      const a = rng() * Math.PI * 2, r = 5 + rng() * 8;
+      mobs.push(terrain === 'tunnel' ? { type: 'zombie', x: bot.x + 6 + k * 3, y: 40, z: 0.5 } : { type: 'zombie', x: 0.5 + Math.cos(a) * r, y: 70, z: 0.5 + Math.sin(a) * r });
+    }
+    const r = arena({ classify, bot: ground(classify, bot), mobs: mobs.map((m) => ground(classify, m)), weapon: pick(['stone_sword', 'iron_sword', 'stone_axe', 'wooden_sword']), shield: false, health: 20, ticks: 900 });
+    hits += r.hitsTaken; close += r.closeTicks; kills += r.kills; total += r.total; secs += r.ticks / 20; if (r.hp <= 0) died++;
+  }
+  console.log(`${ZOMBIES} zombie fights: ${(hits / ZOMBIES).toFixed(2)} hits taken a fight, a zombie inside its reach ${(close / ZOMBIES / 20).toFixed(2)} s a fight, killed ${kills}/${total}, ${(secs / ZOMBIES).toFixed(1)} s a fight, died ${died}`);
+  process.exit(0);
 }
 
 // --creepers N: creeper encounters: from any side, behind trees or round a corner, not always known

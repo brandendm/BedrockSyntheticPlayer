@@ -221,7 +221,7 @@ export function fleePoint(me, threats, distance = 16) {
 export const REACH_HIT = 3.2;   // swing if the target is this close (feet to feet)
 export const STOP_AT = 3.0;     // stop walking in at this distance (momentum carries a little further)
 export const HOLD_AT = 2.8;     // where to stand when closing in
-export const BACK_OFF = 2.0;    // a melee mob this close: step back to HOLD_AT while swinging
+export const BACK_OFF = 2.6;    // a melee mob this close: step back to HOLD_AT while swinging (a zombie hits from ~1.6: at 2.0 it was often in; tools/sim_combat.mjs --zombies: 0.76 hits a fight -> 0.28)
 
 /** 'approach' | 'hold' | 'back' for a target d blocks away (feet to feet). */
 export function spacing(d, melee) {

@@ -119,6 +119,21 @@ With no orders (and after finishing any order) it works through a goal ladder.
 
 **Fire:** fire on or around the house, day or night, comes first. It punches every flame out, nearest first, reaching roof fires from the ground beside the wall. The repair then patches whatever burned. A running job is dropped as soon as fire is seen at the house.
 
+**What it wants** (`core/wants.js`): one table of what's worth having right now, used everywhere it decides whether to bother.
+- **Ore:** coal (torches, the furnace; worth more when it's short), iron (while the gear isn't made), diamonds once it has an iron pickaxe. Copper, gold, redstone, lapis and emerald are left alone: nothing it makes with them yet.
+- **Where ore gets mined:** in the walls of the quarry, the branch mine and the stairs. While quarrying stone, every block's uncovered faces are checked, not every 4th block as before. And any wanted ore showing within 6 blocks of wherever it's working.
+- **Items on the ground:** armor that beats what it's wearing, a better sword or tool, a shield, iron, diamonds, coal when short, wool while the bed needs it. Worth fetching from 20 blocks off; something well worth having (armor, a better sword) dropped within 16 makes it drop what it's doing and go. String, bones, flowers and odd stone aren't worth the steps (it still picks up whatever it walks over).
+- **Armor:** any material. Each piece that beats what's worn in that slot goes on as soon as it's picked up, and the old one goes back in the pack.
+
+**Other fixes in this round:**
+- **Sleeping off means working nights.** With `!bot beds off`, a sword and half health or more, night is like day: no going home and sitting it out. Unarmed or hurt, it still takes cover.
+- **The bed is crafted at a table that's already there,** not at a new table put down where the last sheep fell. The wool keeps; at bedtime it's made at the house's table and put in.
+- **Zombies:** it backs off at 2.6 blocks instead of 2.0 (a zombie hits from about 1.6). `node tools/sim_combat.mjs --zombies 300`: 0.28 hits taken a fight, down from 0.76, same kills.
+- **Following you up a tower** (or anywhere with no walking way): `come`, `goto` and `follow` now pillar, dig or bridge a way there, out to 64 blocks. Climbs search weighted toward the goal, and the search's estimate now counts a block up as at least a step-up (it counted 0.3, a drop's cost). A 40-high climb takes about 400 search nodes instead of running out at 60,000.
+- **Down fast with a water bucket:** with one in the pack (not in the Nether, 8+ health), a route can go straight off a pillar or cliff up to 40 blocks, and the water breaks the fall.
+- **No bucket after dying:** the height of a fall from before a death (or a teleport) was kept, so the first step off a block after respawning read as a long fall.
+- **Never through its own house:** a route never digs the house's walls, roof, furniture or the ground it stands on. Its own blocks count as diggable, and one way in with a wall down went under the floor.
+
 **The whole game, start to finish** (`node tools/sim_life.mjs 50`): the agent's own planner (`planStep`: the goal ladder, settling in, the farm and iron, side jobs, night in the mine) and the auto loop's own bookkeeping (a failing step set aside for 3 minutes) run on a virtual clock. A world model plays out each step: walks, chopping, digging, furnaces, nights, hunger, deaths and lost things, a creeper, a player's blocks, fire, a pack filling with junk. It runs 10 kinds of world: plains, forest, desert, no sheep at all, griefed, deadly, brutal, hunting off, junk, and goals switched off. It looks for steps repeating with nothing changing, the plan asking for what the world can't give, and where the time goes. It found five bugs, now fixed:
 - **No sheep anywhere stopped everything.** Once it gave up looking, the plan still said "look for sheep", so the farm and the iron never came (0 of 20 such worlds finished). Now it gets on with the rest and looks again later. After 6 fruitless search legs (3 on later rounds), it waits 15 minutes, then 30, then an hour. With nothing else left to do it keeps looking. Finding sheep ends the wait; before, the wait kept it from hunting sheep it had just found.
 - **A full pack of things it keeps:** there was nothing to put away, so `store` came back every round, ahead of the farm and the iron. Now that's noted for 10 minutes.
@@ -359,6 +374,7 @@ node tools/sim_combat.mjs --ambush 500   # creepers catching the bot in its quar
 node tools/sim_quarry.mjs 300    # creeper craters in the quarry stairs: can it still get down and back up?
 node tools/sim_quarry.mjs 300 --leave  # getting out of a damaged quarry the game's way, with the blocks it may spend (LEAVE=old: before)
 node tools/sim_furnace.mjs       # the game's own furnace code against a stand-in game: jobs, several furnaces, restarts, fuel running out
+node tools/sim_combat.mjs --zombies 300  # zombie fights: hits taken, time a zombie was inside its reach
 node tools/sim_life.mjs 50       # the whole game, first goal to last: the agent's own planner on a virtual clock in 10 kinds of world; stuck steps, mismatches, where the time goes
 node tools/sim_home.mjs          # the house kept usable: a player's blocks, a bricked-up doorway at night, water, a blast, fire
 node tools/sim_mine.mjs          # the branch mine across deaths and restarts: branches spaced, own tunnels never a "cave" (OLD=1: before)

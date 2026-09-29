@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { findPath, smoothPath, Cell } from '../behavior_pack/scripts/core/pathfinder.js';
+import { findPath, smoothPath, Cell, DEFAULT_COSTS } from '../behavior_pack/scripts/core/pathfinder.js';
 import { makeWorld } from './helpers.js';
 
 const at = (p) => `${p.x},${p.y},${p.z}`;
@@ -273,4 +273,27 @@ test('standing on a slab: the search starts from on top of it', () => {
   const r = findPath(classify, { x: 0.5, y: 63.5, z: 0.5 }, { x: 5, y: 64, z: 0 });
   assert.equal(r.complete, true);
   assert.equal(r.path[0].y, 64);
+});
+
+test('actions: a player on top of a 15-high tower: pillars up beside it and steps across', () => {
+  // A 1x1 tower at x=3, top at 79 (stand at 80); ground stands at 64.
+  const solids = [];
+  for (let y = 64; y < 80; y++) solids.push([3, y, 0]);
+  const w = makeWorld({ solids });
+  assert.equal(findPath(w.classify, { x: 0, y: 64, z: 0 }, { x: 3, y: 80, z: 0 }, { maxNodes: 3000 }).complete, false, 'no walking way up');
+  const r = findPath(w.classify, { x: 0, y: 64, z: 0 }, { x: 3, y: 80, z: 0 }, { actions: { ...digAll(Infinity), budget: 32 }, maxNodes: 2000, tolerance: 1.5, weight: 2 }); // (the game's goNear searches: weighted)
+  assert.equal(r.complete, true);
+  assert.ok(r.path.filter((p) => p.move?.type === 'pillar').length >= 14, 'pillared up');
+});
+
+test('with a water bucket: straight off a 20-high pillar instead of the long way down', () => {
+  // Standing on top of a pillar at x=0 (stand at 84); the ground stands at 64; a staircase down far away.
+  const solids = [];
+  for (let y = 64; y < 84; y++) solids.push([0, y, 0]);
+  const w = makeWorld({ solids });
+  const noBucket = findPath(w.classify, { x: 0, y: 84, z: 0 }, { x: 3, y: 64, z: 0 }, { maxNodes: 3000 });
+  assert.equal(noBucket.complete, false, 'no safe way down without it');
+  const r = findPath(w.classify, { x: 0, y: 84, z: 0 }, { x: 3, y: 64, z: 0 }, { maxNodes: 3000, costs: { ...DEFAULT_COSTS, bucketDrop: 40 } });
+  assert.equal(r.complete, true);
+  assert.ok(r.path.some((p) => p.move?.type === 'bucketDrop'), 'jumped off with the bucket');
 });

@@ -3,7 +3,7 @@
 // the brain is only consulted on events (commands, stuck, task done, combat reports).
 import { system, world, EntityComponentTypes, Direction, EquipmentSlot, ItemStack } from '@minecraft/server';
 import { MotorController, EYE_HEIGHT } from '../core/motor.js';
-import { searchJob, smoothPath, findPath, Cell } from '../core/pathfinder.js';
+import { searchJob, smoothPath, findPath, Cell, DEFAULT_COSTS } from '../core/pathfinder.js';
 import { dist3D, makeRng } from '../core/mathutil.js';
 import { decide, fleePoint, weaponDamage, MOBS, REACH_HIT, STOP_AT } from '../core/threat.js';
 import { fightMove, creeperFight, creeperMove, Stalemate, pickRefuge, bestWeapon, barricadeCells, SPEAR_DAMAGE, weaponReach, pickCreeperSwing, creeperWeapon, isSpear, awayPath, knockbackRoom, blockOffCells, guardCell, fleeJab, killSlotCells, killSlotWorth, dodgeArrow, CREEPER_LIGHT, CREEPER_CALM } from '../core/tactics.js';
@@ -17,6 +17,7 @@ import { inside as houseInside } from '../core/house.js';
 import { mlgNow, ticksToLand } from '../core/fall.js';
 import { GOALS, goalsOf, goalKey } from '../core/toggles.js';
 import { FULL_SLOTS } from '../core/storage.js';
+import { itemValue, armorUpgrades } from '../core/wants.js';
 import { Homestead, FOOD_ANIMALS } from './homestead.js';
 import { Lookout } from './lookout.js';
 import { Skills, Aborted, markVisited } from './skills.js';
@@ -102,6 +103,8 @@ export class Agent {
     this.planning = 0;           // path searches running
     this.prof = null;            // the step profile being counted
     this.fallFrom = null;        // the highest our feet got since we left the ground
+    /** @type {{x:number,y:number,z:number}|null} */
+    this.fallLast = null;        // where we were last tick (a jump further than a fall: respawned, teleported)
     this.mlg = null;             // water we put down to break a fall: { t, cell, d, done }
     this.slot = null;            // a kill slot we put up: { cells, slot, stand, dir, block }
     this.threatsNow = [];        // the last survive() pass's threats
@@ -148,6 +151,7 @@ export class Agent {
     const p = this.body.getPos();
     this.deathSpot = { x: p.x, y: p.y, z: p.z, d: this.dim.id, at: Date.now() };
     this.memory.data.kit = null; // it's all on the ground now (and gone back for): nothing to put back
+    this.fallFrom = null; this.mlg = null; // (no fall carried over to the respawn)
     this.saveState();
     this.newTask(null);
     this.suspended = null;
@@ -226,9 +230,18 @@ export class Agent {
       const night = isNight(world.getTimeOfDay());
       const mining = MINE_STEPS.has(this.autoStep) && (this.minedUnderground() || this.onMiningTrip());
       if (night && !this.wasNight) trace(`dusk: step ${this.autoStep}, in the mine ${mining} (underground ${this.minedUnderground()}, trip ${this.onMiningTrip()})`);
-      if (night && !this.wasNight && this.task?.kind === 'auto' && !mining && !['go_home', 'shelter', 'build_house'].includes(this.autoStep)) this.startAuto();
+      if (night && !this.wasNight && this.task?.kind === 'auto' && !mining && !['go_home', 'shelter', 'build_house'].includes(this.autoStep) && !this.workNights(invCounts(this.sim))) this.startAuto();
       this.wasNight = night;
     }
+    // Something well worth having dropped near us (armor, a better sword: a player's gift, a mob's
+    // drop): drop the job and get it (the auto loop picks things up first). Armor in the pack
+    // that beats what's worn goes on.
+    if (t % 40 === 10 && this.mode === 'none' && this.autoEnabled && (this.task?.kind === 'auto' || !this.task) && this.wantedItemsNear(16, 8).length) {
+      trace('something worth having dropped nearby: going for it');
+      this.autoDone = false;
+      this.startAuto();
+    }
+    if (t % 100 === 60 && this.mode === 'none') { try { if (armorUpgrades(invCounts(this.sim), this.worn()).length) this.equipArmor(); } catch {} }
     // Fire at the house: drop whatever's running; the plan puts the fire first. (Not again while a
     // fire we couldn't reach is set aside.)
     if (t % 40 === 30 && this.mode === 'none' && this.autoEnabled && this.homestead.house && this.autoStep !== 'fight_fire' &&
@@ -1211,10 +1224,47 @@ export class Agent {
     let n = 0;
     try { n = this.dim.getEntities({ type: 'minecraft:item', location: this.sim.location, maxDistance: 8 }).length; } catch {}
     if (n) await S.sweep(gen, this.sim.location, 8, null, 8);
+    // Further off, what's worth the walk (core/wants.js itemValue: armor or a weapon better than
+    // ours, iron, coal when short, wool for the bed...): not a bone or a flower.
+    if (this.wantedItemsNear(20).length) {
+      const ctx = this.wantsCtx();
+      await S.sweep(gen, this.sim.location, 20, (id) => itemValue(id, ctx) >= 3, 20);
+    }
+    this.equipArmor(); // (anything better we just picked up goes straight on)
+    // Ore we want showing close by (coal on a hillside, iron in a cave mouth): a few steps, a few
+    // swings, while we're here (core/wants.js blockValue; never copper and the like).
+    if (!isNight(world.getTimeOfDay()) && Object.keys(invCounts(this.sim)).some((id) => /_pickaxe$/.test(id))) await S.oreInView(gen, 6, { maxWalk: 8, limit: 2 });
+  }
+
+  /** What core/wants.js values things against: what we have and wear, what the goals still need. */
+  wantsCtx() {
+    const inv = invCounts(this.sim);
+    let needs = {};
+    try { needs = this.focusFacts(inv).need; } catch {}
+    return { inv, worn: this.worn(), needs };
+  }
+
+  /** Items on the ground within r worth going for ([{ e, value }], best first), skipping ones we couldn't reach. */
+  wantedItemsNear(r, min = 3) {
+    const ctx = this.wantsCtx();
+    const out = [];
+    try {
+      for (const e of this.dim.getEntities({ type: 'minecraft:item', location: this.sim.location, maxDistance: r })) {
+        if ((this.skills.unreachableItems.get(e.id) ?? 0) > system.currentTick) continue;
+        const id = e.getComponent('minecraft:item')?.itemStack?.typeId ?? '';
+        const v = itemValue(id, ctx);
+        if (v >= min) out.push({ e, value: v });
+      }
+    } catch {}
+    return out.sort((a, b) => b.value - a.value);
   }
 
   /** The next step of the goal ladder, from what we have right now (inventory is the truth). */
   planStep(inv, tableDist, tableDy, { opportunities = true, dayTime = false } = {}) {
+    // Sleeping switched off (!bot beds off, the goal toggle) and able to look after itself (a sword,
+    // half health or more): nights are for working like days. It was still going home or digging in
+    // at dusk and standing about till morning. (Unarmed or hurt, it still takes cover.)
+    if (!dayTime && this.workNights(inv)) dayTime = true;
     // Down the mine when night falls: a lit tunnel is as safe as the house, and climbing out to walk
     // home in the dark (then all the way back down in the morning) wastes the night. Keep mining if
     // that's what the day's plan says to do; anything else (home, the farm, the furnace) waits for the
@@ -1272,6 +1322,11 @@ export class Agent {
     // The ladder's step against everything else still needed that's cheap right now.
     if (opportunities && !night) step = chooseStep(step, this.focusFacts(inv));
     return step;
+  }
+
+  /** Beds off, and fit to be out in the dark: work through the night. */
+  workNights(inv) {
+    return (this.bedsOn() === false || this.toggles().beds === false) && SWORD_OK.test(Object.keys(inv).join(' ')) && this.health() >= 10;
   }
 
   /**
@@ -1403,24 +1458,32 @@ export class Agent {
     return out;
   }
 
-  /** Put on the armor (and the shield in the off hand) we carry. */
+  /**
+   * Put on the best armor we carry, any material (a player's gift, a zombie's drop, our own iron):
+   * each piece that beats what's worn in its slot goes on, the old one back in the pack (core/wants.js
+   * armorUpgrades). And a shield in the off hand if there's none there.
+   */
   equipArmor() {
     const eq = this.sim.getComponent('minecraft:equippable');
     const c = container(this.sim);
     if (!eq || !c) return 0;
-    const slotFor = { iron_helmet: EquipmentSlot.Head, iron_chestplate: EquipmentSlot.Chest, iron_leggings: EquipmentSlot.Legs, iron_boots: EquipmentSlot.Feet, shield: EquipmentSlot.Offhand };
+    const SLOT = { helmet: EquipmentSlot.Head, chestplate: EquipmentSlot.Chest, leggings: EquipmentSlot.Legs, boots: EquipmentSlot.Feet };
     let n = 0;
-    for (let i = 0; i < c.size; i++) {
-      const it = c.getItem(i);
-      const id = it?.typeId.replace('minecraft:', '');
-      if (!id || !(id in slotFor)) continue;
-      try {
-        if (eq.getEquipment(slotFor[id])) continue;
-        eq.setEquipment(slotFor[id], it.clone());
-        c.setItem(i, undefined);
-        n++;
-      } catch (e) { trace(`equip ${id}: ${e}`); }
-    }
+    const put = (id, slot) => {
+      for (let i = 0; i < c.size; i++) {
+        const it = c.getItem(i);
+        if (!it || it.typeId.replace('minecraft:', '') !== id) continue;
+        try {
+          const old = eq.getEquipment(slot);
+          eq.setEquipment(slot, it.clone());
+          c.setItem(i, old ?? undefined); // (the old piece where the new one was)
+          n++;
+        } catch (e) { trace(`equip ${id}: ${e}`); }
+        return;
+      }
+    };
+    for (const u of armorUpgrades(invCounts(this.sim), this.worn())) put(u.id, SLOT[u.slot]);
+    try { if (invCounts(this.sim).shield && !eq.getEquipment(EquipmentSlot.Offhand)) put('shield', EquipmentSlot.Offhand); } catch {}
     if (n) this.say(`Put on ${n} piece${n > 1 ? 's' : ''} of gear.`);
     return n;
   }
@@ -1873,6 +1936,12 @@ export class Agent {
     const sim = this.sim;
     let onGround = true, inWater = false, loc = null;
     try { onGround = sim.isOnGround; inWater = sim.isInWater; loc = sim.location; } catch { return; }
+    // Dead, or just moved further than any fall could in a tick (respawned, teleported): no fall.
+    // The height from before a death was kept, and the first step off a block after respawning
+    // read as a long fall: the bucket went down for nothing.
+    const jumped = this.fallLast && Math.hypot(loc.x - this.fallLast.x, loc.y - this.fallLast.y, loc.z - this.fallLast.z) > 8;
+    this.fallLast = { x: loc.x, y: loc.y, z: loc.z };
+    if (this.health() <= 0 || jumped) { this.fallFrom = null; if (this.mlg && !this.mlg.done) this.mlg.done = true; return; }
     if (this.mlg && !this.mlg.done && (inWater || onGround) && t - this.mlg.t >= 2) this.scoopFallWater(t);
     if (onGround || inWater || sim.isClimbing) { this.fallFrom = null; return; }
     this.fallFrom = Math.max(this.fallFrom ?? loc.y, loc.y);
@@ -2197,7 +2266,7 @@ export class Agent {
   }
 
   async runGoto(gen, target, tolerance) {
-    let replans = 0, climbed = false;
+    let replans = 0, climbed = false, built = false;
     for (let seg = 0; seg < CONFIG.maxSegments; seg++) {
       if (gen !== this.taskGen) return;
       const from = this.body.getPos();
@@ -2206,6 +2275,16 @@ export class Agent {
       if (CONFIG.debug) {
         const end = res.path[res.path.length - 1];
         console.warn(`[agent] plan seg ${seg}: from ${from.x.toFixed(1)} ${from.y.toFixed(1)} ${from.z.toFixed(1)} to ${target.x} ${target.y} ${target.z} -> ${res.complete ? 'complete' : 'partial'}, ${res.path.length} nodes, ${res.expanded} expanded, ends ${end.x} ${end.y} ${end.z}`);
+      }
+      // No walking way there (a player up a tower, on a ledge, across a ravine): build, dig or bridge
+      // one (skills.goNear's actions: pillar up, cut steps, bridge), before walking as close as we can.
+      const end = res.path[res.path.length - 1];
+      if (!res.complete && end && dist3D(end, target) > tolerance + 2 && dist3D(from, target) <= 64 && !built) {
+        built = true; // (once a trip)
+        let ok = false;
+        try { ok = await this.skills.goNear(gen, target, Math.max(tolerance, 1), 2, { actionRange: 64 }); } catch (e) { if (gen !== this.taskGen) return; }
+        if (gen !== this.taskGen) return;
+        if (ok) break;
       }
       if (res.path.length < 2 || (!res.complete && seg === 0 && res.path.length < 4)) {
         if (res.complete) break; // already there
@@ -2266,6 +2345,14 @@ export class Agent {
     };
   }
 
+  /** Path costs for now: long drops allowed with a water bucket (core/pathfinder.js bucketDrop). */
+  moveCosts() {
+    try {
+      if (this.dim.id !== 'minecraft:nether' && invCounts(this.sim).water_bucket && this.health() >= 8 && !this.testHold) return { ...DEFAULT_COSTS, bucketDrop: 40 };
+    } catch {}
+    return DEFAULT_COSTS;
+  }
+
   /** We broke or placed a block (or poured water): forget what the searches read. */
   cellChanged() { this.cells = null; this.cellGen = (this.cellGen ?? 0) + 1; }
 
@@ -2278,8 +2365,11 @@ export class Agent {
       // Places we got physically stuck at recently count as walls, so we don't try them again.
       const classify = bad.size ? (x, y, z) => ((bad.get(`${x},${y},${z}`) ?? 0) > now ? Cell.DANGER : base(x, y, z)) : base;
       const t0 = system.currentTick;
+      // A water bucket on us (not in the Nether, not badly hurt): long drops are fine (the fall's
+      // broken with the water, fallTick), so a route can go off a pillar or a cliff edge.
+      const costs = extra.costs ?? this.moveCosts();
       const job = function* () {
-        const r = yield* searchJob(classify, from, to, { tolerance, maxNodes, goalTest, ...extra });
+        const r = yield* searchJob(classify, from, to, { tolerance, maxNodes, goalTest, costs, ...extra });
         const ticks = system.currentTick - t0;
         if (ticks > 40) trace(`slow plan: ${ticks} ticks, ${r.expanded} nodes, ${r.complete ? 'complete' : 'partial'}${goalTest ? ' (search)' : ''}${extra.actions ? ' (actions)' : ''}`);
         resolve(r);
@@ -2289,6 +2379,7 @@ export class Agent {
   }
 
   async updateFollow() {
+    if (this.followClimb) return; // building our way up to them: let it finish
     const p = this.findPlayer(this.task.player);
     if (!p) { this.say(`Lost ${this.task.player}.`); this.newTask(null); return; }
     const gen = this.taskGen;
@@ -2299,7 +2390,16 @@ export class Agent {
       return;
     }
     const res = await this.plan(this.body.getPos(), p.location, CONFIG.followDistance);
-    if (gen !== this.taskGen || res.path.length < 2) return;
+    if (gen !== this.taskGen) return;
+    // No walking way to them (up a tower, over a gap): pillar, dig or bridge one, like a player would.
+    const end = res.path[res.path.length - 1];
+    if (!res.complete && (!end || dist3D(end, p.location) > CONFIG.followDistance + 2) && d <= 64) {
+      this.followClimb = true;
+      this.say(`No way up to you on foot, ${this.task.player}: building one.`);
+      this.skills.goNear(gen, p.location, CONFIG.followDistance, 2, { actionRange: 64 }).catch(() => {}).finally(() => { this.followClimb = false; });
+      return;
+    }
+    if (res.path.length < 2) return;
     this.motor.followPath(smoothPath(this.classifier(), res.path), { seamless: true });
   }
 }

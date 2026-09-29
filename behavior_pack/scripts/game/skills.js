@@ -18,6 +18,7 @@ import { wantScore, biomeName } from '../core/biomes.js';
 import { trace } from './bridge.js';
 import { inside as houseInside } from '../core/house.js';
 import { saplingFor, needs2x2, plantProblem } from '../core/saplings.js';
+import { blockValue } from '../core/wants.js';
 
 export class Aborted extends Error {}
 
@@ -372,7 +373,8 @@ export class Skills {
   // ---------- movement ----------
 
   /** Walk until our feet are within `tolerance` of pos. Replans on stuck. */
-  async goNear(gen, pos, tolerance = 3, tries = 3) {
+  // (actionRange: how far off digging and building a way there is tried: 24; a player up a tower, 64.)
+  async goNear(gen, pos, tolerance = 3, tries = 3, { actionRange = 24 } = {}) {
     let climbs = 0;
     for (let i = 0; i < tries + climbs; i++) {
       this.check(gen);
@@ -389,9 +391,10 @@ export class Skills {
         if (r.status === 'arrived' && res.complete) return true;
       } else if (res.complete) return true;
       // Can't walk there: plan again allowing digging through and building up, and do that.
-      if (!res.complete && climbs === 0 && dist3D(this.sim.location, pos) <= 24) {
+      if (!res.complete && climbs === 0 && dist3D(this.sim.location, pos) <= actionRange) {
         climbs++;
-        const ar = await this.a.plan(this.sim.location, pos, tolerance, 6000, null, { actions: this.actionOpts() });
+        // (Weighted toward the goal: a climb up a 40-high tower found in ~400 nodes, not 60,000.)
+        const ar = await this.a.plan(this.sim.location, pos, tolerance, actionRange > 24 ? 20000 : 6000, null, { actions: this.actionOpts(), weight: 2 });
         this.check(gen);
         if (ar.complete && ar.path.some((p) => !isWalkMove(p))) {
           this.log(`digging/building my way there (${ar.path.filter((p) => !isWalkMove(p)).length} actions)`);
@@ -517,6 +520,10 @@ export class Skills {
         const id = this.blockAt(p) ?? 'air';
         if (OPEN.test(id)) return 0;
         if (/water|lava/.test(id) || this.isProtected(p)) return Infinity;
+        // Never our own house: its walls, roof and furniture, or the ground it stands on. Blocks we
+        // put down ourselves count as diggable, and the house is ours: one route in with the door
+        // shut and a wall down went under the floor and up through it.
+        if (this.a.homestead?.isHouseBlock?.(p)) return Infinity;
         // Something essential (home, the furnace, the chest, our things) walled off by anything at
         // all (a player's build, a chest, glass, wool): through it. Never our own house, or what
         // can't be broken.
@@ -1714,6 +1721,11 @@ export class Skills {
       // Drops are gathered every few blocks, not after each one (a player mines a face, then walks
       // over what fell).
       if (!(await this.mine(gen, target, { collect: false }))) { fails++; this.a.memory.markUnreachable(target, 120000); }
+      // Ore the block uncovered (coal behind the stone we just took): the vein now, it's right here.
+      for (const [dx, dy, dz] of [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]]) {
+        const c = { x: mined.x + dx, y: mined.y + dy, z: mined.z + dz };
+        if (this.wantsOre(this.blockAt(c) ?? '') && this.inReach(c)) await this.mineVein(gen, c);
+      }
       if (n % 4 === 3) await this.sweep(gen, this.sim.location, 5, null, 4, false);
       // Coal or iron showing near the stone we're working: take it (torches, fuel, the iron gear).
       if (n % 4 === 0) await this.oreInView(gen, 8, { maxWalk: 12 });
@@ -2479,19 +2491,30 @@ export class Skills {
   static isWanted(id) { return /^(deepslate_)?(iron|coal)_ore$/.test(id); }
 
   /**
+   * Ore worth mining when it turns up, from what we have now (core/wants.js blockValue): coal for
+   * torches and the furnace, iron for the gear, diamonds with an iron pickaxe. Not copper, gold,
+   * redstone or lapis: nothing to make with them yet.
+   */
+  wantsOre(id) {
+    if (!Skills.isOre(id)) return false;
+    const inv = invCounts(this.sim);
+    return blockValue(id, { inv, worn: this.a.worn?.() ?? [] }) > 0 && !!chooseTool(id, inv, { needDrop: true });
+  }
+
+  /**
    * Iron and coal ore we can see within `radius` (not just in reach): walk over and mine the vein,
    * iron first then nearest, if the walk there is short. Returns how many veins we mined.
    */
   async oreInView(gen, radius, { maxWalk = 16, minY = -Infinity, limit = 6 } = {}) {
     const f = this.feet();
-    const found = (await this.scan((id) => Skills.isWanted(id), { radius, below: Math.min(radius, 8), above: Math.min(radius, 8), limit: 16 }))
+    const found = (await this.scan((id) => this.wantsOre(id), { radius, below: Math.min(radius, 8), above: Math.min(radius, 8), limit: 16 }))
       .filter((b) => b.y >= minY && !this.a.memory.isUnreachable(b) && this.sees(b) && chooseTool(b.id, invCounts(this.sim), { needDrop: true }));
     this.rememberOre(found.filter((b) => /iron_ore$/.test(b.id))); // till it's mined: a trip cut short comes back for it
     found.sort((a, b) => (/iron/.test(b.id) ? 1 : 0) - (/iron/.test(a.id) ? 1 : 0) || dist3D(f, a) - dist3D(f, b));
     let n = 0;
     for (const b of found.slice(0, limit)) {
       this.check(gen);
-      if (!Skills.isWanted(this.blockAt(b) ?? '')) continue; // part of a vein we've just mined
+      if (!this.wantsOre(this.blockAt(b) ?? '')) continue; // part of a vein we've just mined
       if (!this.inReach(b)) {
         const res = await this.a.plan(this.sim.location, center(b), REACH - 0.7, 2500);
         this.check(gen);
@@ -2614,7 +2637,7 @@ export class Skills {
     }
     // Head then feet, one swing leading into the next.
     const cut = [head, feet].filter((c) => !OPEN.test(this.blockAt(c) ?? 'air'));
-    const ores = new Set(cut.filter((c) => Skills.isOre(this.blockAt(c) ?? '')).map((c) => `${c.x},${c.y},${c.z}`));
+    const ores = new Set(cut.filter((c) => this.wantsOre(this.blockAt(c) ?? '')).map((c) => `${c.x},${c.y},${c.z}`));
     await this.mineFlow(gen, cut, (c) => ({ collect: ores.has(`${c.x},${c.y},${c.z}`) }));
     if (cut.some((c) => !OPEN.test(this.blockAt(c) ?? 'air'))) return false;
     const r = await this.a.motor.followPath([{ x: f.x + 0.5, y: f.y, z: f.z + 0.5 }, { x: feet.x + 0.5, y: f.y, z: feet.z + 0.5 }]);
@@ -2628,11 +2651,11 @@ export class Skills {
 
   /** Ore showing on the walls around us (in reach and in view): mine it, whole veins. */
   async mineExposedOre(gen) {
-    const ores = (await this.scan((id) => Skills.isOre(id), { radius: 4, below: 2, above: 3, limit: 12 }))
+    const ores = (await this.scan((id) => this.wantsOre(id), { radius: 4, below: 2, above: 3, limit: 12 }))
       .filter((b) => this.inReach(b) && this.sees(b) && chooseTool(b.id, invCounts(this.sim), { needDrop: true })); // (floor ore too: mineVein fills it back)
     this.rememberOre(ores.filter((b) => /iron_ore$/.test(b.id)));
     let n = 0;
-    for (const b of ores) if (Skills.isOre(this.blockAt(b) ?? '') && (await this.mineVein(gen, b))) n++;
+    for (const b of ores) if (this.wantsOre(this.blockAt(b) ?? '') && (await this.mineVein(gen, b))) n++;
     return n;
   }
 

@@ -160,11 +160,14 @@ export function settleStep(f) {
   if (sheepNow && wool(inv) < 3 && !f.house) return { step: 'hunt', what: 'sheep', need: 3 - wool(inv) };
   if (on('hunting') && armed && f.animals > 0 && foodCount(inv) < FOOD_GOAL && !sheepNow) return { step: 'hunt', what: 'food' };
 
-  // 2. Bed.
+  // 2. Bed. Crafted at a table that's already there (the wool keeps): not a new table put down
+  // wherever the last sheep fell. With none near, it's made at the house's table at bedtime
+  // (homestead.nightAtHome), or at the next table it's working at.
   const haveBed = !bedsOn || has(inv, 'bed') || !!f.house?.bed;
+  const tableNear = (f.tableDist ?? Infinity) <= 16;
   if (!haveBed) {
-    if (wool(inv) >= 3) return craftStep(inv, ['bed'], f.tableDist);
-    if (armed && f.sheep && !f.bedDeferred) return { step: 'hunt', what: 'sheep', need: 3 - wool(inv) };
+    if (wool(inv) >= 3 && tableNear) return craftStep(inv, ['bed'], f.tableDist);
+    if (wool(inv) < 3 && armed && f.sheep && !f.bedDeferred) return { step: 'hunt', what: 'sheep', need: 3 - wool(inv) };
   }
 
   // 3. Torches (charcoal smelting runs in the background).
@@ -199,8 +202,8 @@ export function settleStep(f) {
   }
   if (!f.house.bed && bedsOn) {
     if (has(inv, 'bed') || f.house.bedMisplaced) return { step: 'furnish' };
-    if (wool(inv) >= 3) return craftStep(inv, ['bed'], f.tableDist);
-    if (armed && f.sheep && !f.bedDeferred) return { step: 'hunt', what: 'sheep', need: 3 - wool(inv) };
+    if (wool(inv) >= 3 && (tableNear || (f.house.dist ?? 0) <= 24)) return craftStep(inv, ['bed'], f.tableDist); // (at the house: its table)
+    if (wool(inv) < 3 && armed && f.sheep && !f.bedDeferred) return { step: 'hunt', what: 'sheep', need: 3 - wool(inv) };
   }
   // A crafting table and a furnace belong inside the house.
   if (!f.house.table) {
