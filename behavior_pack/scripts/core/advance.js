@@ -12,6 +12,7 @@
 //   4. Wear the armor; bread from the wheat when food runs low; harvest and replant ripe wheat.
 import { count, has, isPlanks, isLog } from './recipes.js';
 import { planFuel } from './fuel.js';
+import { isWorkPickaxe } from './costs.js';
 import { craftStep, foodCount, FOOD_GOAL } from './settle.js';
 
 /** Ingots each iron item is made of. */
@@ -120,7 +121,8 @@ export function advanceStep(f) {
  * plus a stone spare.
  */
 export function pickaxes(inv) {
-  return Object.entries(inv).filter(([id]) => /^(stone|iron|diamond|netherite)_pickaxe$/.test(id)).reduce((a, [, n]) => a + n, 0);
+  // (Pickaxes for the digging: an iron one is kept for the ore that needs it, core/costs.js.)
+  return Object.entries(inv).filter(([id]) => /^(stone|iron|diamond|netherite)_pickaxe$/.test(id) && isWorkPickaxe(id)).reduce((a, [, n]) => a + n, 0);
 }
 function ironTrip(f, need, why) {
   const inv = f.inv;

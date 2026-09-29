@@ -102,18 +102,39 @@ export function dropsWith(id, tool) {
  */
 export function chooseTool(id, inv, { needDrop = true } = {}) {
   const options = [null, ...Object.keys(inv).filter((k) => parseTool(k))];
-  let best = null;
-  for (const tool of options) {
-    if (needDrop && !dropsWith(id, tool)) continue;
-    const t = parseTool(tool);
-    // A tool that isn't the right kind is no faster than a fist and still wears down: skip it.
-    if (t && t.kind !== toolKindFor(id)) continue;
-    const seconds = breakSeconds(id, tool);
-    const cost = seconds + (t ? WEAR[t.tier] : 0);
-    if (!best || cost < best.cost) best = { tool, seconds, cost };
-  }
-  return best;
+  const pick = (allowPrecious) => {
+    let best = null;
+    for (const tool of options) {
+      if (needDrop && !dropsWith(id, tool)) continue;
+      const t = parseTool(tool);
+      // A tool that isn't the right kind is no faster than a fist and still wears down: skip it.
+      if (t && t.kind !== toolKindFor(id)) continue;
+      if (!allowPrecious && isPrecious(tool) && !needsPrecious(id)) continue;
+      const seconds = breakSeconds(id, tool);
+      const cost = seconds + (t ? WEAR[t.tier] : 0);
+      if (!best || cost < best.cost) best = { tool, seconds, cost };
+    }
+    return best;
+  };
+  // The iron pickaxe only on what needs it. With no stone one to hand (all worn out), it does the
+  // stone rather than a bare fist (7.5 s a block): the plan makes a stone one again straight off.
+  const best = pick(false);
+  if (best && !(best.tool === null && toolKindFor(id) === 'pickaxe' && !workPickaxe(inv))) return best;
+  return pick(true) ?? best;
 }
+
+/**
+ * Iron and better pickaxes are kept for what only they can mine (gold, diamond, redstone and
+ * emerald ore; obsidian) while iron is scarce: the rest is a stone pickaxe's job. Set
+ * TOOL_POLICY.sparePrecious = false once iron's plentiful (an iron farm) to use them on anything.
+ */
+export const TOOL_POLICY = { sparePrecious: true };
+const isPrecious = (tool) => TOOL_POLICY.sparePrecious && /^(iron|diamond|netherite)_pickaxe$/.test(tool ?? '');
+/** Does mining `id` need better than a stone pickaxe (to drop anything)? */
+export const needsPrecious = (id) => needsPickaxe(id) && !dropsWith(id, 'stone_pickaxe');
+/** A pickaxe for everyday digging (stone, the stairs, tunnels): not one kept for ore. */
+export const isWorkPickaxe = (id) => /_pickaxe$/.test(id) && !!parseTool(id) && !isPrecious(id);
+const workPickaxe = (inv) => Object.keys(inv).some((k) => (inv[k] ?? 0) > 0 && isWorkPickaxe(k));
 
 // How much we'd rather keep an item than build with it (seconds to get another, plus what it's
 // good for). Dirt is free filler; cobblestone makes tools and furnaces; planks make everything.

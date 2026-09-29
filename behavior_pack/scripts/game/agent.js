@@ -28,6 +28,7 @@ import { makeClassifier, canSee, isWatery, OPENABLE } from './world.js';
 import { sendEvent, trace } from './bridge.js';
 import { parseLocal } from './localCommands.js';
 import { CONFIG } from '../config.js';
+import { isWorkPickaxe } from '../core/costs.js';
 
 /** Steps done down the mine (the camp's furnace and table too): night doesn't send us home from them. */
 const MINE_STEPS = new Set(['get_iron', 'get_stone', 'smelt', 'collect_smelt', 'craft', 'equip']);
@@ -1567,7 +1568,7 @@ export class Agent {
       farm: this.farm.state(),
       smelt: job ? { ready: system.currentTick >= job.readyAt, kind: job.kind, n: job.n ?? 0, dist: dist3D(this.sim.location, job.pos) } : null,
       furnaceDist: f ? f.dist : Infinity,
-      pickUses: usesLeft(this.sim, (id) => /^(stone|iron|diamond|netherite)_pickaxe$/.test(id)),
+      pickUses: usesLeft(this.sim, (id) => /^(stone|iron|diamond|netherite)_pickaxe$/.test(id) && isWorkPickaxe(id)), // (the iron one is kept for ore)
       oreCooking: H.oreCooking(),
       canFillBucket: this.dim.id !== 'minecraft:nether' && Date.now() - (this.memory.data.bucketFailAt ?? 0) > 600000,
       goals: this.toggles(),

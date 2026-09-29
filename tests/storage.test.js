@@ -78,8 +78,10 @@ test('moved in: the hoe, spare pickaxes, iron tool handles and the shield counte
   const need = upkeepNeeds({ stone_pickaxe: 1 });
   assert.equal(need.stone, 2 + 2 * 3); // hoe + two spare pickaxes
   assert.ok(need.planks >= 6 + 8, `planks ${need.planks}`); // shield 6 + ~15 sticks (8 planks)
-  const kitted = upkeepNeeds({ iron_pickaxe: 1, stone_pickaxe: 1, iron_sword: 1, iron_axe: 1, iron_shovel: 1, stone_hoe: 1, shield: 1 });
+  const kitted = upkeepNeeds({ iron_pickaxe: 1, stone_pickaxe: 2, iron_sword: 1, iron_axe: 1, iron_shovel: 1, stone_hoe: 1, shield: 1 });
   assert.deepEqual(kitted, { planks: 0, stone: 0 });
+  // The iron pickaxe is kept for ore: it isn't a digging spare.
+  assert.equal(upkeepNeeds({ iron_pickaxe: 1, stone_pickaxe: 1, iron_sword: 1, iron_axe: 1, iron_shovel: 1, stone_hoe: 1, shield: 1 }).stone, 3);
 });
 
 test('chest room: each thing in the chest its sign says', () => {

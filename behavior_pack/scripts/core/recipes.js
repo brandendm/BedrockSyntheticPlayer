@@ -1,5 +1,6 @@
 // Items, recipes, tool choice and the early-game progression plan. Pure: inventories are plain
 // objects { itemId: count } with ids lacking the "minecraft:" prefix.
+import { isWorkPickaxe } from './costs.js';
 
 // ---------- item families ----------
 
@@ -254,7 +255,10 @@ export function nextStep({ inv, tableDist = Infinity, exposedStoneKnown, tableDy
   // fist), shovel (dirt, sand, gravel), spear (creepers, from 4 blocks out: one cobblestone). Each is
   // only made if we don't have one as good already.
   const better = (kind) => ['stone', 'copper', 'iron', 'diamond', 'netherite'].some((t) => has(inv, `${t}_${kind}`));
-  const stoneKit = /** @type {Array<[string, number]>} */ ([['pickaxe', 3], ['sword', 2], ['axe', 3], ['shovel', 1], ['spear', 1]]).filter(([k]) => !better(k) && (spears || k !== 'spear'));
+  // (A pickaxe for the digging: an iron one is kept for the ore that needs it, core/costs.js, so
+  // with only that left a stone one is made again.)
+  const digPick = Object.keys(inv).some((id) => (inv[id] ?? 0) > 0 && isWorkPickaxe(id) && id !== 'wooden_pickaxe' && id !== 'golden_pickaxe');
+  const stoneKit = /** @type {Array<[string, number]>} */ ([['pickaxe', 3], ['sword', 2], ['axe', 3], ['shovel', 1], ['spear', 1]]).filter(([k]) => !(k === 'pickaxe' ? digPick : better(k)) && (spears || k !== 'spear'));
   const kitCobble = stoneKit.reduce((a, [, n]) => a + n, 0);
   if (stoneKit.length && cobble < kitCobble) return { step: 'get_stone', need: kitCobble - cobble };
   if (stoneKit.length) {
