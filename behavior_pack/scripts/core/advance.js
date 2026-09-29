@@ -82,8 +82,10 @@ export function advanceStep(f) {
   if (on('farm') && f.farm && !f.farm.resting && (f.farm.upkeep || f.farm.ripe >= Math.max(2, Math.ceil((f.farm.planted ?? f.farm.tiles) * 0.6)) || (f.farm.planted < f.farm.tiles && (inv.wheat_seeds ?? 0) >= 4))) return { step: 'tend_farm' };
 
   // 1. The farm, once there's a bucket (from the iron, below: its water wherever the farm goes, and
-  // the fall-breaking bucket after); unless it just failed (another go in 10 minutes).
-  if (on('farm') && !f.farm && !f.farmBlocked && haveBucket) {
+  // the fall-breaking bucket after); unless it just failed (another go in 10 minutes). With water
+  // by the house already it needs no bucket: straight after moving in (a hoe is two cobblestone),
+  // and the wheat's growing while we mine. (Whether there is: a look round first, once.)
+  if (on('farm') && !f.farm && !f.farmBlocked && (haveBucket || f.waterNearHouse !== false)) {
     if (f.waterNearHouse == null) return { step: 'check_water' };
     if (!has(inv, 'stone_hoe') && !has(inv, 'wooden_hoe') && !has(inv, 'iron_hoe')) return craftStep(inv, ['stone_hoe'], f.tableDist);
     return { step: 'make_farm', water: f.waterNearHouse ? 'near' : 'bucket', tiles: FARM_TILES };

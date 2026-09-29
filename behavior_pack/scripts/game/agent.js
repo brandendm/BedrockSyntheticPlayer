@@ -32,6 +32,8 @@ import { isWorkPickaxe } from '../core/costs.js';
 
 /** Steps done down the mine (the camp's furnace and table too): night doesn't send us home from them. */
 const MINE_STEPS = new Set(['get_iron', 'get_stone', 'smelt', 'collect_smelt', 'craft', 'equip']);
+// Steps done inside the house (at its table, furnaces and chests): fine after dark, before bed.
+const INDOOR_STEPS = new Set(['craft', 'furnish', 'store', 'smelt', 'collect_smelt', 'equip']);
 // Steps that are the bot's home and its things: a way there walled off by anything breakable (a
 // player's build, a chest, junk) gets broken through rather than given up on.
 const ESSENTIAL_STEPS = new Set(['go_home', 'clear_house', 'fight_fire', 'repair_house', 'furnish', 'store', 'smelt', 'collect_smelt', 'wait_smelt', 'goto_table', 'light_outside', 'shelter']);
@@ -1339,7 +1341,12 @@ export class Agent {
       const day = this.planStep(inv, tableDist, tableDy, { opportunities: false, dayTime: true });
       trace(`night in the mine: the day's plan is ${day.step}`);
       // Anything that's done down here (the camp's furnace and table, putting gear on) carries on.
-      if (MINE_STEPS.has(day.step) && !(day.step === 'craft' && day.needsTable && !(tableDist <= 16))) {
+      // (The furnace one only if it's the camp's down here: not a walk home through the dark to the
+      // house's and back down.)
+      const furnaceStep = ['smelt', 'collect_smelt', 'wait_smelt'].includes(day.step);
+      const job = furnaceStep ? this.homestead.planJob() : null;
+      const farFurnace = furnaceStep && !(job?.pos && dist3D(this.sim.location, job.pos) <= 24);
+      if (MINE_STEPS.has(day.step) && !farFurnace && !(day.step === 'craft' && day.needsTable && !(tableDist <= 16))) {
         this.sayOnce('mine-night', "It's night, but I'm down the mine: carrying on here.", 600000);
         return day;
       }
@@ -1381,8 +1388,19 @@ export class Agent {
     else if (night) {
       // Night before we're set up: home if we have one, otherwise dig in unless we're armed and healthy.
       const armed = Object.keys(inv).some((id) => /_sword$/.test(id)) && this.health() >= 12;
-      if (this.homestead.house) step = { step: 'go_home' };
-      else if (!armed) step = { step: 'shelter' };
+      if (this.homestead.house) {
+        // In the house already: what's done indoors comes first (the table, the furnaces and the
+        // chests are all here: crafting, furnishing, putting things away, loading a furnace), then
+        // bed. It was going to bed with all that left for the morning's daylight.
+        const H = this.homestead;
+        if (H.isHome()) {
+          const day = this.planStep(inv, tableDist, tableDy, { opportunities: false, dayTime: true });
+          const fine = INDOOR_STEPS.has(day.step) && !(day.step === 'craft' && day.needsTable && !(tableDist <= 12)) &&
+            !(['smelt', 'collect_smelt'].includes(day.step) && !H.house.furnace);
+          if (fine) { trace(`night, at home: ${day.step} first`); return day; }
+        }
+        step = { step: 'go_home' };
+      } else if (!armed) step = { step: 'shelter' };
     }
     // The ladder's step against everything else still needed that's cheap right now.
     if (opportunities && !night) step = chooseStep(step, this.focusFacts(inv));

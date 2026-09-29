@@ -9,6 +9,8 @@ import { register } from 'node:module';
 register('./mock/hooks.mjs', import.meta.url);
 const MC = await import('@minecraft/server');
 const { Homestead } = await import('../behavior_pack/scripts/game/homestead.js');
+const { Skills } = await import('../behavior_pack/scripts/game/skills.js');
+const { castRay } = await import('../behavior_pack/scripts/game/world.js');
 const { settleStep } = await import('../behavior_pack/scripts/core/settle.js');
 const { blueprint, footing, furnishings, keepClear } = await import('../behavior_pack/scripts/core/house.js');
 const { system, ItemStack, Container } = MC;
@@ -36,7 +38,7 @@ function makeGame({ unbreakable = /^bedrock$/ } = {}) {
   for (const t of [fur.torchInside, fur.torchChests, ...fur.torchesOutside]) set(t.toward, 'wall_torch');
   const dim = {
     id: 'minecraft:overworld',
-    getBlock: (p) => ({ typeId: `minecraft:${get(p)}`, permutation: { getState: () => false } }),
+    getBlock: (p) => { const id = get(p); return { typeId: `minecraft:${id}`, isAir: id === 'air', isLiquid: /water|lava/.test(id), location: { x: Math.floor(p.x), y: Math.floor(p.y), z: Math.floor(p.z) }, permutation: { getState: () => false } }; },
     getEntities: ({ location, maxDistance }) => items.filter((e) => e.isValid && d3(e.location, location) <= maxDistance),
     runCommand: (cmd) => { const m = /^setblock (-?\d+) (-?\d+) (-?\d+) (\S+)/.exec(cmd); if (m) set({ x: +m[1], y: +m[2], z: +m[3] }, m[4].replace(/\[.*$/, '')); },
   };
@@ -108,12 +110,66 @@ function makeGame({ unbreakable = /^bedrock$/ } = {}) {
       set(cell, it.typeId.replace('minecraft:', '')); it.amount--; pack.setItem(slot, it.amount ? it : undefined); return true;
     },
     afterUse() {}, markPlaced() {},
+    // The crosshair, for real: the game's rules (game/skills.js) on this world; it lands where the
+    // motor was last told to look (the head's turn is instant here).
+    dim,
+    targetPoint: Skills.prototype.targetPoint, placePoint: Skills.prototype.placePoint, aimOn: Skills.prototype.aimOn,
+    crosshair() {
+      if (!focus) return null;
+      const e = eye(), d = { x: focus.x - e.x, y: focus.y - e.y, z: focus.z - e.z };
+      const h = castRay(dim, e, d, 5, { crosshair: true });
+      return h ? { location: h.location, face: h.face } : null;
+    },
+    // Round to where it can be got at: the nearest cell we can walk to, in reach, where ok(eye).
+    async goSee(gen, p, ok, maxNodes, { build = false } = {}) {
+      const cand = [];
+      for (let dx = -5; dx <= 5; dx++) for (let dy = -3; dy <= 2; dy++) for (let dz = -5; dz <= 5; dz++) {
+        const c = { x: Math.floor(p.x) + dx, y: Math.floor(p.y) + dy, z: Math.floor(p.z) + dz };
+        if (!standable(c)) continue;
+        const e = { x: c.x + 0.5, y: c.y + 1.62, z: c.z + 0.5 };
+        if (d3(e, { x: p.x + 0.5, y: p.y + 0.5, z: p.z + 0.5 }) <= 4.2 && ok(e)) cand.push(c);
+      }
+      cand.sort((a, b) => d3(a, feet()) - d3(b, feet()));
+      for (const c of cand) if (walk(feet(), c)) { bot.location = { x: c.x + 0.5, y: c.y, z: c.z + 0.5 }; seeMoves++; return true; }
+      if (!build) return false;
+      // Up a pillar from ground we can walk to (skills.goSee's build): the blocks go in builtUp.
+      for (let dx = -4; dx <= 4; dx++) for (let dz = -4; dz <= 4; dz++) {
+        const g0 = { x: Math.floor(p.x) + dx, y: 64, z: Math.floor(p.z) + dz };
+        if (!standable(g0) || !walk(feet(), g0)) continue;
+        for (let up = 1; up <= 4; up++) {
+          const top = { ...g0, y: 64 + up };
+          if (SOLIDISH(get(top)) || SOLIDISH(get({ ...top, y: top.y + 1 }))) break;
+          const e = { x: top.x + 0.5, y: top.y + 1.62, z: top.z + 0.5 };
+          const pc = { x: p.x + 0.5, y: p.y + 0.5, z: p.z + 0.5 };
+          let at = d3(e, pc) <= 4.2 && ok(e) ? top : null;
+          // (Or up the pillar and on across what it's up against: onto the roof.)
+          if (!at) {
+            for (let yy = 64; yy < top.y; yy++) set({ ...g0, y: yy }, 'cobblestone');
+            for (let ax = -5; ax <= 5 && !at; ax++) for (let az = -5; az <= 5 && !at; az++) {
+              const c = { x: Math.floor(p.x) + ax, y: top.y, z: Math.floor(p.z) + az };
+              const ce = { x: c.x + 0.5, y: c.y + 1.62, z: c.z + 0.5 };
+              if (standable(c) && d3(ce, pc) <= 4.2 && ok(ce) && walk(top, c)) at = c;
+            }
+            for (let yy = 64; yy < top.y; yy++) set({ ...g0, y: yy }, 'air');
+          }
+          if (at) {
+            for (let yy = 64; yy < top.y; yy++) { set({ ...g0, y: yy }, 'cobblestone'); S.builtUp.push({ ...g0, y: yy }); }
+            bot.location = { x: at.x + 0.5, y: at.y, z: at.z + 0.5 }; seeMoves++;
+            return true;
+          }
+        }
+      }
+      return false;
+    },
+    builtUp: [],
+    async takeDownBuilt() { const cs = S.builtUp.splice(0).sort((a, b) => b.y - a.y); if (cs.length) bot.location = { x: cs[0].x + 0.5, y: cs[0].y + 1, z: cs[0].z + 0.5 }; for (const c of cs) { set(c, 'air'); bot.location = { ...bot.location, y: c.y }; } },
   };
+  let focus = null, seeMoves = 0;
   const agent = {
     sim: bot, skills: S, say: (m) => said.push(m), sayOnce: (k, m) => said.push(m), cellChanged() {},
     memory: { data: { house }, save() {}, saveNow() {} }, health: () => 20, bedsOn: () => true,
     motor: {
-      async lookAt() {}, setFocus() {},
+      async lookAt() {}, setFocus(f) { focus = f; },
       async followPath(pts) {
         for (const p of pts.slice(1)) {
           const c = { x: Math.floor(p.x), y: Math.floor(p.y), z: Math.floor(p.z) };
@@ -124,6 +180,7 @@ function makeGame({ unbreakable = /^bedrock$/ } = {}) {
       },
     },
   };
+  S.a = agent;
   const H = new Homestead(agent);
   let sheltered = 0;
   H.shelter = async () => { sheltered++; };

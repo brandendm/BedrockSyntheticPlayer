@@ -7,7 +7,7 @@ import { wetCones, towardWet, ExploreStall } from '../core/explore.js';
 import { tourStops, sweepOrder } from '../core/flow.js';
 import { EYE_HEIGHT } from '../core/motor.js';
 import { smoothPath, Cell, isWalkMove, isGround, DEFAULT_COSTS } from '../core/pathfinder.js';
-import { dist3D } from '../core/mathutil.js';
+import { dist3D, viewVector } from '../core/mathutil.js';
 import { toolFor, planCrafts, applyCraft, isLog, isPlanks, STONE_TARGETS, SHOVEL_BLOCKS, PICKAXE_BLOCKS, TOOL_STONE, count } from '../core/recipes.js';
 import { canBreak, chooseTool, breakSeconds, cheapestPlaceable, spendableBlocks, blockSourceCost, itemValue, plankReserve } from '../core/costs.js';
 import { invCounts, hold, take, give, container, findSlot } from './inventory.js';
@@ -72,6 +72,8 @@ export class Skills {
   constructor(agent) {
     this.a = agent;
     this.placed = new Set(); // blocks we put down ourselves (pillars): fair game to dig out again
+    /** @type {Array<{x: number, y: number, z: number}>} blocks goSee put down to see from (a pillar by a roof fire): taken down after */
+    this.builtUp = [];
     // Running a job that can't be done without getting somewhere (home, the furnace, the chest): a
     // way there that's blocked by anything breakable gets broken through (actionOpts).
     this.essential = false;
@@ -306,6 +308,139 @@ export class Skills {
 
   inReach(p) {
     return dist3D(this.eye(), center(p)) <= REACH;
+  }
+
+  // ---------- the crosshair: what a player can actually click ----------
+  // A player breaks or clicks what the crosshair is on, and it stops on anything with an outline
+  // (a vine over a log, grass in front of a flower, the leaf before the trunk). The game's
+  // breakBlock and useItemOnBlock take any block in reach, seen or not: every break and place goes
+  // through these first, so the bot only does what a player could from where it stands.
+
+  /** The block under the crosshair now, within reach: { location, face (outward normal), faceLocation } or null. */
+  crosshair() {
+    try {
+      const e = this.sim.getHeadLocation(), r = this.sim.getRotation();
+      const v = viewVector(r.y, r.x);
+      const h = castRay(this.dim, e, v, REACH + 0.5, { crosshair: true });
+      return h ? { location: h.location, face: h.face, faceLocation: h.faceLocation } : null;
+    } catch { return null; }
+  }
+
+  /**
+   * A point on block p the crosshair can be put on from eye e (nothing with an outline in front of
+   * it): { pt } or, failing that, { blocker } (the first thing in the way of the most direct one).
+   * Tries the middle and, on each face turned toward e, the face's middle and four points round it.
+   */
+  targetPoint(p, e = this.eye()) {
+    const same = (a) => a && a.x === p.x && a.y === p.y && a.z === p.z;
+    const pts = [center(p)];
+    for (const [nx, ny, nz] of [[0, 1, 0], [0, -1, 0], [1, 0, 0], [-1, 0, 0], [0, 0, 1], [0, 0, -1]]) {
+      const fc = { x: p.x + 0.5 + nx * 0.49, y: p.y + 0.5 + ny * 0.49, z: p.z + 0.5 + nz * 0.49 };
+      if ((e.x - fc.x) * nx + (e.y - fc.y) * ny + (e.z - fc.z) * nz <= 0) continue; // (faces turned away)
+      pts.push(fc);
+      // (the two axes across the face)
+      const ax = nx ? [[0, 1, 0], [0, 0, 1]] : ny ? [[1, 0, 0], [0, 0, 1]] : [[1, 0, 0], [0, 1, 0]];
+      for (const [s1, s2] of [[1, 1], [1, -1], [-1, 1], [-1, -1]]) {
+        pts.push({ x: fc.x + (ax[0][0] * s1 + ax[1][0] * s2) * 0.3, y: fc.y + (ax[0][1] * s1 + ax[1][1] * s2) * 0.3, z: fc.z + (ax[0][2] * s1 + ax[1][2] * s2) * 0.3 });
+      }
+    }
+    let blocker = null;
+    const first = pts.slice(1).sort((a, b) => dist3D(e, a) - dist3D(e, b))[0];
+    for (const c of [pts[0], ...pts.slice(1).sort((a, b) => dist3D(e, a) - dist3D(e, b))]) {
+      const d = { x: c.x - e.x, y: c.y - e.y, z: c.z - e.z };
+      const len = Math.hypot(d.x, d.y, d.z);
+      if (len > REACH + 0.6) continue;
+      let h;
+      try { h = castRay(this.dim, e, d, len + 0.3, { crosshair: true }); } catch { h = null; }
+      if (same(h?.location)) return { pt: c };
+      if (h && !blocker && (c === first || c === pts[0])) blocker = h.location;
+    }
+    return { pt: null, blocker };
+  }
+
+  /**
+   * Placing into `cell` against neighbour n's face: a point on that face the crosshair gets onto
+   * from eye e (we're on the open side of it and nothing's in the way; grass in the cell itself is
+   * fine: a click on it puts the block there). null if there's none.
+   */
+  placePoint(cell, n, e = this.eye()) {
+    const nx = cell.x - n.x, ny = cell.y - n.y, nz = cell.z - n.z; // (the face's outward normal)
+    const fc = { x: n.x + 0.5 + nx * 0.5, y: n.y + 0.5 + ny * 0.5, z: n.z + 0.5 + nz * 0.5 };
+    if ((e.x - fc.x) * nx + (e.y - fc.y) * ny + (e.z - fc.z) * nz <= 0.05) return null; // behind the face
+    const ax = nx ? [[0, 1, 0], [0, 0, 1]] : ny ? [[1, 0, 0], [0, 0, 1]] : [[1, 0, 0], [0, 1, 0]];
+    const pts = [fc];
+    for (const [s1, s2] of [[1, 1], [1, -1], [-1, 1], [-1, -1]]) pts.push({ x: fc.x + (ax[0][0] * s1 + ax[1][0] * s2) * 0.3, y: fc.y + (ax[0][1] * s1 + ax[1][1] * s2) * 0.3, z: fc.z + (ax[0][2] * s1 + ax[1][2] * s2) * 0.3 });
+    for (const c of pts) {
+      const q = { x: c.x - nx * 0.01, y: c.y - ny * 0.01, z: c.z - nz * 0.01 }; // (just inside n)
+      const d = { x: q.x - e.x, y: q.y - e.y, z: q.z - e.z };
+      const len = Math.hypot(d.x, d.y, d.z);
+      if (len > REACH + 0.5) continue;
+      let h;
+      try { h = castRay(this.dim, e, d, len + 0.2, { crosshair: true }); } catch { h = null; }
+      if (!h) continue;
+      const L = h.location;
+      const onN = L.x === n.x && L.y === n.y && L.z === n.z && h.face.x === nx && h.face.y === ny && h.face.z === nz;
+      const inCell = L.x === cell.x && L.y === cell.y && L.z === cell.z;
+      if (onN || inCell) return { pt: c, onN };
+    }
+    return null;
+  }
+
+  /**
+   * Crosshair onto block p (at point pt, or wherever it can be): turns until it's really on it, the
+   * way a player's hand does before the click. True once it is.
+   */
+  async aimOn(gen, p, pt = null, maxTicks = 14) {
+    const at = pt ?? this.targetPoint(p).pt;
+    if (!at) return false;
+    this.a.motor.setFocus(at);
+    for (let k = 0; k <= maxTicks; k++) {
+      const h = this.crosshair();
+      if (h && h.location.x === p.x && h.location.y === p.y && h.location.z === p.z) return true;
+      if (k < maxTicks) await this.wait(gen, 1);
+    }
+    return false;
+  }
+
+  /**
+   * Somewhere to stand, in reach of p, from where `ok(eye)` holds (the crosshair gets onto it):
+   * walk there. The way a player steps round a wall to get at something behind it.
+   */
+  async goSee(gen, p, ok, maxNodes = 3000, { build = false } = {}) {
+    const c = center(p);
+    const goal = (x, y, z, w) => {
+      if (!w.standable(x, y, z) && !(build && w.open(x, y, z) && w.open(x, y + 1, z))) return false;
+      const e = { x: x + 0.5, y: y + EYE_HEIGHT, z: z + 0.5 };
+      if (dist3D(e, c) > REACH - 0.3) return false;
+      if (x === p.x && z === p.z && (y === p.y || y + 1 === p.y)) return false; // (not standing in it)
+      return ok(e);
+    };
+    const res = await this.a.plan(this.sim.location, p, 0, maxNodes, goal);
+    this.check(gen);
+    if (res.complete) {
+      if (res.path.length >= 2) await this.a.motor.followPath(smoothPath(this.a.classifier(), res.path));
+      this.check(gen);
+      if (ok(this.eye())) return true;
+    }
+    if (!build) return false;
+    // Nowhere on the ground to see it from (the top of a roof): up a few blocks to where we can,
+    // the way a player does. The blocks are the caller's to take down again (this.builtUp).
+    const ar = await this.a.plan(this.sim.location, p, 0, maxNodes, goal, { actions: { ...this.actionOpts(), bridge: false }, weight: 1.5 });
+    this.check(gen);
+    if (!ar.complete) return false;
+    for (const q of ar.path) if (q.move?.place) (this.builtUp ??= []).push({ x: q.x, y: q.y - 1, z: q.z });
+    if (!(await this.followActionPath(gen, ar.path, { sweep: false }))) return false;
+    return ok(this.eye());
+  }
+
+  /** Take down what goSee built to see from (a pillar): top first, standing on it. */
+  async takeDownBuilt(gen) {
+    const cells = (this.builtUp ?? []).splice(0).sort((a, b) => b.y - a.y);
+    for (const c of cells) {
+      if (OPEN.test(this.blockAt(c) ?? 'air')) continue;
+      await this.mine(gen, c, { collect: true, allowBelow: true }).catch(() => false);
+      await this.wait(gen, 6); // (down onto the next)
+    }
   }
 
   // ---------- placing ----------
@@ -692,28 +827,35 @@ export class Skills {
 
     if (!this.inReach(p) && !(await this.goNear(gen, p, 3))) return false;
     if (!this.inReach(p) && !(await this.goNear(gen, p, 1.5))) return false;
+    // The crosshair has to get onto it, as a player's does: what's in front (a vine over the log,
+    // the leaves before the trunk, grass before the flower, the next block) comes out first, or we
+    // step round to where we can get at it. No more breaking things through other things.
+    let tp = this.targetPoint(p);
+    for (let k = 0; !tp.pt && k < 3; k++) {
+      const hit = tp.blocker;
+      if (hit) {
+        const hid = this.blockAt(hit) ?? '';
+        const f0 = this.feet();
+        const ownFloor = hit.x === f0.x && hit.z === f0.z && hit.y < f0.y;
+        const soft = ONE_TAP.test(hid) || /leaves|vine|grass|fern|flower|bush|snow_layer|lichen|roots|web|fire|litter|petals/.test(hid) || SHOVEL_BLOCKS.has(hid);
+        // On an essential job, whatever's in front of it goes too (not our house, not liquid).
+        const clearIt = !ownFloor && depth < 3 && !this.isProtected(hit) && (soft || (this.essential && !UNBREAKABLE.test(hid) && !/water|lava/.test(hid) && !this.a.homestead?.isHouseBlock?.(hit)));
+        if (clearIt) {
+          if (!(await this.mine(gen, hit, { collect: !soft, depth: depth + 1 }))) break;
+          tp = this.targetPoint(p);
+          continue;
+        }
+      }
+      if (!(await this.goSee(gen, p, (e) => !!this.targetPoint(p, e).pt))) break;
+      tp = this.targetPoint(p);
+    }
+    if (!tp.pt) { this.log(`can't get the crosshair on ${id} at ${p.x} ${p.y} ${p.z} (${tp.blocker ? `${this.blockAt(tp.blocker)} in the way` : 'out of sight'})`); return false; }
+
     // Grass, a flower, litter: one tap, no tool, no settling.
     if (ONE_TAP.test(id) && !(p.x === this.feet().x && p.z === this.feet().z && p.y < this.feet().y)) {
-      const ok = await this.tap(gen, p, 25, next);
+      const ok = await this.tap(gen, p, 25, next, tp.pt);
       if (ok && collect) await this.collect(gen, p, 4, 3, false);
       return ok;
-    }
-
-    // Something in the way (usually leaves)? Clear it first. Rays pass straight through snow
-    // layers, grass and flowers, so for those the "obstruction" is just the block behind: skip it.
-    const passable = OPEN.test(id);
-    const hit = passable ? null : this.firstHit(p);
-    const f0 = this.feet();
-    const ownFloor = hit && hit.x === f0.x && hit.z === f0.z && hit.y < f0.y;
-    if (hit && !ownFloor && (hit.x !== p.x || hit.y !== p.y || hit.z !== p.z)) {
-      if (depth >= 2) return false;
-      const hid = this.blockAt(hit);
-      const soft = !!hid && (/leaves|grass|fern|vine|flower|bush/.test(hid) || SHOVEL_BLOCKS.has(hid));
-      // On an essential job, whatever's in front of it goes too (not our house, not liquid).
-      const clearIt = soft || (!!hid && this.essential && !UNBREAKABLE.test(hid) && !/water|lava/.test(hid) && !this.a.homestead?.isHouseBlock?.(hit));
-      if (!clearIt) {
-        if (!(await this.goNear(gen, p, 1.5))) return false;
-      } else if (!(await this.mine(gen, hit, { collect: !soft, depth: depth + 1 }))) return false;
     }
 
     id = this.blockAt(p);
@@ -726,8 +868,8 @@ export class Skills {
     const inv = invCounts(this.sim);
     const tool = (chooseTool(id, inv, { needDrop: true }) ?? chooseTool(id, inv, { needDrop: false }))?.tool ?? null;
     hold(this.sim, tool);
-    const c = center(p);
-    await this.aim(gen, c);
+    // Crosshair on it before the swing (the view could have moved while the tool came out).
+    if (!(await this.aimOn(gen, p, tp.pt)) && !(await this.aimOn(gen, p))) { this.log(`crosshair wouldn't settle on ${id} at ${p.x} ${p.y} ${p.z}`); return false; }
     const expect = breakTicks(id, tool);
     this.a.breaking = true; // (the step profile: breaking, not thinking)
     try {
@@ -747,7 +889,7 @@ export class Skills {
     }
     // Snow layers and plants: if the swing didn't take (the break ray can miss thin blocks),
     // knock it out the way a punch would, with its normal drop.
-    if (this.blockAt(p) === id && passable) {
+    if (this.blockAt(p) === id && OPEN.test(id)) {
       try { this.dim.runCommand(`setblock ${p.x} ${p.y} ${p.z} air destroy`); } catch {}
     }
     this.a.cellChanged?.();
@@ -981,12 +1123,11 @@ export class Skills {
   }
 
   /** One swipe at a one-tap block: crosshair near it, hit, gone next tick. */
-  async tap(gen, c, tol = 25, next = null) {
+  async tap(gen, c, tol = 25, next = null, pt = null) {
     const id = this.blockAt(c) ?? 'air';
     if (!ONE_TAP.test(id) || !this.inReach(c) || this.isProtected(c)) return false;
-    const pt = { x: c.x + 0.5, y: c.y + 0.25, z: c.z + 0.5 };
-    this.a.motor.setFocus(pt);
-    for (let k = 0; k < 4 && this.aimError(pt) > tol; k++) await this.wait(gen, 1);
+    // (Only what the crosshair gets onto: grass behind grass is the next swipe's.)
+    if (!(await this.aimOn(gen, c, pt, 6))) return false;
     try { this.sim.breakBlock(c); } catch {}
     // On to the next one as it goes (the hand sweeps through; it doesn't stop on each).
     if (next) this.a.motor.setFocus({ x: next.x + 0.5, y: next.y + 0.25, z: next.z + 0.5 });

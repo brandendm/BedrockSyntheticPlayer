@@ -83,7 +83,8 @@ function simulate(worldName, seed) {
   };
   // Blocks dug wear the best pickaxe down; a worn-out one breaks.
   const wearPick = (n) => {
-    const id = ['iron_pickaxe', 'stone_pickaxe', 'wooden_pickaxe'].find((k) => W.inv[k]);
+    // (core/costs.js: the iron pickaxe is kept for the ore that needs it; the stone ones dig.)
+    const id = ['stone_pickaxe', 'wooden_pickaxe', 'iron_pickaxe'].find((k) => W.inv[k]);
     if (!id) return;
     W.wear[id] = (W.wear[id] ?? 0) + n;
     while (W.inv[id] && W.wear[id] >= MAXUSE[id]) { add(id, -1); W.wear[id] -= MAXUSE[id]; W.events.push(`${fmt(t)} ${id} broke`); }
@@ -159,6 +160,7 @@ function simulate(worldName, seed) {
     get house() { return W.house ? { x: 0, y: 64, z: 0, dir: 'south', layout: 'chests', ...houseState() } : null; },
     get project() { return W.project; },
     houseState, shortfall: null,
+    isHome: () => !!W.house && W.where === 'home',
     // (The house's own repairs: the blocks missing against what we carry, as stone.)
     houseNeeds: () => (W.house ? { stone: Math.max(0, W.house.damage - count(W.inv, (id) => TOOL_STONE.has(id)) - count(W.inv, isPlanks) - count(W.inv, isLog) * 4), planks: 0 } : shortfall()),
     planJob: () => W.jobs.find((j) => DIST[W.where][j.where] <= 24 && tick() >= j.readyAt) ?? W.jobs.find((j) => DIST[W.where][j.where] <= 24) ?? W.jobs[0] ?? null,
@@ -237,7 +239,11 @@ function simulate(worldName, seed) {
     const fail = (why, secs) => { pass(step.step, secs); return { ok: false, why }; };
     switch (step.step) {
       case 'gather_logs': {
-        const need = Math.max(1, step.count - count(W.inv, isLog));
+        // (game/agent.js: what the goals still need after this comes in the same trip, up to 12.)
+        let later = 0;
+        try { later = Math.max(0, a.focusFacts(W.inv).need.logs - Math.max(0, step.count - count(W.inv, isLog))); } catch {}
+        const target = step.count + (step.opportunity ? 0 : Math.min(12, later));
+        const need = Math.max(1, target - count(W.inv, isLog));
         if (!W.treesKnown && !chance(0.6)) return fail('no trees found', 90);
         let secs = walk('field') + (Wd.trees / 4.3) + need * chopS() + Math.ceil(need / 4) * (Math.min(Wd.trees, 20) / 4.3);
         W.treesKnown = true;
@@ -309,9 +315,9 @@ function simulate(worldName, seed) {
         const other = slots.find((s) => s !== slot && !W.jobs.some((j) => j.where === where && (j.slot ?? 'main') === s));
         if (step.input === 'ore' && plan.k >= 8 && other && !NOSPLIT) {
           const h1 = Math.ceil(plan.k / 2);
-          W.jobs.push({ where, slot, kind: 'ore', n: h1, out, readyAt: tick() + h1 * 200 + 20, pos: { x: 1, y: 64, z: 1 } });
-          W.jobs.push({ where, slot: other, kind: 'ore', n: plan.k - h1, out, readyAt: tick() + (plan.k - h1) * 200 + 20, pos: { x: 1, y: 64, z: 2 } });
-        } else W.jobs.push({ where, slot, kind: step.input, n: plan.k, out, readyAt: tick() + plan.k * 200 + 20, pos: { x: 1, y: 64, z: 1 } });
+          W.jobs.push({ where, slot, kind: 'ore', n: h1, out, readyAt: tick() + h1 * 200 + 20, pos: { x: 1, y: where === 'mine' ? 16 : 64, z: 1 } });
+          W.jobs.push({ where, slot: other, kind: 'ore', n: plan.k - h1, out, readyAt: tick() + (plan.k - h1) * 200 + 20, pos: { x: 1, y: where === 'mine' ? 16 : 64, z: 2 } });
+        } else W.jobs.push({ where, slot, kind: step.input, n: plan.k, out, readyAt: tick() + plan.k * 200 + 20, pos: { x: 1, y: where === 'mine' ? 16 : 64, z: 1 } });
         return { ok: true };
       }
       case 'wait_smelt': case 'collect_smelt': {

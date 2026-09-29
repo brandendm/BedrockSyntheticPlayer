@@ -509,22 +509,39 @@ export class Homestead {
     const open = (id) => SOFT.test(id) || (liquid && /water|lava/.test(id));
     if (!open(S.blockAt(cell) ?? 'air')) return S.blockAt(cell) === itemId;
     const faces = via ? FACES.filter(([o]) => cell.x + o[0] === via.x && cell.y + o[1] === via.y && cell.z + o[2] === via.z) : FACES;
+    const solidAt = (n) => { const nid = S.blockAt(n) ?? 'air'; return !SOFT.test(nid) && !/water|lava/.test(nid); };
+    const nOf = (o) => ({ x: cell.x + o[0], y: cell.y + o[1], z: cell.z + o[2] });
+    // Only a face the crosshair gets onto from here (we're on its open side and can see it): a
+    // player can't put a block against the far side of a wall. None from here: step round to
+    // where there is one (goSee), once.
+    const clickable = (e) => faces.some(([o]) => solidAt(nOf(o)) && S.placePoint(cell, nOf(o), e));
+    if (!faces.some(([o]) => solidAt(nOf(o)))) return false;
+    if (!S.inReach(cell) || !clickable(S.eye())) {
+      if (!(await S.goSee(gen, cell, clickable))) return false;
+    }
     for (const [o, face, loc] of faces) {
-      const n = { x: cell.x + o[0], y: cell.y + o[1], z: cell.z + o[2] };
-      const nid = S.blockAt(n) ?? 'air';
-      if (SOFT.test(nid) || /water|lava/.test(nid)) continue;
-      if (!S.inReach(cell)) return false;
+      const n = nOf(o);
+      if (!solidAt(n)) continue;
+      const pp = S.placePoint(cell, n, S.eye());
+      if (!pp) continue;
       const slot = hold(this.sim, itemId);
       if (slot < 0) return false;
-      // The crosshair onto the face we'll click (near enough, as a player's hand gets there; no stop
-      // and settle), then straight on toward the next block as this one goes down.
-      const faceAt = { x: (cell.x + n.x) / 2 + 0.5, y: (cell.y + n.y) / 2 + 0.5, z: (cell.z + n.z) / 2 + 0.5 };
-      await S.aim(gen, faceAt, 15, 6);
+      // The crosshair onto the face we'll click, then straight on toward the next block as this
+      // one goes down.
+      this.a.motor.setFocus(pp.pt);
+      let on = false;
+      for (let k = 0; k <= 10 && !on; k++) {
+        const h = S.crosshair();
+        on = !!h && ((h.location.x === n.x && h.location.y === n.y && h.location.z === n.z && h.face.x === -o[0] && h.face.y === -o[1] && h.face.z === -o[2]) ||
+          (h.location.x === cell.x && h.location.y === cell.y && h.location.z === cell.z));
+        if (!on && k < 10) await S.wait(gen, 1);
+      }
       S.check(gen);
+      if (!on) continue;
       const r = await S.placeOn(gen, slot, n, face, loc, cell);
       this.a.motor.setFocus(next ? center(next) : null);
       if (r || !open(S.blockAt(cell) ?? 'air')) return true;
-      S.log(`place ${itemId} at ${cell.x} ${cell.y} ${cell.z} against ${nid} (${face}): ${r}, still ${S.blockAt(cell)}`);
+      S.log(`place ${itemId} at ${cell.x} ${cell.y} ${cell.z} against ${S.blockAt(n)} (${face}): ${r}, still ${S.blockAt(cell)}`);
     }
     return false;
   }
@@ -809,7 +826,7 @@ export class Homestead {
     this.a.memory.data.houseProject = null;
     this.a.memory.saveNow();
     await this.furnish(gen);
-    this.placeDoor();
+    await this.placeDoor(gen);
     // Torches outside, either side of the door.
     await this.leaveHouse(gen);
     for (const t of fur.torchesOutside) {
@@ -843,8 +860,28 @@ export class Homestead {
     const missing = (p) => { const id = this.S.blockAt(p); return id !== null && SOFT.test(id); };
     const out = [];
     for (const b of blueprint(h, h.dir)) if (missing(b)) out.push(b);
-    for (const p of footing(h, h.dir)) if (missing(p)) out.push({ ...p, material: 'stone' });
+    // (A hole in the footing sealed in on every side, under the wall: no one can get a block in
+    // there, and it does no harm. Not damage.)
+    for (const p of footing(h, h.dir)) if (missing(p) && !this.sealedVoid(p)) out.push({ ...p, material: 'stone' });
     return out;
+  }
+
+  /** An air pocket (up to 6 cells) with solid blocks all round it: out of everyone's reach. */
+  sealedVoid(p) {
+    const S = this.S;
+    const k = (c) => `${c.x},${c.y},${c.z}`;
+    const seen = new Set([k(p)]), q = [p];
+    for (let i = 0; i < q.length; i++) {
+      for (const [dx, dy, dz] of [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]]) {
+        const n = { x: q[i].x + dx, y: q[i].y + dy, z: q[i].z + dz };
+        if (seen.has(k(n))) continue;
+        const id = S.blockAt(n);
+        if (id === null || !SOFT.test(id)) continue;
+        seen.add(k(n)); q.push(n);
+        if (q.length > 6) return false;
+      }
+    }
+    return true;
   }
 
   /**
@@ -1030,17 +1067,30 @@ export class Homestead {
     this.a.say(`My house is on fire (${fires.length} flame${fires.length > 1 ? 's' : ''}): putting it out.`);
     let out = 0, rounds = 0;
     const t0 = system.currentTick;
-    while (fires.length && rounds++ < 60 && system.currentTick - t0 < 20 * 90) {
+    const skip = new Set(); // (ones we couldn't get at: the rest first, and not again)
+    this.fireSecondGo = false;
+    const k = (p) => `${p.x},${p.y},${p.z}`;
+    while (rounds++ < 60 && system.currentTick - t0 < 20 * 90) {
       S.check(gen);
+      fires = this.houseFires().filter((p) => !skip.has(k(p)));
+      // (The others out, one more go at those we couldn't get at: we're somewhere else now.)
+      if (!fires.length && skip.size && !this.fireSecondGo) { this.fireSecondGo = true; skip.clear(); continue; }
+      if (!fires.length) break;
       const f = this.sim.location;
       fires.sort((a, b) => dist3D(f, center(a)) - dist3D(f, center(b)));
       const c = fires[0];
-      if (!S.inReach(c)) await S.goNear(gen, { x: c.x + 0.5, y: c.y, z: c.z + 0.5 }, 2.5, 2);
-      // On the roof: from the ground by the wall, reaching up (4 up and a bit across is in reach).
-      if (!S.inReach(c)) await S.goNear(gen, { x: c.x + 0.5, y: c.y, z: c.z + 0.5 }, 4.2, 2);
+      // Where the crosshair gets onto the flame: round the wall to it, and for one on the roof, up
+      // a pillar beside the house (you can't see the top of a roof from the ground).
+      const sees = (e) => !!S.targetPoint(c, e).pt;
+      if (!(S.inReach(c) && sees(S.eye()))) {
+        if (S.builtUp?.length) await S.takeDownBuilt(gen); // (down off the last pillar first)
+        await S.goSee(gen, c, sees, 4000, { build: true });
+      }
       if (await this.punchOut(gen, c)) out++;
-      fires = this.houseFires();
+      else skip.add(k(c));
     }
+    await S.takeDownBuilt?.(gen);
+    fires = this.houseFires();
     this.a.say(fires.length ? `Put out ${out}; ${fires.length} still burning I can't get to.` : `Fire's out (${out} flame${out === 1 ? '' : 's'}).`);
     return !fires.length;
   }
@@ -1051,7 +1101,8 @@ export class Homestead {
     if (!/fire/.test(S.blockAt(c) ?? '')) return true;
     if (!S.inReach(c)) return false;
     hold(this.sim, null); // a fist: no tool wear for a flame
-    await S.aim(gen, { x: c.x + 0.5, y: c.y + 0.2, z: c.z + 0.5 }, 15, 6);
+    // (Crosshair on the flame itself, as a player's must be: not through a wall.)
+    if (!(await S.aimOn(gen, c, null, 8))) return false;
     try { this.sim.breakBlock(c); } catch {}
     await S.wait(gen, 2);
     try { this.sim.stopBreakingBlock(); } catch {}
@@ -1061,14 +1112,36 @@ export class Homestead {
     return !/fire/.test(S.blockAt(c) ?? '');
   }
 
+  /**
+   * Before a block goes in from the item with a command (door, bed, chest: the simulated player
+   * can't place those itself): where a player could put it, clicking the top of the block under
+   * it from where they stand (step round to see it if need be), crosshair on it. False if not.
+   */
+  async seeToPlace(gen, cell) {
+    const S = this.S;
+    const below = { x: cell.x, y: cell.y - 1, z: cell.z };
+    const ok = (e) => !!S.placePoint(cell, below, e);
+    if (!(S.inReach(cell) && ok(S.eye())) && !(await S.goSee(gen, cell, ok))) { S.log(`can't get at ${cell.x} ${cell.y} ${cell.z} to put it there`); return false; }
+    const pp = S.placePoint(cell, below, S.eye());
+    if (!pp) return false;
+    this.a.motor.setFocus(pp.pt);
+    for (let k = 0; k < 10; k++) {
+      const hh = S.crosshair();
+      if (hh && ((hh.location.x === below.x && hh.location.y === below.y && hh.location.z === below.z && hh.face.y === 1) || (hh.location.x === cell.x && hh.location.y === cell.y && hh.location.z === cell.z))) break;
+      await S.wait(gen, 1);
+    }
+    return true;
+  }
+
   /** Put the door in from the item (the simulated player can't place doors itself). */
-  placeDoor() {
+  async placeDoor(gen) {
     const h = this.house;
     if (!h || !invCounts(this.sim).wooden_door) return false;
     const fur = furnishings(h, h.dir);
     if (/door/.test(this.S.blockAt(fur.door) ?? '')) return true;
     // (setblock replaces whatever's there: something in the doorway is cleared out first, clear_house.)
     if (!SOFT.test(this.S.blockAt(fur.door) ?? 'air') || !SOFT.test(this.S.blockAt({ ...fur.door, y: fur.door.y + 1 }) ?? 'air')) return false;
+    if (!(await this.seeToPlace(gen, fur.door))) return false;
     take(this.sim, 'wooden_door', 1);
     // Hinged so it swings out of the way: the door's facing is across the way we walk through it.
     const across = h.dir === 'north' || h.dir === 'south' ? 'east' : 'south';
@@ -1191,7 +1264,7 @@ export class Homestead {
           if (!invCounts(this.sim).bed) give(this.sim, 'bed', 1); // it broke without dropping
         }
       }
-      if (!h.bed && SOFT.test(S.blockAt(fur.bed.foot) ?? 'air') && SOFT.test(S.blockAt(fur.bed.head) ?? 'air') && invCounts(this.sim).bed) {
+      if (!h.bed && SOFT.test(S.blockAt(fur.bed.foot) ?? 'air') && SOFT.test(S.blockAt(fur.bed.head) ?? 'air') && invCounts(this.sim).bed && (await this.seeToPlace(gen, fur.bed.foot))) {
         // The simulated player's bed placement is unreliable in tight rooms: set it from the item instead.
         // Bedrock's setblock makes the given cell the HEAD and puts the foot one block behind it
         // (tested: direction 0 = head to the south). Setting it at the foot cell put the foot in
@@ -1212,12 +1285,12 @@ export class Homestead {
       }
       S.restHands(); // the bed's gone from the inventory: don't keep showing it in hand
     }
-    if (!/door/.test(S.blockAt(fur.door) ?? '')) this.placeDoor();
+    if (!/door/.test(S.blockAt(fur.door) ?? '')) await this.placeDoor(gen);
     if (fur.layout === 'chests') await this.furnishChestRoom(gen, h, fur);
     else if (!/chest/.test(S.blockAt(fur.chests[0]) ?? '') && invCounts(this.sim).chest) {
       // The chest, in the front corner by the door.
       await S.goNear(gen, fur.stand, 0.4, 2);
-      if (await this.placeAt(gen, fur.chests[0], 'chest') || this.setChest(fur.chests[0], h)) { h.chest = true; this.a.say('Put a chest in the house.'); }
+      if (await this.placeAt(gen, fur.chests[0], 'chest') || (await this.setChest(gen, fur.chests[0], h))) { h.chest = true; this.a.say('Put a chest in the house.'); }
     }
     if (invCounts(this.sim).torch && S.blockAt(fur.torchInside.toward) === 'air') {
       await S.goNear(gen, fur.stand, 0.4, 2);
@@ -1244,7 +1317,7 @@ export class Homestead {
     let put = 0;
     for (const c of missing) {
       if (!invCounts(this.sim).chest) break;
-      if (await this.placeAt(gen, c, 'chest') || this.setChest(c, h)) put++;
+      if (await this.placeAt(gen, c, 'chest') || (await this.setChest(gen, c, h))) put++;
     }
     if (put) this.a.say(`Put ${put} chest${put > 1 ? 's' : ''} in the chest room.`);
     h.chest = fur.chests.every((c) => /chest/.test(S.blockAt(c) ?? ''));
@@ -1371,8 +1444,9 @@ export class Homestead {
    * The simulated player's placement didn't take (a tight corner, like the bed): set the chest from
    * the item instead, facing into the room.
    */
-  setChest(cell, h) {
+  async setChest(gen, cell, h) {
     if (!invCounts(this.sim).chest || !SOFT.test(this.S.blockAt(cell) ?? 'air')) return false;
+    if (!(await this.seeToPlace(gen, cell))) return false;
     take(this.sim, 'chest', 1);
     const back = { north: 'south', south: 'north', east: 'west', west: 'east' }[h.dir]; // away from the door: into the room
     try { this.dim.runCommand(`setblock ${cell.x} ${cell.y} ${cell.z} chest ["minecraft:cardinal_direction"="${back}"]`); } catch {
@@ -1425,7 +1499,7 @@ export class Homestead {
         // The first chest's full: a second one (8 planks) against the back wall.
         if (ci === 0) break;
         if (!invCounts(this.sim).chest && !(await S.craft(gen, ['chest'], true, true))) break;
-        if (!(await this.placeAt(gen, pos, 'chest')) && !this.setChest(pos, h)) break;
+        if (!(await this.placeAt(gen, pos, 'chest')) && !(await this.setChest(gen, pos, h))) break;
         this.a.say('First chest is full: put a second one in.');
       }
       if (!(await S.reach(gen, pos))) continue;

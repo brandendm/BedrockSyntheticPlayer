@@ -116,7 +116,7 @@ function slabOnTop(b) {
  * the like don't stop a ray; liquids only when asked. The cell we start in is skipped.
  * Returns { block, location, faceLocation (0..1 within the block) } or undefined.
  */
-export function castRay(dimension, from, dir, maxDistance, { liquids = false } = {}) {
+export function castRay(dimension, from, dir, maxDistance, { liquids = false, crosshair = false } = {}) {
   const len = Math.hypot(dir.x, dir.y, dir.z) || 1;
   const d = { x: dir.x / len, y: dir.y / len, z: dir.z / len };
   let x = Math.floor(from.x), y = Math.floor(from.y), z = Math.floor(from.z);
@@ -125,17 +125,18 @@ export function castRay(dimension, from, dir, maxDistance, { liquids = false } =
   let tx = next(from.x, x, sx, d.x), ty = next(from.y, y, sy, d.y), tz = next(from.z, z, sz, d.z);
   const dx = sx === 0 ? Infinity : 1 / Math.abs(d.x), dy = sy === 0 ? Infinity : 1 / Math.abs(d.y), dz = sz === 0 ? Infinity : 1 / Math.abs(d.z);
   for (let i = 0; i < 512; i++) {
-    let t;
-    if (tx <= ty && tx <= tz) { x += sx; t = tx; tx += dx; }
-    else if (ty <= tz) { y += sy; t = ty; ty += dy; }
-    else { z += sz; t = tz; tz += dz; }
+    let t, face;
+    if (tx <= ty && tx <= tz) { x += sx; t = tx; tx += dx; face = { x: -sx, y: 0, z: 0 }; }
+    else if (ty <= tz) { y += sy; t = ty; ty += dy; face = { x: 0, y: -sy, z: 0 }; }
+    else { z += sz; t = tz; tz += dz; face = { x: 0, y: 0, z: -sz }; }
     if (t > maxDistance) return undefined;
     let b;
     try { b = dimension.getBlock({ x, y, z }); } catch { return undefined; }
     if (!b) return undefined; // not loaded: can't see into it
-    if (!stopsRay(b, liquids)) continue;
+    if (!(crosshair ? stopsCrosshair(b) : stopsRay(b, liquids))) continue;
     const hp = { x: from.x + d.x * t, y: from.y + d.y * t, z: from.z + d.z * t };
-    return { block: b, location: { x, y, z }, faceLocation: { x: hp.x - x, y: hp.y - y, z: hp.z - z } };
+    // (face: the outward normal of the face the ray came in through)
+    return { block: b, location: { x, y, z }, faceLocation: { x: hp.x - x, y: hp.y - y, z: hp.z - z }, face };
   }
   return undefined;
 }
@@ -146,6 +147,16 @@ function stopsRay(b, liquids) {
   const id = b.typeId;
   if (PASSABLE.has(id) || PASSABLE_RE.test(id) || CLIMBABLE.test(id)) return false;
   return true;
+}
+
+/**
+ * What a player's crosshair stops on: anything with an outline, so vines, grass, flowers, torches,
+ * fire, snow layers and leaves as much as stone. It passes through air and liquids only. (Seeing
+ * is castRay's other mode: you see a log through a vine, but a click there hits the vine.)
+ */
+function stopsCrosshair(b) {
+  if (b.isAir || b.isLiquid) return false;
+  return !/^minecraft:(light_block.*|structure_void|bubble_column|water|flowing_water|lava|flowing_lava)$/.test(b.typeId);
 }
 
 /** True if nothing solid is between the eye and the target (fair-play perception). */

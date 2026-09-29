@@ -14,9 +14,10 @@ test('with a bucket: first check for water near the house', () => {
   assert.equal(advanceStep({ ...base, inv: { ...kit, bucket: 1 }, farm: null, waterNearHouse: null }).step, 'check_water');
 });
 
-test('the farm waits for a bucket: iron first, even with water by the house', () => {
-  const s = advanceStep({ ...base, inv: kit, farm: null, waterNearHouse: true });
-  assert.equal(s.step, 'get_iron');
+test('the farm: with water by the house, straight away (no bucket needed); without, after the bucket', () => {
+  assert.deepEqual(advanceStep({ ...base, inv: kit, farm: null, waterNearHouse: true }).items, ['stone_hoe']);
+  assert.equal(advanceStep({ ...base, inv: kit, farm: null, waterNearHouse: null }).step, 'check_water', 'not known yet: a look round first');
+  assert.equal(advanceStep({ ...base, inv: kit, farm: null, waterNearHouse: false }).step, 'get_iron', 'no water near: iron for the bucket first');
   assert.deepEqual(advanceStep({ ...base, inv: { ...kit, bucket: 1 }, farm: null, waterNearHouse: true }).items, ['stone_hoe']);
   const near = advanceStep({ ...base, inv: { ...kit, bucket: 1, stone_hoe: 1 }, farm: null, waterNearHouse: true });
   assert.deepEqual([near.step, near.water], ['make_farm', 'near']);
@@ -27,7 +28,7 @@ test('the farm waits for a bucket: iron first, even with water by the house', ()
 test('goals switched off: no farm, no iron', () => {
   const f = { ...base, farm: null, waterNearHouse: true };
   assert.notEqual(advanceStep({ ...f, inv: { ...kit, bucket: 1, stone_hoe: 1 }, goals: { farm: false } }).step, 'make_farm');
-  assert.equal(advanceStep({ ...f, inv: kit, goals: { iron: false } }).step, 'done');
+  assert.equal(advanceStep({ ...f, farm: { tiles: 24, ripe: 0 }, inv: kit, goals: { iron: false } }).step, 'done');
 });
 
 test('after the farm: mine iron, the shield from the first ingot, then the pickaxe', () => {

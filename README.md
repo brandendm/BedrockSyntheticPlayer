@@ -138,6 +138,22 @@ It says what it changed. `node tools/sim_home.mjs`: 12 cases, all as a player wo
 - **Zombies:** it backs off at 2.6 blocks instead of 2.0 (a zombie hits from about 1.6). `node tools/sim_combat.mjs --zombies 300`: 0.28 hits taken a fight, down from 0.76, same kills.
 - **Following you, it fights for you, not on its own:** only mobs that hit it or you, mobs you hit (for 20 s after), and creepers within 6 blocks of either of you. Other monsters are left to you: chasing them was how it lost you. `node tools/sim_follow.mjs` has 12 checks for this and the boat.
 - **Boats:** when you get in a boat, it walks (or swims) over and gets in the other seat, sits tight while you steer, and gets out when you do. A chest boat has only one seat, so it follows along instead.
+- **Only what a player could do** (`game/skills.js` `crosshair`, `targetPoint`, `placePoint`, `goSee`; `game/world.js` `castRay` `crosshair` mode). The game lets a script break or click any block within reach, seen or not. The bot used to:
+  - break a log through the vines on it,
+  - break a trunk through its leaves,
+  - build against the far side of a wall without moving.
+
+  Now every break and place goes through the crosshair, which stops on anything with an outline (vines, grass, flowers, leaves, fire) and passes only air and water.
+  - **Breaking:** it finds a point on the block the crosshair can reach. If something is in front, it breaks that first (vines, leaves and grass always; other blocks on an essential job). If the block can't be reached from where it stands, it walks round to a spot where it can (`goSee`). It turns until the crosshair is really on the block before swinging.
+  - **Placing:** it clicks a face of a block it's on the open side of and can see. Otherwise it steps round to one. If there isn't one (shut in), it doesn't place.
+  - **Door, bed and chest:** these go in by command, but only where a player could put them: it has to see the top of the block underneath.
+  - **Roof fires:** it builds a short pillar beside the house to reach them, and takes it down afterwards. A flame it can't reach is skipped and tried again once. A sealed air pocket under the walls no longer counts as house damage.
+  - **`node tools/sim_reach.mjs`:** 6 cases (log behind vines, trunk behind leaves, flower behind grass, ore behind a wall, building past a wall, building from a walled box). The game's break and place calls are checked against the crosshair, so each "through something" is counted. All 6 pass with 0 cheats. `sim_home.mjs` still passes 12/12 under the same rules.
+- **Faster goals** (`tools/sim_life.mjs`, 20 lives in each of 10 worlds; median minutes to iron gear):
+  - **Indoor work before bed.** At night, at home, it does what's indoors first: craft, furnish, store, load a furnace. Then it goes to bed. Plains: moved in at minute 10 instead of 20, iron gear 59 → 46.
+  - **Farm first.** With water by the house already, the farm goes in straight after moving in, without waiting for an iron bucket (a hoe costs two cobblestone). Farm at minute 22-24 instead of 42-47, and forest iron gear 59 → 48.
+  - **Down the mine at night**, it only carries on with a furnace step if the furnace is the camp's down there, not a walk home in the dark and back.
+  - **The sim now gathers logs like the agent** (the whole trip's worth, up to 12 extra), and wears the stone pickaxe rather than the iron one.
 - **Parkour** (`core/pathfinder.js` leaps, `core/jump.js`, `core/motor.js` `_leap`): it now jumps gaps like a player does.
   - **Which jumps:** 1-4 blocks wide, landing level, one up, or up to three down. Each kind was measured on its own with the game's momentum physics (`--jumps`), and only the ones that landed every time are used. The table is below.
   - **Walk or sprint:** it takes the slowest gait that makes it. A sprint-jump onto a pillar a level down just went over it.
@@ -438,6 +454,7 @@ node tools/sim_combat.mjs --witch 200    # witches, alone or with a zombie (WITC
 node tools/sim_combat.mjs --weapons 150  # the same fights with each loadout: swords, an axe, sword + spear, bow + sword
 node tools/sim_combat.mjs --ambush 500   # creepers catching the bot in its quarry and mine (down the stairs behind it, dropped in, in the dark tunnel, from a side branch, on the stairs)
 node tools/sim_quarry.mjs 300    # creeper craters in the quarry stairs: can it still get down and back up?
+node tools/sim_reach.mjs           # only what a player could: no breaking through vines or leaves, no building through walls
 node tools/sim_parkour.mjs 300  # jump courses over the void: the real planner and motor on a body with the game's momentum (--jumps: each jump alone; HARD=1: 20 jumps, mostly pillars)
 node tools/sim_stairs.mjs 300   # stairs blown to pieces, the entrance too: rebuilt as they were, no new holes (OLD=1: before; PIT=1: a sheer pit round the top)
 node tools/sim_follow.mjs        # following: what it fights for you, and getting in your boat
