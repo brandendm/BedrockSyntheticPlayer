@@ -50,6 +50,17 @@ function isFalling(b) {
   }
 }
 
+/** Flowing water (not a source block, not falling): liquid_depth 1-7 in Bedrock. Its current pushes. */
+export function isFlowing(b) {
+  try {
+    if (!b.isLiquid) return false;
+    const d = b.permutation.getState('liquid_depth') ?? 0;
+    return d >= 1 && d < 8;
+  } catch {
+    return false;
+  }
+}
+
 export function makeClassifier(dimension) {
   return (x, y, z) => {
     let b;
@@ -64,7 +75,7 @@ export function makeClassifier(dimension) {
     if (DANGER.has(id)) return Cell.DANGER;
     // Mangrove roots are solid (you stand on them, they block you), even waterlogged in a swamp.
     if (MANGROVE_ROOTS.test(id)) return Cell.SOLID;
-    if (isWatery(b)) return isFalling(b) ? Cell.DANGER : Cell.LIQUID; // waterfalls drop you into ravines
+    if (isWatery(b)) return isFalling(b) ? Cell.DANGER : isFlowing(b) ? Cell.FLOW : Cell.LIQUID; // waterfalls drop you into ravines
     // Leaves: never walk on or through a canopy (you end up on top of a forest, or stuck in it).
     if (id.endsWith('leaves')) return Cell.DANGER;
     // Wooden doors and fence gates are ways through: the bot opens them as it walks up (agent.js

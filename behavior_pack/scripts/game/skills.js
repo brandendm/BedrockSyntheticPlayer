@@ -12,7 +12,7 @@ import { toolFor, planCrafts, applyCraft, isLog, isPlanks, STONE_TARGETS, SHOVEL
 import { chooseTool, breakSeconds, cheapestPlaceable, spendableBlocks, blockSourceCost, itemValue, plankReserve } from '../core/costs.js';
 import { invCounts, hold, take, give, container, findSlot } from './inventory.js';
 import { chooseSource, chooseSourceSticky, sourceKey, trustFor, trunksOf, EXPLORE_S, DIG_DOWN_S } from '../core/sourcing.js';
-import { castRay, canSee, ONE_TAP } from './world.js';
+import { castRay, canSee, ONE_TAP, isWatery } from './world.js';
 import { CONFIG } from '../config.js';
 import { wantScore, biomeName } from '../core/biomes.js';
 import { trace } from './bridge.js';
@@ -384,6 +384,13 @@ export class Skills {
       // swamp, a hedge of leaves, a wall of dirt) gets priced against one that breaks its way
       // through (break time with our best tool, in the same units as walking), cheapest wins.
       if (res.complete && res.path.length >= 2 && i === 0 && (await this.throughIfCheaper(gen, pos, tolerance, res))) return true;
+      // The only way there runs through a current (3+ blocks of flowing water: a flooded crater, a
+      // stream down a slope): stop it at its source and plan again, once, rather than fight it.
+      if (i === 0 && res.path.length >= 2 && this.blockCount() >= 2) {
+        const cls = this.a.classifier();
+        const flow = res.path.filter((p) => cls(p.x, p.y, p.z) === Cell.FLOW || cls(p.x, p.y + 1, p.z) === Cell.FLOW);
+        if (flow.length >= 3 && (await this.stopFlow(gen, flow.slice(0, 16))) > 0) { climbs++; continue; }
+      }
       if (res.path.length >= 2) {
         const r = await this.a.motor.followPath(smoothPath(this.a.classifier(), res.path));
         this.check(gen);
@@ -1959,6 +1966,12 @@ export class Skills {
     if (from === to) return true;
     const idx = [];
     for (let i = from; from < to ? i <= to : i >= to; i += from < to ? 1 : -1) idx.push(i);
+    // Water on the steps (a creeper's crater let a pond in, rain filled a hole): stopped where it
+    // comes in, and the steps cleared, before walking them. Wading down against a current, or
+    // swimming a flooded stairwell, is slow and it pushes us off the steps.
+    const wet = [];
+    for (const i of idx) { const s = this.shaftStand(q, i); for (const dy of [0, 1]) if (this.waterDepth({ ...s, y: s.y + dy }) !== null) wet.push({ ...s, y: s.y + dy }); }
+    if (wet.length) await this.stopFlow(gen, wet);
     for (let a = 0; a < idx.length; a += 40) {
       const wps = idx.slice(Math.max(0, a - 1), a + 40).map((i) => { const s = this.shaftStand(q, i); return { x: s.x + 0.5, y: s.y, z: s.z + 0.5 }; });
       const r = await this.a.motor.followPath(wps);
@@ -1970,6 +1983,87 @@ export class Skills {
       }
     }
     return true;
+  }
+
+  /** Water here: its liquid_depth (0 a source, 1-7 flowing, 8+ falling), or null (not water). */
+  waterDepth(p) {
+    try {
+      const b = this.dim.getBlock(p);
+      if (!b || !isWatery(b) || /lava/.test(b.typeId)) return null;
+      if (!b.isLiquid) return 0; // (waterlogged: stays put like a source)
+      return b.permutation.getState('liquid_depth') ?? 0;
+    } catch { return null; }
+  }
+
+  /**
+   * Water where it's in our way (`cells`: the steps of our stairs, a path): stopped at the source,
+   * the way a player does, not waded or swum. Traced back up the current (lower liquid_depth, or
+   * water from above) to the blocks feeding it, and those filled: a pond's edge is a few blocks.
+   * Fed by many (a lake): the first flowing blocks next to them instead (a dam). Then the water
+   * left on the cells themselves (a source that ended up there) is filled and dug back out.
+   * Returns how many blocks went down.
+   */
+  async stopFlow(gen, cells, maxBlocks = 12) {
+    const key = (p) => `${p.x},${p.y},${p.z}`;
+    const t0 = system.currentTick;
+    const block = () => cheapestPlaceable(invCounts(this.sim), this.blockReserve(invCounts(this.sim)));
+    let placed = 0, traced = 0;
+    // A round: trace back, fill what feeds it, let the current die back; again while the cells
+    // are still wet (a wide crater has more than one way in: the next nearest takes over).
+    for (let round = 0; round < 4 && cells.some((c) => (this.waterDepth(c) ?? 0) > 0); round++) {
+      const seen = new Set(cells.map(key));
+      const queue = cells.filter((c) => (this.waterDepth(c) ?? 0) > 0).map((c) => ({ ...c }));
+      const sources = new Map(), dam = new Map();
+      for (let n = 0; n < queue.length && n < 600; n++) {
+        const c = queue[n], dc = this.waterDepth(c) ?? 0;
+        // Falling water is fed from above; the top of a fall, from beside it (where the current
+        // reached the edge). Never from a pool below it (the one at the bottom of the quarry).
+        const wetAbove = this.waterDepth({ x: c.x, y: c.y + 1, z: c.z }) !== null;
+        for (const [dx, dy, dz] of [[1, 0, 0], [-1, 0, 0], [0, 0, 1], [0, 0, -1], [0, 1, 0]]) {
+          const u = { x: c.x + dx, y: c.y + dy, z: c.z + dz };
+          if (seen.has(key(u))) continue;
+          const du = this.waterDepth(u);
+          if (du === null) continue;
+          // Upstream: water above us, or level water nearer its source than we are.
+          if (!(dy === 1 || (dc >= 8 ? !wetAbove : du < dc))) continue;
+          seen.add(key(u));
+          if (du === 0) { sources.set(key(u), u); dam.set(key(c), c); continue; }
+          queue.push(u);
+        }
+      }
+      traced += sources.size;
+      let targets = [...sources.values()];
+      if (targets.length > maxBlocks) targets = [...dam.values()];
+      if (!targets.length || targets.length > maxBlocks * 2) {
+        if (targets.length) this.log(`water: ${sources.size} sources feeding it, too many to stop`);
+        break;
+      }
+      if (!block() && toolFor('stone', invCounts(this.sim))) await this.gatherBlocks(gen, Math.min(targets.length + 4, 16), false);
+      if (!round) this.a.sayOnce('stop-water', `Water's running onto my way: stopping it where it comes in.`, 60000);
+      const f0 = this.sim.location;
+      let n = 0;
+      for (const c of targets.sort((a, b) => dist3D(f0, a) - dist3D(f0, b))) {
+        this.check(gen);
+        if (this.waterDepth(c) === null) continue;
+        const id = block();
+        if (!id) break;
+        if (!this.inReach(c)) await this.goNear(gen, { x: c.x + 0.5, y: c.y, z: c.z + 0.5 }, 3.5, 2);
+        if (await this.a.homestead.placeAt(gen, c, id, null, null, { liquid: true })) { placed++; n++; this.markPlaced(c); }
+      }
+      if (!n) break;
+      await this.wait(gen, 40); // (a level of current dies back every 5 ticks)
+    }
+    // What's still standing on our cells (a source that ended up there): fill it, dig it back out.
+    for (const c of cells) {
+      if (this.waterDepth(c) === null) continue;
+      const id = block();
+      if (!id) break;
+      if (!this.inReach(c)) await this.goNear(gen, { x: c.x + 0.5, y: c.y, z: c.z + 0.5 }, 3, 2);
+      if (await this.a.homestead.placeAt(gen, c, id, null, null, { liquid: true })) { placed++; await this.mine(gen, c, { collect: true, force: true }); }
+    }
+    this.a.cellChanged?.();
+    if (placed) this.log(`water: ${placed} block(s) to stop it (${traced} source(s) traced) in ${((system.currentTick - t0) / 20).toFixed(1)} s`);
+    return placed;
   }
 
   /**

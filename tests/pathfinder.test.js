@@ -297,3 +297,33 @@ test('with a water bucket: straight off a 20-high pillar instead of the long way
   assert.equal(r.complete, true);
   assert.ok(r.path.some((p) => p.move?.type === 'bucketDrop'), 'jumped off with the bucket');
 });
+
+test('flowing water: a route goes round a current if there is a way, and through it if not', () => {
+  // A stream of flowing water across x=5 (feet level, ground under it) from z=-3 to 3; dry beyond.
+  const flow = new Set(); for (let z = -3; z <= 3; z++) flow.add(`5,64,${z}`);
+  const cls = (x, y, z) => (flow.has(`${x},${y},${z}`) ? Cell.FLOW : y < 64 ? Cell.SOLID : Cell.AIR);
+  const r = findPath(cls, { x: 0, y: 64, z: 0 }, { x: 10, y: 64, z: 0 });
+  assert.equal(r.complete, true);
+  assert.ok(r.path.every((p) => !flow.has(`${p.x},${p.y},${p.z}`)), 'went round the end of the stream');
+  const wide = new Set(); for (let z = -40; z <= 40; z++) wide.add(`5,64,${z}`);
+  const cls2 = (x, y, z) => (wide.has(`${x},${y},${z}`) ? Cell.FLOW : y < 64 ? Cell.SOLID : Cell.AIR);
+  const r2 = findPath(cls2, { x: 0, y: 64, z: 0 }, { x: 10, y: 64, z: 0 }, { maxNodes: 4000 });
+  assert.equal(r2.complete, true, 'no way round: across it');
+});
+
+test('under water: a dive under a wall to the far side, only when allowed and the surface is near', () => {
+  // A pool y 60-64 (surface at 64, air above), a wall at x=5 from y 62 up out of the water: under it at y 60-61.
+  const cls = (depth) => (x, y, z) => {
+    if (x === 5 && y >= 64 - depth + 2) return Cell.SOLID; // (the wall runs the whole way across)
+    if (y < 64 - depth || Math.abs(z) > 3 || x < -2 || x > 12) return y < 65 ? Cell.SOLID : Cell.AIR;
+    return y <= 64 ? Cell.LIQUID : Cell.AIR;
+  };
+  const w = cls(4);
+  const no = findPath(w, { x: 0, y: 64, z: 0 }, { x: 10, y: 64, z: 0 }, { maxNodes: 4000 });
+  assert.equal(no.complete, false, 'no diving: no way');
+  const dive = findPath(w, { x: 0, y: 64, z: 0 }, { x: 10, y: 64, z: 0 }, { maxNodes: 4000, costs: { ...DEFAULT_COSTS, dive: 1.5 } });
+  assert.equal(dive.complete, true);
+  assert.ok(dive.path.some((p) => p.move?.type === 'dive'), 'dived');
+  const deep = findPath(cls(9), { x: 0, y: 64, z: 0 }, { x: 10, y: 64, z: 0 }, { maxNodes: 4000, costs: { ...DEFAULT_COSTS, dive: 1.5 } });
+  assert.equal(deep.complete, false, 'the gap is 7+ down: air too far');
+});

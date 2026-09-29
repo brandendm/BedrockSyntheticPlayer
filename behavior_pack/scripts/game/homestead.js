@@ -1,6 +1,6 @@
 // Settling in after stone tools: eating, hunting, smelting, the house, and nights.
 // The plan (what to do next) is core/settle.js; this file is the doing.
-import { system, world, Direction, ItemStack } from '@minecraft/server';
+import { system, world, Direction, ItemStack, BlockVolume } from '@minecraft/server';
 import { dist3D } from '../core/mathutil.js';
 import { standOff } from '../core/threat.js';
 import { isLog, isPlanks, TOOL_STONE, count } from '../core/recipes.js';
@@ -86,6 +86,11 @@ export class Homestead {
    */
   furnaceFor(input = null, p = this.sim.location) {
     const known = this.a.memory.list('furnace', this.dim.id, p).filter((e) => !this.isCamp(e.pos));
+    // At the house: its food furnace for food, the other for ore and charcoal (so a batch of
+    // meat never holds up the iron, or the iron the meat); either, if the other's the free one.
+    const h = this.house, fur = h ? furnishings(h, h.dir) : null;
+    const role = (e) => (fur?.furnace2 && e.pos.x === fur.furnace2.x && e.pos.y === fur.furnace2.y && e.pos.z === fur.furnace2.z ? 'food' : 'other');
+    if (input) known.sort((a, b) => (role(a) === (input === 'food' ? 'food' : 'other') ? 0 : 1) - (role(b) === (input === 'food' ? 'food' : 'other') ? 0 : 1) || a.dist - b.dist);
     const free = known.find((e) => !this.busy(e.pos) && e.dist < 128);
     if (!free && known.length && (invCounts(this.sim).furnace ?? 0) > 0) return { pos: null, pack: true, busy: false, dist: 0 }; // (all busy: the pack's)
     const pick = free ?? known[0];
@@ -414,10 +419,19 @@ export class Homestead {
     let n = 0;
     for (const slot of [2]) {
       const it = c.getItem(slot);
-      if (it) { give(this.sim, strip(it.typeId), it.amount); n += it.amount; c.setItem(slot, undefined); }
+      if (!it) continue;
+      // What fits in the pack; the rest stays in the furnace (dropped at our feet with a full pack,
+      // it couldn't be picked up and was gone in 5 minutes).
+      const left = packOf(this.sim)?.addItem(it.clone());
+      const moved = it.amount - (left?.amount ?? 0);
+      n += moved;
+      c.setItem(slot, left && left.amount > 0 ? left : undefined);
     }
     return n;
   }
+
+  /** The furnace's output slot still has something in it (the pack was full). */
+  outputLeft(pos) { try { return this.container(pos)?.getItem(2)?.amount ?? 0; } catch { return 0; } }
 
   async collectSmelt(gen) {
     // The nearest finished job (else the nearest one).
@@ -429,7 +443,12 @@ export class Homestead {
     if (!this.furnaceAt(job.pos)) { this.dropJob(job.pos); this.a.saveState(); return; }
     await this.a.motor.lookAt(center(job.pos), 10, 30);
     this.S.check(gen);
-    const got = await this.emptyFurnace(job.pos);
+    let got = await this.emptyFurnace(job.pos);
+    // Pack full, output still in there: put things away (the chests are at the house) and take the rest.
+    if (this.outputLeft(job.pos) && this.chests().length && dist3D(this.sim.location, this.house) <= 24) {
+      await this.storeItems(gen);
+      if (await this.S.reach(gen, job.pos)) got += await this.emptyFurnace(job.pos);
+    }
     const c = this.container(job.pos);
     const left = c?.getItem(0)?.amount ?? 0;
     // Still some in, no fuel and not burning (someone took the fuel, planks we made fell out of a
@@ -442,6 +461,7 @@ export class Homestead {
       this.dropJob(job.pos);
       this.a.say(`The furnace ran out of fuel with ${left} still in it; took them back.`);
     } else if (left) this.setJob({ ...job, readyAt: system.currentTick + left * 200 + 20 });
+    else if (this.outputLeft(job.pos)) this.setJob({ ...job, readyAt: system.currentTick }); // (still to take: kept, ready)
     else this.dropJob(job.pos);
     this.a.saveState();
     if (got) this.a.say(`Took ${got} out of the furnace.`);
@@ -452,7 +472,14 @@ export class Homestead {
     const job = this.planJob() ?? this.smeltJob;
     if (!job) return;
     await this.S.reach(gen, job.pos);
-    while (system.currentTick < job.readyAt) await this.S.wait(gen, 20);
+    // Waited out, unless it can't finish: the furnace gone (a creeper), or out (no fuel, not lit,
+    // something still in): then straight to collecting, which takes the rest back.
+    while (system.currentTick < job.readyAt) {
+      await this.S.wait(gen, 20);
+      if (!this.furnaceAt(job.pos)) break;
+      const c = this.container(job.pos);
+      if ((c?.getItem(0)?.amount ?? 0) > 0 && !c?.getItem(1) && this.S.blockAt(job.pos) !== 'lit_furnace') break;
+    }
     await this.collectSmelt(gen);
   }
 
@@ -958,6 +985,14 @@ export class Homestead {
     const h = this.house;
     if (!h || !this.houseLoaded()) return [];
     const at = frame(h, h.dir), back = layoutOf(h) === 'chests' ? -6 : -2;
+    // One engine query for the box (it's asked every couple of seconds near the house: ~550 block
+    // reads each time otherwise), block by block where that isn't available.
+    const a = at(-3, back - 1, -1), b = at(3, 4, 5);
+    try {
+      const vol = new BlockVolume({ x: Math.min(a.x, b.x), y: a.y, z: Math.min(a.z, b.z) }, { x: Math.max(a.x, b.x), y: b.y, z: Math.max(a.z, b.z) });
+      const hits = this.dim.getBlocks(vol, { includeTypes: ['minecraft:fire', 'minecraft:soul_fire'] }, true);
+      return [...hits.getBlockLocationIterator()].map((p) => ({ x: p.x, y: p.y, z: p.z }));
+    } catch {}
     const out = [];
     for (let lx = -3; lx <= 3; lx++) for (let lz = back - 1; lz <= 4; lz++) for (let dy = -1; dy <= 5; dy++) {
       const p = at(lx, lz, dy);
@@ -1056,6 +1091,8 @@ export class Homestead {
       bedMisplaced: !(/bed/.test(at(fur.bed.foot)) && /bed/.test(at(fur.bed.head))) && this.bedBlocks().length > 0,
       table: at(fur.table) === 'crafting_table',
       furnace: /furnace/.test(at(fur.furnace)),
+      // The food furnace (chest-room houses): false while it's still to go in.
+      furnace2: fur.furnace2 ? /furnace/.test(at(fur.furnace2)) : null,
       chest: fur.layout === 'chests' ? chestsPlaced === fur.chests.length : /chest/.test(at(fur.chests[0])),
       lit: /torch/.test(at(fur.torchInside.toward)) && (!fur.torchChests || /torch/.test(at(fur.torchChests.toward))),
       litOutside: fur.torchesOutside.every((t) => /torch/.test(at(t.toward))),
@@ -1092,6 +1129,11 @@ export class Homestead {
     if (!h.furnace && invCounts(this.sim).furnace) {
       await S.goNear(gen, fur.stand, 0.4, 2);
       if (await this.placeAt(gen, fur.furnace, 'furnace')) { h.furnace = true; this.a.memory.remember('furnace', this.dim.id, fur.furnace); }
+    }
+    // The food furnace, once the first's in (the second furnace in the pack: straight in its corner).
+    if (fur.furnace2 && h.furnace && invCounts(this.sim).furnace && !/furnace/.test(S.blockAt(fur.furnace2) ?? '')) {
+      await S.goNear(gen, fur.stand, 0.4, 2);
+      if (await this.placeAt(gen, fur.furnace2, 'furnace')) this.a.memory.remember('furnace', this.dim.id, fur.furnace2);
     }
     // A bed set in the wrong place (half a bed, or one poking into the wall): pick it up and redo it.
     const fb = /bed/.test(S.blockAt(fur.bed.foot) ?? ''), hb = /bed/.test(S.blockAt(fur.bed.head) ?? '');

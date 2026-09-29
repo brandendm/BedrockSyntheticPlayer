@@ -35,6 +35,9 @@ const TRACE = TI >= 0 ? { world: args[TI + 1], seed: Number(args[TI + 2] ?? 1) }
 const HOUSE = materials();
 const DAY = 20 * 60; // seconds in a Minecraft day
 const LIMIT_DAYS = 12;
+const NOF2 = process.env.NOF2 === '1';
+const PLAN_MS = []; // how long each planStep took (the thinking between steps, in Node)
+const NOSPLIT = process.env.NOSPLIT === '1'; // no splitting a batch of ore across the two // one furnace at the house (as before the food furnace)
 
 // ---------- the worlds ----------
 const WORLDS = {
@@ -118,6 +121,7 @@ function simulate(worldName, seed) {
         const out = [];
         if (cat === 'furnace' && W.furnace) out.push({ pos: { x: 1, y: 64, z: 1 }, dist: DIST[W.where][W.furnace.where] });
         if (cat === 'furnace' && W.house?.furnace) out.push({ pos: { x: 0, y: 64, z: 0 }, dist: DIST[W.where].home });
+        if (cat === 'furnace' && W.house?.furnace2 && !NOF2) out.push({ pos: { x: 0, y: 64, z: 1 }, dist: DIST[W.where].home });
         if (cat === 'sheep' && W.sheepNear) out.push({ pos: {}, dist: 18 });
         if (cat === 'log' && W.treesKnown) out.push({ pos: {}, dist: Math.min(Wd.trees, 30) });
         if (cat === 'stone' && a.knownSurfaceStone) out.push({ pos: {}, dist: Wd.stone });
@@ -138,7 +142,7 @@ function simulate(worldName, seed) {
   a.worn = () => [...W.worn];
   const houseState = () => W.house && {
     layout: 'chests', damage: W.house.damage, blocked: W.house.blocked, fire: W.house.fire,
-    door: W.house.door, bed: W.house.bed, bedMisplaced: false, table: W.house.table, furnace: W.house.furnace,
+    door: W.house.door, bed: W.house.bed, bedMisplaced: false, table: W.house.table, furnace: W.house.furnace, furnace2: NOF2 ? null : W.house.furnace2,
     chest: W.house.chests >= 4, chestsPlaced: W.house.chests, signs: W.house.signs >= 4, signsPlaced: W.house.signs,
     lit: W.house.lit, litOutside: W.house.litOutside,
   };
@@ -289,7 +293,10 @@ function simulate(worldName, seed) {
           W.furnace = { where: W.where };
         }
         const where = W.house?.furnace ? 'home' : W.furnace.where;
-        if (W.jobs.some((j) => j.where === where)) return fail('furnace busy', 5);
+        // (The house's two furnaces: food in the second, the rest in the first; either if the other's free.)
+        const slots = where === 'home' && W.house?.furnace2 && !NOF2 ? (step.input === 'food' ? ['food', 'main'] : ['main', 'food']) : ['main'];
+        const slot = slots.find((s) => !W.jobs.some((j) => j.where === where && (j.slot ?? 'main') === s));
+        if (!slot) return fail('furnace busy', 5);
         const inId = step.input === 'log' ? Object.keys(W.inv).find(isLog) : step.input === 'ore' ? 'raw_iron' : Object.keys(W.inv).find((id) => RAWMEAT.includes(id));
         if (!inId) { problems.push(`smelt ${step.input} with nothing to put in`); return fail('nothing to smelt', 2); }
         const plan = planFuel(W.inv, inId, Math.min(step.n, W.inv[inId] ?? 0), {});
@@ -298,7 +305,13 @@ function simulate(worldName, seed) {
         add(inId, -plan.k); add(plan.fuel, -Math.min(plan.n, W.inv[plan.fuel] ?? 0));
         const out = step.input === 'log' ? 'charcoal' : step.input === 'ore' ? 'iron_ingot' : cooked(inId);
         pass('smelt', walk(where) + 3);
-        W.jobs.push({ where, kind: step.input, n: plan.k, out, readyAt: tick() + plan.k * 200 + 20, pos: { x: 1, y: 64, z: 1 } });
+        // (agent.js: a big batch of ore with the other house furnace free goes half in each.)
+        const other = slots.find((s) => s !== slot && !W.jobs.some((j) => j.where === where && (j.slot ?? 'main') === s));
+        if (step.input === 'ore' && plan.k >= 8 && other && !NOSPLIT) {
+          const h1 = Math.ceil(plan.k / 2);
+          W.jobs.push({ where, slot, kind: 'ore', n: h1, out, readyAt: tick() + h1 * 200 + 20, pos: { x: 1, y: 64, z: 1 } });
+          W.jobs.push({ where, slot: other, kind: 'ore', n: plan.k - h1, out, readyAt: tick() + (plan.k - h1) * 200 + 20, pos: { x: 1, y: 64, z: 2 } });
+        } else W.jobs.push({ where, slot, kind: step.input, n: plan.k, out, readyAt: tick() + plan.k * 200 + 20, pos: { x: 1, y: 64, z: 1 } });
         return { ok: true };
       }
       case 'wait_smelt': case 'collect_smelt': {
@@ -319,7 +332,7 @@ function simulate(worldName, seed) {
         while (count(W.inv, isPlanks) < HOUSE.planks && count(W.inv, isLog)) W.inv = applyCraft(W.inv, 'planks').inv;
         if (!take(isPlanks, HOUSE.planks)) problems.push('ran out of planks building the walls');
         W.project = null;
-        W.house = { damage: 0, blocked: 0, fire: 0, door: false, bed: false, table: false, furnace: false, chests: 0, signs: 0, lit: false, litOutside: false };
+        W.house = { damage: 0, blocked: 0, fire: 0, door: false, bed: false, table: false, furnace: false, furnace2: false, chests: 0, signs: 0, lit: false, litOutside: false };
         pass('build_house', walk('home') + 120);
         furnish();
         return { ok: true };
@@ -406,6 +419,7 @@ function simulate(worldName, seed) {
     if (!h.table && !W.inv.crafting_table && count(W.inv, isPlanks) + count(W.inv, isLog) * 4 >= 4) { const p = planCrafts(W.inv, ['crafting_table']); for (const st of p.steps) W.inv = applyCraft(W.inv, st).inv; }
     if (!h.table && take((id) => id === 'crafting_table', 1)) { h.table = true; W.tables.add('home'); }
     if (!h.furnace && (W.inv.furnace || (W.furnace && !W.jobs.some((j) => j.where === W.furnace.where)))) { if (!take((id) => id === 'furnace', 1)) W.furnace = null; h.furnace = true; }
+    if (h.furnace && !h.furnace2 && !NOF2 && take((id) => id === 'furnace', 1)) h.furnace2 = true;
     if (!h.bed && take((id) => id === 'bed', 1)) h.bed = true;
     while (h.chests < 4 && take((id) => id === 'chest', 1)) h.chests++;
     while (h.signs < 4 && h.chests >= 4 && take((id) => /_sign$/.test(id), 1)) h.signs++;
@@ -421,7 +435,9 @@ function simulate(worldName, seed) {
     steps++;
     if (chance(0.01)) W.trader = true;
     let step;
+    const tp0 = performance.now();
     try { step = a.planStep({ ...W.inv }, tableDist(), 0); } catch (e) { problems.push(`planStep threw: ${e.message}`); break; }
+    PLAN_MS.push(performance.now() - tp0);
     // (runAuto: a mining trip lasts till the plan has us doing something that isn't done down there.)
     if (step.step === 'get_iron') a.miningTrip = true;
     else if (!['get_iron', 'get_stone', 'smelt', 'collect_smelt', 'craft', 'equip'].includes(step.step) && step.step !== 'shelter') a.miningTrip = false;
@@ -501,6 +517,7 @@ for (const w of Object.keys(WORLDS).filter((x) => !ONLY || x === ONLY)) {
   if (VERBOSE) for (const r of rs.filter((x) => x.finished == null)) console.log(`    seed ${r.seed}: stopped at ${fmt(r.t)}, last: ${r.log.slice(-3).join(' | ')}`);
 }
 const total = Object.values(timeTot).reduce((a, b) => a + b, 0);
+{ const s = [...PLAN_MS].sort((x, y) => x - y); console.log(`\nthinking: planStep ${s.length} calls, median ${s[Math.floor(s.length / 2)].toFixed(3)} ms, 99th ${s[Math.floor(s.length * 0.99)].toFixed(2)} ms, worst ${s[s.length - 1].toFixed(1)} ms`); }
 console.log(`\nwhere the time goes (all runs):`);
 for (const [k, v] of Object.entries(timeTot).sort((p, q) => q[1] - p[1]).slice(0, 14)) console.log(`  ${k.padEnd(18)} ${(100 * v / total).toFixed(1).padStart(5)}%`);
 console.log(`\ndeaths by cause: ${[...causes].sort((p, q) => q[1] - p[1]).map(([c, n]) => `${c} ${n}`).join(', ') || 'none'}`);

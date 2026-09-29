@@ -126,6 +126,8 @@ export function furnishings(origin, dir) {
     return {
       ...common,
       layout,
+      // A second furnace, for food (the first does ore and charcoal): the front room's free corner by the door.
+      furnace2: at(-1, 1),
       stands: [at(0, 0), at(0, -4)],
       chestStand: at(0, -4),
       torchInside: { on: at(1, -2, 1), toward: at(1, -1, 1) },
@@ -137,6 +139,7 @@ export function furnishings(origin, dir) {
   return {
     ...common,
     layout,
+    furnace2: null, // (no room for a second in a cabin)
     stands: [at(0, 0)],
     chestStand: at(0, 0),
     torchInside: { on: at(0, -2, 1), toward: at(0, -1, 1) },     // wall torch on the back wall
@@ -163,6 +166,7 @@ export function keepClear(origin, dir) {
   const want = new Map();
   want.set(k(fur.table), 'crafting_table');
   want.set(k(fur.furnace), 'furnace');
+  if (fur.furnace2) want.set(k(fur.furnace2), 'furnace');
   want.set(k(fur.bed.foot), 'bed');
   want.set(k(fur.bed.head), 'bed');
   for (const c of fur.chests) want.set(k(c), 'chest');

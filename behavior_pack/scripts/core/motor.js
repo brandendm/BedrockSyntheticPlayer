@@ -171,9 +171,12 @@ export class MotorController {
     this.t += TICK;
     if (this.jumpCooldown > 0) this.jumpCooldown--;
 
-    // In water: keep the head above the surface (swims up if we sank).
+    // In water: keep the head above the surface (swims up if we sank), unless the path's taking us
+    // under (a dive: down, or along below the surface; the agent's air watch brings us up if short).
     const inWater = !!this.body.isInWater?.();
-    if (inWater) this.body.swimUp?.();
+    const wp = this.intent?.kind === 'path' ? this.intent.wps[this.intent.idx] : null;
+    const diving = !!wp?.dive && wp.y <= this.body.getPos().y + 0.3;
+    if (inWater && !diving) this.body.swimUp?.();
 
     const pos = this.body.getPos();
     const eye = { x: pos.x, y: pos.y + EYE_HEIGHT, z: pos.z };

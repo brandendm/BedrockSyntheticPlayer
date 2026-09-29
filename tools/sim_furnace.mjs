@@ -13,6 +13,7 @@ const { Homestead } = await import('../behavior_pack/scripts/game/homestead.js')
 const { WorldMemory } = await import('../behavior_pack/scripts/game/memory.js');
 const { burnsFor } = await import('../behavior_pack/scripts/core/fuel.js');
 const { settleStep } = await import('../behavior_pack/scripts/core/settle.js');
+const { furnishings } = await import('../behavior_pack/scripts/core/house.js');
 const { advanceStep } = await import('../behavior_pack/scripts/core/advance.js');
 const { system, ItemStack, Container } = MC;
 const VERBOSE = process.argv.includes('-v');
@@ -272,6 +273,63 @@ const house = { x: 5, y: 64, z: 5 };
   const ok = await g.H.startSmelt(gen, 'food', 6, 0);
   const still = g.a.memory.list('furnace', g.dim.id, g.bot.location).length;
   check('81 blocks from the house furnace, raw meat to cook', ok && still === 1, `${ok ? 'cooking at the house' : 'failed'}; remembers ${still} furnace(s)`, g);
+}
+
+// 11. The chest-room house's two furnaces: ore in the first, food in the second, both at once;
+// and the plan, with meat cooking in the food furnace, still loads the iron (never waits on the meat).
+{
+  const g = makeGame();
+  const h = { x: 5, y: 64, z: 5, dir: 'south', layout: 'chests', d: g.dim.id };
+  g.a.memory.data.house = h;
+  const fur = furnishings(h, h.dir);
+  g.addFurnace(fur.furnace); g.addFurnace(fur.furnace2);
+  g.bot.location = { x: fur.stand.x + 0.5, y: 64, z: fur.stand.z + 0.5 };
+  g.give('raw_iron', 8); g.give('beef', 12); g.give('oak_planks', 16); g.give('coal', 4);
+  const oreOk = await g.H.startSmelt(gen, 'ore', 8, 0);
+  const oreAt = g.H.jobs.find((j) => j.kind === 'ore')?.pos;
+  const foodOk = await g.H.startSmelt(gen, 'food', 12, 0);
+  const foodAt = g.H.jobs.find((j) => j.kind === 'food')?.pos;
+  const both = oreOk && foodOk && key(oreAt) === key(fur.furnace) && key(foodAt) === key(fur.furnace2);
+  check('two house furnaces: ore in one, food in the other, at once', both, `ore ${oreOk ? `in ${key(oreAt)}` : 'not started'}, food ${foodOk ? `in ${key(foodAt)}` : 'not started'} (ore furnace ${key(fur.furnace)}, food furnace ${key(fur.furnace2)})`, g);
+  // Collect the ore; food still cooking; more raw iron: the plan loads it rather than waiting.
+  g.S.wait(gen, 20 * 85);
+  await g.H.collectSmelt(gen);
+  g.takeItem('iron_ingot', 64); // (made into gear already: the question is only the furnaces)
+  g.give('raw_iron', 6);
+  const { invCounts } = await import('../behavior_pack/scripts/game/inventory.js');
+  const beefJob = g.H.jobs.find((j) => j.kind === 'food');
+  const step = advanceStep({ inv: invCounts(g.bot), tableDist: 2, worn: [], waterNearHouse: true, farm: { tiles: 24, planted: 24, ripe: 0 }, smelt: g.smeltFact(), furnaceDist: 2, oreCooking: g.H.oreCooking(), canFillBucket: false, underground: false });
+  check('meat cooking in the food furnace, raw iron to smelt', step.step === 'smelt' && step.input === 'ore', `food job ${beefJob ? 'cooking' : 'done'}; the plan says ${step.step}${step.input ? ` ${step.input}` : ''}`, g);
+}
+
+// 12. A full pack when the batch is done: what doesn't fit stays in the furnace (dropped at our
+// feet it couldn't be picked up, and was gone in 5 minutes), the job kept till it's all out.
+{
+  const g = makeGame();
+  g.addFurnace(house);
+  g.give('oak_log', 8); g.give('oak_planks', 8);
+  await g.H.startSmelt(gen, 'log', 8, 0);
+  for (let i = 0; i < 40; i++) g.give(`filler_${i}`, 1); // (every slot taken)
+  g.S.wait(gen, 20 * 90);
+  await g.H.collectSmelt(gen);
+  const inFurnace = g.furnaces.get(key(house)).c.getItem(2)?.amount ?? 0;
+  check('pack full when the charcoal is done', g.dropped.length === 0 && inFurnace === 8 && g.H.jobs.length === 1, `${g.dropped.length} dropped on the ground, ${inFurnace} left in the furnace, job ${g.H.jobs.length ? 'kept' : 'dropped'}`, g);
+}
+
+// 13. Waiting by the furnace (nothing else to do) and the fuel's taken: it stops waiting and takes
+// the rest back, rather than stand there the whole batch's time.
+{
+  const g = makeGame();
+  g.addFurnace(house);
+  g.give('raw_iron', 30); g.give('coal', 4);
+  await g.H.startSmelt(gen, 'ore', 30, 0);
+  g.S.wait(gen, 20 * 12);
+  g.furnaces.get(key(house)).c.setItem(1, undefined); // fuel taken (a player)
+  // (and what was burning burns out: 80 s a coal at most)
+  const t0 = system.currentTick;
+  await g.H.waitSmelt(gen);
+  const waited = (system.currentTick - t0) / 20;
+  check('waiting on a batch whose fuel was taken', waited < 120 && !g.H.jobs.length && g.count('raw_iron') > 0, `waited ${waited.toFixed(0)} s (the batch had ${(30 * 10 - 12).toFixed(0)} s to go), ${g.count('raw_iron')} raw iron back, ${g.count('iron_ingot')} ingots`, g);
 }
 
 const bad = results.filter((r) => !r.ok).length;

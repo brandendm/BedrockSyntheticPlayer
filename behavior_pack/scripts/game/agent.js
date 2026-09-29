@@ -41,6 +41,7 @@ const ATTACKER_MEMORY_TICKS = 200;
 
 /** A sword worth hunting with: stone or better (a wooden one or a fist wastes the time). */
 const SWORD_OK = /\b(stone|iron|diamond|netherite)_sword\b/;
+const key3 = (p) => `${Math.floor(p.x)},${Math.floor(p.y)},${Math.floor(p.z)}`;
 
 const STEP_WORDS = {
   gather_logs: 'getting wood', get_stone: 'getting cobblestone', place_table: 'placing a crafting table', goto_table: 'walking to the crafting table',
@@ -1040,9 +1041,15 @@ export class Agent {
               await H.hunt(gen, FOOD_ANIMALS, () => foodCount(invCounts(this.sim)) >= FOOD_GOAL, 45);
             }
             break;
-          case 'smelt':
-            if (!(await H.startSmelt(gen, step.input, step.n, step.fuelPlanks))) await S.wait(gen, 40);
+          case 'smelt': {
+            // A big batch of ore with a second furnace free (the house's two): half in each, done in
+            // half the time (the last batch of the iron is the wait the gear's made after).
+            const split = step.input === 'ore' && step.n >= 8 && H.furnaceFor('food')?.pos && !H.furnaceFor('food').busy && H.furnaceFor('ore')?.pos && key3(H.furnaceFor('food').pos) !== key3(H.furnaceFor('ore').pos);
+            if (!(await H.startSmelt(gen, step.input, split ? Math.ceil(step.n / 2) : step.n, step.fuelPlanks))) { await S.wait(gen, 40); break; }
+            const other = split ? H.furnaceFor('ore') : null;
+            if (other?.pos && !other.busy && S.rawIron() > 0) await H.startSmelt(gen, 'ore', S.rawIron(), 0);
             break;
+          }
           case 'collect_smelt': await H.collectSmelt(gen); break;
           case 'light_outside': await H.lightOutside(gen); break;
           case 'check_water': await this.farm.checkWater(gen); break;
@@ -1256,10 +1263,13 @@ export class Agent {
 
   /** Items on the ground within r worth going for ([{ e, value }], best first), skipping ones we couldn't reach. */
   wantedItemsNear(r, min = 3) {
-    const ctx = this.wantsCtx();
     const out = [];
+    let items = [];
+    try { items = this.dim.getEntities({ type: 'minecraft:item', location: this.sim.location, maxDistance: r }); } catch {}
+    if (!items.length) return out; // (the usual case: no working out what we need, it looks at animals)
+    const ctx = this.wantsCtx();
     try {
-      for (const e of this.dim.getEntities({ type: 'minecraft:item', location: this.sim.location, maxDistance: r })) {
+      for (const e of items) {
         if ((this.skills.unreachableItems.get(e.id) ?? 0) > system.currentTick) continue;
         const id = e.getComponent('minecraft:item')?.itemStack?.typeId ?? '';
         const v = itemValue(id, ctx);
@@ -2422,10 +2432,15 @@ export class Agent {
 
   /** Path costs for now: long drops allowed with a water bucket (core/pathfinder.js bucketDrop). */
   moveCosts() {
+    /** @type {any} */
+    let c = DEFAULT_COSTS;
     try {
-      if (this.dim.id !== 'minecraft:nether' && invCounts(this.sim).water_bucket && this.health() >= 8 && !this.testHold) return { ...DEFAULT_COSTS, bucketDrop: 40 };
+      if (this.dim.id !== 'minecraft:nether' && invCounts(this.sim).water_bucket && this.health() >= 8 && !this.testHold) c = { ...c, bucketDrop: 40 };
+      // Air to spare and not hurt: routes may go under water (the surface never more than 5 blocks
+      // up, core/pathfinder.js submerged; checkWater brings us up at half air whatever the route).
+      if (this.body.airRatio() >= 0.95 && this.health() >= 10 && !this.testHold) c = { ...c, dive: 1.5 };
     } catch {}
-    return DEFAULT_COSTS;
+    return c;
   }
 
   /** We broke or placed a block (or poured water): forget what the searches read. */

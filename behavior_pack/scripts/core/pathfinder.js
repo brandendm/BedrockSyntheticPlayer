@@ -23,7 +23,12 @@ export const Cell = Object.freeze({
                // below without a jump (the front half is half a block; Bedrock steps up 0.5625)
   SLAB: 7,     // a bottom slab: ground half a block high. Walked onto from full-height ground; but
                // standing on it we're half a block low, so the next level up is out of a jump's reach
+  FLOW: 8,     // flowing water (not a source, not falling): swum like water, but its current pushes
+               // a body along it (off quarry steps, back down a slope), so routes keep out of it
 });
+
+/** Water of either kind (still or flowing). */
+export const isWet = (c) => c === Cell.LIQUID || c === Cell.FLOW;
 
 /** Something to stand on: a full block, stairs, a bottom slab. */
 export const isGround = (c) => c === Cell.SOLID || c === Cell.STEP || c === Cell.SLAB;
@@ -46,6 +51,8 @@ export const DEFAULT_COSTS = Object.freeze({
   leap: 0.9,        // extra for jumping a gap, per block of it (on top of the blocks walked)
   maxLeap: 3,       // widest gap jumped: 1 walking, 2-3 with a sprint-jump
   stair: 0.15,      // extra for walking up a stair or onto a slab (no jump)
+  flow: 6,          // extra per block of flowing water swum (its current pushes: a route keeps out of it if it can)
+  dive: 0,          // extra per block under water (0: never dive; game/agent.js turns it on with air to spare)
   bucketDrop: 0,    // with a water bucket: drops this deep are fine too (the fall's broken with water, game/agent.js fallTick); 0: off
   bucketDropCost: 3, // extra for one (putting the water down and scooping it back up)
 });
@@ -89,7 +96,25 @@ export class WorldView {
   /** Floating at the surface: feet in water, head in air. */
   swimmable(x, y, z) {
     // Water with something under it (more water or ground): never a thin sheet over a drop.
-    return this.get(x, y, z) === Cell.LIQUID && this.open(x, y + 1, z) && this.get(x, y - 1, z) !== Cell.AIR;
+    return isWet(this.get(x, y, z)) && this.open(x, y + 1, z) && this.get(x, y - 1, z) !== Cell.AIR;
+  }
+  /**
+   * Under water, head and all (a dive): air never far. The surface within 5 blocks up, straight
+   * above or one block over (under a short overhang, a wall we're swimming under).
+   */
+  submerged(x, y, z) {
+    if (!isWet(this.get(x, y, z)) || !isWet(this.get(x, y + 1, z))) return false;
+    const upToAir = (cx, cz, from) => {
+      for (let k = from; k <= 6; k++) {
+        const c = this.get(cx, y + k, cz);
+        if (c === Cell.AIR) return true;
+        if (!isWet(c)) return false;
+      }
+      return false;
+    };
+    if (upToAir(x, z, 2)) return true;
+    for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) if (isWet(this.get(x + dx, y + 1, z + dz)) && upToAir(x + dx, z + dz, 1)) return true;
+    return false;
   }
   occupiable(x, y, z) {
     return this.standable(x, y, z) || this.swimmable(x, y, z) || this.climbable(x, y, z);
@@ -97,7 +122,7 @@ export class WorldView {
   /** Can a body pass through this cell sideways (air or water, not solid/danger)? */
   passable(x, y, z) {
     const c = this.get(x, y, z);
-    return c === Cell.AIR || c === Cell.LIQUID || c === Cell.CLIMB;
+    return c === Cell.AIR || c === Cell.LIQUID || c === Cell.FLOW || c === Cell.CLIMB;
   }
 }
 
@@ -139,7 +164,16 @@ class MinHeap {
 /** Yields [nx, ny, nz, cost] for every legal move from (x, y, z). */
 export function* neighbors(w, x, y, z, costs = DEFAULT_COSTS) {
   const inWater = w.swimmable(x, y, z);
-  const enter = (nx, ny, nz, base) => [nx, ny, nz, base + (w.swimmable(nx, ny, nz) ? costs.swim : 0)];
+  // Into water: the swim's extra; into a current, far more (it pushes: off steps, back down).
+  const enter = (nx, ny, nz, base) => [nx, ny, nz, base + (w.swimmable(nx, ny, nz) ? costs.swim + (w.get(nx, ny, nz) === Cell.FLOW ? (costs.flow ?? 6) : 0) : 0)];
+  // Under water (costs.dive: off unless asked for, and then only where the surface is close above).
+  if (costs.dive && (inWater || w.submerged(x, y, z))) {
+    const sub = (nx, ny, nz) => w.submerged(nx, ny, nz) && w.get(nx, ny, nz) !== Cell.FLOW;
+    for (const [dx, dz] of DIRS.slice(0, 4)) if (sub(x + dx, y, z + dz)) yield [x + dx, y, z + dz, costs.walk + costs.swim + costs.dive, { type: 'dive', breaks: [], place: false }];
+    if (sub(x, y - 1, z)) yield [x, y - 1, z, costs.swim + costs.dive, { type: 'dive', breaks: [], place: false }];
+    if (!inWater && (sub(x, y + 1, z) || w.swimmable(x, y + 1, z))) yield [x, y + 1, z, costs.swim + (w.swimmable(x, y + 1, z) ? 0 : costs.dive), { type: 'dive', breaks: [], place: false }];
+    if (!inWater) return; // (under water: only these, and up to the surface)
+  }
   // On a ladder: straight up or down it.
   if (w.climbable(x, y, z)) {
     if (w.climbable(x, y + 1, z)) yield [x, y + 1, z, costs.climb];
@@ -215,7 +249,7 @@ export function* neighbors(w, x, y, z, costs = DEFAULT_COSTS) {
 function safeGap(w, x, y, z) {
   for (let d = 1; d <= 4; d++) {
     const c = w.get(x, y - d, z);
-    if (c === Cell.LIQUID) return true;
+    if (isWet(c)) return true;
     if (isGround(c)) return d <= 4; // landing on top of it: a fall of d-1 blocks
     if (c !== Cell.AIR) return false;    // lava, fire, unloaded...
   }
@@ -285,7 +319,7 @@ export function* actionNeighbors(w, x, y, z, act, placed, onPlaced = false) {
     for (const [dx, dz] of DIRS.slice(0, 4)) {
       const nx = x + dx, nz = z + dz;
       const below = w.get(nx, y - 1, nz);
-      const gap = below === Cell.LIQUID || (below === Cell.AIR && !isGround(w.get(nx, y - 2, nz)));
+      const gap = isWet(below) || (below === Cell.AIR && !isGround(w.get(nx, y - 2, nz)));
       if (gap && w.open(nx, y, nz) && w.open(nx, y + 1, nz)) {
         yield [nx, y, nz, 1 + (act.placeCost + 0.5) * u, { type: 'bridge', breaks: [], place: true }];
       }
@@ -294,7 +328,7 @@ export function* actionNeighbors(w, x, y, z, act, placed, onPlaced = false) {
   // Pillar: jump and place a block where our feet were.
   if (placed < (act.budget ?? 0)) {
     const h = cellCost(x, y + 2, z);
-    if (h < Infinity && w.get(x, y, z) !== Cell.LIQUID && w.get(x, y, z) !== Cell.CLIMB) {
+    if (h < Infinity && !isWet(w.get(x, y, z)) && w.get(x, y, z) !== Cell.CLIMB) {
       yield [x, y + 1, z, (act.placeCost + h) * u, { type: 'pillar', breaks: h > 0 ? [[x, y + 2, z]] : [], place: true }];
     }
   }
@@ -377,7 +411,7 @@ export function* searchJob(classify, start, goal, opts = {}) {
     const done = goalTest ? goalTest(cur.x, cur.y, cur.z, w) : Math.hypot(cur.x - g.x, cur.y - g.y, cur.z - g.z) <= tolerance;
     if (done) return { path: rebuild(cur), complete: true, expanded, cost: cur.g };
     // Partial results must end on dry land: stopping mid-lake is worse than stopping short.
-    if (cur.h < best.h && (wetPartial || !w.swimmable(cur.x, cur.y, cur.z))) best = cur;
+    if (cur.h < best.h && (wetPartial || (!w.swimmable(cur.x, cur.y, cur.z) && !w.submerged(cur.x, cur.y, cur.z)))) best = cur;
 
     if (++expanded >= maxNodes) break;
     // Taking a while: is the goal somewhere we can't get to at all (an item behind a wall, a cow
@@ -545,11 +579,12 @@ function center(p) {
   const c = { x: p.x + 0.5, y: p.y, z: p.z + 0.5 };
   if (p.move?.type === 'leap') c.leap = p.move.gap ?? 1; // the motor runs (sprints, past 1) and jumps for this one
   if (p.move?.type === 'stair') c.stair = true; // the motor walks up this one, no jump
+  if (p.move?.type === 'dive') c.dive = true; // under water: the motor doesn't swim up for air on the way to it
   return c;
 }
 
 /** A path step the motor walks (plain moves and gap leaps), as opposed to one that digs or builds. */
-export const isWalkMove = (p) => !p.move || p.move.type === 'leap' || p.move.type === 'stair' || p.move.type === 'bucketDrop';
+export const isWalkMove = (p) => !p.move || ['leap', 'stair', 'bucketDrop', 'dive'].includes(p.move.type);
 
 function sameLevelRun(path, i, k) {
   for (let m = i + 1; m <= k; m++) if (path[m].y !== path[i].y) return false;

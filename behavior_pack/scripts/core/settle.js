@@ -257,6 +257,14 @@ export function settleStep(f) {
     if (count(inv, charcoalInput) >= 2) return { step: 'smelt', input: 'log', n: 1, fuelPlanks: 1 };
     return { step: 'gather_logs', count: count(inv, isLog) + 2, wanted: ['torch'] };
   }
+  // A second furnace, for food (chest-room houses), last of the house's things (moving in comes
+  // first: it was pushing the rest past nightfall): meat never waits on the iron, or the iron on
+  // the meat (homestead.furnaceFor gives each its own). 8 cobblestone.
+  if (f.house.furnace2 === false && on('house')) {
+    if (has(inv, 'furnace')) return { step: 'furnish' };
+    if (stone(inv) < 8) return { step: 'get_stone', need: 8 - stone(inv), why: 'food furnace' };
+    return craftStep(inv, ['furnace'], f.tableDist);
+  }
   if (f.smelt?.ready) return { step: 'collect_smelt' }; // nothing else to do: go and get it now
   return { step: 'done' };
 }
