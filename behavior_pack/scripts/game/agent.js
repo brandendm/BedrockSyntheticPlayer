@@ -675,6 +675,26 @@ export class Agent {
     }
   }
 
+  /**
+   * A search that keeps walking and never finds anything (no sheep on an island, in a desert): the
+   * explore code only gives up on goes that get nowhere at all. After 6 legs with no sheep, the bed
+   * waits 15 minutes and the rest of the list goes on.
+   */
+  noteSearch(want, found) {
+    if (want !== 'sheep') return;
+    // Found some: the wait's over (it kept the plan off them, and it walked away to look again).
+    if (found) { this.sheepLegs = 0; this.sheepGiveUps = 0; this.bedDeferredUntil = 0; return; }
+    this.sheepLegs = (this.sheepLegs ?? 0) + 1;
+    if (this.sheepLegs < (this.sheepGiveUps ? 3 : 6)) return; // (a shorter look each time after the first)
+    // Each time it comes up empty, a longer wait before the next look (15 min, 30, then an hour):
+    // a world with none near shouldn't cost a quarter of every hour in searching.
+    this.sheepLegs = 0;
+    this.sheepGiveUps = (this.sheepGiveUps ?? 0) + 1;
+    const wait = Math.min(60, 15 * 2 ** (this.sheepGiveUps - 1));
+    this.bedDeferredUntil = Math.max(this.bedDeferredUntil ?? 0, Date.now() + wait * 60000);
+    this.say(`No sheep anywhere I've looked: the bed can wait, getting on with the rest. I'll look again in ${wait} minutes.`);
+  }
+
   /** Up out of bed (a mob's got to us). */
   getOutOfBed() {
     trace('out of bed: a mob close');
@@ -840,7 +860,7 @@ export class Agent {
 
   async runAuto(gen) {
     const S = this.skills, H = this.homestead;
-    let last = '', repeats = 0;
+    let last = '', repeats = 0, same = 0, lastSig = '';
     try {
       if (this.knownSurfaceStone === null && !S.isUnderground()) { // stone seen in a cave says nothing about the surface
         this.knownSurfaceStone = (await S.scan((id) => STONE_TARGETS.has(id), { radius: 24, below: 4, above: 8, limit: 1 })).length > 0;
@@ -869,8 +889,15 @@ export class Agent {
         if (step.step === 'get_iron') this.miningTrip = true;
         else if (!MINE_STEPS.has(step.step) && step.step !== 'shelter') this.miningTrip = false;
         const key = step.step + (step.items ? step.items.join() : '') + (step.count ?? '') + (step.what ?? '') + (step.why ?? '');
-        repeats = key === last ? repeats + 1 : 0;
+        // A repeat is the same step with nothing to show for the last one (the pack unchanged): the
+        // same craft three times running that worked each time (bread, a loaf per 3 wheat; spare
+        // pickaxes) is progress, and was being set aside for 3 minutes. The same step 8 times over
+        // is set aside whatever it picked up on the way.
+        const sig = JSON.stringify(inv);
+        same = key === last ? same + 1 : 0;
+        repeats = key === last && sig === lastSig ? repeats + 1 : 0;
         last = key;
+        lastSig = sig;
         // The same step straight back after failing in no time (a placement that didn't take, a
         // craft with no table): give it a moment instead of burning through the retries in a second.
         if (repeats > 0 && system.currentTick - (this.lastStepAt ?? 0) < 20) await S.wait(gen, 40);
@@ -901,13 +928,13 @@ export class Agent {
         }
         // Steps that run in stints (iron mining is time-boxed and repeats on purpose) or handle their
         // own failure (the farm) never get set aside: exploring doesn't help them.
-        if (repeats >= 3 && !['go_home', 'shelter', 'wait_smelt', 'explore', 'get_iron', 'make_farm', 'tend_farm', 'check_water', 'equip'].includes(step.step)) {
+        if ((repeats >= 3 || same >= 8) && !['go_home', 'shelter', 'wait_smelt', 'explore', 'get_iron', 'make_farm', 'tend_farm', 'check_water', 'equip'].includes(step.step)) {
           // It keeps failing: set it aside for a few minutes and do the cheapest other thing on the
           // list (core/focus.js); it only goes exploring when nothing else is doable.
           if (step.step === 'hunt' && step.what === 'sheep') this.bedDeferredUntil = Date.now() + 300000;
           this.deferred.set(stepKey(step), { until: Date.now() + 180000, step: step.step });
           if (CONFIG.debug) console.warn(`[agent] setting aside ${stepKey(step)} for 3 min`);
-          repeats = 0;
+          repeats = 0; same = 0;
           last = '';
           continue;
         }
@@ -925,6 +952,7 @@ export class Agent {
             }
             const from = { ...this.sim.location };
             await S.explore(gen, what, step.want ?? null);
+            if (step.want === 'sheep') this.noteSearch('sheep', H.animals(new Set(['sheep'])).length > 0);
             // Somewhere new: steps that failed because of the spot (no room for the furnace or the
             // table, no table in view) get another go here instead of waiting out their 3 minutes.
             // Only if we really moved, and never jobs tied to the house (its furnace is where it
@@ -1221,6 +1249,14 @@ export class Agent {
     if (step.step === 'done') step = settleStep({ ...this.settleFacts(inv, tableDist), ...(dayTime ? { time: 6000 } : {}) });
     // Moved in: a farm, iron, iron gear (core/advance.js).
     if (step.step === 'done' && this.homestead.house) step = advanceStep(this.advanceFacts(inv, tableDist));
+    // Nothing else left and still no bed (the sheep search put off, noteSearch): look now rather than
+    // stand about till the wait's over.
+    if (step.step === 'done' && this.homestead.house && this.toggles().beds !== false && !this.homestead.houseState()?.bed && !inv.bed &&
+        SWORD_OK.test(Object.keys(inv).join(' '))) {
+      const wool = Math.max(0, ...Object.entries(inv).filter(([id]) => id.endsWith('_wool')).map(([, n]) => n));
+      const sheep = this.homestead.animalsSeen(new Set(['sheep'])).length > 0 || this.memory.list('sheep', this.dim.id, this.sim.location).some((m) => m.dist < 96);
+      step = wool >= 3 ? step : sheep ? { step: 'hunt', what: 'sheep', need: 3 - wool } : { step: 'explore', want: 'sheep' };
+    }
     // A wandering trader in sight and no lead yet: his two leads (for walking animals and
     // villagers home, into boats) drop when he's gone. Any time of day but night, from the start.
     if (!night && !inv.lead && !['go_home', 'shelter', 'repair_house', 'clear_house', 'fight_fire'].includes(step.step)) {
@@ -1434,7 +1470,7 @@ export class Agent {
       farmRipe: (this.farm.state()?.ripe ?? 0) >= 3,
       project: !!H.project,
       shortfall: H.project ? H.houseNeeds(H.project, H.project.dir, { fittings: true }) : H.shortfall ?? null,
-      packFull: H.freeSlots() <= FULL_SLOTS,
+      packFull: H.freeSlots() <= FULL_SLOTS && Date.now() - (this.memory.data.nothingToStoreAt ?? 0) > 600000,
       chestFull: Date.now() - (this.memory.data.chestFullAt ?? 0) < 600000,
     };
   }

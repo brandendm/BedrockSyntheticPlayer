@@ -127,3 +127,9 @@ test('mine camp: smelting, collecting and spare pickaxes happen down there; with
   assert.equal(advanceStep({ ...down, camp: true, inv: { ...kit, cobblestone: 20 } }).step, 'get_iron', 'no wood for a handle: keep mining, no climb out for a log');
   assert.equal(advanceStep({ ...down, camp: false, inv: { ...kit, cobblestone: 20 } }).step, 'get_iron');
 });
+
+test('a farm tend that did nothing rests the farm (it was sent straight back, for ever)', () => {
+  const f = { inv: { wheat_seeds: 10, iron_pickaxe: 1, water_bucket: 1 }, worn: [], tableDist: 0, waterNearHouse: true, farm: { tiles: 24, planted: 20, ripe: 0 } };
+  assert.equal(advanceStep(f).step, 'tend_farm');
+  assert.notEqual(advanceStep({ ...f, farm: { ...f.farm, resting: true } }).step, 'tend_farm');
+});

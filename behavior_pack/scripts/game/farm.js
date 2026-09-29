@@ -501,7 +501,8 @@ export class Farm {
       }
     }
     const upkeep = loaded && this.needsUpkeep();
-    return loaded ? { tiles: f.tiles.length, planted, ripe, upkeep } : { tiles: f.tiles.length, planted: this.lastPlanted ?? 0, ripe: 0, upkeep: false };
+    const resting = Date.now() < (this.restUntil ?? 0);
+    return loaded ? { tiles: f.tiles.length, planted, ripe, upkeep, resting } : { tiles: f.tiles.length, planted: this.lastPlanted ?? 0, ripe: 0, upkeep: false, resting };
   }
 
   /** Harvest ripe wheat, re-till trampled tiles, plant seeds on every empty tile. */
@@ -553,6 +554,9 @@ export class Farm {
     await S.sweep(gen, { x: f.water.x, y: f.water.y + 1, z: f.water.z }, 7, null, 10);
     S.restHands();
     this.lastPlanted = this.state()?.planted ?? 0;
+    // Nothing done at all (tiles it can't plant: a block on them, out of reach, no farmland): the
+    // plan would send it straight back, and tending is never set aside. Rest the farm 5 minutes.
+    this.restUntil = harvested + tilled + planted === 0 ? Date.now() + 300000 : 0;
     S.log(`farm: harvested ${harvested}, tilled ${tilled}, planted ${planted}`);
     if (harvested) this.a.say(`Harvested ${harvested} wheat and replanted.`);
   }

@@ -119,6 +119,15 @@ With no orders (and after finishing any order) it works through a goal ladder.
 
 **Fire:** fire on or around the house, day or night, comes first. It punches every flame out, nearest first, reaching roof fires from the ground beside the wall. The repair then patches whatever burned. A running job is dropped as soon as fire is seen at the house.
 
+**The whole game, start to finish** (`node tools/sim_life.mjs 50`): the agent's own planner (`planStep`: the goal ladder, settling in, the farm and iron, side jobs, night in the mine) and the auto loop's own bookkeeping (a failing step set aside for 3 minutes) run on a virtual clock. A world model plays out each step: walks, chopping, digging, furnaces, nights, hunger, deaths and lost things, a creeper, a player's blocks, fire, a pack filling with junk. It runs 10 kinds of world: plains, forest, desert, no sheep at all, griefed, deadly, brutal, hunting off, junk, and goals switched off. It looks for steps repeating with nothing changing, the plan asking for what the world can't give, and where the time goes. It found five bugs, now fixed:
+- **No sheep anywhere stopped everything.** Once it gave up looking, the plan still said "look for sheep", so the farm and the iron never came (0 of 20 such worlds finished). Now it gets on with the rest and looks again later. After 6 fruitless search legs (3 on later rounds), it waits 15 minutes, then 30, then an hour. With nothing else left to do it keeps looking. Finding sheep ends the wait; before, the wait kept it from hunting sheep it had just found.
+- **A full pack of things it keeps:** there was nothing to put away, so `store` came back every round, ahead of the farm and the iron. Now that's noted for 10 minutes.
+- **A farm tile it can't plant** sent it straight back to tend the farm for ever (tending is never set aside). A tend that does nothing now rests the farm 5 minutes.
+- **The same step three times running was set aside even when each one worked** (bread, a loaf per 3 wheat; spare pickaxes). A repeat now means the pack didn't change; 8 of the same in a row is still set aside.
+- **The idle bed search** (above): sheep found while the wait was on went unhunted.
+
+Result: 499 of 500 runs finish every goal, with none stuck and no mismatches. The one miss is a desert where it never met a sheep. Median time is about an hour of game time (3 days) on plains or in a forest, and 84–88 minutes with no sheep or in a desert. The time goes on nights at home (31%), iron (28%), searching (8%), and waiting on the last batch of iron in the furnace (4%). Two ideas the sim can measure but not decide: spending nights down the mine rather than at home while iron is still short, and a second furnace at the house to halve that last wait.
+
 **After a blast:** before patching the house (and before furnishing it), it picks up what's lying around it: a blown-up chest's or furnace's contents, or the junk it dug out. `node tools/sim_home.mjs` runs `homestead.js`'s own code against a block world:
 - a player filling the rooms and doorway
 - the doorway bricked up at night
@@ -350,6 +359,7 @@ node tools/sim_combat.mjs --ambush 500   # creepers catching the bot in its quar
 node tools/sim_quarry.mjs 300    # creeper craters in the quarry stairs: can it still get down and back up?
 node tools/sim_quarry.mjs 300 --leave  # getting out of a damaged quarry the game's way, with the blocks it may spend (LEAVE=old: before)
 node tools/sim_furnace.mjs       # the game's own furnace code against a stand-in game: jobs, several furnaces, restarts, fuel running out
+node tools/sim_life.mjs 50       # the whole game, first goal to last: the agent's own planner on a virtual clock in 10 kinds of world; stuck steps, mismatches, where the time goes
 node tools/sim_home.mjs          # the house kept usable: a player's blocks, a bricked-up doorway at night, water, a blast, fire
 node tools/sim_mine.mjs          # the branch mine across deaths and restarts: branches spaced, own tunnels never a "cave" (OLD=1: before)
 node tools/sim_bed.mjs           # no fighting from bed: out of bed first when a mob gets to it

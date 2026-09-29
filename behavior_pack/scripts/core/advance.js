@@ -78,7 +78,7 @@ export function advanceStep(f) {
   // Ripe wheat on the farm: harvest and replant (quick, and the seeds and bread keep coming).
   // Most of what's planted is ripe, or there are empty tiles and seeds to sow them with.
   // Or it needs seeing to: a tree over it, torches missing, no pool by it yet.
-  if (on('farm') && f.farm && (f.farm.upkeep || f.farm.ripe >= Math.max(2, Math.ceil((f.farm.planted ?? f.farm.tiles) * 0.6)) || (f.farm.planted < f.farm.tiles && (inv.wheat_seeds ?? 0) >= 4))) return { step: 'tend_farm' };
+  if (on('farm') && f.farm && !f.farm.resting && (f.farm.upkeep || f.farm.ripe >= Math.max(2, Math.ceil((f.farm.planted ?? f.farm.tiles) * 0.6)) || (f.farm.planted < f.farm.tiles && (inv.wheat_seeds ?? 0) >= 4))) return { step: 'tend_farm' };
 
   // 1. The farm, once there's a bucket (from the iron, below: its water wherever the farm goes, and
   // the fall-breaking bucket after); unless it just failed (another go in 10 minutes).

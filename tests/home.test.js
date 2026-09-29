@@ -58,3 +58,10 @@ test('eating: hunger and saturation that land, least wasted', () => {
   assert.equal(chooseFood({ rotten_flesh: 3, bread: 1 }, { hunger: 4 }), 'bread');
   assert.equal(chooseFood(inv, { hunger: 20 }), null);
 });
+
+test('no sheep to be found: once it has given up looking, the rest of the list goes on', () => {
+  const house = { dist: 3, damage: 0, blocked: 0, fire: 0, door: true, bed: false, table: true, furnace: true, chest: true, signs: true, lit: true, litOutside: true };
+  const base = { tableDist: 0, time: 1000, furnace: { dist: 3, inHouse: true }, smelt: null, house, sheep: false, animals: 0, inv: { stone_sword: 1, stone_pickaxe: 1, torch: 8, cooked_beef: 8 } };
+  assert.equal(settleStep({ ...base, bedDeferred: false }).step, 'explore', 'still looking');
+  assert.equal(settleStep({ ...base, bedDeferred: true }).step, 'done', 'given up for now: on to the farm and the iron');
+});

@@ -1333,7 +1333,13 @@ export class Homestead {
     const S = this.S;
     const fur = furnishings(h, h.dir);
     let plan = depositPlan(invCounts(this.sim));
-    if (!Object.keys(plan).length) return true;
+    if (!Object.keys(plan).length) {
+      // A full pack of things it keeps (tools, food, the working stock): nothing to put away. Noted,
+      // so the plan doesn't send it back every round (store comes before the farm and the iron).
+      this.a.memory.data.nothingToStoreAt = Date.now();
+      this.a.memory.save();
+      return true;
+    }
     if (!this.isHome()) await this.enterHouse(gen);
     await S.goNear(gen, fur.chestStand, 0.4, 2);
     let stored = 0;

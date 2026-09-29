@@ -84,9 +84,11 @@ test("never 'done' with the house missing its door, bed or light", () => {
   const kit = { stone_pickaxe: 1, stone_sword: 1, stone_axe: 1, stone_shovel: 1, torch: 8, cooked_beef: 8 };
   const full = { dist: 3, door: true, bed: true, table: true, furnace: true, lit: true };
   assert.equal(settleStep({ ...b, house: full, inv: kit }).step, 'done');
-  const noBed = settleStep({ ...b, house: { ...full, bed: false }, inv: kit });
+  const noBed = settleStep({ ...b, bedDeferred: false, house: { ...full, bed: false }, inv: kit });
   assert.equal(noBed.step, 'explore', 'no sheep known: goes looking for some');
   assert.equal(noBed.want, 'sheep');
+  // (Given up looking for now: the rest of the list goes on, the search comes back later.)
+  assert.equal(settleStep({ ...b, house: { ...full, bed: false }, inv: kit }).step, 'done');
   assert.notEqual(settleStep({ ...b, house: { ...full, door: false }, inv: { ...kit, oak_planks: 12 } }).step, 'done');
   assert.equal(settleStep({ ...b, house: { ...full, door: false }, inv: { ...kit, wooden_door: 1 } }).step, 'furnish');
   assert.equal(settleStep({ ...b, house: { ...full, lit: false }, inv: kit }).step, 'furnish', 'has torches: puts one up');

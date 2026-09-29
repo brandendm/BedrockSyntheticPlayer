@@ -241,7 +241,10 @@ export function settleStep(f) {
   // grassland, see core/biomes.js), or the charcoal for the torches is still cooking.
   // Torches by the door first if we have them: seconds of work here, before a long sheep search.
   if (!litOutside && torches > 0) return { step: 'light_outside' };
-  if (!f.house.bed && bedsOn && armed) return { step: 'explore', want: 'sheep' };
+  // (Given up looking for now, bedDeferred: the rest of the list goes on, farm and iron included,
+  // and the search comes back when the wait's over. It used to go on looking for ever, and in a
+  // world with no sheep near the farm and the iron never came.)
+  if (!f.house.bed && bedsOn && armed && !f.bedDeferred) return { step: 'explore', want: 'sheep' };
   if (!lit) return f.smelt ? { step: 'wait_smelt' } : { step: 'gather_logs', count: count(inv, isLog) + 2, wanted: ['torch'] };
   // Torches either side of the door (fewer mobs spawning at the doorstep).
   if (!litOutside) {
