@@ -138,6 +138,24 @@ It says what it changed. `node tools/sim_home.mjs`: 12 cases, all as a player wo
 - **Zombies:** it backs off at 2.6 blocks instead of 2.0 (a zombie hits from about 1.6). `node tools/sim_combat.mjs --zombies 300`: 0.28 hits taken a fight, down from 0.76, same kills.
 - **Following you, it fights for you, not on its own:** only mobs that hit it or you, mobs you hit (for 20 s after), and creepers within 6 blocks of either of you. Other monsters are left to you: chasing them was how it lost you. `node tools/sim_follow.mjs` has 12 checks for this and the boat.
 - **Boats:** when you get in a boat, it walks (or swims) over and gets in the other seat, sits tight while you steer, and gets out when you do. A chest boat has only one seat, so it follows along instead.
+- **Parkour** (`core/pathfinder.js` leaps, `core/jump.js`, `core/motor.js` `_leap`): it now jumps gaps like a player does.
+  - **Which jumps:** 1-4 blocks wide, landing level, one up, or up to three down. Each kind was measured on its own with the game's momentum physics (`--jumps`), and only the ones that landed every time are used. The table is below.
+  - **Walk or sprint:** it takes the slowest gait that makes it. A sprint-jump onto a pillar a level down just went over it.
+  - **Steering in the air:** each tick it holds forward, nothing or back, whichever brings it down nearest the middle of the landing block, and corrects sideways.
+  - **Run-up:** at the edge it only jumps if its current speed carries the gap. Otherwise (after a turn, or standing still) it steps back across the take-off block and runs at it.
+  - **On a 1×1 pillar:** it lines up by turning and shuffling in place instead of backing off.
+  - **Tight lines:** a jump with a block beside its arc gets lined up to within 0.08 of a block. It won't jump where its head would clip a ceiling at the top of the arc, and it won't step diagonally past a corner with a deep drop beside it.
+  - **Deep drops:** over drops it would survive, any jump. Over a deep one (void, a ravine), only the sure ones, at an extra cost of 6 blocks' walk, so a short way round still wins. Over lava, never. Set `riskyJumps: false` in `config.js` to stop jumping deep drops.
+  - **Results:** `node tools/sim_parkour.mjs 300` (12-jump courses over the void) finishes 298/298 courses that have a way through, and `HARD=1` (20 jumps, mostly 1×1 pillars) finishes 285/285, with no falls. Before, it found a path on no course at all: it only knew same-level jumps over survivable drops. The ones with no path have the course's own blocks in the way.
+
+  | landing | gap 1 | gap 2 | gap 3 | gap 4 |
+  |---|---|---|---|---|
+  | 1 up | yes | yes | – | – |
+  | level | yes | yes | yes | – |
+  | 1 down | yes | yes | yes | – |
+  | 2-3 down | yes | yes | yes | with a run-up |
+
+  - **Planning speed:** the search is 20% faster than before this change (163 → 189 nodes per ms over 360 searches), even with the bigger set of jumps. The block cache is a small typed array per column instead of one map entry per cell, node keys are small integers, and neighbours are collected without a generator. The stress worlds (`tools/stress_path.mjs`, now on the momentum body) all arrive, and the trench course takes 6.1 s instead of 6.7.
 - **Following you up a tower** (or anywhere with no walking way): `come`, `goto` and `follow` now pillar, dig or bridge a way there, out to 64 blocks. Climbs search weighted toward the goal, and the search's estimate now counts a block up as at least a step-up (it counted 0.3, a drop's cost). A 40-high climb takes about 400 search nodes instead of running out at 60,000.
 - **Down fast with a water bucket:** with one in the pack (not in the Nether, 8+ health), a route can go straight off a pillar or cliff up to 40 blocks, and the water breaks the fall.
 - **No bucket after dying:** the height of a fall from before a death (or a teleport) was kept, so the first step off a block after respawning read as a long fall.
@@ -420,6 +438,7 @@ node tools/sim_combat.mjs --witch 200    # witches, alone or with a zombie (WITC
 node tools/sim_combat.mjs --weapons 150  # the same fights with each loadout: swords, an axe, sword + spear, bow + sword
 node tools/sim_combat.mjs --ambush 500   # creepers catching the bot in its quarry and mine (down the stairs behind it, dropped in, in the dark tunnel, from a side branch, on the stairs)
 node tools/sim_quarry.mjs 300    # creeper craters in the quarry stairs: can it still get down and back up?
+node tools/sim_parkour.mjs 300  # jump courses over the void: the real planner and motor on a body with the game's momentum (--jumps: each jump alone; HARD=1: 20 jumps, mostly pillars)
 node tools/sim_stairs.mjs 300   # stairs blown to pieces, the entrance too: rebuilt as they were, no new holes (OLD=1: before; PIT=1: a sheer pit round the top)
 node tools/sim_follow.mjs        # following: what it fights for you, and getting in your boat
 node tools/sim_combat.mjs --armor 300  # group fights in armor from none to diamond (ARMOR=0: confidence ignoring armor)

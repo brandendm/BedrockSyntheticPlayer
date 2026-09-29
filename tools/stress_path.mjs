@@ -21,7 +21,7 @@
 import { MotorController } from '../behavior_pack/scripts/core/motor.js';
 import { findPath, smoothPath, Cell, DEFAULT_COSTS } from '../behavior_pack/scripts/core/pathfinder.js';
 import { makeRng } from '../behavior_pack/scripts/core/mathutil.js';
-import { SimBody, runMotor } from '../tests/helpers.js';
+import { SimBody, McBody, runMotor } from '../tests/helpers.js';
 import { pathToFileURL } from 'node:url';
 
 const N = Number(process.argv.find((a) => /^\d+$/.test(a)) ?? 60);
@@ -230,7 +230,7 @@ export const KINDS = {
 const COSTS = process.env.MAXLEAP ? { ...DEFAULT_COSTS, maxLeap: Number(process.env.MAXLEAP) } : DEFAULT_COSTS;
 
 async function walk(w, start, goal, tol, seed, maxNodes = 20000) {
-  const body = new SimBody(w, start, makeRng(seed).range(-180, 180), { hw: 0.3 });
+  const body = process.env.BODY === 'simple' ? new SimBody(w, start, makeRng(seed).range(-180, 180), { hw: 0.3 }) : new McBody(w, start, makeRng(seed).range(-180, 180));
   const m = new MotorController(body, {}, makeRng(seed));
   const bad = new Set();
   const classify = (x, y, z) => (bad.has(`${x},${y},${z}`) ? Cell.DANGER : w.classify(x, y, z));

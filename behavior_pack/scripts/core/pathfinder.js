@@ -49,7 +49,8 @@ export const DEFAULT_COSTS = Object.freeze({
   swim: 2.5,        // extra per block: swimming is ~2x slower and mobs get free hits
   climb: 1.8,       // per block up or down a ladder (~2.4 blocks/s vs 4.3 walking)
   leap: 0.9,        // extra for jumping a gap, per block of it (on top of the blocks walked)
-  maxLeap: 3,       // widest gap jumped: 1 walking, 2-3 with a sprint-jump
+  maxLeap: 4,       // widest gap jumped (how far each jump reaches: LEAP_RUNUP, by landing height)
+  riskyLeap: 6,     // extra for a jump over a deep drop (void, a ravine), only the sure ones; null: never
   stair: 0.15,      // extra for walking up a stair or onto a slab (no jump)
   flow: 6,          // extra per block of flowing water swum (its current pushes: a route keeps out of it if it can)
   dive: 0,          // extra per block under water (0: never dive; game/agent.js turns it on with air to spare)
@@ -63,24 +64,66 @@ export const DEFAULT_COSTS = Object.freeze({
  */
 export const cellKey = (o, x, y, z) => ((x - o.x + 65536) * 131072 + (z - o.z + 65536)) * 1024 + (y + 512);
 
-/** Memoises classify() for the duration of one search. */
+/**
+ * Memoises classify() for the duration of one search: per column (a small int key near the start),
+ * a run of cells kept in a typed array that grows as the search looks further up or down. A map
+ * keyed by one big number per cell was a third of every search's time.
+ */
+const COL_SPAN = 16;
 export class WorldView {
   constructor(classify, origin = { x: 0, y: 0, z: 0 }) {
     this.classify = classify;
     this.o = { x: Math.floor(origin.x), y: 0, z: Math.floor(origin.z) };
-    this.cache = new Map();
+    this.cols = new Map(); // column key -> { lo, a: Int8Array (cell + 1; 0 = not read yet) }
+    this.far = new Map();  // (columns too far from the start for a small key)
     /** @type {(x: number, y: number, z: number) => number} seconds to break a block (actions searches) */
     this.breakCost = () => Infinity;
   }
   k(x, y, z) { return cellKey(this.o, x, y, z); }
-  get(x, y, z) {
-    const k = cellKey(this.o, x, y, z);
-    let c = this.cache.get(k);
-    if (c === undefined) {
-      c = this.classify(x, y, z);
-      this.cache.set(k, c);
-    }
+  _col(x, z) {
+    const dx = x - this.o.x, dz = z - this.o.z;
+    if (dx < -16000 || dx >= 16000 || dz < -16000 || dz >= 16000) return null;
+    const ck = (dx + 16000) * 32000 + (dz + 16000);
+    let c = this.cols.get(ck);
+    if (!c) { c = { lo: 0, a: null }; this.cols.set(ck, c); }
     return c;
+  }
+  get(x, y, z) {
+    const c = this._col(x, z);
+    if (!c) {
+      const k = cellKey(this.o, x, y, z);
+      let v = this.far.get(k);
+      if (v === undefined) { v = this.classify(x, y, z); this.far.set(k, v); }
+      return v;
+    }
+    let a = c.a, i = y - c.lo;
+    if (a === null) { c.lo = y - (COL_SPAN >> 1); a = c.a = new Int8Array(COL_SPAN); i = y - c.lo; }
+    else if (i < 0 || i >= a.length) {
+      // Grow to take y in (doubling), keeping what's been read.
+      const lo = Math.min(c.lo, y - 4), hi = Math.max(c.lo + a.length, y + 5);
+      let n = a.length;
+      while (n < hi - lo) n *= 2;
+      const b = new Int8Array(n);
+      b.set(a, c.lo - lo);
+      c.lo = lo; a = c.a = b; i = y - lo;
+    }
+    const v = a[i];
+    if (v !== 0) return v - 1;
+    const cell = this.classify(x, y, z);
+    a[i] = cell + 1;
+    return cell;
+  }
+  /** Overwrite a cell for a while (a block the plan put down): returns what to hand back to unset(). */
+  poke(x, y, z, cell) {
+    const was = this.get(x, y, z);
+    this.set(x, y, z, cell);
+    return was;
+  }
+  set(x, y, z, cell) {
+    this.get(x, y, z); // (makes room for it)
+    const c = this._col(x, z);
+    if (!c) { this.far.set(cellKey(this.o, x, y, z), cell); return; }
+    c.a[y - c.lo] = cell + 1;
   }
   open(x, y, z) {
     const c = this.get(x, y, z);
@@ -136,7 +179,7 @@ class MinHeap {
     while (i > 0) {
       const p = (i - 1) >> 1;
       if (a[p].f <= a[i].f) break;
-      [a[p], a[i]] = [a[i], a[p]];
+      const t = a[p]; a[p] = a[i]; a[i] = t;
       i = p;
     }
   }
@@ -153,7 +196,7 @@ class MinHeap {
         if (l < a.length && a[l].f < a[m].f) m = l;
         if (r < a.length && a[r].f < a[m].f) m = r;
         if (m === i) break;
-        [a[m], a[i]] = [a[i], a[m]];
+        const t = a[m]; a[m] = a[i]; a[i] = t;
         i = m;
       }
     }
@@ -161,23 +204,23 @@ class MinHeap {
   }
 }
 
-/** Yields [nx, ny, nz, cost] for every legal move from (x, y, z). */
-export function* neighbors(w, x, y, z, costs = DEFAULT_COSTS) {
+/** Every legal move from (x, y, z), [nx, ny, nz, cost, move?], pushed onto `out` (returned). */
+export function neighborsInto(out, w, x, y, z, costs = DEFAULT_COSTS) {
   const inWater = w.swimmable(x, y, z);
   // Into water: the swim's extra; into a current, far more (it pushes: off steps, back down).
   const enter = (nx, ny, nz, base) => [nx, ny, nz, base + (w.swimmable(nx, ny, nz) ? costs.swim + (w.get(nx, ny, nz) === Cell.FLOW ? (costs.flow ?? 6) : 0) : 0)];
   // Under water (costs.dive: off unless asked for, and then only where the surface is close above).
   if (costs.dive && (inWater || w.submerged(x, y, z))) {
     const sub = (nx, ny, nz) => w.submerged(nx, ny, nz) && w.get(nx, ny, nz) !== Cell.FLOW;
-    for (const [dx, dz] of DIRS.slice(0, 4)) if (sub(x + dx, y, z + dz)) yield [x + dx, y, z + dz, costs.walk + costs.swim + costs.dive, { type: 'dive', breaks: [], place: false }];
-    if (sub(x, y - 1, z)) yield [x, y - 1, z, costs.swim + costs.dive, { type: 'dive', breaks: [], place: false }];
-    if (!inWater && (sub(x, y + 1, z) || w.swimmable(x, y + 1, z))) yield [x, y + 1, z, costs.swim + (w.swimmable(x, y + 1, z) ? 0 : costs.dive), { type: 'dive', breaks: [], place: false }];
-    if (!inWater) return; // (under water: only these, and up to the surface)
+    for (const [dx, dz] of DIRS.slice(0, 4)) if (sub(x + dx, y, z + dz)) out.push([x + dx, y, z + dz, costs.walk + costs.swim + costs.dive, { type: 'dive', breaks: [], place: false }]);
+    if (sub(x, y - 1, z)) out.push([x, y - 1, z, costs.swim + costs.dive, { type: 'dive', breaks: [], place: false }]);
+    if (!inWater && (sub(x, y + 1, z) || w.swimmable(x, y + 1, z))) out.push([x, y + 1, z, costs.swim + (w.swimmable(x, y + 1, z) ? 0 : costs.dive), { type: 'dive', breaks: [], place: false }]);
+    if (!inWater) return out; // (under water: only these, and up to the surface)
   }
   // On a ladder: straight up or down it.
   if (w.climbable(x, y, z)) {
-    if (w.climbable(x, y + 1, z)) yield [x, y + 1, z, costs.climb];
-    if (w.climbable(x, y - 1, z) || w.standable(x, y - 1, z)) yield [x, y - 1, z, costs.climb * 0.6];
+    if (w.climbable(x, y + 1, z)) out.push([x, y + 1, z, costs.climb]);
+    if (w.climbable(x, y - 1, z) || w.standable(x, y - 1, z)) out.push([x, y - 1, z, costs.climb * 0.6]);
   }
   for (const [dx, dz] of DIRS) {
     const nx = x + dx, nz = z + dz;
@@ -187,44 +230,76 @@ export function* neighbors(w, x, y, z, costs = DEFAULT_COSTS) {
       // No corner cutting: both orthogonal neighbours must be clear for feet and head.
       if (!(w.passable(x + dx, y, z) && w.open(x + dx, y + 1, z) &&
             w.passable(x, y, z + dz) && w.open(x, y + 1, z + dz))) continue;
-      if (w.occupiable(nx, y, nz)) yield enter(nx, y, nz, costs.diagonal);
+      // Past a corner with a deep drop on either side (the edge of a pillar, a cliff, a bridge):
+      // the body's half over it at the turn, and what's left of a jump's speed takes it over.
+      // Two straight steps instead.
+      if (deepBeside(w, x + dx, y, z) || deepBeside(w, x, y, z + dz)) continue;
+      if (w.occupiable(nx, y, nz)) out.push(enter(nx, y, nz, costs.diagonal));
       continue;
     }
 
     // Flat walk or swim
     if (w.occupiable(nx, y, nz)) {
-      yield enter(nx, y, nz, costs.walk);
+      out.push(enter(nx, y, nz, costs.walk));
       continue;
     }
     // Up a stair or onto a slab: walked, not jumped, and hardly slower than the flat. It still wants
     // a block of room over where we stand: the body rises half a block while it's still here.
     const below = w.get(x, y - 1, z);
     if (!inWater && below !== Cell.SLAB && isHalf(w.get(nx, y, nz)) && w.open(x, y + 2, z) && w.standable(nx, y + 1, nz)) {
-      yield [nx, y + 1, nz, costs.walk + costs.stair, { type: 'stair', breaks: [], place: false }];
+      out.push([nx, y + 1, nz, costs.walk + costs.stair, { type: 'stair', breaks: [], place: false }]);
       continue;
     }
     // Step up (a jump, or climbing out of water onto the bank): needs headroom above us. Not from on
     // top of a slab: that's a 1.5 block climb.
     if (below !== Cell.SLAB && w.open(x, y + 2, z) && w.standable(nx, y + 1, nz)) {
-      yield [nx, y + 1, nz, costs.walk + costs.stepUp + (inWater ? 0.5 : 0)];
+      out.push([nx, y + 1, nz, costs.walk + costs.stepUp + (inWater ? 0.5 : 0)]);
       continue;
     }
-    // Leap a 1-block gap: running jump from the edge onto the block beyond, same level. Needs
-    // headroom all the way (the arc peaks ~1.25 up), and only over a gap we'd survive falling
-    // into (ground or water within 3 blocks): a missed jump costs a climb, never a life.
-    // Wider gaps (2 or 3 blocks: a trench, a stream bed, a gap in a ridge): a sprint-jump, with a
-    // block of run-up behind us for the 3. The same rule: only over a drop we'd survive.
+    // Leap a gap: a running jump from the edge onto the block beyond, level with us, one up, or up
+    // to three down (tools/sim_parkour.mjs --jumps, a body with the game's momentum: which ones
+    // land every time). One block: a walking jump; wider: a sprint-jump; the widest want a block
+    // of run-up behind us. Needs room overhead the whole way (the arc peaks ~1.25 up; a block more
+    // going up a level). Over a drop we'd survive (ground or water within 4) it's just a jump; over
+    // a deep one (void, a ravine) only the sure ones and at a price (costs.riskyLeap; null: never);
+    // over lava or fire, never.
     if (!inWater && costs.leap != null && w.open(nx, y, nz) && w.open(nx, y + 1, nz) && w.open(nx, y + 2, nz) &&
         w.open(x, y + 2, z) && !w.occupiable(nx, y - 1, nz) && !isGround(w.get(nx, y - 1, nz))) {
-      for (let gap = 1; gap <= (costs.maxLeap ?? 3); gap++) {
+      const runup = w.standable(x - dx, y, z - dz);
+      const reach = runup ? LEAP_RUNUP : LEAP_STANDING;
+      const headUp = w.open(x, y + 3, z);
+      let deadly = false;
+      for (let gap = 1; gap <= Math.min(costs.maxLeap ?? 4, 4); gap++) {
         const gx = x + gap * dx, gz = z + gap * dz;
         // Every block of the gap open all the way up (the arc) and nothing to land on in it.
-        if (!(w.open(gx, y, gz) && w.open(gx, y + 1, gz) && w.open(gx, y + 2, gz)) || isGround(w.get(gx, y - 1, gz)) || !safeGap(w, gx, y, gz)) break;
+        if (!(w.open(gx, y, gz) && w.open(gx, y + 1, gz) && w.open(gx, y + 2, gz)) || isGround(w.get(gx, y - 1, gz))) break;
+        // A ceiling at 3 over the gap but not over us: the jump rises past 3 (its top is 3.05 up)
+        // and runs its head into the edge of it, and drops short. (Under a ceiling all the way, the
+        // jump's just capped, and carries on.)
+        if (headUp && !w.open(gx, y + 3, gz)) break;
+        const under = gapBelow(w, gx, y, gz);
+        if (under === 'lava') break;
+        if (under === 'deep') deadly = true;
         const lx = x + (gap + 1) * dx, lz = z + (gap + 1) * dz;
-        if (!(w.standable(lx, y, lz) && w.open(lx, y + 2, lz))) continue;
-        if (gap === 3 && !w.standable(x - dx, y, z - dz)) break; // (no run-up: no sprint)
-        yield [lx, y, lz, (gap + 1) * costs.walk + costs.leap * gap, { type: 'leap', gap, breaks: [], place: false }];
-        break;
+        for (const dy of LEAP_DY) {
+          if (gap > (reach[dy] ?? 0) || (deadly && gap > (LEAP_SURE[dy] ?? 0))) continue;
+          const ly = y + dy;
+          if (!w.standable(lx, ly, lz)) continue;
+          // Room for the arc: up a level, a block more overhead all the way; down, the landing's
+          // column open from where we come in; never onto a spot with a ceiling at our head.
+          if (dy > 0 && !(headUp && w.open(lx, ly + 2, lz) && [...Array(gap).keys()].every((k) => w.open(x + (k + 1) * dx, y + 3, z + (k + 1) * dz)))) continue;
+          if (dy < 0 && !(w.open(lx, y, lz) && w.open(lx, y + 1, lz))) continue;
+          if (!w.open(lx, ly + 2, lz) && dy >= 0) continue;
+          const cost = (gap + 1) * costs.walk + costs.leap * gap + (dy > 0 ? costs.stepUp : -dy * costs.dropPerBlock) + (deadly ? costs.riskyLeap ?? Infinity : 0);
+          if (cost === Infinity) continue;
+          // Something beside the arc (a wall, the next platform): the motor lines up exactly for it,
+          // or the box's edge catches it and the jump stops dead in the air.
+          let narrow = false;
+          for (let k = 0; k <= gap + 1 && !narrow; k++) for (const sgn of [1, -1]) for (let h = Math.min(0, dy); h <= 2 + Math.max(0, dy); h++) {
+            if (!w.open(x + k * dx + sgn * dz, y + h, z + k * dz + sgn * dx) && !(k === 0 && h < 0)) { narrow = true; break; }
+          }
+          out.push([lx, ly, lz, cost, { type: 'leap', gap, dy, narrow, breaks: [], place: false }]);
+        }
       }
     }
     // Drop: walk off the edge and fall straight down (into water is fine too)
@@ -235,26 +310,51 @@ export function* neighbors(w, x, y, z, costs = DEFAULT_COSTS) {
       for (let d = 1; d <= deepest; d++) {
         const ny = y - d;
         if (w.occupiable(nx, ny, nz)) {
-          if (d <= costs.maxDrop) yield enter(nx, ny, nz, costs.walk + costs.dropPerBlock * d);
-          else if (w.standable(nx, ny, nz)) yield [nx, ny, nz, costs.walk + costs.dropPerBlock * costs.maxDrop + (d - costs.maxDrop) * 0.1 + costs.bucketDropCost, { type: 'bucketDrop', breaks: [], place: false }];
+          if (d <= costs.maxDrop) out.push(enter(nx, ny, nz, costs.walk + costs.dropPerBlock * d));
+          else if (w.standable(nx, ny, nz)) out.push([nx, ny, nz, costs.walk + costs.dropPerBlock * costs.maxDrop + (d - costs.maxDrop) * 0.1 + costs.bucketDropCost, { type: 'bucketDrop', breaks: [], place: false }]);
           break;
         }
         if (!w.open(nx, ny, nz)) break; // landed on something we can't stand on
       }
     }
   }
+  return out;
+}
+
+/** Yields [nx, ny, nz, cost, move?] for every legal move from (x, y, z). */
+export function* neighbors(w, x, y, z, costs = DEFAULT_COSTS) {
+  yield* neighborsInto([], w, x, y, z, costs);
 }
 
 /** Falling into this gap would be survivable: ground or water within 3 blocks, no lava or fire. */
-function safeGap(w, x, y, z) {
-  for (let d = 1; d <= 4; d++) {
-    const c = w.get(x, y - d, z);
-    if (isWet(c)) return true;
-    if (isGround(c)) return d <= 4; // landing on top of it: a fall of d-1 blocks
-    if (c !== Cell.AIR) return false;    // lava, fire, unloaded...
-  }
-  return false;
+// How far each jump reaches, by where it lands (dy: 1 up .. 3 down): the widest gap that landed
+// every time in tools/sim_parkour.mjs --jumps (40 tries each, turned a random way at the start),
+// from a run-up and from standing (a 1x1 pillar), one less than the physics allows at the top end.
+// LEAP_SURE: over a deep drop only these (a miss there is a death, and the game's feet may not be
+// the sim's to the last tenth of a block).
+const LEAP_DY = [1, 0, -1, -2, -3];
+const LEAP_RUNUP = { 1: 2, 0: 3, '-1': 3, '-2': 4, '-3': 4 };
+const LEAP_STANDING = { 1: 2, 0: 3, '-1': 3, '-2': 3, '-3': 3 };
+const LEAP_SURE = { 1: 2, 0: 3, '-1': 3, '-2': 3, '-3': 3 };
+
+/** An open cell with nothing to stand on within a safe fall under it. */
+function deepBeside(w, x, y, z) {
+  if (w.occupiable(x, y, z)) return false;
+  for (let d = 1; d <= 4; d++) { const c = w.get(x, y - d, z); if (isGround(c) || isWet(c)) return false; if (c !== Cell.AIR && c !== Cell.CLIMB) return true; }
+  return true;
 }
+
+/** Under a gap: 'safe' (ground or water within 4 to fall on), 'deep' (further: void, a ravine) or 'lava'. */
+function gapBelow(w, x, y, z) {
+  for (let d = 1; d <= 24; d++) {
+    const c = w.get(x, y - d, z);
+    if (isWet(c)) return d <= 4 ? 'safe' : 'deep';
+    if (isGround(c)) return d <= 5 ? 'safe' : 'deep'; // (landing on top of it: a fall of d-1)
+    if (c !== Cell.AIR) return 'lava'; // lava, fire, anything that hurts
+  }
+  return 'deep';
+}
+
 
 /**
  * Moves that change the world, Baritone-style: dig through (forward, or a step up), pillar up
@@ -391,7 +491,13 @@ export function* searchJob(classify, start, goal, opts = {}) {
   // the cell above it (what we stand on is the STEP).
   if (isHalf(w.get(s.x, s.y, s.z)) && w.open(s.x, s.y + 1, s.z)) s.y++;
   const g = { x: Math.floor(goal.x), y: Math.floor(goal.y), z: Math.floor(goal.z) };
-  const key = (x, y, z) => w.k(x, y, z);
+  // Node keys: a small int (V8 hashes those fast) within 512 of the start sideways and 256 up or
+  // down; further out (hardly ever), the big key, negated so the two never meet.
+  const key = (x, y, z) => {
+    const dx = x - s.x, dz = z - s.z, dy = y - s.y;
+    if (dx >= -512 && dx < 512 && dz >= -512 && dz < 512 && dy >= -256 && dy < 256) return ((dx + 512) * 1024 + (dz + 512)) * 512 + (dy + 256);
+    return -1 - w.k(x, y, z);
+  };
   const heuristic = heuristicFn ?? (goalTest ? () => 0 : octileHeuristic);
 
   const open = new MinHeap();
@@ -408,7 +514,8 @@ export function* searchJob(classify, start, goal, opts = {}) {
     const cur = open.pop();
     if (cur.closed) continue;
     cur.closed = true;
-    const done = goalTest ? goalTest(cur.x, cur.y, cur.z, w) : Math.hypot(cur.x - g.x, cur.y - g.y, cur.z - g.z) <= tolerance;
+    const ddx = cur.x - g.x, ddy = cur.y - g.y, ddz = cur.z - g.z;
+    const done = goalTest ? goalTest(cur.x, cur.y, cur.z, w) : ddx * ddx + ddy * ddy + ddz * ddz <= tolerance * tolerance + 1e-9;
     if (done) return { path: rebuild(cur), complete: true, expanded, cost: cur.g };
     // Partial results must end on dry land: stopping mid-lake is worse than stopping short.
     if (cur.h < best.h && (wetPartial || (!w.swimmable(cur.x, cur.y, cur.z) && !w.submerged(cur.x, cur.y, cur.z)))) best = cur;
@@ -422,15 +529,12 @@ export function* searchJob(classify, start, goal, opts = {}) {
     }
     // Standing on a block the plan put down (pillar, bridge): the world view doesn't have it, so
     // lay it in while we look at this node (walking on from a bridge needs ground under it).
-    const pk = cur.move?.place ? key(cur.x, cur.y - 1, cur.z) : null;
-    const saved = pk ? w.cache.get(pk) : undefined;
-    if (pk) w.cache.set(pk, Cell.SOLID);
+    const pk = !!cur.move?.place;
+    const saved = pk ? w.poke(cur.x, cur.y - 1, cur.z, Cell.SOLID) : 0;
+    const restore = () => { if (pk) w.set(cur.x, cur.y - 1, cur.z, saved); };
 
-    const restore = () => { if (pk) { if (saved === undefined) w.cache.delete(pk); else w.cache.set(pk, saved); } };
-
-    const moves = actions
-      ? [...neighbors(w, cur.x, cur.y, cur.z, costs), ...actionNeighbors(w, cur.x, cur.y, cur.z, actions, cur.placed, cur.move?.place ? cur.move : false)]
-      : [...neighbors(w, cur.x, cur.y, cur.z, costs)];
+    const moves = neighborsInto([], w, cur.x, cur.y, cur.z, costs);
+    if (actions) for (const m of actionNeighbors(w, cur.x, cur.y, cur.z, actions, cur.placed, cur.move?.place ? cur.move : false)) moves.push(m);
     restore();
     if (expanded % yieldEvery === 0) yield; // hand control back to the game (system.runJob)
     for (const [nx, ny, nz, c, move = null] of moves) {
@@ -577,7 +681,7 @@ function besideDrop(w, x, y, z) {
 
 function center(p) {
   const c = { x: p.x + 0.5, y: p.y, z: p.z + 0.5 };
-  if (p.move?.type === 'leap') c.leap = p.move.gap ?? 1; // the motor runs (sprints, past 1) and jumps for this one
+  if (p.move?.type === 'leap') { c.leap = p.move.gap ?? 1; if (p.move.narrow) c.narrow = true; } // the motor runs (sprints, past 1) and jumps for this one (lined up exactly if narrow)
   if (p.move?.type === 'stair') c.stair = true; // the motor walks up this one, no jump
   if (p.move?.type === 'dive') c.dive = true; // under water: the motor doesn't swim up for air on the way to it
   return c;

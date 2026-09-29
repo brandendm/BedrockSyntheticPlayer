@@ -141,3 +141,57 @@ export async function runMotor(motor, body, promise, maxTicks = 2000) {
   }
   return { result, ticks };
 }
+
+/**
+ * A player body with Minecraft's movement physics (the numbers Bedrock's player uses too), for
+ * parkour: velocity carried tick to tick. On the ground each tick keeps 0.546 of it (block
+ * friction 0.6 x 0.91) and adds 0.098 walking / 0.1274 sprinting in the input direction (so 4.3
+ * and 5.6 blocks a second flat out); in the air it keeps 0.91 and adds only 0.0196 / 0.0255, so a
+ * jump carries the speed it took off with. Jump: 0.42 up, and a sprint-jump adds 0.2 along the
+ * facing. Gravity: (vy - 0.08) x 0.98. Steps up 0.6 on the ground. Box 0.6 x 1.8.
+ */
+export class McBody extends SimBody {
+  constructor(world, pos, yaw = 0, opts = {}) {
+    super(world, pos, yaw, { hw: 0.3, ...opts });
+    this.vx = 0; this.vz = 0;
+    this.airTicks = 0;
+  }
+  jump() {
+    if (!this.onGround || this.vy > 0) return;
+    // (Still on the ground for this tick's friction and push, as in the game: off it once it moves.)
+    this.vy = 0.42; this.jumps++;
+    if (this.sprint) { const r = this.yaw * Math.PI / 180; this.vx += -Math.sin(r) * 0.2; this.vz += Math.cos(r) * 0.2; }
+  }
+  speed2D() { return Math.hypot(this.vx, this.vz); }
+  step() {
+    const p = this.pos;
+    const ground = this.onGround;
+    const f = ground ? 0.546 : 0.91;
+    if (this.cmd && this.cmd.s > 0) {
+      const l = Math.hypot(this.cmd.dx, this.cmd.dz) || 1;
+      const a = (ground ? (this.sprint ? 0.13 : 0.1) : (this.sprint ? 0.026 : 0.02)) * 0.98 * Math.min(1, this.cmd.s);
+      this.vx += this.cmd.dx / l * a; this.vz += this.cmd.dz / l * a;
+      this.moves.push({ ...this.cmd });
+    }
+    // Y first, then X, then Z (the game's order), each stopped by what it runs into.
+    let vy = this.vy;
+    const ny = p.y + vy;
+    if (vy <= 0 && !this.fits(p.x, ny, p.z)) {
+      p.y = this.settle(p.x, ny, p.z, 1.5) ?? Math.floor(ny) + 1;
+      this.onGround = true; vy = 0;
+    } else if (vy > 0 && !this.fits(p.x, ny, p.z)) { vy = 0; this.onGround = false; }
+    else { p.y = ny; this.onGround = !this.fits(p.x, p.y - 0.01, p.z) && vy <= 0 ? true : false; }
+    const slide = (tx, tz) => {
+      if (this.fits(tx, p.y, tz)) return p.y;
+      return this.onGround ? this.settle(tx, p.y, tz, 0.6) : null;
+    };
+    let y1 = slide(p.x + this.vx, p.z);
+    if (y1 != null) { p.x += this.vx; p.y = y1; } else this.vx = 0;
+    y1 = slide(p.x, p.z + this.vz);
+    if (y1 != null) { p.z += this.vz; p.y = y1; } else this.vz = 0;
+    if (this.onGround && this.fits(p.x, p.y - 0.01, p.z)) this.onGround = false; // walked off an edge
+    this.vy = this.onGround ? 0 : (vy - 0.08) * 0.98;
+    this.vx *= f; this.vz *= f;
+    this.airTicks = this.onGround ? 0 : this.airTicks + 1;
+  }
+}

@@ -21,6 +21,7 @@
 import {
   DEG, clamp, angleDiff, yawTo, pitchTo, viewVector, dist2D, springAngle, makeRng, SmoothNoise,
 } from './mathutil.js';
+import { gaitFor, landingAlong, reachFrom } from './jump.js';
 
 export const TICK = 0.05;
 export const EYE_HEIGHT = 1.62;
@@ -314,6 +315,12 @@ export class MotorController {
     const nx = wps[it.idx];
     if (nx.stair && dist2D(pos, nx) < 1.3 && this.body.isOnGround() && pos.y < nx.y - 0.6) it.stairStall = (it.stairStall ?? 0) + 1;
     else it.stairStall = 0;
+    if (leap?.air || leap?.lineup) {
+      // In the air over a gap: the held direction is the steering (core/jump.js), head on the landing.
+      this._setSprint(leap.sprint);
+      const faceYaw = yawTo(pos, leap.face);
+      return { gaze: { ...leap.face, y: leap.face.y + EYE_HEIGHT - o.gazeDrop }, move: leap.move ?? { yaw: faceYaw, speed: 0 }, headYaw: faceYaw };
+    }
     const step = leap || nx.stair ? null : this._stepUp(pos, it);
     const steer = leap ? leap.steer : step ? step.steer : this._lookahead(pos, it, o.steerLookahead);
     const g = this._lookahead(pos, it, o.gazeLookahead);
@@ -386,23 +393,74 @@ export class MotorController {
   _leap(pos, it) {
     const wps = it.wps;
     const next = wps[it.idx], prev = wps[it.idx - 1];
-    if (!next?.leap || !prev) return null;
+    if (!next?.leap || !prev) { this._air = null; return null; }
     const gap = typeof next.leap === 'number' ? next.leap : 1;
     const onGround = this.body.isOnGround();
-    if (onGround && pos.y < next.y - 0.5) return 'fell';
+    // Down in the gap (below both the take-off and the landing): fell. (Before the jump, a leap up
+    // a level has us a block under the landing: that's the take-off, not a fall.)
+    if (onGround && pos.y < Math.min(prev.y, next.y) - 0.5) return 'fell';
     let dx = next.x - prev.x, dz = next.z - prev.z;
     if (Math.abs(dx) >= Math.abs(dz)) { dx = Math.sign(dx); dz = 0; } else { dz = Math.sign(dz); dx = 0; }
     const rx = pos.x - next.x, rz = pos.z - next.z;
     const along = rx * dx + rz * dz;
     const lateral = -rx * dz + rz * dx;
     const at = (a) => ({ x: next.x + dx * a, y: pos.y, z: next.z + dz * a });
+    // Walk or sprint: the slowest that makes it (core/jump.js). A sprint-jump onto a pillar a level
+    // down just goes over it.
+    const dyLand = Math.round(next.y - prev.y);
+    const sprint = gaitFor(gap, dyLand) === 'sprint';
+    // In the air: forward, nothing or back, whichever brings us down nearest the landing block's
+    // middle (a touch short of it: what's left of the speed carries us on after), and sideways
+    // back onto the line. The way a player steers a jump.
+    const last = this._air;
+    this._air = { x: pos.x, y: pos.y, z: pos.z };
+    if (!onGround) {
+      if (!last) return { steer: at(0.6), jump: false, sprint };
+      const v = (pos.x - last.x) * dx + (pos.z - last.z) * dz;
+      const vy = pos.y - last.y;
+      const landDy = next.y - pos.y;
+      const want = -along - 0.15; // (how far on the landing point is)
+      let best = null;
+      for (const hold of [1, 0, -1]) {
+        const d = landingAlong(v, vy, landDy, hold, this.sprinting);
+        if (d === null) continue;
+        const miss = Math.abs(d - want);
+        if (!best || miss < best.miss - 0.02) best = { hold, miss };
+      }
+      const hold = best ? best.hold : 1;
+      // Sideways: back toward the line through the landing block's middle.
+      const side = clamp(-lateral * 2, -1, 1);
+      const mx = dx * hold - dz * side, mz = dz * hold + dx * side;
+      const len = Math.hypot(mx, mz);
+      return { air: true, sprint, move: len < 0.05 ? null : { yaw: yawTo({ x: 0, z: 0 }, { x: mx, z: mz }), speed: Math.min(1, len) }, face: at(0.6) };
+    }
     // The take-off edge is gap + 0.5 before the landing block's centre; the box keeps a foothold
-    // ~0.3 past it. One block: a walking jump. Two or three: a sprint-jump (the run-up does it).
+    // ~0.3 past it.
     const edge = -(gap + 0.5);
-    if (!onGround || along > edge + 0.4) return { steer: at(0.6), jump: false, sprint: gap > 1 }; // in the air (or across): carry on
-    const aligned = Math.abs(lateral) < 0.25 && Math.abs(angleDiff(this.yaw, yawTo(pos, at(0)))) < 25;
-    if (!aligned && along > edge - 0.3) return { steer: at(edge - 0.8), jump: false, sprint: false }; // too close to the edge to fix it here
-    return { steer: at(Math.min(along + 1.2, 0.6)), jump: aligned && along > edge - 0.05, sprint: gap > 1 };
+    if (along > edge + 0.4) return { steer: at(0.6), jump: false, sprint }; // across (landed): carry on
+    const aligned = Math.abs(lateral) < (next.narrow ? 0.08 : 0.25) && Math.abs(angleDiff(this.yaw, yawTo(pos, at(0)))) < 25;
+    if (!aligned && along > edge - 0.3) {
+      // Too close to the edge to fix it on the move: stop, turn to face the jump and shuffle
+      // sideways onto the line where we stand (on a pillar there's nowhere to back off to).
+      const side = Math.abs(lateral) < (next.narrow ? 0.04 : 0.1) ? 0 : clamp(-lateral * 3, -1, 1);
+      const mx = -dz * side, mz = dx * side;
+      return { lineup: true, sprint: false, move: side ? { yaw: yawTo({ x: 0, z: 0 }, { x: mx, z: mz }), speed: Math.min(0.4, Math.abs(side)) } : null, face: at(0.6) };
+    }
+    // At the edge: jump if the speed we have carries it (core/jump.js reachFrom); if not (we came
+    // round a turn, or lined up standing still), back to the far side of the take-off block and
+    // run at it: a block's run is most of a sprint's speed.
+    const v = last ? (pos.x - last.x) * dx + (pos.z - last.z) * dz : 0;
+    const enough = reachFrom(v, sprint ? 'sprint' : 'walk', dyLand) >= gap + 0.1;
+    if (it.leapBack === it.idx) {
+      if (along > edge - 0.7) return { lineup: true, sprint: false, move: { yaw: yawTo(pos, at(edge - 0.75)), speed: 0.6 }, face: at(0.6) };
+      it.leapBack = null;
+    }
+    if (aligned && along > edge - 0.05 && !enough && it.leapBack !== -it.idx) {
+      it.leapBack = it.idx; // (once: a second go at it jumps from whatever speed it's got)
+      return { lineup: true, sprint: false, move: null, face: at(0.6) };
+    }
+    if (it.leapBack === null && along <= edge - 0.6) it.leapBack = -it.idx;
+    return { steer: at(Math.min(along + 1.2, 0.6)), jump: aligned && along > edge - 0.05, sprint };
   }
 
   /**

@@ -161,14 +161,16 @@ test('actions: tunnels through a wall when walking round is far', () => {
 test('actions: bridges a gap too deep to climb down, then walks on from the bridge', () => {
   // A 3-wide chasm 30 deep across the whole map.
   const w = makeWorld({ ground: (x) => (x >= 3 && x <= 5 ? 34 : 64) });
-  const plain = findPath(w.classify, { x: 0, y: 64, z: 0 }, { x: 9, y: 64, z: 0 }, { maxNodes: 3000 });
+  // (No jumping it: over a drop that deep only when told to risk it.)
+  const noRisk = { ...DEFAULT_COSTS, riskyLeap: null };
+  const plain = findPath(w.classify, { x: 0, y: 64, z: 0 }, { x: 9, y: 64, z: 0 }, { maxNodes: 3000, costs: noRisk });
   assert.equal(plain.complete, false);
-  const r = findPath(w.classify, { x: 0, y: 64, z: 0 }, { x: 9, y: 64, z: 0 }, { actions: { ...digAll(Infinity), budget: 5 }, maxNodes: 6000 });
+  const r = findPath(w.classify, { x: 0, y: 64, z: 0 }, { x: 9, y: 64, z: 0 }, { actions: { ...digAll(Infinity), budget: 5 }, maxNodes: 6000, costs: noRisk });
   assert.equal(r.complete, true);
   const bridges = r.path.filter((p) => p.move?.type === 'bridge');
   assert.equal(bridges.length, 3, `bridged ${bridges.length} blocks`);
   assert.ok(r.path.every((p) => p.y === 64), 'stays level');
-  const none = findPath(w.classify, { x: 0, y: 64, z: 0 }, { x: 9, y: 64, z: 0 }, { actions: { ...digAll(Infinity), budget: 2 }, maxNodes: 6000 });
+  const none = findPath(w.classify, { x: 0, y: 64, z: 0 }, { x: 9, y: 64, z: 0 }, { actions: { ...digAll(Infinity), budget: 2 }, maxNodes: 6000, costs: noRisk });
   assert.equal(none.complete, false, "can't bridge 3 with 2 blocks");
 });
 

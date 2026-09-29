@@ -2565,6 +2565,8 @@ export class Agent {
       // Air to spare and not hurt: routes may go under water (the surface never more than 5 blocks
       // up, core/pathfinder.js submerged; checkWater brings us up at half air whatever the route).
       if (this.body.airRatio() >= 0.95 && this.health() >= 10 && !this.testHold) c = { ...c, dive: 1.5 };
+      // Jumps over a deep drop (void, a ravine): the sure ones only, and not at all if switched off.
+      if (CONFIG.riskyJumps === false) c = { ...c, riskyLeap: null };
     } catch {}
     return c;
   }

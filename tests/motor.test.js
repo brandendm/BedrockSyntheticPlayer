@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { MotorController } from '../behavior_pack/scripts/core/motor.js';
-import { findPath, smoothPath, Cell } from '../behavior_pack/scripts/core/pathfinder.js';
+import { findPath, smoothPath, Cell, DEFAULT_COSTS } from '../behavior_pack/scripts/core/pathfinder.js';
 import { angleDiff, makeRng, dist2D } from '../behavior_pack/scripts/core/mathutil.js';
 import { makeWorld, SimBody, runMotor } from './helpers.js';
 
@@ -161,9 +161,17 @@ test('leaps a 1-block gap instead of going down and around', async () => {
   }
 });
 
-test('never leaps over a deep drop or lava', () => {
+test('over a deep drop only a sure jump, at a price (riskyLeap: null never); over lava never', () => {
   const deep = makeWorld({ ground: (x, z) => (x === 5 ? 50 : 64) });
-  assert.ok(!findPath(deep.classify, { x: 0, y: 64, z: 0 }, { x: 10, y: 64, z: 0 }).path.some((p) => p.move?.type === 'leap'));
+  const over = findPath(deep.classify, { x: 0, y: 64, z: 0 }, { x: 10, y: 64, z: 0 });
+  assert.ok(over.path.some((p) => p.move?.type === 'leap'), 'no way round: jumped');
+  assert.ok(!findPath(deep.classify, { x: 0, y: 64, z: 0 }, { x: 10, y: 64, z: 0 }, { costs: { ...DEFAULT_COSTS, riskyLeap: null } }).path.some((p) => p.move?.type === 'leap'));
+  // 4 wide and deep: past what's sure, never.
+  const wide = makeWorld({ ground: (x, z) => (x >= 5 && x <= 8 ? 40 : 64) });
+  assert.ok(!findPath(wide.classify, { x: 0, y: 64, z: 0 }, { x: 12, y: 64, z: 0 }).path.some((p) => p.move?.type === 'leap'));
+  // A way round a few blocks off: the price of the jump buys a short detour.
+  const gapped = makeWorld({ ground: (x, z) => (x === 5 && z < 3 && z > -30 ? 40 : 64) });
+  assert.ok(!findPath(gapped.classify, { x: 0, y: 64, z: 1 }, { x: 10, y: 64, z: 1 }).path.some((p) => p.move?.type === 'leap'), 'went round');
   const lava = makeWorld({ ground: (x, z) => (x === 5 ? 62 : 64), danger: [[5, 62, 0], [5, 62, 1], [5, 62, -1]].flatMap(([x, y, z]) => [[x, y, z]]) });
   const r = findPath(lava.classify, { x: 0, y: 64, z: 0 }, { x: 10, y: 64, z: 0 });
   assert.ok(!r.path.some((p, i) => p.move?.type === 'leap' && Math.abs(p.z) <= 1 && r.path[i - 1] && Math.abs(r.path[i - 1].z) <= 1 && p.z === r.path[i - 1].z && [-1, 0, 1].includes(p.z)), 'no leap over the lava');
