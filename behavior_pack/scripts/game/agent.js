@@ -6,7 +6,7 @@ import { MotorController, EYE_HEIGHT } from '../core/motor.js';
 import { searchJob, smoothPath, findPath, Cell, DEFAULT_COSTS } from '../core/pathfinder.js';
 import { dist3D, makeRng } from '../core/mathutil.js';
 import { decide, fleePoint, weaponDamage, MOBS, REACH_HIT, STOP_AT } from '../core/threat.js';
-import { fleeJabOrder, avoidCreepers, towerWorth, TOWER_H, fightMove, creeperFight, creeperMove, Stalemate, pickRefuge, bestWeapon, barricadeCells, SPEAR_DAMAGE, weaponReach, pickCreeperSwing, creeperWeapon, isSpear, awayPath, knockbackRoom, blockOffCells, guardCell, fleeJab, killSlotCells, killSlotWorth, dodgeArrow, CREEPER_LIGHT, CREEPER_CALM } from '../core/tactics.js';
+import { fleeJabOrder, avoidCreepers, towerWorth, TOWER_H, fightMove, creeperFight, creeperMove, Stalemate, pickRefuge, bestWeapon, barricadeCells, SPEAR_DAMAGE, weaponReach, pickCreeperSwing, creeperWeapon, isSpear, awayPath, knockbackRoom, blockOffCells, guardCell, fleeJab, killSlotCells, killSlotWorth, pinchWallCells, alcoveCells, dodgeArrow, CREEPER_LIGHT, CREEPER_CALM } from '../core/tactics.js';
 import { nextStep, STONE_TARGETS, TOOL_STONE, count, isLog } from '../core/recipes.js';
 import { settleStep, foodCount, FOOD_GOAL, isNight } from '../core/settle.js';
 import { goalChain } from '../core/goals.js';
@@ -611,7 +611,11 @@ export class Agent {
     const d = decide({ health: this.health(), damage: this.damage, isNight: this.isNight(), prevMode: this.mode, mobs, inWater, shield: this.shield, slot: this.slotHolds(), witches: this.toggles().witches });
     this.threatsNow = d.threats;
     // Cornered with nowhere better to run: fight the nearest thing that can be fought.
-    if (d.mode === 'flee' && (this.corneredUntil ?? 0) > t && d.reason !== 'creeper' && d.reason !== 'cover') {
+    // (Or squeezed and the creeper walled off behind us, out of sight and not hissing: the rest.)
+    const pw = this.pinchWall;
+    const behindWall = !!pw && t - pw.t < 1200 && pw.cells.every((c) => this.skills.blockAt(c) === pw.block) &&
+      !d.threats.some((m) => m.type === 'creeper' && m.dist <= 8 && (m.lit || m.visible));
+    if (d.mode === 'flee' && ((this.corneredUntil ?? 0) > t || (behindWall && d.reason === 'creeper')) && d.reason !== 'cover') {
       const fightable = (m) => !MOBS[m.type].never && m.type !== 'creeper' && m.dist <= 8 && (m.visible || m.attackedMe);
       const target = d.threats.find((m) => m.attackedMe && fightable(m)) ?? d.threats.find(fightable);
       if (target) { d.mode = 'fight'; d.target = target.id; d.reason = 'cornered'; }
@@ -1774,7 +1778,9 @@ export class Agent {
     }
     this.setBlocking(false);
     if (!this.jabbing) this.motor.setFocus(null); // (turned to jab something catching up: leave the head on it)
-    if ((t < this.nextRoute && this.motor.busy) || this.findingRefuge || this.walling) return;
+    if (this.walling || this.digging) return;
+    if (this.pinch(threats, t)) return;
+    if ((t < this.nextRoute && this.motor.busy) || this.findingRefuge) return;
     this.nextRoute = t + 20;
     this.findingRefuge = true;
     const gen = this.taskGen;
@@ -1917,6 +1923,84 @@ export class Agent {
     if (how === 'spear') this.spearNext = t + weaponReach(id).cooldown + 1;
     trace(`running: jabbed the ${best.m.type} with the ${how} at ${best.d.toFixed(2)}`);
     stopJab(); // and on
+  }
+
+  /**
+   * Squeezed in a passage (a tunnel, the quarry stairs): a creeper coming one way, the rest the other.
+   * Running either way runs into one of them. Two blocks across the creeper's way (core/tactics.js
+   * pinchWallCells), only if that really cuts it off (not round a tree or up the next step), then a
+   * kill slot across the other way if they're zombies, and the fight's with them. No blocks: dig
+   * them out of the passage's side (alcoveCells), which leaves a pocket out of its line to duck into
+   * if there's still not enough. Once per squeeze. Returns true while it's doing any of that.
+   */
+  pinch(threats, t) {
+    if (this.walling || this.digging) return true;
+    if (this.pinchWall && t - this.pinchWall.t < 600) return false; // (once: it's gone round, or over)
+    if (this.pinchDig && t - this.pinchDig.t > 600) this.pinchDig = null;
+    const me = this.body.getPos();
+    const cr = threats.filter((m) => m.type === 'creeper' && m.dist <= 8).sort((a, b) => a.dist - b.dist)[0];
+    if (!cr) return false;
+    const across = (m) => (m.pos.x - me.x) * (cr.pos.x - me.x) + (m.pos.z - me.z) * (cr.pos.z - me.z) < 0;
+    const rest = threats.filter((m) => m.type !== 'creeper' && m.dist <= 12 && across(m)).sort((a, b) => a.dist - b.dist);
+    if (!rest.length) return false;
+    const at = this.cellAt();
+    let cells = this.pinchDig?.wall ?? pinchWallCells(me, cr.pos, at);
+    if (cells && !this.pinchDig) {
+      if (t < (this.pinchNext ?? 0)) return false;
+      this.pinchNext = t + 10;
+      // Cut off with it there? (its path to us, the wall solid)
+      const w = this.classifier();
+      const shut = new Set(cells.map((c) => `${c.x},${c.y},${c.z}`));
+      try { if (findPath((x, y, z) => (shut.has(`${x},${y},${z}`) ? Cell.SOLID : w(x, y, z)), cr.pos, me, { tolerance: 1, maxNodes: 400 }).complete) cells = null; } catch { cells = null; }
+    }
+    if (!cells) return false;
+    if (threats.some((m) => cells.some((c) => Math.floor(m.pos.x) === c.x && Math.floor(m.pos.z) === c.z && Math.abs(Math.floor(m.pos.y) - c.y) <= 1))) return false;
+    const block = this.homestead.materialFor('stone');
+    const have = block ? invCounts(this.sim)[block] ?? 0 : 0;
+    const gen = this.taskGen;
+    if (block && have >= cells.length) {
+      this.walling = true;
+      this.setBlocking(false);
+      this.stopWalking();
+      trace(`squeezed: walling off the creeper's way (${cells.length} blocks, creeper ${cr.dist.toFixed(1)}, ${rest.length} ${rest[0].type} the other way)`);
+      this.homestead.placeFlow(gen, cells.map((c) => ({ cell: c, id: block })))
+        .then(() => {
+          const up = cells.filter((c) => this.skills.blockAt(c) === block);
+          for (const c of up) this.skills.markPlaced(c);
+          if (up.length) {
+            this.pinchWall = { cells: up, block, t: system.currentTick };
+            this.creeperWalls = [...(this.creeperWalls ?? []), { cells: up, block }];
+            this.say('Walled the creeper off: now the rest.');
+          }
+          trace(`squeezed: wall up (${up.length}/${cells.length})`);
+        })
+        .catch(() => {})
+        .finally(() => {
+          this.walling = false;
+          // The rest have the only way in now: a kill slot across it, if they're zombies.
+          if (this.pinchWall && gen === this.taskGen) this.buildSlot(rest, rest[0]);
+        });
+      return true;
+    }
+    // Short of blocks: dig them out of the side.
+    if (!this.pinchDig) {
+      const al = alcoveCells(me, cr.pos, at);
+      if (!al) return false;
+      this.pinchDig = { wall: cells, into: al.into, t, ducked: false };
+      this.digging = true;
+      this.setBlocking(false);
+      this.stopWalking();
+      trace(`squeezed, ${have} blocks: digging ${al.cells.length} out of the side for them`);
+      this.skills.mineFlow(gen, al.cells, () => ({ collect: true })).catch(() => {}).finally(() => { this.digging = false; });
+      return true;
+    }
+    // Dug and still short: into the pocket, out of its line.
+    if (!this.pinchDig.ducked) {
+      this.pinchDig.ducked = true;
+      this.motor.followPath([{ ...me }, this.pinchDig.into], { walk: true });
+      return true;
+    }
+    return false;
   }
 
   /**

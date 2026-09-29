@@ -170,17 +170,19 @@ const inside = (g) => g.H.isHome();
     `${got ? 'got in' : 'NOT in'}; sheltered elsewhere ${g.sheltered()}`, g);
 }
 
-// 3. Night, the doorway filled with something it can't break: digs in outside instead of standing there all night.
+// 3. Night, the doorway and doorstep filled with something it can't break (bedrock): the door moves
+// along the front wall (the old doorway walled up round it) and in it goes; no digging in outside.
 {
   const g = makeGame();
   g.set(g.fur.door, 'bedrock'); g.set({ ...g.fur.door, y: g.fur.door.y + 1 }, 'bedrock');
   g.set(g.fur.doorstep, 'bedrock'); g.set({ ...g.fur.doorstep, y: g.fur.doorstep.y + 1 }, 'bedrock');
-  // (Walls it may not break: the only way in is the door.)
   setNight(true);
-  const r1 = await g.H.nightAtHome(0);
-  const r2 = await g.H.nightAtHome(0);
+  let got = false, waited = 0;
+  g.S.wait = async (gen, n) => { system.advance(n); waited += n; if (inside(g)) { got = true; setNight(false); } else if (waited > 4000) setNight(false); };
+  await g.H.nightAtHome(0);
+  if (!got) await g.H.nightAtHome(0);
   setNight(false);
-  report("doorway blocked by what can't be broken", r1 === false && r2 === true && g.sheltered() === 1, `tries: ${r1}, ${r2}; dug in ${g.sheltered()} time(s)`, g);
+  report("doorway blocked by what can't be broken", got && (g.house.doorLx ?? 0) !== 0 && g.sheltered() === 0, `door moved to ${g.house.doorLx ?? 0} along the wall; ${got ? 'got in' : 'NOT in'}; dug in outside ${g.sheltered()} time(s)`, g);
 }
 
 // 4. The wrong thing in our furniture's spots (a player's furnace where the table goes, a block on the bed).
@@ -238,6 +240,49 @@ const inside = (g) => g.H.isHome();
   const g = makeGame();
   const st = g.H.houseStateNow();
   report('clean house', st.blocked === 0 && st.fire === 0 && st.damage === 0, `blocked ${st.blocked}, fire ${st.fire}, damage ${st.damage}`, g);
+}
+
+// 9. Obsidian where the crafting table goes (no diamond pickaxe): never swung at; the table's spot
+// moves to a free one in the room, out of the way through.
+{
+  const g = makeGame();
+  g.set(g.fur.table, 'obsidian');
+  const before = g.H.houseStateNow().blocked;
+  await g.H.clearHouse(0);
+  const fur = furnishings(g.house, g.house.dir);
+  const moved = key(fur.table) !== key(g.fur.table);
+  const left = g.H.houseObstructions().filter((c) => c.want !== 'crafting_table');
+  report('obsidian on the table\'s spot', before === 1 && moved && g.get(g.fur.table) === 'obsidian' && !left.length && g.standable(fur.stand), `table's spot ${moved ? `moved to ${key(fur.table)}` : 'NOT moved'}; obsidian ${g.get(g.fur.table)}; ${left.length} other things in the way; the stand still clear: ${g.standable(fur.stand)}`, g);
+}
+
+// 10. Obsidian somewhere harmless (over the furnace, head height by the wall): left be; the house
+// no longer counts as blocked (it used to try, fail, and come back every 3 minutes).
+{
+  const g = makeGame();
+  const spot = { ...g.fur.furnace, y: g.fur.furnace.y + 1 };
+  g.set(spot, 'obsidian');
+  await g.H.clearHouse(0);
+  const st = g.H.houseStateNow();
+  report('obsidian somewhere harmless', st.blocked === 0 && (g.house.doorLx ?? 0) === 0 && !Object.keys(g.house.moved ?? {}).length, `blocked ${st.blocked}; door ${g.house.doorLx ?? 0}; moved ${JSON.stringify(g.house.moved ?? {})}`, g);
+}
+
+// 11. Obsidian in the chest room's doorway: the doorway moves along the partition.
+{
+  const g = makeGame();
+  const fur0 = furnishings(g.house, g.house.dir);
+  g.set(fur0.doorway, 'obsidian');
+  await g.H.clearHouse(0);
+  const fur = furnishings(g.house, g.house.dir);
+  report('obsidian in the chest room\'s doorway', (g.house.doorwayLx ?? 0) !== 0 && g.standable(fur.doorway) && g.H.houseObstructions().length === 0, `doorway moved to ${g.house.doorwayLx ?? 0}; the new one open: ${g.standable(fur.doorway)}; left in the way ${g.H.houseObstructions().length}`, g);
+}
+
+// 12. With a diamond pickaxe: the obsidian's mined (and kept), nothing moved.
+{
+  const g = makeGame();
+  g.give('diamond_pickaxe', 1);
+  g.set(g.fur.table, 'obsidian');
+  await g.H.clearHouse(0);
+  report('obsidian, with a diamond pickaxe', g.get(g.fur.table) === 'air' && !Object.keys(g.house.moved ?? {}).length, `table's spot now ${g.get(g.fur.table)}; moved ${JSON.stringify(g.house.moved ?? {})}`, g);
 }
 
 const pass = results.filter(Boolean).length;

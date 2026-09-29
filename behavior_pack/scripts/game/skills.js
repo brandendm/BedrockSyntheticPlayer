@@ -9,7 +9,7 @@ import { EYE_HEIGHT } from '../core/motor.js';
 import { smoothPath, Cell, isWalkMove, isGround } from '../core/pathfinder.js';
 import { dist3D } from '../core/mathutil.js';
 import { toolFor, planCrafts, applyCraft, isLog, isPlanks, STONE_TARGETS, SHOVEL_BLOCKS, PICKAXE_BLOCKS, TOOL_STONE, count } from '../core/recipes.js';
-import { chooseTool, breakSeconds, cheapestPlaceable, spendableBlocks, blockSourceCost, itemValue, plankReserve } from '../core/costs.js';
+import { canBreak, chooseTool, breakSeconds, cheapestPlaceable, spendableBlocks, blockSourceCost, itemValue, plankReserve } from '../core/costs.js';
 import { invCounts, hold, take, give, container, findSlot } from './inventory.js';
 import { chooseSource, chooseSourceSticky, sourceKey, trustFor, trunksOf, EXPLORE_S, DIG_DOWN_S } from '../core/sourcing.js';
 import { castRay, canSee, ONE_TAP, isWatery } from './world.js';
@@ -687,6 +687,7 @@ export class Skills {
     if (!id || id === 'air') return true;
     if (this.isProtected(p) && !force) return false; // a step of our own staircase or tunnel floor (force: ore in it, filled back in after)
     if (/water|lava/.test(id)) return false;
+    if (!canBreak(id, invCounts(this.sim))) return false; // (obsidian without a diamond pickaxe, bedrock: never started on)
     if (this.touchesLava(p)) return false; // opening it would let lava in
 
     if (!this.inReach(p) && !(await this.goNear(gen, p, 3))) return false;

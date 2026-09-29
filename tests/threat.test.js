@@ -127,3 +127,13 @@ test('a witch is fought, not run from: it follows and throws from 10 blocks', ()
   // With a zombie too, where the race is close: still fight (running only gives it more throws).
   assert.equal(decide({ health: 20, damage: 5, isNight: true, mobs: [w, mob('zombie', 7, { targetingMe: true })] }).mode, 'fight');
 });
+
+test('a creeper with company: run while it is close; turn on the rest while it is well back', () => {
+  const z = mob('zombie', 5, { attackedMe: true });
+  assert.equal(decide({ health: 20, damage: 7, mobs: [mob('creeper', 7), z] }).mode, 'flee');
+  const back = decide({ health: 20, damage: 7, mobs: [mob('creeper', 12), z] });
+  assert.equal(back.mode, 'fight');
+  assert.equal(back.target, z.id);
+  assert.equal(decide({ health: 20, damage: 7, prevMode: 'fight', mobs: [mob('creeper', 9), z] }).mode, 'fight', 'at it already: until 8');
+  assert.equal(decide({ health: 20, damage: 7, prevMode: 'fight', mobs: [mob('creeper', 9, { lit: true }), z] }).mode, 'flee', 'hissing');
+});

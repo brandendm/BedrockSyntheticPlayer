@@ -112,7 +112,11 @@ export function decide({ health, damage = FIST_DAMAGE, isNight = false, prevMode
     const others = threats.some((m) => m !== creeper && (m.visible || m.attackedMe) &&
       (m.type === 'creeper' ? m.dist <= 8 : MOBS[m.type].kind === 'melee' ? m.dist <= 10 : m.dist <= 3));
     if (!others && creeper.canReach !== false && !inWater) return { mode: 'fight', target: creeper.id, threats, reason: 'creeper: keep it at arm\'s length' };
-    return { mode: 'flee', threats, reason: 'creeper' };
+    // Company, but the creeper's well back (it walks at about half a zombie's pace: running strings
+    // them out, the creeper last): turn on the rest while it's 10+ off (8+ once we're at it), then
+    // run again as it comes up. Running from all of them for ever never won the fight.
+    const creeperBack = !creeper.lit && creeper.dist > (prevMode === 'fight' ? 8 : 10) && !threats.some((m) => m !== creeper && m.type === 'creeper' && m.dist <= 10);
+    if (!creeperBack) return { mode: 'flee', threats, reason: 'creeper' };
   }
   // (witches: the goal switched off, `!bot goal witches off`: run from them as before)
   const never = threats.find((m) => (MOBS[m.type].never || (m.type === 'witch' && !witches)) && m.dist <= 16);

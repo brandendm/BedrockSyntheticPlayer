@@ -65,3 +65,37 @@ test('no sheep to be found: once it has given up looking, the rest of the list g
   assert.equal(settleStep({ ...base, bedDeferred: false }).step, 'explore', 'still looking');
   assert.equal(settleStep({ ...base, bedDeferred: true }).step, 'done', 'given up for now: on to the farm and the iron');
 });
+
+test('house round blocks it cannot break: door moved, things moved, harmless ones left', async () => {
+  const { planAroundFixed, frame, keepClear: kc, blueprint: bp, furnishings: fu } = await import('../behavior_pack/scripts/core/house.js');
+  const h = { x: 0, y: 64, z: 0, dir: 'north', layout: 'chests' };
+  const at = frame(h, h.dir);
+  // Obsidian in the doorway: the door moves along the wall; the old doorway is wall now.
+  const d = { ...h, ...planAroundFixed(h, h.dir, [at(0, 2, 0)]) };
+  assert.notEqual(d.doorLx, 0);
+  const walls = new Set(bp(d, d.dir).map(k));
+  assert.ok(walls.has(k(at(0, 2, 1))), 'the old doorway walled up');
+  assert.ok(!walls.has(k(at(d.doorLx, 2, 0))) && !walls.has(k(at(d.doorLx, 2, 1))), 'the new doorway open');
+  assert.equal(k(fu(d, d.dir).door), k(at(d.doorLx, 2)));
+  // Obsidian on the table's spot: the table moves (the front room's full: into the chest room).
+  const t = { ...h, ...planAroundFixed(h, h.dir, [at(-1, -1, 0)]) };
+  const tbl = fu(t, t.dir).table;
+  assert.notEqual(k(tbl), k(at(-1, -1)));
+  assert.ok(!kc(t, t.dir).some((c) => k(c) === k(at(-1, -1, 0))), 'the obsidian cell is no longer "in the way"');
+  // Harmless: over the furnace at head height. Nothing moves.
+  const hm = { ...h, ...planAroundFixed(h, h.dir, [at(-1, 0, 1)]) };
+  assert.equal(hm.doorLx, 0);
+  assert.deepEqual(hm.moved, {});
+  // The bed's head spot taken: the bed moves to two free cells with a free one beside.
+  const b = { ...h, ...planAroundFixed(h, h.dir, [at(1, 0, 0)]) };
+  const bed = fu(b, b.dir).bed;
+  assert.ok(b.moved.bed && (b.moved.bedNone || (k(bed.head) !== k(at(1, 0)) && k(bed.foot) !== k(at(1, 0)))));
+});
+
+test('canBreak: obsidian only with a diamond pickaxe, bedrock never', async () => {
+  const { canBreak } = await import('../behavior_pack/scripts/core/costs.js');
+  assert.equal(canBreak('obsidian', { iron_pickaxe: 1 }), false);
+  assert.equal(canBreak('obsidian', { diamond_pickaxe: 1 }), true);
+  assert.equal(canBreak('bedrock', { netherite_pickaxe: 1 }), false);
+  assert.equal(canBreak('cobblestone', {}), true);
+});

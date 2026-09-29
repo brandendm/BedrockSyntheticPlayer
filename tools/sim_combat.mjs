@@ -12,7 +12,7 @@ import { MotorController, EYE_HEIGHT } from '../behavior_pack/scripts/core/motor
 import { findPath, searchJob, smoothPath, Cell } from '../behavior_pack/scripts/core/pathfinder.js';
 import { decide, MOBS, weaponDamage, REACH_HIT } from '../behavior_pack/scripts/core/threat.js';
 import { readFileSync } from 'node:fs';
-import { fleeJabOrder, avoidCreepers, towerWorth, TOWER_H, fightMove, creeperMove, creeperFight, Stalemate, pickRefuge, barricadeCells, awayPath, weaponReach, creeperWeapon, bestWeapon, pickCreeperSwing, knockbackRoom, blockOffCells, fleeJab, killSlotCells, killSlotWorth, dodgeArrow, guardCell, blastDamage, bowFight, aimBow, bowPower, BOW_FULL } from '../behavior_pack/scripts/core/tactics.js';
+import { pinchWallCells, alcoveCells, fleeJabOrder, avoidCreepers, towerWorth, TOWER_H, fightMove, creeperMove, creeperFight, Stalemate, pickRefuge, barricadeCells, awayPath, weaponReach, creeperWeapon, bestWeapon, pickCreeperSwing, knockbackRoom, blockOffCells, fleeJab, killSlotCells, killSlotWorth, dodgeArrow, guardCell, blastDamage, bowFight, aimBow, bowPower, BOW_FULL } from '../behavior_pack/scripts/core/tactics.js';
 import { makeRng, dist3D } from '../behavior_pack/scripts/core/mathutil.js';
 import { SimBody } from '../tests/helpers.js';
 
@@ -25,6 +25,9 @@ const OLD = process.argv.includes('--old');
 const TOWER = process.env.TOWER !== '0', AVOID = process.env.AVOID !== '0', CJAB = process.env.CJAB !== '0';
 // CLIMB=0: running routes that only walk (no putting a block down to get up a ledge).
 const CLIMB = process.env.CLIMB !== '0';
+// PINCH=0: squeezed between a creeper and the rest, no walling off the creeper's side (or digging a
+// pocket out of its line), and no fighting back when cornered with a creeper about (as before).
+const PINCH = process.env.PINCH !== '0';
 const ONLY = process.argv.slice(2).find((a) => !a.startsWith('-'));
 
 // ---------- line of sight over the classifier (a voxel walk) ----------
@@ -181,6 +184,44 @@ function arena({ classify: base, bot, mobs, weapon = 'stone_sword', shield = fal
   const towerHolds = () => !!tower?.done && Math.floor(body.pos.x) === tower.x && Math.floor(body.pos.z) === tower.z && body.pos.y >= tower.top - 0.1;
   const towerSafe = (threats) => threats.filter((m) => m.dist <= 12).every((m) => CANT.has(m.type));
   let wallNext = 0;
+  // Squeezed in a passage, a creeper one way, the rest the other: wall its way off, else a pocket in the side.
+  let alcove = null, pinches = 0, walledOff = false;
+  const digQueue = [];
+  let digNext = 0;
+  function tryPinch(threats) {
+    if (wallQueue.length || digQueue.length) return true;
+    if (walledOff) return false; // (once: it's gone round, or over, the wall)
+    const cr = threats.filter((m) => m.type === 'creeper' && m.dist <= 8).sort((a, b) => a.dist - b.dist)[0];
+    // (the rest the other way: a pincer, not just company)
+    const across = (m) => (m.pos.x - body.pos.x) * (cr.pos.x - body.pos.x) + (m.pos.z - body.pos.z) * (cr.pos.z - body.pos.z) < 0;
+    if (!cr || !threats.some((m) => m.type !== 'creeper' && m.dist <= 12 && across(m))) return false;
+    // (planned before digging for blocks: the pocket is a third way out, which reads as open ground)
+    let cells = alcove?.wall ?? pinchWallCells(body.pos, cr.pos, at);
+    // Only if it cuts it off: not round a tree, or up the next step over.
+    if (cells && !alcove) {
+      const shut = new Set(cells.map((c) => `${c.x},${c.y},${c.z}`));
+      if (runPath((x, y, z) => (shut.has(`${x},${y},${z}`) ? Cell.SOLID : classify(x, y, z)), cr.pos, body.pos, 1, 400).complete) cells = null;
+    }
+    if (!cells) return false;
+    if (cells && blocks >= cells.length && !mobs.some((m) => m.hp > 0 && cells.some((c) => Math.floor(m.x) === c.x && Math.floor(m.z) === c.z && Math.abs(Math.floor(m.y) - c.y) <= 1))) {
+      for (const c of cells) if (at(c.x, c.y, c.z) === 'open') wallQueue.push(c);
+      walls++; pinches++; motor.stop(); walledOff = cells;
+      if (VERBOSE) log.push(`${t}: squeezed: walled off the creeper's way (${cells.length} blocks)`);
+      // Then the rest have the only way in: a kill slot across it, if they're zombies.
+      const shut = new Set(cells.map((c) => `${c.x},${c.y},${c.z}`));
+      const at2 = (x, y, z) => (shut.has(`${x},${y},${z}`) ? 'solid' : at(x, y, z));
+      const rest = threats.filter((m) => m.type !== 'creeper' && m.dist <= 12);
+      const ks = SLOT && !slot && blocks > cells.length && rest.length && killSlotWorth({ threats: rest.map((m) => ({ type: m.type, dist: m.dist })), health: hp }) && killSlotCells(body.pos, rest[0].pos, at2);
+      if (ks && blocks - cells.length >= ks.cells.length) { slot = ks; slots++; wallQueue.push(...ks.cells); if (VERBOSE) log.push(`${t}: and a kill slot on the other side (${ks.cells.length} blocks)`); }
+      return true;
+    }
+    // No blocks: dig them out of the passage's side (a pocket out of its line, left behind), then wall.
+    const al = !alcove && alcoveCells(body.pos, cr.pos, at);
+    if (al) { alcove = { ...al, wall: cells }; digQueue.push(...al.cells); pinches++; motor.stop(); if (VERBOSE) log.push(`${t}: squeezed, no blocks: digging ${al.cells.length} out of the side for them`); return true; }
+    // Dug and still short (or no rock to dig): duck into the pocket out of its line.
+    if (alcove && !alcove.ducked && !digQueue.length) { alcove.ducked = true; routeSeq++; motor.followPath([{ ...body.pos }, alcove.into], { walk: true }); return true; }
+    return false;
+  }
   function tryWall(threats) {
     if (wallQueue.length) return true;
     const near = threats.filter((m) => m.dist <= 12).sort((a, b) => a.dist - b.dist)[0];
@@ -344,7 +385,8 @@ function arena({ classify: base, bot, mobs, weapon = 'stone_sword', shield = fal
         return { id: m.id, type: m.type, hp: m.hp, lit: m.type === 'creeper' && m.fuse >= 0, dist: d, visible, targetingMe: m.aware !== false && d <= 16, attackedMe: t - m.lastHitMe < 200, recent: visible || t - (m.seenAt ?? -1e9) < 100, dy: m.y - me.y, canReach, pos: { x: m.x, y: m.y, z: m.z }, inWater: false, ref: m };
       });
       const d = decide({ health: hp, damage, isNight: night, prevMode: mode, mobs: seen, shield, slot: slotHolds() });
-      if (d.mode === 'flee' && corneredUntil > t && d.reason !== 'creeper' && d.reason !== 'cover') {
+      const behindWall = walledOff && walledOff.every((c) => placed.has(`${c.x},${c.y},${c.z}`));
+      if (d.mode === 'flee' && (corneredUntil > t || (behindWall && d.reason === 'creeper' && !d.threats.some((m) => m.type === 'creeper' && (m.lit || m.visible) && m.dist <= 8))) && (d.reason !== 'creeper' || (PINCH && !OLD)) && d.reason !== 'cover') {
         const target = d.threats.find((m) => m.type !== 'creeper' && m.dist <= 8);
         if (target) { d.mode = 'fight'; d.target = target.id; }
       }
@@ -368,6 +410,8 @@ function arena({ classify: base, bot, mobs, weapon = 'stone_sword', shield = fal
         const creeper = d.threats.find((m) => m.type === 'creeper');
         if (creeper && creeperMove({ me, creeper: creeper.pos, shield, lit: creeper.lit }) === 'block') {
           blocking = true; stopWalking(); motor.setFocus({ x: creeper.pos.x, y: creeper.pos.y + 1, z: creeper.pos.z });
+        } else if (PINCH && !OLD && tryPinch(d.threats)) {
+          // (walling off the creeper, or digging out of its way)
         } else if ((tower && !tower.done) || climbRoute) {
           // (building it, or on the way up a ledge)
         } else if (t >= nextRoute || !motor.busy) {
@@ -486,6 +530,10 @@ function arena({ classify: base, bot, mobs, weapon = 'stone_sword', shield = fal
       }
     }
     for (const m of mobs) if (m.type === 'creeper' && m.hp > 0 && dist3D(body.pos, m) <= 3) creeperClose++;
+    if (digQueue.length && t >= digNext) {
+      const c = digQueue.shift();
+      blown.add(`${c.x},${c.y},${c.z}`); digNext = t + 8; blocks++; // (stone, a stone pickaxe: ~0.4 s; a cobblestone each)
+    }
     if (wallQueue.length && t >= wallNext) {
       const c = wallQueue.shift();
       const inIt = mobs.some((m) => m.hp > 0 && Math.floor(m.x) === c.x && Math.floor(m.z) === c.z && Math.floor(m.y) <= c.y && Math.floor(m.y) + 1 >= c.y);
@@ -686,7 +734,7 @@ function arena({ classify: base, bot, mobs, weapon = 'stone_sword', shield = fal
     }
     if (!mobs.some((m) => m.hp > 0)) break;
   }
-  return { climbs, killer: hp <= 0 ? lastHurt : null, towers, creeperClose, creeperJabs, closeTicks, potionsThrown, potionHits, potionHp, blastHp, bowShots, bowHits, arrowsLeft, dodges, arrowsShot, arrowHits, slots, jabs, crater, misses, explosions, walls, foughtAtDeath, hp: Math.max(0, hp), kills, total: mobs.length, ticks: t, worstIdle, hitsTaken, blocked, gaveUp, log };
+  return { pinches, climbs, killer: hp <= 0 ? lastHurt : null, towers, creeperClose, creeperJabs, closeTicks, potionsThrown, potionHits, potionHp, blastHp, bowShots, bowHits, arrowsLeft, dodges, arrowsShot, arrowHits, slots, jabs, crater, misses, explosions, walls, foughtAtDeath, hp: Math.max(0, hp), kills, total: mobs.length, ticks: t, worstIdle, hitsTaken, blocked, gaveUp, log };
 }
 
 const standOffOld = (me, mob, r = 2.8) => { const dx = me.x - mob.x, dz = me.z - mob.z, l = Math.hypot(dx, dz) || 1; return { x: mob.x + dx / l * r, y: mob.y, z: mob.z + dz / l * r }; };
@@ -778,6 +826,13 @@ const SCENARIOS = {
   'creeper walking in, bow': () => ({ classify: flat(), weapon: ['bow', 'stone_sword'], bot: { x: 0.5, y: 64, z: 0.5 }, mobs: [{ type: 'creeper', x: 14.5, y: 64, z: 0.5 }] }),
   'skeleton in the open, bow': () => ({ classify: flat(), weapon: ['bow', 'stone_sword'], bot: { x: 0.5, y: 64, z: 0.5 }, mobs: [{ type: 'skeleton', x: 14.5, y: 64, z: 0.5 }] }),
   'zombie, open field, stone sword': () => ({ classify: flat(), bot: { x: 0.5, y: 64, z: 0.5 }, mobs: [{ type: 'zombie', x: 10.5, y: 64, z: 0.5 }] }),
+  'squeezed in the open: two zombies one side, a creeper the other, sword + spear': () => ({ classify: flat(), bot: { x: 0.5, y: 64, z: 0.5 }, weapon: ['stone_sword', 'stone_spear'], mobs: [{ type: 'zombie', x: 6.5, y: 64, z: 0.5 }, { type: 'zombie', x: 7.5, y: 64, z: 1.5 }, { type: 'creeper', x: -6.5, y: 64, z: 0.5 }], minHp: 8 }),
+  'squeezed in the open, stone sword only': () => ({ classify: flat(), bot: { x: 0.5, y: 64, z: 0.5 }, weapon: 'stone_sword', mobs: [{ type: 'zombie', x: 6.5, y: 64, z: 0.5 }, { type: 'zombie', x: 7.5, y: 64, z: 1.5 }, { type: 'creeper', x: -6.5, y: 64, z: 0.5 }], minHp: 8 }),
+  'squeezed in the open, the creeper well back: the zombies first, sword + spear': () => ({ classify: flat(), bot: { x: 0.5, y: 64, z: 0.5 }, weapon: ['stone_sword', 'stone_spear'], mobs: [{ type: 'zombie', x: 6.5, y: 64, z: 0.5 }, { type: 'zombie', x: 7.5, y: 64, z: 1.5 }, { type: 'creeper', x: -13.5, y: 64, z: 0.5 }], minKills: 2, minHp: 8 }),
+  'squeezed in the open, the creeper well back, stone sword': () => ({ classify: flat(), bot: { x: 0.5, y: 64, z: 0.5 }, mobs: [{ type: 'zombie', x: 6.5, y: 64, z: 0.5 }, { type: 'zombie', x: 7.5, y: 64, z: 1.5 }, { type: 'creeper', x: -13.5, y: 64, z: 0.5 }], minKills: 1, minHp: 3 }),
+  'squeezed in a tunnel: zombies one end, a creeper the other, sword + spear': () => ({ classify: (x, y, z) => (z === 0 && x >= -12 && x <= 12 && (y === 40 || y === 41) ? Cell.AIR : Cell.SOLID), bot: { x: 0.5, y: 40, z: 0.5 }, weapon: ['stone_sword', 'stone_spear'], mobs: [{ type: 'zombie', x: 6.5, y: 40, z: 0.5 }, { type: 'zombie', x: 8.5, y: 40, z: 0.5 }, { type: 'creeper', x: -6.5, y: 40, z: 0.5 }] }),
+  'squeezed in a tunnel, stone sword only': () => ({ classify: (x, y, z) => (z === 0 && x >= -12 && x <= 12 && (y === 40 || y === 41) ? Cell.AIR : Cell.SOLID), bot: { x: 0.5, y: 40, z: 0.5 }, weapon: 'stone_sword', mobs: [{ type: 'zombie', x: 6.5, y: 40, z: 0.5 }, { type: 'zombie', x: 8.5, y: 40, z: 0.5 }, { type: 'creeper', x: -6.5, y: 40, z: 0.5 }] }),
+  'squeezed in a tunnel, no blocks: a pocket in the side': () => ({ classify: (x, y, z) => (z === 0 && x >= -12 && x <= 12 && (y === 40 || y === 41) ? Cell.AIR : Cell.SOLID), bot: { x: 0.5, y: 40, z: 0.5 }, weapon: ['stone_sword', 'stone_spear'], blocks: 0, mobs: [{ type: 'zombie', x: 6.5, y: 40, z: 0.5 }, { type: 'zombie', x: 8.5, y: 40, z: 0.5 }, { type: 'creeper', x: -6.5, y: 40, z: 0.5 }] }),
   'two zombies, iron sword + shield': () => ({ classify: flat(), bot: { x: 0.5, y: 64, z: 0.5 }, weapon: 'iron_sword', shield: true, mobs: [{ type: 'zombie', x: 9.5, y: 64, z: 2.5 }, { type: 'zombie', x: 10.5, y: 64, z: -3.5 }] }),
   'skeleton in the open, stone sword': () => ({ classify: flat(), bot: { x: 0.5, y: 64, z: 0.5 }, mobs: [{ type: 'skeleton', x: 12.5, y: 64, z: 0.5 }] }),
   'skeleton in the open, with a shield': () => ({ classify: flat(), bot: { x: 0.5, y: 64, z: 0.5 }, shield: true, mobs: [{ type: 'skeleton', x: 12.5, y: 64, z: 0.5 }] }),
@@ -1162,7 +1217,7 @@ for (const [name, make] of Object.entries(SCENARIOS)) {
   const r = arena(sc);
   const lived = r.hp > 0;
   const stared = r.worstIdle >= 160; // 8 s of doing nothing while hunted
-  const ok = lived && !stared && r.hp >= (sc.minHp ?? 1);
+  const ok = lived && !stared && r.hp >= (sc.minHp ?? 1) && r.kills >= (sc.minKills ?? 0);
   if (!ok) failed++;
   console.log(`${ok ? 'ok  ' : 'FAIL'} ${name}: ${lived ? `lived (${r.hp.toFixed(0)} hp)` : 'DIED'}, killed ${r.kills}/${r.total}, hits taken ${r.hitsTaken}, blocked ${r.blocked}, gave up ${r.gaveUp}, longest idle while hunted ${(r.worstIdle / 20).toFixed(1)} s, ${(r.ticks / 20).toFixed(0)} s`);
   if (VERBOSE) for (const l of r.log) console.log(`    ${l}`);

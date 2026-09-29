@@ -465,6 +465,61 @@ export function oneWayIn(me, threat, at) {
   return (threat.x - me.x) * w.dx + (threat.z - me.z) * w.dz > 0 ? w : null;
 }
 
+/** The ways out of our cell we could walk (level, a step up or down): [{ x, y, z, dx, dz }]. */
+function waysOut(me, at) {
+  const f = { x: Math.floor(me.x), y: Math.floor(me.y), z: Math.floor(me.z) };
+  const ways = [];
+  for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+    for (const dy of [0, 1, -1]) {
+      const x = f.x + dx, y = f.y + dy, z = f.z + dz;
+      if (at(x, y, z) === 'open' && at(x, y + 1, z) === 'open' && at(x, y - 1, z) === 'solid' && (dy <= 0 || at(f.x, f.y + 2, f.z) === 'open')) { ways.push({ x, y, z, dx, dz }); break; }
+    }
+  }
+  return ways;
+}
+
+/**
+ * Squeezed in a passage (a tunnel, the quarry stairs: two ways at most), a creeper coming one way and
+ * something else the other: two blocks across the creeper's way (feet and head height of the next
+ * cell toward it; over head too on stairs going up). It can't get to us, and the blocks between take
+ * most of its blast; what's left is a fight with the rest (a kill slot on their side, if they're
+ * zombies). Returns the cells to fill, or null (open ground, or the creeper's not up a way).
+ */
+export function pinchWallCells(me, creeper, at) {
+  const ways = waysOut(me, at);
+  if (!ways.length || ways.length > 2) return null;
+  const f = { x: Math.floor(me.x), y: Math.floor(me.y), z: Math.floor(me.z) };
+  const w = ways.find((v) => (creeper.x - me.x) * v.dx + (creeper.z - me.z) * v.dz > 0.5);
+  if (!w) return null;
+  const cells = [{ x: w.x, y: w.y, z: w.z }, { x: w.x, y: w.y + 1, z: w.z }];
+  if (w.y > f.y && at(w.x, w.y + 2, w.z) === 'open') cells.push({ x: w.x, y: w.y + 2, z: w.z });
+  return cells;
+}
+
+/**
+ * The same squeeze with no blocks to wall it off: dig sideways into the passage's side (head, feet,
+ * and the feet cell beyond if that's rock too) for the blocks to do it with; what's left is a pocket
+ * out of the line the creeper comes along, somewhere to duck into if the wall doesn't get built.
+ * Returns { cells: to dig, in order, into: the pocket } or null.
+ */
+export function alcoveCells(me, creeper, at) {
+  const f = { x: Math.floor(me.x), y: Math.floor(me.y), z: Math.floor(me.z) };
+  const ways = waysOut(me, at);
+  if (ways.length > 2) return null;
+  // Across the line to the creeper: its sideways directions.
+  const along = Math.abs(creeper.x - me.x) >= Math.abs(creeper.z - me.z) ? [1, 0] : [0, 1];
+  for (const [dx, dz] of along[0] ? [[0, 1], [0, -1]] : [[1, 0], [-1, 0]]) {
+    const c = { x: f.x + dx, y: f.y, z: f.z + dz };
+    if (at(c.x, c.y, c.z) === 'solid' && at(c.x, c.y + 1, c.z) === 'solid' && at(c.x, c.y - 1, c.z) === 'solid') {
+      const cells = [{ ...c, y: c.y + 1 }, c];
+      const b = { x: c.x + dx, y: c.y, z: c.z + dz };
+      if (at(b.x, b.y, b.z) === 'solid') cells.push(b);
+      return { cells, into: { x: c.x + 0.5, y: c.y, z: c.z + 0.5 } };
+    }
+  }
+  return null;
+}
+
 /**
  * A kill slot: at a dead end (a tunnel's end, a 1-wide passage with the only way in toward them)
  * with tall melee mobs coming, a block at our feet in the next cell toward them, and one over head

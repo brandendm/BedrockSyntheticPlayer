@@ -6,6 +6,8 @@
 // hardness * 5 by hand on blocks that need a tool to drop anything.
 /** @type {Array<[RegExp, number]>} */
 const HARDNESS = [
+  [/^(obsidian|crying_obsidian|respawn_anchor|netherite_block|ender_chest)$/, 50],
+  [/^ancient_debris$/, 30],
   [/^(dirt|coarse_dirt|grass_block|podzol|mycelium|rooted_dirt|farmland|grass_path|dirt_path|sand|red_sand|clay|mud|soul_sand|soul_soil)$/, 0.5],
   [/^(gravel|suspicious_gravel)$/, 0.6],
   [/^(snow_layer)$/, 0.1],
@@ -26,6 +28,22 @@ const HARDNESS = [
   [/^obsidian$/, 50],
 ];
 
+// Never breakable by a player in survival, whatever they hold.
+const NEVER_BREAKS = /^(bedrock|barrier|command_block|chain_command_block|repeating_command_block|structure_block|structure_void|jigsaw|end_portal_frame|end_portal|end_gateway|portal|reinforced_deepslate|allow|deny|border_block|light_block.*)$/;
+// Only with a diamond pickaxe or better (anything less takes minutes and drops nothing).
+const DIAMOND_ONLY = /^(obsidian|crying_obsidian|respawn_anchor|netherite_block|ancient_debris|ender_chest)$/;
+
+/**
+ * Can we break this with what we carry, in a reasonable time? (Obsidian without a diamond pickaxe:
+ * ~250 s and nothing for it; bedrock: never.) The bot never starts on one it can't.
+ */
+export function canBreak(id, inv = {}) {
+  const b = String(id ?? '').replace(/^minecraft:/, '');
+  if (NEVER_BREAKS.test(b)) return false;
+  if (DIAMOND_ONLY.test(b)) return Object.keys(inv).some((k) => /^(diamond|netherite)_pickaxe$/.test(k) && inv[k] > 0);
+  return true;
+}
+
 export function hardness(id) {
   for (const [re, h] of HARDNESS) if (re.test(id)) return h;
   return 1;
@@ -36,7 +54,7 @@ export const TOOL_KIND = [
   [/^(dirt|coarse_dirt|grass_block|podzol|mycelium|rooted_dirt|farmland|grass_path|dirt_path|sand|red_sand|clay|mud|soul_sand|soul_soil|gravel|suspicious_gravel|snow|snow_layer)$/, 'shovel'],
   [/(_log|_wood|_stem|_hyphae|_planks)$|^crafting_table$|^mangrove_roots$/, 'axe'],
   [/^muddy_mangrove_roots$/, 'shovel'],
-  [/^(stone|cobblestone|cobbled_deepslate|deepslate|andesite|diorite|granite|tuff|calcite|blackstone|basalt|smooth_basalt|dripstone_block|sandstone|red_sandstone|netherrack|mossy_cobblestone|smooth_stone|obsidian|furnace|lit_furnace|blast_furnace|lit_blast_furnace|smoker|lit_smoker)$|_ore$/, 'pickaxe'],
+  [/^(stone|cobblestone|cobbled_deepslate|deepslate|andesite|diorite|granite|tuff|calcite|blackstone|basalt|smooth_basalt|dripstone_block|sandstone|red_sandstone|netherrack|mossy_cobblestone|smooth_stone|obsidian|crying_obsidian|respawn_anchor|netherite_block|ancient_debris|ender_chest|furnace|lit_furnace|blast_furnace|lit_blast_furnace|smoker|lit_smoker)$|_ore$/, 'pickaxe'],
 ];
 
 export function toolKindFor(id) {

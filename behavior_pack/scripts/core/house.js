@@ -42,12 +42,27 @@ export const WINDOWS = [[-2, 0, 2], [2, 0, 2]];
 // The chest room's doorway: open, two high, in the middle of the partition.
 const DOORWAY = [[0, -2, 0], [0, -2, 1]];
 
+/**
+ * A house adapted round blocks it can't shift (someone's obsidian, bedrock): fields kept on the
+ * house object (planAroundFixed). doorLx: where along the front wall the door is (0, else -1 or 1);
+ * doorwayLx: the chest room's doorway along the partition; moved: { name: [lx, lz] } a thing's
+ * new spot (or null: no room for it); accepted: [[lx, lz, h]] cells left as they are.
+ */
+const adapt = (origin) => ({ d: origin?.doorLx ?? 0, dw: origin?.doorwayLx ?? 0, moved: origin?.moved ?? {}, accepted: origin?.accepted ?? [] });
+
+/** The house's local coordinates of world point p (the inverse of frame). */
+export function toLocal(origin, dir, p) {
+  const f = DIRS[dir], r = { x: -f.z, z: f.x };
+  const dx = Math.floor(p.x) - origin.x, dz = Math.floor(p.z) - origin.z;
+  return [dx * r.x + dz * r.z, dx * f.x + dz * f.z, Math.floor(p.y) - origin.y];
+}
+
 /** The layout's walls (outside and the partition) and what's left open in them. */
-function shape(layout) {
+function shape(layout, d = 0, dw = 0) {
   const back = backOf(layout);
   const isWall = (lx, lz) => Math.abs(lx) === 2 || lz === 2 || lz === back || (layout === 'chests' && lz === -2);
   const isCorner = (lx, lz) => Math.abs(lx) === 2 && (lz === 2 || lz === back);
-  const open = [...DOOR, ...WINDOWS, ...(layout === 'chests' ? DOORWAY : [])];
+  const open = [...DOOR.map(([, b, c]) => [d, b, c]), ...WINDOWS, ...(layout === 'chests' ? DOORWAY.map(([, b, c]) => [dw, b, c]) : [])];
   const skip = (lx, lz, h) => open.some(([a, b, c]) => a === lx && b === lz && c === h);
   return { back, isWall, isCorner, skip };
 }
@@ -58,7 +73,8 @@ function shape(layout) {
  */
 export function blueprint(origin, dir) {
   const layout = layoutOf(origin);
-  const { back, isWall, isCorner, skip } = shape(layout);
+  const A = adapt(origin);
+  const { back, isWall, isCorner, skip } = shape(layout, A.d, A.dw);
   const at = frame(origin, dir);
   const out = [];
   for (let h = 0; h <= 2; h++) {
@@ -78,10 +94,10 @@ export function blueprint(origin, dir) {
 
 /** Cells that must be clear (air or plants) before building: the whole footprint up to the roof, plus the doorstep. */
 export function clearance(origin, dir) {
-  const at = frame(origin, dir), back = backOf(layoutOf(origin));
+  const at = frame(origin, dir), back = backOf(layoutOf(origin)), d = adapt(origin).d;
   const out = [];
   for (let lx = -2; lx <= 2; lx++) for (let lz = back; lz <= 3; lz++) {
-    if (lz === 3 && lx !== 0) continue;
+    if (lz === 3 && lx !== d) continue;
     for (let h = 0; h <= 3; h++) out.push(at(lx, lz, h));
   }
   return out;
@@ -89,10 +105,10 @@ export function clearance(origin, dir) {
 
 /** Ground cells (one below the floor) that must be solid: the footprint and the doorstep. */
 export function footing(origin, dir) {
-  const at = frame(origin, dir), back = backOf(layoutOf(origin));
+  const at = frame(origin, dir), back = backOf(layoutOf(origin)), d = adapt(origin).d;
   const out = [];
   for (let lx = -2; lx <= 2; lx++) for (let lz = back; lz <= 3; lz++) {
-    if (lz === 3 && lx !== 0) continue;
+    if (lz === 3 && lx !== d) continue;
     out.push(at(lx, lz, -1));
   }
   return out;
@@ -108,47 +124,64 @@ export const CHEST_KINDS = [
 
 /** Where things go inside, and where to stand to place them. */
 export function furnishings(origin, dir) {
-  const at = frame(origin, dir);
+  const at0 = frame(origin, dir);
   const layout = layoutOf(origin);
+  const A = adapt(origin);
+  const at = at0;
+  // A thing's spot: where it was moved to (planAroundFixed), else its own.
+  const spot = (name, lx, lz, h = 0) => { const m = A.moved[name]; return m ? at0(m[0], m[1], h) : at0(lx, lz, h); };
+  const bedM = A.moved.bed;
   const common = {
-    stand: at(0, 0),                   // middle of the front room: its walls and roof are in reach
-    doorstep: at(0, 3),
-    door: at(0, 2),
-    table: at(-1, -1),
-    furnace: at(-1, 0),
-    bed: { foot: at(1, -1), head: at(1, 0), standAt: at(1, 1) }, // foot at the back, head toward the front; homestead checks both cells after placing
-    torchesOutside: [-1, 1].map((lx) => ({ on: at(lx, 2, 1), toward: at(lx, 3, 1) })),
+    stand: spot('stand', 0, 0),        // middle of the front room: its walls and roof are in reach
+    doorstep: at(A.d, 3),
+    door: at(A.d, 2),
+    table: spot('table', -1, -1),
+    furnace: spot('furnace', -1, 0),
+    // foot at the back, head toward the front; homestead checks both cells after placing
+    bed: bedM ? { foot: at0(bedM.foot[0], bedM.foot[1]), head: at0(bedM.head[0], bedM.head[1]), standAt: at0(bedM.standAt[0], bedM.standAt[1]) } : { foot: at(1, -1), head: at(1, 0), standAt: at(1, 1) },
+    torchesOutside: [A.d - 1, A.d + 1].filter((lx) => Math.abs(lx) <= 2).map((lx) => ({ on: at(lx, 2, 1), toward: at(lx, 3, 1) })),
+    // Things there's no room for at all (a spot taken for good, nowhere else in the room): the
+    // house counts as having them (homestead.houseState), so nothing waits on them.
+    noRoom: [...Object.keys(A.moved).filter((k) => A.moved[k] === null), ...(A.moved.bedNone ? ['bed'] : [])],
   };
   if (layout === 'chests') {
     // Chests in the chest room's corners, each with a sign on the side wall over it (facing the
     // path down the middle); the torches on the partition (over the bed's foot) and the back wall.
     const corners = [[-1, -5], [1, -5], [-1, -3], [1, -3]];
+    const chestAt = (i) => A.moved[`chest${i}`] ?? corners[i];
+    // (A chest that had to move keeps no sign: there's no wall beside its new spot to hang it on.)
+    const signed = [0, 1, 2, 3].filter((i) => !A.moved[`chest${i}`] && A.moved[`chest${i}`] !== null);
+    const stand2 = spot('stand2', 0, -4);
     return {
       ...common,
       layout,
       // A second furnace, for food (the first does ore and charcoal): the front room's free corner by the door.
-      furnace2: at(-1, 1),
-      stands: [at(0, 0), at(0, -4)],
-      chestStand: at(0, -4),
+      furnace2: A.moved.furnace2 === null ? null : spot('furnace2', -1, 1),
+      stands: [common.stand, stand2],
+      chestStand: stand2,
       torchInside: { on: at(1, -2, 1), toward: at(1, -1, 1) },
       torchChests: { on: at(0, -6, 1), toward: at(0, -5, 1) },
-      chests: corners.map(([lx, lz]) => at(lx, lz)),
-      signs: corners.map(([lx, lz], i) => ({ cell: at(lx, lz, 1), on: at(Math.sign(lx) * 2, lz, 1), text: CHEST_KINDS[i].sign, kind: CHEST_KINDS[i].kind })),
+      chests: [0, 1, 2, 3].filter((i) => A.moved[`chest${i}`] !== null).map((i) => at0(chestAt(i)[0], chestAt(i)[1])),
+      chestKinds: [0, 1, 2, 3].filter((i) => A.moved[`chest${i}`] !== null).map((i) => CHEST_KINDS[i].kind),
+      signs: signed.map((i) => { const [lx, lz] = corners[i]; return { cell: at(lx, lz, 1), on: at(Math.sign(lx) * 2, lz, 1), text: CHEST_KINDS[i].sign, kind: CHEST_KINDS[i].kind }; }),
+      doorway: at(A.dw, -2),
     };
   }
   return {
     ...common,
     layout,
     furnace2: null, // (no room for a second in a cabin)
-    stands: [at(0, 0)],
-    chestStand: at(0, 0),
+    stands: [common.stand],
+    chestStand: common.stand,
     torchInside: { on: at(0, -2, 1), toward: at(0, -1, 1) },     // wall torch on the back wall
     torchChests: null,
     // Chests: the front corner left of the door, then the middle of the back wall (under the torch).
     // Neither is in the way (door -> middle of the room -> bed side), and both are in reach from
     // the middle of the room. Not side by side, so each stays a single chest of its own.
-    chests: [at(-1, 1), at(0, -1)],
+    chests: [0, 1].filter((i) => A.moved[`chest${i}`] !== null).map((i) => { const m = A.moved[`chest${i}`]; const d = [[-1, 1], [0, -1]][i]; return m ? at0(m[0], m[1]) : at0(d[0], d[1]); }),
     signs: [],
+    chestKinds: null,
+    doorway: null,
   };
 }
 
@@ -174,18 +207,115 @@ export function keepClear(origin, dir) {
   for (const t of [fur.torchInside, fur.torchChests, ...fur.torchesOutside].filter(Boolean)) want.set(k(t.toward), 'torch');
   want.set(k(fur.door), 'door');
   want.set(k({ ...fur.door, y: fur.door.y + 1 }), 'door');
-  const { isWall, skip } = shape(layout);
+  const A = adapt(origin);
+  const { isWall, skip } = shape(layout, A.d, A.dw);
+  const acc = new Set(A.accepted.map((c) => c.join(',')));
   const out = [];
-  const add = (p) => { const w = want.get(k(p)); out.push(w ? { ...p, want: w } : { ...p }); };
+  const add = (p, local) => { if (acc.has(local.join(','))) return; const w = want.get(k(p)); out.push(w ? { ...p, want: w } : { ...p }); };
   for (let lx = -2; lx <= 2; lx++) for (let lz = back; lz <= 3; lz++) for (let h = 0; h <= 2; h++) {
-    if (lz === 3) { if (lx === 0 && h <= 1) add(at(lx, lz, h)); continue; } // the doorstep
+    if (lz === 3) { if (lx === A.d && h <= 1) add(at(lx, lz, h), [lx, lz, h]); continue; } // the doorstep
     // Inside the walls, and the openings in them we walk through (the door, the chest room's doorway).
-    if (isWall(lx, lz) && !(skip(lx, lz, h) && lx === 0)) continue;
-    add(at(lx, lz, h));
+    if (isWall(lx, lz) && !(skip(lx, lz, h) && (lz === 2 ? lx === A.d : lz === -2 ? lx === A.dw : false))) continue;
+    add(at(lx, lz, h), [lx, lz, h]);
   }
   // The torches outside hang off the front wall over the ground either side of the door.
-  for (const t of fur.torchesOutside) if (!out.some((c) => k(c) === k(t.toward))) out.push({ ...t.toward, want: 'torch' });
+  for (const t of fur.torchesOutside) {
+    if (acc.has(toLocal(origin, dir, t.toward).join(','))) continue;
+    if (!out.some((c) => k(c) === k(t.toward))) out.push({ ...t.toward, want: 'torch' });
+  }
   return out;
+}
+
+/**
+ * Blocks in the house we can't shift (obsidian without a diamond pickaxe, bedrock: `fixed`, world
+ * cells): make the house work round them, as a player would, rather than try and fail for ever.
+ *  - the doorway or doorstep taken: the door moves along the front wall (the old doorway's walled
+ *    up, the block in it part of the wall); the chest room's doorway the same along the partition;
+ *  - where one of our things goes (the table, a furnace, a chest, the bed): it moves to the nearest
+ *    free spot in the same room that keeps the way through open (none: noRoom, and it's done without);
+ *  - anywhere else it's left be (accepted), if the rooms can still be walked through.
+ * Returns the house's new fields { doorLx, doorwayLx, moved, accepted } (the old ones kept).
+ */
+export function planAroundFixed(origin, dir, fixed) {
+  const layout = layoutOf(origin), back = backOf(layout);
+  const A = adapt(origin);
+  let d = A.d, dw = A.dw;
+  const moved = { ...A.moved };
+  const accepted = [...A.accepted];
+  const F = new Set(fixed.map((p) => toLocal(origin, dir, p).join(',')));
+  const blocked = (lx, lz, h) => F.has(`${lx},${lz},${h}`);
+  const walk = (lx, lz) => !blocked(lx, lz, 0) && !blocked(lx, lz, 1);
+  const inRoom = (lx, lz) => Math.abs(lx) <= 1 && lz > back && lz < 2 && !(layout === 'chests' && lz === -2);
+  const roomOf = (lz) => (layout === 'chests' && lz < -2 ? 'chests' : 'front');
+  // 1. The door: its cells, the doorstep and the step inside it, all clear.
+  const doorOk = (x) => walk(x, 2) && walk(x, 3) && walk(x, 1);
+  if (!doorOk(d)) { const nd = [0, 1, -1].find((x) => x !== d && doorOk(x)); if (nd !== undefined) d = nd; }
+  if (layout === 'chests' && !(walk(dw, -2) && walk(dw, -1) && walk(dw, -3))) { const nw = [0, 1, -1].find((x) => x !== dw && walk(x, -2) && walk(x, -1) && walk(x, -3)); if (nw !== undefined) dw = nw; }
+  // Where things stand now (local), with the moves so far.
+  const def = { stand: [0, 0], table: [-1, -1], furnace: [-1, 0], ...(layout === 'chests' ? { furnace2: [-1, 1], stand2: [0, -4], chest0: [-1, -5], chest1: [1, -5], chest2: [-1, -3], chest3: [1, -3] } : { chest0: [-1, 1], chest1: [0, -1] }) };
+  const cur = (n) => (moved[n] !== undefined ? moved[n] : def[n]);
+  const bed = () => moved.bed ?? { foot: [1, -1], head: [1, 0], standAt: [1, 1] };
+  // Cells to keep for walking: the step in from the door, the stands, the bed's side, the doorway's
+  // either side; and things' spots taken.
+  const keepWalk = () => new Set([[d, 1], cur('stand'), bed().standAt, ...(layout === 'chests' ? [cur('stand2'), [dw, -1], [dw, -3]] : [])].filter(Boolean).map((c) => c.join(',')));
+  const things = () => new Set([...Object.keys(def).filter((n) => !/^stand/.test(n)).map(cur), bed().foot, bed().head].filter(Boolean).map((c) => c.join(',')));
+  // Can every stand, the bed side and the door step reach each other over walkable cells?
+  const connected = (extraBlocked = new Set()) => {
+    const free = (lx, lz) => (inRoom(lx, lz) || (lx === d && lz === 1) || (layout === 'chests' && lz === -2 && lx === dw)) && walk(lx, lz) && !extraBlocked.has(`${lx},${lz}`) && !things().has(`${lx},${lz}`);
+    const start = [d, 1];
+    if (!free(...start)) return false;
+    const seen = new Set([start.join(',')]), q = [start];
+    while (q.length) {
+      const [x, z] = q.shift();
+      for (const [a, b] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) { const n = [x + a, z + b]; if (!seen.has(n.join(',')) && free(...n)) { seen.add(n.join(',')); q.push(n); } }
+    }
+    return [...keepWalk()].every((c) => seen.has(c));
+  };
+  // 2. A stand that's taken: the nearest free cell in its room.
+  for (const s of layout === 'chests' ? ['stand', 'stand2'] : ['stand']) {
+    const [sx, sz] = cur(s);
+    if (walk(sx, sz)) continue;
+    const opts = [];
+    for (let lx = -1; lx <= 1; lx++) for (let lz = back + 1; lz <= 1; lz++) if (inRoom(lx, lz) && roomOf(lz) === roomOf(sz) && walk(lx, lz) && !things().has(`${lx},${lz}`)) opts.push([lx, lz]);
+    opts.sort((a, b) => Math.hypot(a[0] - sx, a[1] - sz) - Math.hypot(b[0] - sx, b[1] - sz));
+    if (opts[0]) moved[s] = opts[0];
+  }
+  // 3. Our things whose spot is taken (or now in the way of the door): the nearest free spot in the
+  // room, else in the other room (the chest room's front room is full: the table goes by the chests).
+  const relocate = (n) => {
+    const [ox, oz] = cur(n);
+    const opts = [];
+    for (let lx = -1; lx <= 1; lx++) for (let lz = back + 1; lz <= 1; lz++) {
+      if (!inRoom(lx, lz) || blocked(lx, lz, 0) || keepWalk().has(`${lx},${lz}`) || things().has(`${lx},${lz}`)) continue;
+      if (!connected(new Set([`${lx},${lz}`]))) continue;
+      opts.push([lx, lz]);
+    }
+    const cost = (c) => (roomOf(c[1]) === roomOf(oz) ? 0 : 100) + Math.hypot(c[0] - ox, c[1] - oz);
+    opts.sort((a, b) => cost(a) - cost(b));
+    moved[n] = opts[0] ?? null;
+  };
+  for (const n of Object.keys(def).filter((x) => !/^stand/.test(x))) {
+    const c = cur(n);
+    if (!c) continue;
+    if (blocked(c[0], c[1], 0) || keepWalk().has(c.join(','))) relocate(n);
+  }
+  // The bed: two cells side by side and a free one beside it to get in from.
+  const b0 = bed();
+  if ([b0.foot, b0.head].some(([x, z]) => blocked(x, z, 0)) || !walk(...b0.standAt) || keepWalk().has(b0.foot.join(',')) || keepWalk().has(b0.head.join(','))) {
+    let found = null;
+    for (let lx = -1; lx <= 1 && !found; lx++) for (let lz = -1; lz <= 1 && !found; lz++) for (const [a, b] of [[0, 1], [1, 0]]) {
+      const foot = [lx, lz], head = [lx + a, lz + b];
+      if (!inRoom(...foot) || !inRoom(...head) || roomOf(foot[1]) !== 'front' || roomOf(head[1]) !== 'front') continue;
+      if ([foot, head].some(([x, z]) => blocked(x, z, 0) || things().has(`${x},${z}`) || [d, 1].join(',') === `${x},${z}` || cur('stand').join(',') === `${x},${z}`)) continue;
+      const standAt = [[1, 0], [-1, 0], [0, 1], [0, -1]].map(([p, q]) => [foot[0] + p, foot[1] + q]).find(([x, z]) => inRoom(x, z) && walk(x, z) && ![foot, head].some((c) => c[0] === x && c[1] === z) && !things().has(`${x},${z}`));
+      if (standAt) found = { foot, head, standAt };
+    }
+    moved.bed = found ?? b0; // (nowhere: left as it is; it'll be done without a bed)
+    if (!found) moved.bedNone = true;
+  }
+  // 4. Whatever's left where it is: accepted.
+  for (const k of F) { const c = k.split(',').map(Number); if (!accepted.some((a) => a.join(',') === k)) accepted.push(c); }
+  return { doorLx: d, doorwayLx: dw, moved, accepted };
 }
 
 /** Can something stand in a keep-clear cell without being in the way (air, plants, a torch, a carpet)? */

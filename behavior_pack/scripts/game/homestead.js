@@ -6,8 +6,8 @@ import { standOff } from '../core/threat.js';
 import { isLog, isPlanks, TOOL_STONE, count } from '../core/recipes.js';
 import { RAW, isNight, TORCH_GOAL, fittingsPlanks, chooseFood } from '../core/settle.js';
 import { planFuel, burnsFor, charcoalInput } from '../core/fuel.js';
-import { blueprint, clearance, footing, furnishings, inside, houseMissing, standFor, layoutOf, NEW_LAYOUT, keepClear, inTheWay, frame } from '../core/house.js';
-import { cheapestPlaceable, plankReserve } from '../core/costs.js';
+import { blueprint, clearance, footing, furnishings, inside, houseMissing, standFor, layoutOf, NEW_LAYOUT, keepClear, inTheWay, frame, planAroundFixed, toLocal } from '../core/house.js';
+import { cheapestPlaceable, plankReserve, canBreak } from '../core/costs.js';
 import { siteWork, siteScore } from '../core/site.js';
 import { depositPlan, takePlan, sortIntoChests } from '../core/storage.js';
 import { invCounts, hold, take, give, container as packOf } from './inventory.js';
@@ -892,7 +892,7 @@ export class Homestead {
   isHouseBlock(p) {
     const h = this.house;
     if (!h) return false;
-    const k = `${h.x},${h.y},${h.z},${h.dir},${layoutOf(h)}`;
+    const k = `${h.x},${h.y},${h.z},${h.dir},${layoutOf(h)},${h.doorLx ?? 0},${h.doorwayLx ?? 0},${JSON.stringify(h.moved ?? {})}`;
     if (this._houseCells?.k !== k) {
       // The walls and roof, and the ground under the house and its doorstep (the floor).
       const walls = new Set([...blueprint(h, h.dir), ...footing(h, h.dir)].map((b) => `${b.x},${b.y},${b.z}`));
@@ -934,6 +934,24 @@ export class Homestead {
     if (!blocks.length) return true;
     this.a.sayOnce('clear-house', `${blocks.length} block${blocks.length > 1 ? 's are' : ' is'} in the way in my house: clearing ${blocks.length > 1 ? 'them' : 'it'} out.`, 60000);
     trace(`house: in the way: ${blocks.slice(0, 12).map((b) => `${b.id}@${b.x},${b.y},${b.z}${b.want ? `(${b.want} spot)` : ''}`).join(' ')}${blocks.length > 12 ? ' ...' : ''}`);
+    // What we can't break at all (obsidian without a diamond pickaxe, bedrock): never swung at. The
+    // house is made to work round it instead (core/house.js planAroundFixed): the door moved along
+    // the wall, a thing moved to another spot in the room, or it's left where it is.
+    const fixed = blocks.filter((b) => !/water|lava/.test(b.id) && !canBreak(b.id, invCounts(this.sim)));
+    if (fixed.length) {
+      const was = { d: h.doorLx ?? 0, dw: h.doorwayLx ?? 0, moved: JSON.stringify(h.moved ?? {}) };
+      Object.assign(h, planAroundFixed(h, h.dir, fixed));
+      this.a.memory.saveNow();
+      this._houseCells = null;
+      const what = [...new Set(fixed.map((b) => b.id.replace(/_/g, ' ')))].join(', ');
+      const moves = [];
+      if ((h.doorLx ?? 0) !== was.d) moves.push('moving the door along the wall');
+      if ((h.doorwayLx ?? 0) !== was.dw) moves.push('moving the chest room\'s doorway');
+      if (JSON.stringify(h.moved ?? {}) !== was.moved) moves.push('putting my things somewhere else in the room');
+      this.a.say(`There's ${what} in my house I can't break${moves.length ? `: ${moves.join(', ')}` : ': leaving it, it\'s not in the way'}.`);
+      trace(`house: can't break ${fixed.map((b) => `${b.id}@${b.x},${b.y},${b.z}`).join(' ')}: door ${h.doorLx ?? 0}, doorway ${h.doorwayLx ?? 0}, moved ${JSON.stringify(h.moved ?? {})}`);
+      blocks = this.houseObstructions();
+    }
     let cleared = 0;
     const failed = new Set();
     for (let n = 0; n < 200 && blocks.length; n++) {
@@ -1075,6 +1093,9 @@ export class Homestead {
     // rather than "discover" a missing door, bed and 47 missing walls from 90 blocks away.
     if (!this.houseLoaded()) return this.lastHouseState ?? { layout: layoutOf(h), damage: 0, blocked: 0, fire: 0, door: true, bed: !!h.bed, bedMisplaced: false, table: !!h.table, furnace: !!h.furnace, chest: !!h.chest, signs: true, lit: true, litOutside: true };
     const fur = furnishings(h, h.dir), at = (p) => this.S.blockAt(p) ?? '';
+    const none = new Set(fur.noRoom ?? []); // (no room for it anywhere: done without)
+    const acc = new Set((h.accepted ?? []).map((c) => c.join(',')));
+    const accepted = (p) => acc.has(toLocal(h, h.dir, p).join(','));
     const chestsPlaced = fur.chests.filter((c) => /chest/.test(at(c))).length;
     const signsPlaced = fur.signs.filter((sg) => /sign/.test(at(sg.cell))).length;
     return this.lastHouseState = {
@@ -1087,15 +1108,15 @@ export class Homestead {
       fire: this.houseFires().length,
       door: /door/.test(at(fur.door)),
       // Both halves, in the planned cells: half a bed, or one across the wall line, isn't a bed.
-      bed: /bed/.test(at(fur.bed.foot)) && /bed/.test(at(fur.bed.head)),
+      bed: (h.moved?.bedNone ?? false) || (/bed/.test(at(fur.bed.foot)) && /bed/.test(at(fur.bed.head))),
       bedMisplaced: !(/bed/.test(at(fur.bed.foot)) && /bed/.test(at(fur.bed.head))) && this.bedBlocks().length > 0,
-      table: at(fur.table) === 'crafting_table',
-      furnace: /furnace/.test(at(fur.furnace)),
+      table: none.has('table') || at(fur.table) === 'crafting_table',
+      furnace: none.has('furnace') || /furnace/.test(at(fur.furnace)),
       // The food furnace (chest-room houses): false while it's still to go in.
       furnace2: fur.furnace2 ? /furnace/.test(at(fur.furnace2)) : null,
       chest: fur.layout === 'chests' ? chestsPlaced === fur.chests.length : /chest/.test(at(fur.chests[0])),
-      lit: /torch/.test(at(fur.torchInside.toward)) && (!fur.torchChests || /torch/.test(at(fur.torchChests.toward))),
-      litOutside: fur.torchesOutside.every((t) => /torch/.test(at(t.toward))),
+      lit: (accepted(fur.torchInside.toward) || /torch/.test(at(fur.torchInside.toward))) && (!fur.torchChests || accepted(fur.torchChests.toward) || /torch/.test(at(fur.torchChests.toward))),
+      litOutside: fur.torchesOutside.every((t) => accepted(t.toward) || /torch/.test(at(t.toward))),
     };
   }
 
@@ -1117,22 +1138,26 @@ export class Homestead {
     if (!h) return;
     const S = this.S;
     const fur = furnishings(h, h.dir);
+    // What's really there (a flag says "table" after a player took it, or it was blown up, or its
+    // spot moved: it waited on a table that wasn't there, for ever).
+    const st0 = this.houseLoaded() ? this.houseStateNow() : null;
+    if (st0) { h.table = !!st0.table; h.furnace = !!st0.furnace; h.bed = !!st0.bed; }
     await this.sweepAroundHouse(gen); // a chest or furnace that went (a blast, a fire): its things
     if (!inside(h, this.sim.location)) await this.enterHouse(gen);
     let inv = invCounts(this.sim);
     if (!h.table && !inv.crafting_table && (count(inv, isPlanks) >= 4 || count(inv, isLog) >= 1)) await S.craft(gen, ['crafting_table'], false);
     if (!h.table && invCounts(this.sim).crafting_table) {
-      await S.goNear(gen, fur.stand, 0.4, 2);
+      await S.goNear(gen, standFor(fur, fur.table), 0.4, 2);
       if (await this.placeAt(gen, fur.table, 'crafting_table')) { h.table = true; this.a.memory.rememberTable(this.dim.id, fur.table); }
     }
     if (!h.furnace && !invCounts(this.sim).furnace) await this.fetchFurnace(gen).catch(() => false);
     if (!h.furnace && invCounts(this.sim).furnace) {
-      await S.goNear(gen, fur.stand, 0.4, 2);
+      await S.goNear(gen, standFor(fur, fur.furnace), 0.4, 2);
       if (await this.placeAt(gen, fur.furnace, 'furnace')) { h.furnace = true; this.a.memory.remember('furnace', this.dim.id, fur.furnace); }
     }
     // The food furnace, once the first's in (the second furnace in the pack: straight in its corner).
     if (fur.furnace2 && h.furnace && invCounts(this.sim).furnace && !/furnace/.test(S.blockAt(fur.furnace2) ?? '')) {
-      await S.goNear(gen, fur.stand, 0.4, 2);
+      await S.goNear(gen, standFor(fur, fur.furnace2), 0.4, 2);
       if (await this.placeAt(gen, fur.furnace2, 'furnace')) this.a.memory.remember('furnace', this.dim.id, fur.furnace2);
     }
     // A bed set in the wrong place (half a bed, or one poking into the wall): pick it up and redo it.
@@ -1389,7 +1414,7 @@ export class Homestead {
     // The chest room: each thing in the chest its sign says (core/storage.js), then anything that
     // didn't fit in whichever has room. A cabin: the chest by the door, then the second.
     const rounds = fur.layout === 'chests'
-      ? [...sortIntoChests(plan, fur.signs.map((sg) => sg.kind)).map((want, ci) => ({ ci, want })), ...fur.chests.map((_, ci) => ({ ci, want: null }))]
+      ? [...sortIntoChests(plan, fur.chestKinds ?? fur.signs.map((sg) => sg.kind)).map((want, ci) => ({ ci, want })), ...fur.chests.map((_, ci) => ({ ci, want: null }))]
       : fur.chests.map((_, ci) => ({ ci, want: null }));
     for (const { ci, want: only } of rounds) {
       if (!Object.keys(plan).length) break;

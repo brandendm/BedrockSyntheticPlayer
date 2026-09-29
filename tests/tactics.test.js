@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { fightMove, creeperFight, creeperMove, Stalemate, pickRefuge, bestWeapon, barricadeCells, CREEPER_HOLD, CREEPER_LIGHT, CREEPER_CALM, weaponReach, pickCreeperSwing, creeperWeapon, knockbackRoom, blockOffCells, fleeJab, killSlotCells, killSlotWorth, dodgeArrow, arrowHits, aimBow, bowFight, blastDamage, fleeJabOrder, avoidCreepers, towerWorth } from '../behavior_pack/scripts/core/tactics.js';
+import { fightMove, creeperFight, creeperMove, Stalemate, pickRefuge, bestWeapon, barricadeCells, CREEPER_HOLD, CREEPER_LIGHT, CREEPER_CALM, weaponReach, pickCreeperSwing, creeperWeapon, knockbackRoom, blockOffCells, fleeJab, killSlotCells, killSlotWorth, dodgeArrow, arrowHits, aimBow, bowFight, blastDamage, fleeJabOrder, avoidCreepers, towerWorth, pinchWallCells, alcoveCells } from '../behavior_pack/scripts/core/tactics.js';
 import { HOLD_AT, REACH_HIT } from '../behavior_pack/scripts/core/threat.js';
 
 const P = (x, y, z) => ({ x, y, z });
@@ -304,4 +304,16 @@ test('tower: up a pillar from zombies only, with the blocks and the headroom', (
   assert.equal(towerWorth({ threats: [z(3), z(4), { type: 'skeleton', dist: 20 }], blocks: 8 }), false, 'an archer: it shoots us up there');
   assert.equal(towerWorth({ threats: [z(3), { type: 'spider', dist: 4 }], blocks: 8 }), false, 'spiders climb');
   assert.equal(towerWorth({ threats: [z(3), z(4)], blocks: 8, headroom: false }), false, 'leaves overhead');
+});
+
+test('squeezed in a tunnel: the creeper\'s way walled off; no blocks, a pocket dug out of the side', () => {
+  const tunnel = (x, y, z) => (z === 0 && x >= -12 && x <= 12 && (y === 40 || y === 41) ? 'open' : 'solid');
+  assert.deepEqual(pinchWallCells(P(0.5, 40, 0.5), P(-6.5, 40, 0.5), tunnel), [P(-1, 40, 0), P(-1, 41, 0)]);
+  assert.deepEqual(pinchWallCells(P(0.5, 40, 0.5), P(6.5, 40, 0.5), tunnel), [P(1, 40, 0), P(1, 41, 0)]);
+  assert.equal(pinchWallCells(P(0.5, 64, 0.5), P(-6.5, 64, 0.5), (x, y) => (y >= 64 ? 'open' : 'solid')), null, 'open ground');
+  const al = alcoveCells(P(0.5, 40, 0.5), P(-6.5, 40, 0.5), tunnel);
+  assert.equal(al.cells.length, 3, 'head, feet and the one beyond: blocks to wall with');
+  assert.equal(al.cells[0].x, 0);
+  assert.equal(Math.abs(al.cells[0].z), 1, 'sideways, out of its line');
+  assert.equal(al.into.y, 40);
 });

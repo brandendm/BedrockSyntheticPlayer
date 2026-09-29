@@ -117,6 +117,12 @@ With no orders (and after finishing any order) it works through a goal ladder.
 
 **Nothing in the way, whatever it is:** the house's rooms, doorways, doorstep and the places its things go (table, furnace, bed, chests, signs, torches, door) are checked for anything that shouldn't be there (`core/house.js` `keepClear`). That covers a player's blocks, sand or gravel that fell in, rubble, water or lava, or the wrong thing in one of its furniture spots. It's dug out and picked up, and water or lava is blocked off with a block that's then dug out. Clearing the house comes before repairs and anything else, day or night. The rule is general: on any essential job (going home, the furnace, the chest, the table, repairs, getting its things back after dying), a way that's blocked by anything breakable is broken through: a player's build, glass, wool, a chest. The exceptions are its own house's walls and furniture, and blocks that can't be broken (bedrock, obsidian, barriers). Ordinary trips still go around. It no longer puts its door in over a block, which used to delete the block.
 
+**Blocks it can't break in the house** (obsidian, bedrock, a barrier; `core/house.js` `planAroundFixed`): it never keeps trying. With a diamond (or netherite) pickaxe it mines obsidian, crying obsidian, a respawn anchor, ancient debris or netherite like anything else and keeps the block. Without one it works around it and remembers the plan:
+- **Harmless** (a spare corner, a torch spot): left where it is and counted as done.
+- **On a furniture spot** (table, furnace, a chest, the bed, a place it stands): that thing goes to the nearest free cell, in the same room if it can, else the other room, as long as every stand, the bed and the doorways can still be walked to. No room anywhere: it does without and says so.
+- **In the doorway or on the doorstep:** the door moves one along the wall (left or right) and the walls are rebuilt round it; the same for the chest room's doorway.
+It says what it changed. `node tools/sim_home.mjs`: 12 cases, all as a player would expect (the four new ones: obsidian on the table's spot, harmless obsidian, obsidian in the chest room's doorway, and with a diamond pickaxe).
+
 **Fire:** fire on or around the house, day or night, comes first. It punches every flame out, nearest first, reaching roof fires from the ground beside the wall. The repair then patches whatever burned. A running job is dropped as soon as fire is seen at the house.
 
 **What it wants** (`core/wants.js`): one table of what's worth having right now, used everywhere it decides whether to bother.
@@ -204,6 +210,13 @@ All 8 cases pass. With no house yet, it builds one if it has the materials. Othe
   | **One block** | **0** | **225** | 42% | **0.9** |
 
   The wall kept every creeper from going off but almost never killed it: it waited there, and the wall had to come down again. In the general creeper mix (`--creepers 800`) both come to 8 deaths.
+
+**Squeezed between them** (zombies one side, a creeper the other; `core/tactics.js` `pinchWallCells`, `alcoveCells`):
+- **In a tunnel or on the quarry stairs:** two blocks across the creeper's way, only if that really cuts it off (checked with its own path to the bot: not round a tree or up the next step). Then a kill slot across the zombies' way, and the fight is with them through the gap. The wall comes down once it's all gone.
+- **No blocks:** it digs three out of the passage's side (a sideways pocket, out of the creeper's line) and walls with those. Still short: it ducks into the pocket.
+- **In the open:** it runs from them while the creeper's close, and turns on the zombies once the creeper is more than 10 blocks back (8 once it's at them). Running strings them out, the creeper last.
+- **Cornered** (nowhere better to run) it fights back even when a creeper is the reason it was running. Standing still to be caught was worse: 2 deaths in 200 creeper encounters instead of 4 (`--creepers`).
+- In the arena, 7 named "squeezed" fights. In a tunnel it used to die in about 3 s every time. Now it lives, at full health with blocks, killing both zombies. In the open with the creeper well back it kills them. Running from a group (`--pursuit`): 27 deaths either way, 7 explosions instead of 9. `PINCH=0` switches it off.
 
 A creeper with another creeper or a zombie close by is run from. It notices them early: in sight within 8, after it within 12, hissing within 8 even unseen (it hears them). Scripts can't read a creeper's fuse (the game's is_ignited means on fire), so it goes by what a player sees: a creeper within 3.5 that has stopped walking is swelling, and one that got inside 2.5 is taken as hissing for 1.5 s, and anything within 4. The arena now models the game's delays (paths land 3 ticks late, the body coasts after a stop, a swing lands only within the weapon's reach of the eye). At a realistic creeper walk (`CSPEED=0.13 SPEAR=1 node tools/sim_combat.mjs --creepers 500`), 97.4% of encounters end with no explosion, and every creeper met alone is prevented, in every terrain, the quarry stairs included.
 - **Weapon:** the most damage per hit, since Bedrock has no attack cooldown. So a sword beats an axe of the same material (axes hit one less). A spear counts by its damage over its forced cooldown: less than a sword for fighting, but it's the one held against creepers (above). A weapon about to break is used last.
@@ -396,9 +409,10 @@ node tools/sim_quarry.mjs 300 --leave  # getting out of a damaged quarry the gam
 node tools/sim_furnace.mjs       # the game's own furnace code against a stand-in game: jobs, several furnaces, restarts, fuel running out
 node tools/sim_combat.mjs --pursuit 400  # running from a group: creepers speared, routes round them, up ledges and pillars (TOWER=0 AVOID=0 CJAB=0 CLIMB=0: without)
 node tools/sim_combat.mjs --zombies 300  # zombie fights: hits taken, time a zombie was inside its reach
+node tools/sim_combat.mjs squeezed        # zombies one side, a creeper the other: in the open, in a tunnel, with no blocks (PINCH=0: without walling off or digging out)
 node tools/sim_life.mjs 50       # the whole game, first goal to last: the agent's own planner on a virtual clock in 10 kinds of world; stuck steps, mismatches, where the time goes
 node tools/sim_water.mjs         # a crater lets water into the quarry stairs: stopped at the source (a pond, a lake, a wide crater, a stream)
-node tools/sim_home.mjs          # the house kept usable: a player's blocks, a bricked-up doorway at night, water, a blast, fire
+node tools/sim_home.mjs          # the house kept usable: a player's blocks, a bricked-up doorway at night, water, a blast, fire, obsidian in it
 node tools/sim_mine.mjs          # the branch mine across deaths and restarts: branches spaced, own tunnels never a "cave" (OLD=1: before)
 node tools/sim_bed.mjs           # no fighting from bed: out of bed first when a mob gets to it
 node tools/sim_drops.mjs         # chopping: its own drops tracked by id, picked up without stopping
