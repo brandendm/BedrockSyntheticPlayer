@@ -17,7 +17,7 @@ import { inside as houseInside } from '../core/house.js';
 import { mlgNow, ticksToLand } from '../core/fall.js';
 import { GOALS, goalsOf, goalKey } from '../core/toggles.js';
 import { FULL_SLOTS } from '../core/storage.js';
-import { itemValue, armorUpgrades } from '../core/wants.js';
+import { itemValue, armorUpgrades, armorTotal } from '../core/wants.js';
 import { Homestead, FOOD_ANIMALS } from './homestead.js';
 import { Lookout } from './lookout.js';
 import { Skills, Aborted, markVisited } from './skills.js';
@@ -38,6 +38,7 @@ const SURVIVE_EVERY = 4;          // ticks between threat checks (0.2 s reaction
 const ENDERMAN_SCAN_EVERY = 20;
 const CALM_TICKS_TO_RESUME = 40;  // threats gone this long -> resume the interrupted task
 const ATTACKER_MEMORY_TICKS = 200;
+const ESCORT_MEMORY_TICKS = 400; // a mob that hit the player we follow, or that they hit: ours to fight for 20 s
 
 /** A sword worth hunting with: stone or better (a wooden one or a fist wastes the time). */
 const SWORD_OK = /\b(stone|iron|diamond|netherite)_sword\b/;
@@ -67,6 +68,7 @@ export class Agent {
     this.suspended = null;   // task interrupted by a fight/flight, resumed when calm
     this.calmSince = 0;
     this.attackers = new Map(); // entity id -> tick it last hurt us
+    this.escort = new Map(); // following a player: entity id -> tick it hit them or they hit it
     this.nextSwing = 0;
     this.nextRoute = 0;
     this.damage = 1;
@@ -158,6 +160,35 @@ export class Agent {
     this.suspended = null;
     this.endCombat();
     this.emit('died');
+  }
+
+  /**
+   * Following a player, something else got hurt: a mob that hit them, or one they hit, is marked
+   * (for ESCORT_MEMORY_TICKS) as one we fight too (escortMobs). Called from main.js on entityHurt.
+   */
+  onEscortHurt(victim, attacker) {
+    if (this.task?.kind !== 'follow' || !victim || !attacker) return;
+    const name = String(this.task.player).toLowerCase();
+    const isPlayer = (e) => e.typeId === 'minecraft:player' && String(e.name).toLowerCase() === name;
+    const t = system.currentTick;
+    if (isPlayer(victim) && attacker.id !== this.sim.id) this.escort.set(attacker.id, t);
+    else if (isPlayer(attacker) && victim.typeId !== 'minecraft:player') this.escort.set(victim.id, t);
+  }
+
+  /**
+   * Following a player: only what's fighting us or them, what they're fighting, and a creeper
+   * getting close to either of us (6). The rest is left alone, however hostile: the player's
+   * choice whether to take it on, and chasing after it loses them.
+   */
+  escortMobs(mobs, t) {
+    const p = this.findPlayer(this.task.player);
+    const pl = p?.location;
+    const marks = this.escort;
+    for (const [id, at] of marks) if (t - at > ESCORT_MEMORY_TICKS) marks.delete(id);
+    // (One of theirs counts as after us: an enderman they hit is a fight, not a neutral bystander.)
+    return mobs.filter((m) => m.attackedMe || marks.has(m.id) ||
+      (m.type === 'creeper' && (m.dist <= 6 || m.lit || (pl && dist3D(pl, m.pos) <= 6))))
+      .map((m) => (marks.has(m.id) ? { ...m, targetingMe: true } : m));
   }
 
   /** Called from main.js on entityHurt where we're the victim. */
@@ -572,6 +603,7 @@ export class Agent {
       console.warn(`[agent] equip: ${e}`);
     }
     this.shield = this.worn().includes('shield');
+    this.armor = armorTotal(this.worn()); // (confidence: health through armor, core/threat.js)
   }
 
   /**
@@ -606,9 +638,17 @@ export class Agent {
     if (this.testHold) return; // a calibration test is driving
     for (const [id, at] of this.attackers) if (t - at > ATTACKER_MEMORY_TICKS) this.attackers.delete(id);
     if (this.lastSeen.size > 200) for (const [id, at] of this.lastSeen) if (t - at > 200) this.lastSeen.delete(id);
-    const mobs = this.scanMobs(this.mode === 'none' ? 16 : 24);
+    // In the boat with the player we follow: nothing to do but sit (they're steering). Anything
+    // else has us out of it first.
+    if (this.boatUnder(this.sim)) {
+      if (this.task?.kind === 'follow') { if (this.mode !== 'none') this.endCombat(); return; }
+      this.leaveBoat();
+    }
+    const seen = this.scanMobs(this.mode === 'none' ? 16 : 24);
+    const mobs = this.task?.kind === 'follow' ? this.escortMobs(seen, t) : seen;
     const inWater = this.sim.isInWater;
-    const d = decide({ health: this.health(), damage: this.damage, isNight: this.isNight(), prevMode: this.mode, mobs, inWater, shield: this.shield, slot: this.slotHolds(), witches: this.toggles().witches });
+    if (!this.armor || t - (this.armorAt ?? -1e9) >= 100) { this.armor = armorTotal(this.worn()); this.armorAt = t; } // (worn out, taken off)
+    const d = decide({ health: this.health(), damage: this.damage, isNight: this.isNight(), prevMode: this.mode, mobs, inWater, shield: this.shield, slot: this.slotHolds(), witches: this.toggles().witches, armor: this.armor?.points ?? 0, toughness: this.armor?.toughness ?? 0 });
     this.threatsNow = d.threats;
     // Cornered with nowhere better to run: fight the nearest thing that can be fought.
     // (Or squeezed and the creeper walled off behind us, out of sight and not hissing: the rest.)
@@ -1508,7 +1548,8 @@ export class Agent {
     };
     for (const u of armorUpgrades(invCounts(this.sim), this.worn())) put(u.id, SLOT[u.slot]);
     try { if (invCounts(this.sim).shield && !eq.getEquipment(EquipmentSlot.Offhand)) put('shield', EquipmentSlot.Offhand); } catch {}
-    if (n) this.say(`Put on ${n} piece${n > 1 ? 's' : ''} of gear.`);
+    this.armor = armorTotal(this.worn());
+    if (n) this.say(`Put on ${n} piece${n > 1 ? 's' : ''} of gear (armor ${this.armor.points}).`);
     return n;
   }
 
@@ -2554,10 +2595,66 @@ export class Agent {
     });
   }
 
+  /** The boat (a plain one, a raft, a chest boat) e is sitting in, or null. */
+  boatUnder(e) {
+    try {
+      const v = e.getComponent('minecraft:riding')?.entityRidingOn;
+      return v?.isValid && /^minecraft:(chest_)?boat$/.test(v.typeId) ? v : null;
+    } catch { return null; }
+  }
+
+  /** Out of the boat we're in (the player got out, or we stopped following). */
+  leaveBoat() {
+    const b = this.boatUnder(this.sim);
+    if (!b) return false;
+    try { b.getComponent('minecraft:rideable')?.ejectRider(this.sim); } catch {}
+    this.body.resetProbe?.();
+    trace('boat: got out');
+    return true;
+  }
+
+  /**
+   * Following, and they're in a boat: into its other seat, and sit tight until they get out (then
+   * out too, and on following on foot). A chest boat has one seat: follow along the shore instead.
+   * Returns true while the boat's what we're doing.
+   */
+  async followBoat(p) {
+    const theirs = this.boatUnder(p);
+    const ours = this.boatUnder(this.sim);
+    if (ours && (!theirs || ours.id !== theirs.id)) { this.leaveBoat(); if (!theirs) { this.say('Out of the boat.'); return false; } }
+    if (!theirs) return false;
+    if (ours?.id === theirs.id) { if (this.motor.busy) this.motor.stop(); return true; }
+    let rideable = null;
+    try { rideable = theirs.getComponent('minecraft:rideable'); } catch {}
+    const seats = rideable?.seatCount ?? 0;
+    let riders = [];
+    try { riders = rideable?.getRiders() ?? []; } catch {}
+    if (!rideable || riders.length >= seats) {
+      if (!this.boatFullSaid) { this.say("No seat for me in that boat: I'll follow along."); this.boatFullSaid = true; }
+      return false;
+    }
+    this.boatFullSaid = false;
+    const d = dist3D(this.body.getPos(), theirs.location);
+    if (d <= 3.5) {
+      this.motor.stop();
+      let ok = false;
+      try { ok = rideable.addRider(this.sim); } catch (e) { trace(`boat: couldn't get in: ${e}`); }
+      if (ok) { this.say(`In the boat with you, ${this.task.player}.`); trace('boat: in'); }
+      return ok;
+    }
+    // Over to it first (it may be out on the water: swimming's fine).
+    const gen = this.taskGen;
+    const res = await this.plan(this.body.getPos(), theirs.location, 2.5);
+    if (gen !== this.taskGen) return true;
+    if (res.path.length >= 2) this.motor.followPath(smoothPath(this.classifier(), res.path), { seamless: true, urgent: true });
+    return true;
+  }
+
   async updateFollow() {
     if (this.followClimb) return; // building our way up to them: let it finish
     const p = this.findPlayer(this.task.player);
-    if (!p) { this.say(`Lost ${this.task.player}.`); this.newTask(null); return; }
+    if (!p) { this.leaveBoat(); this.say(`Lost ${this.task.player}.`); this.newTask(null); return; }
+    if (await this.followBoat(p)) return;
     const gen = this.taskGen;
     const d = dist3D(this.body.getPos(), p.location);
     if (d <= CONFIG.followDistance + 0.5) {

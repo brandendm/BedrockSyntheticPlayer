@@ -67,6 +67,15 @@ export function weaponDamage(typeId) {
   return WEAPON_DAMAGE[typeId.replace('minecraft:', '')] ?? FIST_DAMAGE;
 }
 
+/**
+ * What's left of a hit of `hit` after armor (Minecraft's formula: armor points take 4% each, less
+ * against big hits; toughness keeps more of it against those). 0-1.
+ */
+export function armorFactor(hit, armor = 0, toughness = 0) {
+  if (!armor) return 1;
+  return 1 - Math.min(20, Math.max(armor / 5, armor - hit / (2 + toughness / 4))) / 25;
+}
+
 /** Is this mob actually a threat right now? */
 export function isActiveThreat(m, isNight, alert = false) {
   const info = MOBS[m.type];
@@ -87,12 +96,13 @@ export function isActiveThreat(m, isNight, alert = false) {
 }
 
 /**
- * input: { health, damage, isNight, prevMode, mobs: [{id, type, dist, visible, targetingMe, attackedMe}] }
+ * input: { health, damage, isNight, prevMode, mobs: [{id, type, dist, visible, targetingMe, attackedMe}], armor, toughness }
+ * (armor: points worn, 0-20; toughness: diamond/netherite's, core/wants.js armorTotal)
  * slot: we're standing behind a kill slot (core/tactics.js killSlotCells): a grown zombie on the far
  * side can't hit us, and we can hit it through the gap. Fight it from there, hurt or not.
  * output: { mode: 'none'|'fight'|'flee', target?: id, threats: [mob], reason }
  */
-export function decide({ health, damage = FIST_DAMAGE, isNight = false, prevMode = 'none', mobs, inWater = false, shield = false, slot = false, witches = true }) {
+export function decide({ health, damage = FIST_DAMAGE, isNight = false, prevMode = 'none', mobs, inWater = false, shield = false, slot = false, witches = true, armor = 0, toughness = 0 }) {
   const held = (m) => slot && SLOT_SAFE.has(m.type) && !m.baby; // at the gap: can't get at us
   const alert = prevMode !== 'none';
   const threats = mobs.filter((m) => isActiveThreat(m, isNight, alert)).sort((a, b) => a.dist - b.dist);
@@ -124,8 +134,11 @@ export function decide({ health, damage = FIST_DAMAGE, isNight = false, prevMode
   // Low on health: run. Except already up close to an archer and nothing else on us: turning our
   // back on it in the open is how it gets the last few shots in; finish it.
   // (Behind a kill slot with only zombies at it: nothing can hurt us; running is what would.)
+  // Armor counts as health: iron all over takes over half of a zombie's hit, so 10 hp in it is
+  // more like 22. Confidence goes on what we can take (health through armor), not bare health.
   const closeOnes = threats.filter((m) => m.dist <= 16 && (m.visible || m.attackedMe));
-  if (health <= FLEE_HEALTH && !(closeOnes.length && closeOnes.every(held))) {
+  const lowAt = Math.max(3, FLEE_HEALTH * armorFactor(3, armor, toughness));
+  if (health <= lowAt && !(closeOnes.length && closeOnes.every(held))) {
     const close = threats.filter((m) => m.dist <= 16 && (m.visible || m.attackedMe));
     const archerOnly = close.length > 0 && close.every((m) => MOBS[m.type].kind === 'ranged');
     const nearest = close[0];
@@ -164,7 +177,7 @@ export function decide({ health, damage = FIST_DAMAGE, isNight = false, prevMode
   // A shield takes arrows from the front and much of what's in front of us up close.
   // (Only from the front, and not while swinging: with two or more after us, less.)
   const guard = (m) => held(m) ? 0 : (!shield ? 1 : (MOBS[m.type].kind === 'ranged' ? 0.4 : 0.7) + (engagedCount > 1 ? 0.2 : 0));
-  const enemyDps = engaged.reduce((s, m) => s + MOBS[m.type].dps * guard(m), 0) * KNOCKBACK;
+  const enemyDps = engaged.reduce((s, m) => s + MOBS[m.type].dps * guard(m) * armorFactor(MOBS[m.type].dps, armor, toughness), 0) * KNOCKBACK;
   const ttd = enemyDps > 0 ? health / enemyDps : Infinity;
   // Already trading blows with something right on us: turning our back is free hits for it (a
   // zombie keeps up for the first seconds, and in a tunnel for ever). Run only if clearly losing.

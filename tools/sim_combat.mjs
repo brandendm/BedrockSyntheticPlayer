@@ -10,7 +10,7 @@
 // blow up), but they do what matters: they chase, they shoot along a line walls stop, they hiss.
 import { MotorController, EYE_HEIGHT } from '../behavior_pack/scripts/core/motor.js';
 import { findPath, searchJob, smoothPath, Cell } from '../behavior_pack/scripts/core/pathfinder.js';
-import { decide, MOBS, weaponDamage, REACH_HIT } from '../behavior_pack/scripts/core/threat.js';
+import { decide, armorFactor, MOBS, weaponDamage, REACH_HIT } from '../behavior_pack/scripts/core/threat.js';
 import { readFileSync } from 'node:fs';
 import { pinchWallCells, alcoveCells, fleeJabOrder, avoidCreepers, towerWorth, TOWER_H, fightMove, creeperMove, creeperFight, Stalemate, pickRefuge, barricadeCells, awayPath, weaponReach, creeperWeapon, bestWeapon, pickCreeperSwing, knockbackRoom, blockOffCells, fleeJab, killSlotCells, killSlotWorth, dodgeArrow, guardCell, blastDamage, bowFight, aimBow, bowPower, BOW_FULL } from '../behavior_pack/scripts/core/tactics.js';
 import { makeRng, dist3D } from '../behavior_pack/scripts/core/mathutil.js';
@@ -28,6 +28,8 @@ const CLIMB = process.env.CLIMB !== '0';
 // PINCH=0: squeezed between a creeper and the rest, no walling off the creeper's side (or digging a
 // pocket out of its line), and no fighting back when cornered with a creeper about (as before).
 const PINCH = process.env.PINCH !== '0';
+// ARMOR=0: fight-or-run ignores what's worn (as before); the armor still takes its share of hits.
+const ARMORSENSE = process.env.ARMOR !== '0';
 const ONLY = process.argv.slice(2).find((a) => !a.startsWith('-'));
 
 // ---------- line of sight over the classifier (a voxel walk) ----------
@@ -86,7 +88,7 @@ const DODGE = process.env.DODGE !== '0';
 const ACCEL = process.env.ACCEL !== '0';
 
 // ---------- the arena ----------
-function arena({ classify: base, bot, mobs, weapon = 'stone_sword', shield = false, ticks = 1200, night = true, health = 20, blocks = 16 }) {
+function arena({ classify: base, bot, mobs, weapon = 'stone_sword', shield = false, ticks = 1200, night = true, health = 20, blocks = 16, armor = 0, toughness = 0 }) {
   // Blocks the bot puts down (a barricade) are solid to everyone from then on.
   const placed = new Set();
   // Blocks the bot puts down, and blocks a blast took out.
@@ -171,6 +173,7 @@ function arena({ classify: base, bot, mobs, weapon = 'stone_sword', shield = fal
   };
   const hurt = (n, m, what) => {
     if (blocking && facingMob(m)) { blocked++; return; }
+    n *= armorFactor(n, armor, toughness); // (what's worn takes its share)
     hp -= n; hitsTaken++; m.lastHitMe = t; lastHurt = what;
     if (VERBOSE) log.push(`${t}: hit by ${what} for ${n.toFixed(1)}, hp ${hp.toFixed(1)}`);
   };
@@ -384,7 +387,7 @@ function arena({ classify: base, bot, mobs, weapon = 'stone_sword', shield = fal
         if (visible) m.seenAt = t;
         return { id: m.id, type: m.type, hp: m.hp, lit: m.type === 'creeper' && m.fuse >= 0, dist: d, visible, targetingMe: m.aware !== false && d <= 16, attackedMe: t - m.lastHitMe < 200, recent: visible || t - (m.seenAt ?? -1e9) < 100, dy: m.y - me.y, canReach, pos: { x: m.x, y: m.y, z: m.z }, inWater: false, ref: m };
       });
-      const d = decide({ health: hp, damage, isNight: night, prevMode: mode, mobs: seen, shield, slot: slotHolds() });
+      const d = decide({ health: hp, damage, isNight: night, prevMode: mode, mobs: seen, shield, slot: slotHolds(), ...(ARMORSENSE ? { armor, toughness } : {}) });
       const behindWall = walledOff && walledOff.every((c) => placed.has(`${c.x},${c.y},${c.z}`));
       if (d.mode === 'flee' && (corneredUntil > t || (behindWall && d.reason === 'creeper' && !d.threats.some((m) => m.type === 'creeper' && (m.lit || m.visible) && m.dist <= 8))) && (d.reason !== 'creeper' || (PINCH && !OLD)) && d.reason !== 'cover') {
         const target = d.threats.find((m) => m.type !== 'creeper' && m.dist <= 8);
@@ -898,6 +901,38 @@ if (FUZZ) {
   console.log(JSON.stringify(stats));
   for (const b of bad.slice(0, 25)) console.log(`  - ${b}`);
   process.exit(stats.diedFighting + stats.stared ? 1 : 0);
+}
+
+// --armor N: groups of zombies and skeletons (2-4), in armor from none to diamond, hurt or not:
+// kills, deaths, time. ARMOR=0: fight-or-run ignoring the armor (it still takes its share).
+const ARMORRUNS = process.argv.includes('--armor') ? Number(process.argv[process.argv.indexOf('--armor') + 1] || 200) : 0;
+if (ARMORRUNS) {
+  const rng = makeRng(31);
+  const pick = (a) => a[Math.floor(rng() * a.length)];
+  const SETS = { none: [0, 0], leather: [7, 0], chainmail: [12, 0], iron: [15, 0], diamond: [20, 8] };
+  const by = {};
+  for (let i = 0; i < ARMORRUNS; i++) {
+    const terrain = pick(['flat', 'forest', 'tunnel']);
+    const classify = terrain === 'flat' ? flat() : terrain === 'forest' ? forest() : tunnel();
+    const bot = terrain === 'tunnel' ? { x: 1.5, y: 40, z: 0.5 } : { x: 0.5, y: 70, z: 0.5 };
+    const n = 2 + Math.floor(rng() * 3);
+    const mobs = [];
+    for (let k = 0; k < n; k++) {
+      const type = pick(['zombie', 'zombie', 'zombie', 'skeleton']);
+      const a = rng() * Math.PI * 2, r = 6 + rng() * 8;
+      mobs.push(terrain === 'tunnel' ? { type, x: bot.x + 6 + k * 3, y: 40, z: 0.5 } : { type, x: 0.5 + Math.cos(a) * r, y: 70, z: 0.5 + Math.sin(a) * r });
+    }
+    const set = pick(Object.keys(SETS));
+    const [armor, toughness] = SETS[set];
+    const r = arena({ classify, bot: ground(classify, bot), mobs: mobs.map((m) => ground(classify, m)), weapon: pick(['stone_sword', 'iron_sword', ['iron_sword', 'stone_spear']]), shield: rng() < 0.3, health: pick([20, 20, 14, 10]), ticks: 900, armor, toughness });
+    const b = (by[set] ??= { n: 0, died: 0, kills: 0, total: 0, hp: 0 });
+    b.n++; if (r.hp <= 0) b.died++; b.kills += r.kills; b.total += r.total; b.hp += r.hp;
+  }
+  let died = 0, kills = 0, total = 0;
+  for (const b of Object.values(by)) { died += b.died; kills += b.kills; total += b.total; }
+  console.log(`${ARMORRUNS} group fights: ${died} died, killed ${kills}/${total} (${(100 * kills / total).toFixed(0)}%)`);
+  for (const [k, b] of Object.entries(by)) console.log(`  ${k.padEnd(10)} ${String(b.n).padStart(3)} fights, ${b.died} died, killed ${(100 * b.kills / b.total).toFixed(0)}%, ${(b.hp / b.n).toFixed(1)} hp left`);
+  process.exit(0);
 }
 
 // --zombies N: one or two zombies (a husk now and then) on flat ground, in a forest, down a tunnel,

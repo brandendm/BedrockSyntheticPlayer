@@ -22,6 +22,19 @@ const ARMOR_POINTS = {
   netherite: { helmet: 3, chestplate: 8, leggings: 6, boots: 3.5 },
   turtle: { helmet: 2 },
 };
+const TOUGHNESS = { diamond: 2, netherite: 3 };
+/** What's worn adds up to: { points (0-20), toughness } (Minecraft's numbers; worn: item ids). */
+export function armorTotal(worn = []) {
+  let points = 0, toughness = 0;
+  for (const id of worn) {
+    const a = armorInfo(id);
+    if (!a) continue;
+    points += a.points;
+    toughness += TOUGHNESS[/^(?:minecraft:)?([a-z]+)_/.exec(String(id))?.[1] ?? ''] ?? 0;
+  }
+  return { points: Math.min(20, points), toughness };
+}
+
 /** { slot, points } for an armor item id, or null. */
 export function armorInfo(id) {
   const m = /^(leather|golden|chainmail|iron|diamond|netherite|turtle)_(helmet|chestplate|leggings|boots)$/.exec(String(id).replace(/^minecraft:/, ''));

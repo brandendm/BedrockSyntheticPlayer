@@ -6,7 +6,7 @@ import { isNight } from '../core/settle.js';
 import { wetCones, towardWet, ExploreStall } from '../core/explore.js';
 import { tourStops, sweepOrder } from '../core/flow.js';
 import { EYE_HEIGHT } from '../core/motor.js';
-import { smoothPath, Cell, isWalkMove, isGround } from '../core/pathfinder.js';
+import { smoothPath, Cell, isWalkMove, isGround, DEFAULT_COSTS } from '../core/pathfinder.js';
 import { dist3D } from '../core/mathutil.js';
 import { toolFor, planCrafts, applyCraft, isLog, isPlanks, STONE_TARGETS, SHOVEL_BLOCKS, PICKAXE_BLOCKS, TOOL_STONE, count } from '../core/recipes.js';
 import { canBreak, chooseTool, breakSeconds, cheapestPlaceable, spendableBlocks, blockSourceCost, itemValue, plankReserve } from '../core/costs.js';
@@ -1955,6 +1955,11 @@ export class Skills {
     const q = this.quarry;
     if (!q) return false;
     let from = this.shaftIndexHere(q);
+    // Thrown off them into a crater beside them: back onto the nearest step, and on from there.
+    if (from < 0 && dist3D(this.sim.location, this.shaftStand(q, this.nearestStep(q))) <= 6) {
+      if (await this.rebuildStairs(gen, q, to)) return true;
+      from = this.shaftIndexHere(q);
+    }
     if (from < 0) {
       // Not on the stairs: to the top (or the nearer end) first.
       const top = this.shaftTop(q), bottom = this.shaftBottom(q);
@@ -1978,9 +1983,9 @@ export class Skills {
       const r = await this.a.motor.followPath(wps);
       this.check(gen);
       if (r.status !== 'arrived') {
-        // Something's changed (a creeper blew a hole in the stairs, a block fell in, a mob): past it
-        // a few steps at a time, and the stairs put right behind us.
-        return this.pastDamage(gen, q, to);
+        // Something's changed (a creeper blew a hole in the stairs, a block fell in, a mob): the
+        // stairs put back as they were, step by step; failing that, past it a few steps at a time.
+        return (await this.rebuildStairs(gen, q, to)) || this.pastDamage(gen, q, to);
       }
     }
     return true;
@@ -2106,6 +2111,215 @@ export class Skills {
     return false;
   }
 
+  /**
+   * The stairs blown about (one crater or a string of them, the top included): put back as they
+   * were, step by step along the recorded line, the way a player rebuilds theirs. No searching for
+   * a way round (every hop a new hole, and next time another), no standing about: at each broken
+   * step, what's fallen into the walkway is dug out, the tread is put back (on a block or two under
+   * it when the crater took everything it could be placed against), and on up. The same stairs
+   * after, so the next trip is a plain walk. Short of blocks: a few out of the wall. Lava, or
+   * nothing to build with: false (pastDamage's searches after that).
+   */
+  async rebuildStairs(gen, q, to) {
+    const t0 = system.currentTick;
+    let i = this.shaftIndexHere(q);
+    if (i < 0) {
+      // Thrown into the crater beside them: onto the nearest step we can stand on.
+      i = this.nearestStep(q);
+      const s = this.shaftStand(q, i);
+      if (dist3D(this.sim.location, s) > 8) return false;
+      if (!this.standableAt(s)) await this.putTread(gen, q, i);
+      if (!(await this.goNear(gen, { x: s.x + 0.5, y: s.y, z: s.z + 0.5 }, 0.8, 2))) return false;
+      i = this.shaftIndexHere(q);
+      if (i < 0) return false;
+    }
+    if (i === to) return true;
+    this.a.sayOnce('quarry-damage', "Something's blown my quarry stairs apart: putting them back as they were.", 120000);
+    const dir = to > i ? 1 : -1;
+    let fixed = 0, dug = 0;
+    while (i !== to) {
+      this.check(gen);
+      // Walk the whole stretch that's fine in one go; stop on the step before the first broken one.
+      let k = i;
+      while (k !== to && this.stepFine(q, k, k + dir)) k += dir;
+      if (k !== i) {
+        const wps = [];
+        for (let s2 = i; s2 !== k + dir; s2 += dir) { const st = this.shaftStand(q, s2); wps.push({ x: st.x + 0.5, y: st.y, z: st.z + 0.5 }); }
+        const r = await this.a.motor.followPath(wps);
+        this.check(gen);
+        const here = this.shaftIndexHere(q);
+        if (r.status !== 'arrived' && here === i) return false;
+        i = here < 0 ? i : here;
+        continue;
+      }
+      // The next step's broken: fix it from here.
+      const j = i + dir;
+      const s = this.shaftStand(q, j);
+      const walk = [0, 1, 2].map((h) => ({ x: s.x, y: s.y + h, z: s.z }));
+      if (walk.some((c) => /lava/.test(this.blockAt(c) ?? '') || this.touchesLava(c))) { this.log(`quarry: lava at step ${j}, not rebuilding`); return false; }
+      const wet = walk.filter((c) => this.isLiquid(c));
+      if (wet.length) await this.stopFlow(gen, wet);
+      for (const c of walk) {
+        if (OPEN.test(this.blockAt(c) ?? 'air') || this.isLiquid(c)) continue;
+        if (await this.mine(gen, c, { collect: true, force: true })) dug++;
+      }
+      if (!this.standableAt(s)) {
+        if (this.blockCount() < 4 && toolFor('stone', invCounts(this.sim))) await this.gatherBlocks(gen, 8, false);
+        if (!(await this.putTread(gen, q, j))) { this.log(`quarry: couldn't put step ${j} back`); return false; }
+        fixed++;
+      }
+      const r = await this.a.motor.followPath([{ ...this.sim.location }, { x: s.x + 0.5, y: s.y, z: s.z + 0.5 }]);
+      this.check(gen);
+      if (r.status !== 'arrived' && this.shaftIndexHere(q) !== j) {
+        // (gravel still coming down, a mob in the way: once more, then the searches)
+        if (!(await this.goNear(gen, { x: s.x + 0.5, y: s.y, z: s.z + 0.5 }, 0.6, 1))) return false;
+      }
+      i = j;
+    }
+    this.log(`quarry: stairs rebuilt on the way (${fixed} tread${fixed === 1 ? '' : 's'} put back, ${dug} fallen block${dug === 1 ? '' : 's'} dug out) in ${((system.currentTick - t0) / 20).toFixed(0)} s`);
+    return true;
+  }
+
+  /** Feet and head free, and something solid to stand on. */
+  standableAt(s) {
+    const open = (c) => OPEN.test(this.blockAt(c) ?? 'air');
+    return open(s) && open({ ...s, y: s.y + 1 }) && !open({ ...s, y: s.y - 1 }) && !this.isLiquid({ ...s, y: s.y - 1 });
+  }
+
+  /** A plain step from stair a to stair b: b standable, clear overhead, no water. */
+  stepFine(q, a, b) {
+    const s = this.shaftStand(q, b);
+    const up = this.shaftStand(q, a);
+    return this.standableAt(s) && !this.isLiquid(s) && !this.isLiquid({ ...s, y: s.y + 1 }) &&
+      OPEN.test(this.blockAt({ ...s, y: s.y + 2 }) ?? 'air') && OPEN.test(this.blockAt({ ...up, y: up.y + 2 }) ?? 'air');
+  }
+
+  /**
+   * Step i's tread back. Nothing beside it to place against (the crater took the rock under and
+   * round it): the block or two under it first, out of the walkway, found by a short search from
+   * the tread to anything solid.
+   */
+  async putTread(gen, q, i) {
+    const s = this.shaftStand(q, i);
+    const walkway = [];
+    for (let k = Math.max(0, i - 2); k <= Math.min(q.steps.length - 1, i + 2); k++) { const w = this.shaftStand(q, k); for (const h of [0, 1, 2]) walkway.push({ ...w, y: w.y + h }); }
+    return this.putTreadAt(gen, { x: s.x, y: s.y - 1, z: s.z }, walkway);
+  }
+
+  /** A tread at `tread`, on a block or two under it if need be (never in `walkway`'s cells). */
+  async putTreadAt(gen, tread, walkwayCells) {
+    const key = (c) => `${c.x},${c.y},${c.z}`;
+    const walkway = new Set(walkwayCells.map(key));
+    const open = (c) => { const id = this.blockAt(c) ?? 'air'; return OPEN.test(id) || /water/.test(id); };
+    const N6 = [[0, -1, 0], [1, 0, 0], [-1, 0, 0], [0, 0, 1], [0, 0, -1], [0, 1, 0]];
+    // Breadth first from the tread over open cells: the first with a solid face ends the chain.
+    const prev = new Map([[key(tread), null]]);
+    let q2 = [tread], end = null;
+    for (let depth = 0; depth < 4 && !end && q2.length; depth++) {
+      const nextQ = [];
+      for (const c of q2) {
+        if (N6.some(([dx, dy, dz]) => !open({ x: c.x + dx, y: c.y + dy, z: c.z + dz }))) { end = c; break; }
+        for (const [dx, dy, dz] of N6) {
+          const n = { x: c.x + dx, y: c.y + dy, z: c.z + dz };
+          if (prev.has(key(n)) || walkway.has(key(n)) || !this.inReach(n)) continue;
+          prev.set(key(n), c);
+          nextQ.push(n);
+        }
+      }
+      q2 = nextQ;
+    }
+    if (!end) return false;
+    const chain = [];
+    for (let c = end; c; c = prev.get(key(c))) chain.push(c);
+    const block = () => cheapestPlaceable(invCounts(this.sim), this.blockReserve(invCounts(this.sim)));
+    for (const c of chain) {
+      this.check(gen);
+      const id = block();
+      if (!id) return false;
+      if (!(await this.a.homestead.placeAt(gen, c, id, null, null, { liquid: true }))) return false;
+      this.markPlaced(c);
+    }
+    this.a.cellChanged?.();
+    return !open(tread);
+  }
+
+  /**
+   * Out of the top of the stairs and still in a hole (the crater took the ground round the
+   * entrance): a way on up to the ground, cut and built like any stair (a step up at a time, or
+   * across), and kept: it's added to the top of the stairs, so the next trip walks it. One way out,
+   * not a new hole each time.
+   */
+  async rebuildEntrance(gen, q) {
+    if (this.shaftIndexHere(q) !== 0 || !(await this.needsEscape(gen))) return true;
+    // The stairs carried on up the way they came, a step at a time: across the crater at this
+    // level on treads put down (a block under each if need be), up a step where the ground rises.
+    if (q.steps.length >= 2 && (await this.extendStairsUp(gen, q))) return true;
+    const f0 = this.feet();
+    const cache = new Map();
+    const out = (x, y, z, w) => w.standable(x, y, z) && Math.hypot(x - f0.x, z - f0.z) >= 4 && y >= f0.y && !this.isUndergroundCached(x, y, z, cache);
+    const opts = this.actionOpts({ force: false });
+    // (No pillars, no leaps over gaps: steps to walk every trip, the gaps bridged.)
+    const costs = { ...(this.a.moveCosts?.() ?? DEFAULT_COSTS), leap: null };
+    const res = await this.a.plan(this.sim.location, this.sim.location, 0, 6000, out, { actions: { ...opts, pillar: false }, costs });
+    this.check(gen);
+    if (!res.complete || res.path.length < 2) return false;
+    // Only a stair-like way is kept (a step at most up or down between neighbours).
+    const stairLike = res.path.every((p, n) => !n || (Math.abs(p.y - res.path[n - 1].y) <= 1 && Math.abs(Math.floor(p.x) - Math.floor(res.path[n - 1].x)) + Math.abs(Math.floor(p.z) - Math.floor(res.path[n - 1].z)) <= 1));
+    if (!stairLike) this.log(`quarry: the way up out of the crater isn't a stair (${res.path.map((p) => `${Math.floor(p.x)},${Math.floor(p.y)},${Math.floor(p.z)}${p.move ? `:${p.move.type}` : ''}`).join(' ')}): not kept`);
+    if (!(await this.followActionPath(gen, res.path))) return false;
+    if (stairLike) {
+      const treads = res.path.slice(1).map((p) => `${Math.floor(p.x)},${Math.floor(p.y) - 1},${Math.floor(p.z)}`).reverse();
+      q.steps.unshift(...treads.filter((k) => !q.steps.includes(k)));
+      this._protected = null;
+      this.a.memory.save();
+      this.log(`quarry: a new way up out of the crater at the top, ${treads.length} step${treads.length === 1 ? '' : 's'}, kept as the stairs' top`);
+      this.a.sayOnce('quarry-top', 'Rebuilt the way into my quarry.', 120000);
+    }
+    return !(await this.needsEscape(gen));
+  }
+
+  /**
+   * From the top step, on in the stairs' own line (away from step 1) until we're out: up to 8 steps,
+   * each put on the front of q.steps as it's made. Returns true once out.
+   */
+  async extendStairsUp(gen, q) {
+    const [a, b] = [this.shaftStand(q, 0), this.shaftStand(q, 1)];
+    const dx = Math.sign(a.x - b.x), dz = Math.sign(a.z - b.z);
+    if (Math.abs(dx) + Math.abs(dz) !== 1) return false;
+    let made = 0;
+    for (let n = 0; n < 8; n++) {
+      this.check(gen);
+      const cur = this.shaftStand(q, 0);
+      const c = { x: cur.x + dx, y: cur.y, z: cur.z + dz };
+      // The ground rises ahead (feet cell solid): a step up, cut into it.
+      const solidAt = (p) => !OPEN.test(this.blockAt(p) ?? 'air') && !this.isLiquid(p);
+      const s = solidAt(c) ? { ...c, y: c.y + 1 } : c;
+      const cells = [0, 1, 2].map((h) => ({ ...s, y: s.y + h }));
+      if (s.y > cur.y) cells.push({ ...cur, y: cur.y + 2 }); // (headroom to step up)
+      if (cells.some((p) => /lava/.test(this.blockAt(p) ?? '') || this.touchesLava(p))) break;
+      for (const p of cells) if (solidAt(p)) await this.mine(gen, p, { collect: true, force: true });
+      if (cells.some((p) => solidAt(p))) break;
+      const tread = { x: s.x, y: s.y - 1, z: s.z };
+      if (!solidAt(tread)) {
+        if (this.blockCount() < 3 && toolFor('stone', invCounts(this.sim))) await this.gatherBlocks(gen, 8, false);
+        if (!(await this.putTreadAt(gen, tread, [...cells, ...[0, 1, 2].map((h) => ({ ...cur, y: cur.y + h }))]))) break;
+      }
+      const r = await this.a.motor.followPath([{ ...this.sim.location }, { x: s.x + 0.5, y: s.y, z: s.z + 0.5 }]);
+      this.check(gen);
+      if (r.status !== 'arrived') break;
+      q.steps.unshift(`${tread.x},${tread.y},${tread.z}`);
+      this._protected = null;
+      made++;
+      if (!(await this.needsEscape(gen))) break;
+    }
+    if (made) {
+      this.a.memory.save();
+      this.log(`quarry: the stairs carried on up out of the crater at the top, ${made} step${made === 1 ? '' : 's'}, kept`);
+      this.a.sayOnce('quarry-top', 'Rebuilt the way into my quarry.', 120000);
+    }
+    return made > 0 && !(await this.needsEscape(gen));
+  }
+
   /** The step of the quarry's stairs nearest us (in a crater beside them, say). */
   nearestStep(q) {
     const p = this.sim.location;
@@ -2171,7 +2385,10 @@ export class Skills {
       if (this.shaftIndexHere(q) < 0) return false;
     }
     this.log('quarry: walking up the stairs');
-    return this.walkShaft(gen, 0);
+    if (!(await this.walkShaft(gen, 0))) return false;
+    // At the top and still in a hole (the entrance blown out): one way on up, kept as the stairs' top.
+    await this.rebuildEntrance(gen, q);
+    return true;
   }
 
   /** Where a new quarry goes: 14-24 blocks from the house (never under it), walking there first. */

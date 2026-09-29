@@ -325,8 +325,8 @@ export function* actionNeighbors(w, x, y, z, act, placed, onPlaced = false) {
       }
     }
   }
-  // Pillar: jump and place a block where our feet were.
-  if (placed < (act.budget ?? 0)) {
+  // Pillar: jump and place a block where our feet were. (pillar: false: stairs only, a way to keep)
+  if (placed < (act.budget ?? 0) && act.pillar !== false) {
     const h = cellCost(x, y + 2, z);
     if (h < Infinity && !isWet(w.get(x, y, z)) && w.get(x, y, z) !== Cell.CLIMB) {
       yield [x, y + 1, z, (act.placeCost + h) * u, { type: 'pillar', breaks: h > 0 ? [[x, y + 2, z]] : [], place: true }];

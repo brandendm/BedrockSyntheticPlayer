@@ -137,3 +137,20 @@ test('a creeper with company: run while it is close; turn on the rest while it i
   assert.equal(decide({ health: 20, damage: 7, prevMode: 'fight', mobs: [mob('creeper', 9), z] }).mode, 'fight', 'at it already: until 8');
   assert.equal(decide({ health: 20, damage: 7, prevMode: 'fight', mobs: [mob('creeper', 9, { lit: true }), z] }).mode, 'flee', 'hissing');
 });
+
+test('armor counts: what a hit leaves, and the fight-or-run race on health through armor', async () => {
+  const { armorFactor } = await import('../behavior_pack/scripts/core/threat.js');
+  const { armorTotal } = await import('../behavior_pack/scripts/core/wants.js');
+  assert.equal(armorFactor(3, 0), 1);
+  assert.ok(Math.abs(armorFactor(3, 15) - 0.46) < 0.01, 'iron all over: a zombie hit mostly taken');
+  assert.ok(armorFactor(20, 20, 8) < armorFactor(20, 20, 0), 'toughness keeps more against big hits');
+  assert.deepEqual(armorTotal(['iron_helmet', 'iron_chestplate', 'iron_leggings', 'iron_boots', 'shield']), { points: 15, toughness: 0 });
+  assert.deepEqual(armorTotal(['diamond_chestplate', 'diamond_boots']), { points: 11, toughness: 4 });
+  // Three zombies with a stone sword: run bare, fight in diamond.
+  const zs = [mob('zombie', 3), mob('zombie', 4), mob('zombie', 5)];
+  assert.equal(decide({ health: 20, damage: 6, mobs: zs }).mode, 'flee');
+  assert.equal(decide({ health: 20, damage: 6, mobs: zs, armor: 20, toughness: 8 }).mode, 'fight');
+  // Low health: 5 hp bare is running; in iron it fights on.
+  assert.equal(decide({ health: 5, damage: 7, mobs: [mob('zombie', 3)] }).mode, 'flee');
+  assert.equal(decide({ health: 5, damage: 7, mobs: [mob('zombie', 3)], armor: 15 }).mode, 'fight');
+});

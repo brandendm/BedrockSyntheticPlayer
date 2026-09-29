@@ -242,7 +242,9 @@ system.afterEvents.scriptEventReceive.subscribe((ev) => {
 
 // Remember who hits us: provoked neutral mobs become threats, and we hit back at the right one.
 world.afterEvents.entityHurt.subscribe((ev) => {
-  if (!agent || ev.hurtEntity.id !== agent.sim.id) return;
+  if (!agent) return;
+  // Following someone: what goes for them, and what they go for, is ours to fight too.
+  if (ev.hurtEntity.id !== agent.sim.id) { try { agent.onEscortHurt(ev.hurtEntity, ev.damageSource.damagingEntity); } catch {} return; }
   agent.onHurt(ev.damageSource.damagingEntity, ev.damageSource.cause, ev.damage);
 });
 
