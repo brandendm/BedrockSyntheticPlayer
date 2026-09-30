@@ -49,22 +49,61 @@ import { invCounts as invCountsOf, hold, container as packOf } from './inventory
 const NAMES = ['roof', 'tower', 'hole', 'pit', 'trap', 'climb', 'ledge', 'ladder', 'husk', 'creeper', 'sheep', 'pen', 'smelt', 'smeltlogs', 'shelter', 'house', 'resume', 'ghostlog', 'quarry', 'dark', 'replant', 'litter', 'trader', 'iron', 'farm', 'equip', 'water', 'bucketfarm', 'treetop', 'corner', 'leap', 'bridge', 'fall', 'vines', 'stairgap', 'loot', 'shield', 'skel', 'rest', 'nights', 'calibrate'];
 let running = false;
 
+// Tests that wait out real time (a 5 minute despawn, a night, a furnace, a long walk): left out of
+// `!bot test all quick`. Their real durations are in the batch report (`secs`), so this list can be
+// corrected from data: anything over QUICK_S in the last report belongs here.
+const SLOW = new Set(['loot', 'nights', 'rest', 'shelter', 'house', 'resume', 'quarry', 'farm', 'bucketfarm', 'iron', 'sheep', 'pen', 'smelt', 'smeltlogs', 'trader', 'ghostlog', 'stairgap']);
+const QUICK_S = 60;
+// No single test runs longer than this (the task is ended and the test left to report what it has).
+const CAP_S = 240;
+
+/**
+ * !bot test <name> [arg]      one test
+ * !bot test all               every test, one after another, unattended
+ * !bot test all quick         only the ones that don't wait out real time (under a minute each)
+ * !bot test all slow          only the slow ones
+ * !bot test <a>,<b>,<c>       a list
+ * Every batch ends with ONE summary (chat, brain/logs/tests.jsonl as `test_batch`): pass/fail, how
+ * long each took (slowest first) and what each failed on. A test over CAP_S is cut off.
+ */
 export async function runTests(agent, player, args) {
   if (running) return agent.say('A test is already running.');
   const [name = 'all', arg] = args;
-  const list = name === 'all' ? NAMES : NAMES.includes(name) ? [name] : null;
-  if (!list) return agent.say(`Tests: ${NAMES.join(', ')}, all.`);
+  const mode = name === 'all' && ['quick', 'slow'].includes(String(arg)) ? String(arg) : null;
+  const named = String(name).includes(',') ? String(name).split(',').map((n) => n.trim()) : null;
+  const list = named && named.every((n) => NAMES.includes(n)) ? named
+    : name === 'all' ? NAMES.filter((n) => (mode === 'quick' ? !SLOW.has(n) : mode === 'slow' ? SLOW.has(n) : true))
+    : NAMES.includes(name) ? [name] : null;
+  if (!list) return agent.say(`Tests: ${NAMES.join(', ')}, all [quick|slow], or a,b,c.`);
   running = true;
   const autoWas = agent.autoEnabled;
   agent.autoEnabled = false;
   const results = [];
+  const argN = mode || arg === undefined ? undefined : Number(arg);
+  const tAll = system.currentTick;
   try {
-    for (const n of list) results.push(await runOne(agent, player, n, arg === undefined ? undefined : Number(arg)));
+    for (const n of list) {
+      const t0 = system.currentTick;
+      // The cap: at the deadline the task ends, so waits on it return and the test reports.
+      let capped = false;
+      const cap = system.runTimeout(() => { capped = true; agent.newTask(null); agent.motor.stop(); }, CAP_S * 20);
+      let r;
+      try { r = await runOne(agent, player, n, argN); } finally { try { system.clearRun(cap); } catch {} }
+      r.secs = Math.round((system.currentTick - t0) / 20);
+      if (capped) { r.pass = false; r.detail = `cut off after ${CAP_S} s; ${r.detail}`; }
+      results.push(r);
+    }
   } finally {
     agent.autoEnabled = autoWas;
     running = false;
   }
-  if (results.length > 1) agent.say(`Tests done: ${results.filter((r) => r.pass).length}/${results.length} passed.`);
+  if (results.length > 1) {
+    const total = Math.round((system.currentTick - tAll) / 20);
+    const failed = results.filter((r) => !r.pass);
+    const slowest = [...results].sort((a, b) => b.secs - a.secs).slice(0, 5).map((r) => `${r.name} ${r.secs}s`).join(', ');
+    agent.say(`Tests done: ${results.length - failed.length}/${results.length} passed in ${Math.floor(total / 60)}m${total % 60}s. Slowest: ${slowest}.${failed.length ? ` FAILED: ${failed.map((r) => r.name).join(', ')}.` : ''}`);
+    sendEvent({ type: 'test_batch', build: CONFIG.build, passed: results.length - failed.length, total: results.length, secs: total, results: results.map((r) => ({ name: r.name, pass: r.pass, secs: r.secs, detail: String(r.detail).slice(0, 300) })) }).catch(() => {});
+  }
 }
 
 async function runOne(agent, player, name, arg) {
