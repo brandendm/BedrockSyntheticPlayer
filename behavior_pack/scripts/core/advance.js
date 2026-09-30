@@ -94,15 +94,23 @@ export function advanceStep(f) {
   // 2-3. Iron, then the iron things, in order, as the ingots come in (the goal switched off: none).
   if (!on('iron')) return raw > 0 && !f.smelt ? smeltOre(f, raw, raw) : f.smelt ? { step: 'wait_smelt' } : { step: 'done' };
   let spare = ingots;
+  let shieldWood = false;
   for (const id of IRON_ORDER) {
     if (made(inv, worn, id)) continue;
     if (spare >= IRON_IN[id]) {
       // Needs planks too: with no wood on us, make the next thing now and the shield once we have
       // some (its ingot kept back).
-      if (id === 'shield' && count(inv, isPlanks) < 6 && count(inv, (x) => /(_log|_wood)$/.test(x)) < 2) { spare -= IRON_IN[id]; continue; }
+      if (id === 'shield' && count(inv, isPlanks) < 6 && count(inv, (x) => /(_log|_wood)$/.test(x)) < 2) { spare -= IRON_IN[id]; shieldWood = true; continue; }
       return craftStep(inv, [id], f.tableDist);
     }
     break; // the next thing needs more ingots: go get them
+  }
+  // Its ingot's been waiting on the wood: fetch it (two logs; the chest's first, gather_logs) rather
+  // than wait for some other job to bring wood by. It never got made otherwise: everything the
+  // bot carried went in the chest and nothing else wanted a log. Not from down the mine.
+  if (shieldWood && !f.underground) {
+    const c = craftStep(inv, ['shield'], f.tableDist);
+    if (c.step === 'gather_logs') return c;
   }
   // Mining goes on while a batch smelts (in parallel): at the surface with raw iron and the furnace
   // free, load it before going back down, so the iron pickaxe (and the rest) come as we go rather

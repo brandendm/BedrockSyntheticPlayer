@@ -43,7 +43,7 @@ function game(setup) {
       set(p, 'air');
     },
     stopBreakingBlock() {}, useItemInSlotOnBlock: (slot, n, face) => true,
-    getHeadLocation: () => ({ x: bot.location.x, y: bot.location.y + 1.62, z: bot.location.z }),
+    getHeadLocation: () => ({ x: bot.location.x, y: bot.location.y + 1.52, z: bot.location.z }),
   };
   let cheats = 0;
   const standable = (c) => OPENISH.test(get(c)) && OPENISH.test(get({ ...c, y: c.y + 1 })) && !OPENISH.test(get({ ...c, y: c.y - 1 }));
@@ -80,7 +80,7 @@ function game(setup) {
   const moveTo = (cands) => { cands.sort((x, y) => d3(x, S.feet()) - d3(y, S.feet())); for (const c of cands) if (walk(S.feet(), c)) { bot.location = { x: c.x + 0.5, y: c.y, z: c.z + 0.5 }; events.push(`walk ${key(c)}`); return true; } return false; };
   const around = (p, r, f) => { const out = []; for (let dx = -r; dx <= r; dx++) for (let dy = -3; dy <= 3; dy++) for (let dz = -r; dz <= r; dz++) { const c = { x: Math.floor(p.x) + dx, y: Math.floor(p.y) + dy, z: Math.floor(p.z) + dz }; if (standable(c) && f(c)) out.push(c); } return out; };
   S.goNear = async (gen, p, tol = 3) => moveTo(around(p, 5, (c) => d3({ x: c.x + 0.5, y: c.y, z: c.z + 0.5 }, p) <= Math.max(tol, 0.8)));
-  S.goSee = async (gen, p, ok) => moveTo(around(p, 5, (c) => { const e = { x: c.x + 0.5, y: c.y + 1.62, z: c.z + 0.5 }; return d3(e, { x: p.x + 0.5, y: p.y + 0.5, z: p.z + 0.5 }) <= 4.2 && !(c.x === p.x && c.z === p.z) && ok(e); }));
+  S.goSee = async (gen, p, ok) => moveTo(around(p, 5, (c) => { const e = { x: c.x + 0.5, y: c.y + 1.52, z: c.z + 0.5 }; return d3(e, { x: p.x + 0.5, y: p.y + 0.5, z: p.z + 0.5 }) <= 4.2 && !(c.x === p.x && c.z === p.z) && ok(e); }));
   const H = Object.create(Homestead.prototype);
   H.a = a; a.skills = S;
   a.homestead = H; H.isHouseBlock = () => false;

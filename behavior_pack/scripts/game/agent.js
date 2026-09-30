@@ -3,12 +3,14 @@
 // the brain is only consulted on events (commands, stuck, task done, combat reports).
 import { system, world, EntityComponentTypes, Direction, EquipmentSlot, ItemStack } from '@minecraft/server';
 import { MotorController, EYE_HEIGHT } from '../core/motor.js';
+import { Calibration } from './calibrate.js';
 import { searchJob, smoothPath, findPath, Cell, DEFAULT_COSTS } from '../core/pathfinder.js';
 import { dist3D, makeRng } from '../core/mathutil.js';
 import { decide, fleePoint, weaponDamage, MOBS, REACH_HIT, STOP_AT } from '../core/threat.js';
 import { fleeJabOrder, avoidCreepers, towerWorth, TOWER_H, fightMove, creeperFight, creeperMove, Stalemate, pickRefuge, bestWeapon, barricadeCells, SPEAR_DAMAGE, weaponReach, pickCreeperSwing, creeperWeapon, isSpear, awayPath, knockbackRoom, blockOffCells, guardCell, fleeJab, killSlotCells, killSlotWorth, pinchWallCells, alcoveCells, dodgeArrow, CREEPER_LIGHT, CREEPER_CALM } from '../core/tactics.js';
 import { nextStep, STONE_TARGETS, TOOL_STONE, count, isLog } from '../core/recipes.js';
-import { settleStep, foodCount, FOOD_GOAL, isNight } from '../core/settle.js';
+import { settleStep, foodCount, FOOD_GOAL, isNight, chooseFood } from '../core/settle.js';
+import { shouldRest, REST_MAX_S } from '../core/rest.js';
 import { goalChain } from '../core/goals.js';
 import { advanceStep, advanceProgress, ironHave, IRON_GOAL } from '../core/advance.js';
 import { Farm } from './farm.js';
@@ -18,6 +20,7 @@ import { mlgNow, ticksToLand } from '../core/fall.js';
 import { GOALS, goalsOf, goalKey } from '../core/toggles.js';
 import { FULL_SLOTS } from '../core/storage.js';
 import { itemValue, armorUpgrades, armorTotal } from '../core/wants.js';
+import { lootPlan, lootWorth, backoffMs, LOOT_WINDOW_MS } from '../core/loot.js';
 import { Homestead, FOOD_ANIMALS } from './homestead.js';
 import { Lookout } from './lookout.js';
 import { Skills, Aborted, markVisited } from './skills.js';
@@ -53,7 +56,7 @@ const STEP_WORDS = {
   plan_house: 'picking a spot for the house', build_house: 'building the house', repair_house: 'repairing the house', furnish: 'moving things into the house', light_outside: 'putting torches up by the door',
   check_water: 'looking for water to farm by', make_farm: 'making a wheat farm', tend_farm: 'harvesting and replanting wheat', get_iron: 'mining for iron', equip: 'putting on armor',
   store: 'putting things away in the chest',
-  go_home: 'night: going home to sleep', shelter: 'night: holed up until morning', clear_house: 'clearing what\'s in the way in the house', fight_fire: 'putting out a fire at the house', done: 'all goals done', blocked: 'stuck on a recipe',
+  rest: 'hurt: resting till I\'ve healed', go_home: 'night: going home to sleep', shelter: 'night: holed up until morning', clear_house: 'clearing what\'s in the way in the house', fight_fire: 'putting out a fire at the house', done: 'all goals done', blocked: 'stuck on a recipe',
 };
 
 export class Agent {
@@ -97,7 +100,16 @@ export class Agent {
     this.creeperSt = new Map();  // creeper id -> { phase, since, retreat }: the hit-and-back-off dance
     this.roomCache = new Map();  // creeper id -> { ok, t, pending }: room to back off from it?
     this.shield = false;         // a shield in the off hand
+    this.resting = false;        // a bout of resting to heal is under way (core/rest.js, homestead.restUp)
+    this.restStart = 0;
+    this.restCoolUntil = 0;
     this.blocking = false;       // crouched behind it right now
+    this.pickingUp = false;      // the job is out collecting dropped things (no restarting it for more)
+    this.lootTriggerAt = -1e9;   // last time a valuable drop nearby restarted the job
+    /** @type {Map<string, number>} restarts each dropped item has caused */
+    this.lootTries = new Map();
+    /** @type {Array<any>} older death spots still to visit (died again on the way back) */
+    this.deathQueue = [];
     this.testHold = false;       // a calibration test is driving: no fighting or running of our own
     this.swell = new Map();      // creeper id -> { still, t, since }: is it standing still, swelling?
     this.miningTrip = false;     // down the mine for iron since the plan last had us elsewhere
@@ -116,6 +128,7 @@ export class Agent {
     this.threatsNow = [];        // the last survive() pass's threats
     this.hunting = false;        // homestead.hunt is steering the head
     this.trail = [];             // recent positions, newest last: {x, y, z, under}
+    this.calibration = new Calibration(this); // (the head height at once, the rest from the auto loop)
     const follow = this.motor.followPath.bind(this.motor);
     this.motor.followPath = async (wps, opts) => {
       const r = await follow(wps, opts);
@@ -155,7 +168,13 @@ export class Agent {
   onDeath() {
     // Everything we carried is on the ground here for 5 minutes: go back for it after respawning.
     const p = this.body.getPos();
-    this.deathSpot = { x: p.x, y: p.y, z: p.z, d: this.dim.id, at: Date.now() };
+    // What was on us (the pack as last saved): gear is worth going back for through the night.
+    let worth = 0;
+    try { const k = this.memory.data.kit; worth = lootWorth([...(k?.slots ?? []).map(([, d]) => d.id), ...Object.values(k?.worn ?? {}).map((d) => d.id)]); } catch {}
+    // Died again on the way back (with nothing on us): the first pile is still lying there, keep it.
+    const old = this.deathSpot;
+    if (old && Date.now() - old.at < LOOT_WINDOW_MS) (this.deathQueue ??= []).push(old);
+    this.deathSpot = { x: p.x, y: p.y, z: p.z, d: this.dim.id, at: Date.now(), worth };
     this.memory.data.kit = null; // it's all on the ground now (and gone back for): nothing to put back
     this.fallFrom = null; this.mlg = null; // (no fall carried over to the respawn)
     this.saveState();
@@ -271,10 +290,21 @@ export class Agent {
     // Something well worth having dropped near us (armor, a better sword: a player's gift, a mob's
     // drop): drop the job and get it (the auto loop picks things up first). Armor in the pack
     // that beats what's worn goes on.
-    if (t % 40 === 10 && this.mode === 'none' && this.autoEnabled && (this.task?.kind === 'auto' || !this.task) && this.wantedItemsNear(16, 8).length) {
-      trace('something worth having dropped nearby: going for it');
-      this.autoDone = false;
-      this.startAuto();
+    // (Not while the job is already out picking things up, and not more than once in ten seconds: a
+    // restart every two seconds meant it never got there, and each one used up a try at getting our
+    // own gear back. The same item that's had three restarts is left to the ordinary pickup.)
+    if (t % 40 === 10 && this.mode === 'none' && this.autoEnabled && (this.task?.kind === 'auto' || !this.task) && !this.pickingUp &&
+        t - (this.lootTriggerAt ?? -1e9) >= 200 && !(this.deathSpot && Date.now() - this.deathSpot.at < LOOT_WINDOW_MS)) {
+      const tries = (this.lootTries ??= new Map());
+      if (tries.size > 200) tries.clear();
+      const want = this.wantedItemsNear(16, 8).filter((w) => (tries.get(w.e.id) ?? 0) < 3);
+      if (want.length) {
+        for (const w of want) tries.set(w.e.id, (tries.get(w.e.id) ?? 0) + 1);
+        this.lootTriggerAt = t;
+        trace('something worth having dropped nearby: going for it');
+        this.autoDone = false;
+        this.startAuto();
+      }
     }
     if (t % 100 === 60 && this.mode === 'none') { try { if (armorUpgrades(invCounts(this.sim), this.worn()).length) this.equipArmor(); } catch {} }
     // Fire at the house: drop whatever's running; the plan puts the fire first. (Not again while a
@@ -357,6 +387,7 @@ export class Agent {
     this.memory.data.state = {
       step: this.autoStep ?? null,
       deathSpot: this.deathSpot ?? null,
+      deathQueue: this.deathQueue ?? [],
       jobs: jobs.map((job) => ({ ...job, readyInMs: Math.max(0, (job.readyAt - system.currentTick) * 50) })),
       at: Date.now(),
     };
@@ -384,7 +415,8 @@ export class Agent {
   restoreState() {
     const st = this.memory.data.state;
     if (!st) return;
-    if (st.deathSpot && Date.now() - st.deathSpot.at < 280000) this.deathSpot = st.deathSpot;
+    if (st.deathSpot && Date.now() - st.deathSpot.at < LOOT_WINDOW_MS) this.deathSpot = st.deathSpot;
+    this.deathQueue = (st.deathQueue ?? []).filter((d) => Date.now() - d.at < LOOT_WINDOW_MS);
     // Every furnace's job (older saves kept just the one, as `smelt`).
     const saved = st.jobs ?? (st.smelt ? [st.smelt] : []);
     if (saved.length && this.homestead) {
@@ -697,8 +729,11 @@ export class Agent {
       this.flips = [...(this.flips ?? []).filter((x) => t - x < 1200), t];
       if (this.flips.length >= 8) { this.ignoreThreatsUntil = t + 600; this.flips = []; if (CONFIG.debug) console.warn('[agent] flip-flopping: ignoring threats for 30 s'); }
     }
-    // (Never a creeper close by: it doesn't hit us before it goes off.)
-    if (d.mode !== 'none' && (this.ignoreThreatsUntil ?? 0) > t && this.health() >= 10 && !d.threats.some((m) => (m.attackedMe && m.dist <= 4) || (m.type === 'creeper' && m.dist <= 8))) {
+    // (Never a creeper close by: it doesn't hit us before it goes off. Never anything that has hit
+    // us, from any distance: it was ignoring an archer shooting from 6-9 blocks while health stayed
+    // over 10, standing there for the arrows. Nor an archer that's after us and in sight.)
+    if (d.mode !== 'none' && (this.ignoreThreatsUntil ?? 0) > t && this.health() >= 10 &&
+        !d.threats.some((m) => m.attackedMe || (m.type === 'creeper' && m.dist <= 8) || (MOBS[m.type]?.kind === 'ranged' && m.targetingMe && m.visible))) {
       d.mode = 'none'; d.reason = 'ignoring (flip-flopping)';
     }
     if (d.mode !== this.mode) {
@@ -943,6 +978,7 @@ export class Agent {
         await this.recoverDrops(gen);
         S.essential = false;
         await this.pickUpLoose(gen);
+        await this.calibration.step(gen); // (once: what the game's numbers are, game/calibrate.js)
         await this.takeDownWalls(gen);
         await this.skills.cleanupScaffold(gen); // pillars left standing when something took us away
         await H.maybeEat(gen);
@@ -955,10 +991,11 @@ export class Agent {
         // so the plan and the crafting never disagree (that was the walk-up, walk-away loop).
         const tableDist = near && S.usable(near) ? 0 : known && S.usable(known.pos) ? 0 : near ? dist3D(this.sim.location, near) : known ? known.dist : Infinity;
         const tableDy = near || !known ? 0 : known.pos.y - this.sim.location.y;
-        const step = this.planStep(inv, tableDist, tableDy);
+        // Hurt enough to stop working first (core/rest.js): a mine at night on 2 hp was how it died.
+        const step = this.restNeeded(inv) ? { step: 'rest' } : this.planStep(inv, tableDist, tableDy);
         // A mining trip lasts till the plan has us doing something that isn't done down the mine.
         if (step.step === 'get_iron') this.miningTrip = true;
-        else if (!MINE_STEPS.has(step.step) && step.step !== 'shelter') this.miningTrip = false;
+        else if (!MINE_STEPS.has(step.step) && step.step !== 'shelter' && step.step !== 'rest') this.miningTrip = false;
         const key = step.step + (step.items ? step.items.join() : '') + (step.count ?? '') + (step.what ?? '') + (step.why ?? '');
         // A repeat is the same step with nothing to show for the last one (the pack unchanged): the
         // same craft three times running that worked each time (bread, a loaf per 3 wheat; spare
@@ -984,7 +1021,7 @@ export class Agent {
         // (Using what's in the house: the furnace, the table, putting things in. Walking out first and
         // back in for those was the in-and-out loop.)
         const inHouseJob = ['smelt', 'collect_smelt', 'furnish', 'store'].includes(step.step) || (['craft', 'goto_table'].includes(step.step) && H.house?.table);
-        if (!['go_home', 'build_house', 'repair_house', 'clear_house', 'fight_fire', 'shelter', 'wait_smelt'].includes(step.step) && !inHouseJob && H.isHome()) await H.leaveHouse(gen);
+        if (!['go_home', 'build_house', 'repair_house', 'clear_house', 'fight_fire', 'shelter', 'wait_smelt', 'rest'].includes(step.step) && !inHouseJob && H.isHome()) await H.leaveHouse(gen);
         // Jobs that can't be done without getting there: a way blocked by anything breakable gets
         // broken through (skills.actionOpts).
         S.essential = ESSENTIAL_STEPS.has(step.step);
@@ -999,7 +1036,7 @@ export class Agent {
         }
         // Steps that run in stints (iron mining is time-boxed and repeats on purpose) or handle their
         // own failure (the farm) never get set aside: exploring doesn't help them.
-        if ((repeats >= 3 || same >= 8) && !['go_home', 'shelter', 'wait_smelt', 'explore', 'get_iron', 'make_farm', 'tend_farm', 'check_water', 'equip'].includes(step.step)) {
+        if ((repeats >= 3 || same >= 8) && !['go_home', 'shelter', 'rest', 'wait_smelt', 'explore', 'get_iron', 'make_farm', 'tend_farm', 'check_water', 'equip'].includes(step.step)) {
           // It keeps failing: set it aside for a few minutes and do the cheapest other thing on the
           // list (core/focus.js); it only goes exploring when nothing else is doable.
           if (step.step === 'hunt' && step.what === 'sheep') this.bedDeferredUntil = Date.now() + 300000;
@@ -1128,6 +1165,7 @@ export class Agent {
           case 'store': await H.storeItems(gen); break;
           case 'go_home': await H.nightAtHome(gen); break;
           case 'shelter': await H.shelter(gen); break;
+          case 'rest': await H.restUp(gen); break;
           case 'blocked':
             this.sayOnce(`blocked:${step.missing}`, `I can't make a ${step.missing.replace(/_/g, ' ')} with what I have.`, 300000);
             await S.explore(gen, 'supplies');
@@ -1164,35 +1202,84 @@ export class Agent {
   }
 
   /**
-   * Died recently: go back for our things before they despawn (5 minutes). Skipped at night when
-   * it's far (walking back through the dark is how we died), and given up after one try.
+   * Died recently: go back for our things before they despawn (5 minutes). The whole 5 minutes:
+   * a leg that gets nowhere, or a visit where it lies out of reach, is a failed try (core/loot.js
+   * has the rule and the back-off; other jobs carry on between tries), but a fight, a swim or a
+   * restart of the job on the way is not: the spot is kept until we've actually been there and
+   * swept it, or the items have despawned.
    */
   async recoverDrops(gen) {
-    const d = this.deathSpot;
-    if (!d || d.d !== this.dim.id) return;
-    const age = Date.now() - d.at, dist = dist3D(this.sim.location, d);
-    if (age < 3000 || this.health() <= 0) return; // not respawned yet
-    if (age > 280000) { this.deathSpot = null; this.saveState(); return; }
-    if (dist < 4 && age < 10000) return; // still standing where we died (respawn pending)
-    if (isNight(world.getTimeOfDay()) && dist > 40) return;
-    // The spot is kept until we've actually been there and swept it: a fight, a swim or nightfall
-    // on the way (anything that restarts the job) comes back here next, instead of forgetting it.
-    d.tries = (d.tries ?? 0) + 1;
-    if (d.tries > 4) { this.say("Couldn't get back to my things; they're gone."); this.deathSpot = null; this.saveState(); return; }
-    this.saveState();
-    this.sayOnce('recover', d.tries > 1 ? `Back to getting my things, ${Math.round(dist)} blocks away.` : `Going back for my things, ${Math.round(dist)} blocks away.`, 20000);
-    const S = this.skills;
-    for (let leg = 0; leg < 6 && dist3D(this.sim.location, d) > 4; leg++) {
-      if (!(await S.goNear(gen, d, 3, 2)) && dist3D(this.sim.location, d) > 40) break;
+    // (A round per try: after a failed one it waits by the pile and goes again, right here rather
+    // than back to the day's jobs, which would wander off and not be back for minutes.)
+    for (let round = 0; round < 80; round++) {
+      const d = this.deathSpot;
+      if (!d || d.d !== this.dim.id) return;
+      const S = this.skills;
+      const now = Date.now();
+      const dist = dist3D(this.sim.location, d);
+      const plan = lootPlan(d, { now, dist, night: isNight(world.getTimeOfDay()), health: this.health() });
+      if (plan.do === 'expired' || plan.do === 'giveup') {
+        trace(`loot: ${plan.do}${plan.why ? ` (${plan.why})` : ''} after ${((now - d.at) / 1000).toFixed(0)} s, ${d.fails ?? 0} failed legs, ${d.stuck ?? 0} visits it couldn't pick up`);
+        if (d.worth > 0) this.say(plan.do === 'expired' ? "Couldn't get back to my things in time; they'll have despawned." : "Couldn't get to my things: there's no way to where they are.");
+        this.nextDeathSpot();
+        continue; // (an older pile, if there is one)
+      }
+      if (plan.do === 'wait' && plan.why === 'backing off') { await S.wait(gen, Math.ceil(Math.max(0, d.retryAt - now) / 50) + 2); continue; }
+      if (plan.do !== 'go') return;
+      this.pickingUp = true;
+      try {
+        this.sayOnce('recover', (d.legs ?? 0) > 0 ? `Back to getting my things, ${Math.round(dist)} blocks away.` : `Going back for my things, ${Math.round(dist)} blocks away.`, 20000);
+        let reached = dist3D(this.sim.location, d) <= 4;
+        let failed = false;
+        for (let leg = 0; leg < 6 && !reached; leg++) {
+          const before = dist3D(this.sim.location, d);
+          const ok = await S.goNear(gen, d, 3, 2);
+          d.legs = (d.legs ?? 0) + 1;
+          const after = dist3D(this.sim.location, d);
+          reached = after <= 4;
+          if (!ok && after > before - 2) { failed = true; break; } // no headway on a leg that ran to its end
+        }
+        if (failed) {
+          d.fails = (d.fails ?? 0) + 1;
+          d.retryAt = Date.now() + backoffMs(d.fails);
+          trace(`loot: no way to it from ${Math.round(dist3D(this.sim.location, d))} away (failed leg ${d.fails}), trying again in ${backoffMs(d.fails) / 1000} s`);
+          this.saveState();
+          await S.wait(gen, Math.ceil(backoffMs(d.fails) / 50)); // (by the pile: a way in may open)
+          continue;
+        }
+        if (dist3D(this.sim.location, d) > 12) { this.saveState(); continue; } // (a long way: another leg)
+        d.fails = 0;
+        // Here: everything lying around the spot. Ones written off a moment ago (the first sweep
+        // couldn't get one, a door has opened since) are tried again.
+        const near = () => { try { return this.dim.getEntities({ type: 'minecraft:item', location: d, maxDistance: 9 }); } catch { return []; } };
+        for (const e of near()) { try { S.unreachableItems.delete(e.id); } catch {} }
+        await S.sweep(gen, d, 8, null, 25);
+        const left = near().length;
+        trace(`loot: at the spot, ${left} stack(s) left after the sweep (visit ${(d.stuck ?? 0) + 1})`);
+        if (!left) {
+          this.say('Got my things back.');
+          this.equipBestWeapon(); this.equipArmor();
+          this.nextDeathSpot();
+          continue;
+        }
+        d.stuck = (d.stuck ?? 0) + 1;
+        d.retryAt = Date.now() + backoffMs(d.stuck);
+        this.sayOnce('loot-left', `Got some of my things back; ${left} stack${left > 1 ? 's' : ''} I couldn't reach yet.`, 30000);
+        this.saveState();
+        await S.wait(gen, Math.ceil(backoffMs(d.stuck) / 50));
+      } finally {
+        this.pickingUp = false;
+      }
     }
-    if (dist3D(this.sim.location, d) <= 12) {
-      await S.sweep(gen, d, 8, null, 25);
-      let left = 0;
-      try { left = this.dim.getEntities({ type: 'minecraft:item', location: d, maxDistance: 8 }).length; } catch {}
-      if (left) this.say(`Got most of my things back; ${left} stack${left > 1 ? 's' : ''} I couldn't reach.`);
-      else this.say('Got my things back.');
-    }
+  }
+
+  /** This death spot's done (all picked up, expired or given up on): on to an older one, if any. */
+  nextDeathSpot() {
     this.deathSpot = null;
+    while (this.deathQueue?.length) {
+      const n = this.deathQueue.shift();
+      if (Date.now() - n.at < LOOT_WINDOW_MS) { this.deathSpot = n; break; }
+    }
     this.saveState();
   }
 
@@ -1279,6 +1366,11 @@ export class Agent {
    * to: picked up between jobs so nothing gets left behind.
    */
   async pickUpLoose(gen) {
+    this.pickingUp = true;
+    try { await this.pickUpLooseInner(gen); } finally { this.pickingUp = false; }
+  }
+
+  async pickUpLooseInner(gen) {
     const S = this.skills;
     if (this.lootAt) {
       const l = this.lootAt;
@@ -1407,9 +1499,23 @@ export class Agent {
     return step;
   }
 
-  /** Beds off, and fit to be out in the dark: work through the night. */
+  /** Hurt enough to stop and heal before any more work (core/rest.js)? */
+  restNeeded(inv) {
+    const H = this.homestead;
+    const hunger = H.hunger(), health = this.health();
+    if (this.resting && Date.now() - this.restStart > (REST_MAX_S + 30) * 1000) this.resting = false; // (a bout an order cut off, long ago)
+    if (health >= 14 && !this.resting) return false; // (the usual case: no food sums)
+    const canEat = !!chooseFood(inv, { hunger, saturation: H.saturation(), health });
+    return shouldRest({ health, hunger, canEat, resting: !!this.resting, coolingDown: Date.now() < (this.restCoolUntil ?? 0) });
+  }
+
+  /**
+   * Fit to be out in the dark, and told to be (sleeping off, or `!bot goal nights off`: not going
+   * home at dusk): work through the night like a day. Unarmed or hurt it still takes cover.
+   */
   workNights(inv) {
-    return (this.bedsOn() === false || this.toggles().beds === false) && SWORD_OK.test(Object.keys(inv).join(' ')) && this.health() >= 10;
+    const tg = this.toggles();
+    return (this.bedsOn() === false || tg.beds === false || tg.nights === false) && SWORD_OK.test(Object.keys(inv).join(' ')) && this.health() >= 10;
   }
 
   /**
@@ -1686,6 +1792,16 @@ export class Agent {
       if (this.towerHolds() && MOBS[target.type]?.kind === 'melee') reach = 3.7;
       mv = (this.towerHolds() && MOBS[target.type]?.kind === 'melee' ? { swing: canSwing, stop: true } : null) ?? this.slotMove(target, me, canSwing) ?? fightMove({ me, mob, melee: MOBS[target.type]?.kind === 'melee', t, shield: this.shield, canSwing, type: target.type });
       this.fightMove = mv.stop ? 'hold' : mv.goal && d > STOP_AT ? 'approach' : 'back';
+      // The combat log for every other fight (twice a second): where it is, what we did, what was in
+      // hand. The skeleton fights that went on for half a minute had nothing in the log to say why.
+      if (t - (this.fightTraceAt ?? -1e9) >= 10) {
+        this.fightTraceAt = t;
+        let held = '?';
+        try { held = this.sim.getComponent('minecraft:inventory')?.container?.getItem(this.sim.selectedSlotIndex)?.typeId?.replace('minecraft:', '') ?? 'hand'; } catch {}
+        let vis = '?';
+        try { vis = canSee(this.dim, this.sim.getHeadLocation(), chest) ? '1' : '0'; } catch {}
+        trace(`fight ${target.type} ${e.id.slice(-4)} d${d.toFixed(1)} dy${(mob.y - me.y).toFixed(1)} hp${target.hp ?? '?'} me${this.health().toFixed(0)} held=${held} ${canSwing ? 'ready' : 'cd'} vis${vis} tgt${target.targetingMe ? 1 : 0} reach${target.canReach === false ? 0 : 1} -> ${mv.swing ? 'SWING ' : ''}${mv.stop ? 'stop' : mv.goal ? 'approach' : 'hold'}${mv.block ? ' block' : ''} shield${this.shield ? 1 : 0} busy${this.motor.busy ? 1 : 0}`);
+      }
     }
     this.setBlocking(!!mv.block);
     // Stepping out of an arrow's way: the feet are the dodge's until it's done.

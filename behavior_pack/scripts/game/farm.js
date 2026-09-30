@@ -566,19 +566,29 @@ export class Farm {
     return ['iron_hoe', 'stone_hoe', 'wooden_hoe'].find((id) => inv[id]) ?? null;
   }
 
-  /** Use an item on the top of a block (hoe on dirt, seeds on farmland). */
+  /**
+   * Use an item on the top of a block (hoe on dirt, seeds on farmland). The game lets a player use
+   * an item every 10 ticks (measured in BDS 1.26.51; game/calibrate.js): a second use right on the heels of
+   * the last one is refused (`false`), which is why every seed after a hoe went nowhere. So: leave
+   * that gap since the last use, and if one is refused anyway, try again a moment later.
+   */
   async useOn(gen, itemId, block, next = null) {
     if (!itemId) return false;
     const slot = hold(this.sim, itemId);
     if (slot < 0) return false;
     const before = this.S.blockAt(block), above = this.S.blockAt({ ...block, y: block.y + 1 });
+    const changed = () => this.S.blockAt(block) !== before || this.S.blockAt({ ...block, y: block.y + 1 }) !== above;
     // Crosshair near the top of it (no stop and settle), use, and on toward the next as it takes.
     await this.S.aim(gen, { x: block.x + 0.5, y: block.y + 1, z: block.z + 0.5 }, 15, 6);
-    this.S.check(gen);
-    try { this.sim.useItemInSlotOnBlock(slot, block, Direction.Up, { x: 0.5, y: 1, z: 0.5 }); } catch {}
-    if (next) this.a.motor.setFocus({ x: next.x + 0.5, y: next.y + 0.1, z: next.z + 0.5 });
-    const changed = () => this.S.blockAt(block) !== before || this.S.blockAt({ ...block, y: block.y + 1 }) !== above;
-    for (let k = 0; k < 3; k++) { await this.S.wait(gen, 1); if (changed()) { this.S.afterUse(slot); return true; } }
+    for (let attempt = 0; attempt < 4; attempt++) {
+      await this.S.useGap(gen);
+      let used = false;
+      try { used = this.sim.useItemInSlotOnBlock(slot, block, Direction.Up, { x: 0.5, y: 1, z: 0.5 }); } catch (e) { this.S.log(`farm: use ${itemId} on ${before} at ${block.x} ${block.y} ${block.z} threw ${e}`); return false; }
+      this.S.lastUseTick = system.currentTick;
+      if (attempt === 0 && next) this.a.motor.setFocus({ x: next.x + 0.5, y: next.y + 0.1, z: next.z + 0.5 });
+      for (let k = 0; k < 3; k++) { await this.S.wait(gen, 1); if (changed()) { this.S.afterUse(slot); return true; } }
+      if (used) return false; // (it went through and did nothing: not something to repeat)
+    }
     return false;
   }
 }

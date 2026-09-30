@@ -11,10 +11,11 @@ import { cheapestPlaceable, plankReserve, canBreak } from '../core/costs.js';
 import { siteWork, siteScore } from '../core/site.js';
 import { depositPlan, takePlan, sortIntoChests } from '../core/storage.js';
 import { invCounts, hold, take, give, container as packOf } from './inventory.js';
-import { canSee, ONE_TAP } from './world.js';
+import { canSee, ONE_TAP, castRay } from './world.js';
 import { barricadeCells } from '../core/tactics.js';
 import { Cell } from '../core/pathfinder.js';
 import { trace } from './bridge.js';
+import { REST_UNTIL, REST_MAX_S, REST_COOLDOWN_S, REST_HOME_M, canHeal } from '../core/rest.js';
 
 const strip = (id) => id.replace('minecraft:', '');
 const center = (p) => ({ x: p.x + 0.5, y: p.y + 0.5, z: p.z + 0.5 });
@@ -159,6 +160,35 @@ export class Homestead {
     try { await this.S.wait(gen, 36); } finally { try { this.sim.stopUsingItem(); } catch {} }
     this.S.afterUse(slot); // (the last bite: not still holding it)
     return true;
+  }
+
+  /**
+   * Hurt: stop and heal (core/rest.js). Inside the house if it's close and we're above ground, else
+   * where we stand (the fight and flee reflexes go on running); eat what heals fastest, wait. A bout
+   * that runs out of time or of food is left with a few minutes' rest of its own before the next.
+   * The bout survives a fight breaking it off (a.resting): the plan comes straight back here.
+   */
+  async restUp(gen) {
+    const a = this.a, S = this.S;
+    if (!a.resting) { a.resting = true; a.restStart = Date.now(); trace(`rest: hurt (${Math.round(a.health())} hp), resting`); }
+    a.sayOnce('rest', `Hurt (${Math.round(a.health())}/20): resting till I've healed.`, 120000);
+    const h = this.house;
+    if (h && !this.isHome() && !a.minedUnderground?.() && dist3D(this.sim.location, h) <= REST_HOME_M) {
+      try { await this.enterHouse(gen); } catch (e) { if (gen !== a.taskGen) throw e; }
+    }
+    let quit = '';
+    for (;;) {
+      S.check(gen);
+      if (a.health() >= REST_UNTIL) break;
+      if ((Date.now() - a.restStart) / 1000 > REST_MAX_S) { quit = 'out of time'; break; }
+      const ate = await this.maybeEat(gen);
+      if (!ate && !canHeal({ hunger: this.hunger(), canEat: !!chooseFood(invCounts(this.sim), { hunger: this.hunger(), saturation: this.saturation(), health: a.health() }) })) { quit = 'nothing to heal with'; break; }
+      if (!ate) await S.wait(gen, 40);
+    }
+    a.resting = false;
+    if (quit) { a.restCoolUntil = Date.now() + REST_COOLDOWN_S * 1000; a.say(quit === 'out of time' ? "Still hurt, but I can't sit here all day: getting on with it, carefully." : "Hurt and nothing to heal with: food first."); }
+    trace(`rest: done (${quit || 'healed'}), ${Math.round(a.health())} hp after ${Math.round((Date.now() - a.restStart) / 1000)} s`);
+    return !quit;
   }
 
   // ---------- animals ----------
@@ -503,8 +533,11 @@ export class Homestead {
    * Put `itemId` into cell: click a solid neighbour's face toward the cell (below first, then the
    * sides, then above), like a player placing against whatever's there.
    */
-  async placeAt(gen, cell, itemId, via = null, next = null, { liquid = false } = {}) {
+  async placeAt(gen, cell, itemId, via = null, next = null, { liquid = false, lenient = true } = {}) {
     const S = this.S;
+    // (A bed, chest, door or sign never goes down by a click from the simulated player: those
+    // are set with a command after this fails, no point trying them again here.)
+    if (/bed|chest|door|sign/.test(itemId)) lenient = false;
     // (liquid: into water or lava, to stop it.)
     const open = (id) => SOFT.test(id) || (liquid && /water|lava/.test(id));
     if (!open(S.blockAt(cell) ?? 'air')) return S.blockAt(cell) === itemId;
@@ -515,17 +548,21 @@ export class Homestead {
     // player can't put a block against the far side of a wall. None from here: step round to
     // where there is one (goSee), once.
     const clickable = (e) => faces.some(([o]) => solidAt(nOf(o)) && S.placePoint(cell, nOf(o), e));
-    if (!faces.some(([o]) => solidAt(nOf(o)))) return false;
+    this.placeWhy = '';
+    if (!faces.some(([o]) => solidAt(nOf(o)))) { this.placeWhy = 'nothing solid beside it'; return false; }
     if (!S.inReach(cell) || !clickable(S.eye())) {
-      if (!(await S.goSee(gen, cell, clickable))) return false;
+      if (!(await S.goSee(gen, cell, clickable))) {
+        this.placeWhy = 'no place to stand where the crosshair gets onto a face';
+        return lenient && await this.placeAnyway(gen, cell, itemId, faces, solidAt, nOf, open, next);
+      }
     }
     for (const [o, face, loc] of faces) {
       const n = nOf(o);
       if (!solidAt(n)) continue;
       const pp = S.placePoint(cell, n, S.eye());
-      if (!pp) continue;
+      if (!pp) { this.placeWhy = `no line to the ${face} face from here`; continue; }
       const slot = hold(this.sim, itemId);
-      if (slot < 0) return false;
+      if (slot < 0) { this.placeWhy = `no ${itemId} in hand`; return false; }
       // The crosshair onto the face we'll click, then straight on toward the next block as this
       // one goes down.
       this.a.motor.setFocus(pp.pt);
@@ -537,11 +574,50 @@ export class Homestead {
         if (!on && k < 10) await S.wait(gen, 1);
       }
       S.check(gen);
-      if (!on) continue;
+      if (!on) { const h = S.crosshair(); this.placeWhy = `crosshair on ${h ? `${S.blockAt(h.location)} ${h.location.x} ${h.location.y} ${h.location.z} ${h.face.x},${h.face.y},${h.face.z}` : 'nothing'}, not the ${face} face of ${n.x} ${n.y} ${n.z}`; continue; }
       const r = await S.placeOn(gen, slot, n, face, loc, cell);
       this.a.motor.setFocus(next ? center(next) : null);
       if (r || !open(S.blockAt(cell) ?? 'air')) return true;
+      this.placeWhy = `used it against ${S.blockAt(n)} (${face}): ${r}, still ${S.blockAt(cell)}`;
       S.log(`place ${itemId} at ${cell.x} ${cell.y} ${cell.z} against ${S.blockAt(n)} (${face}): ${r}, still ${S.blockAt(cell)}`);
+    }
+    return lenient && await this.placeAnyway(gen, cell, itemId, faces, solidAt, nOf, open, next);
+  }
+
+  /**
+   * Last go for a block the crosshair wouldn't get onto a face for (the top course of a wall from
+   * the ground, a roof edge, a face the head turn never settled on): in reach, so put it against a
+   * neighbour's face, aimed at it as near as the head gets. The game takes the click on the named
+   * face. Logged, so the ones that came from here can be counted.
+   */
+  async placeAnyway(gen, cell, itemId, faces, solidAt, nOf, open, next) {
+    const S = this.S;
+    // Only a spot the eye has a line to: nothing between it and the spot but what is built right
+    // against it (the top course over a wall is hidden by that very wall, and that is where a hand
+    // reaches over). A wall or a box further off in the way is no place to build through. What
+    // can't be had is the face to click, not the place.
+    if (!S.inReach(cell)) return false;
+    const e = S.eye(), c = center(cell);
+    const d = { x: c.x - e.x, y: c.y - e.y, z: c.z - e.z };
+    let hit = null;
+    try { hit = castRay(this.dim, e, d, Math.max(0.1, Math.hypot(d.x, d.y, d.z) - 0.35), { vines: true }); } catch { return false; }
+    if (hit) {
+      const l = hit.location;
+      if (Math.max(Math.abs(l.x - cell.x), Math.abs(l.y - cell.y), Math.abs(l.z - cell.z)) > 1) return false;
+    }
+    for (const [o, face, loc] of faces) {
+      const n = nOf(o);
+      if (!solidAt(n)) continue;
+      const slot = hold(this.sim, itemId);
+      if (slot < 0) return false;
+      await S.aim(gen, { x: (cell.x + n.x) / 2 + 0.5, y: (cell.y + n.y) / 2 + 0.5, z: (cell.z + n.z) / 2 + 0.5 }, 15, 6);
+      const r = await S.placeOn(gen, slot, n, face, loc, cell);
+      this.a.motor.setFocus(next ? center(next) : null);
+      if (r || !open(S.blockAt(cell) ?? 'air')) {
+        this.placedAnyway = (this.placedAnyway ?? 0) + 1;
+        S.log(`place ${itemId} at ${cell.x} ${cell.y} ${cell.z}: no clear line (${this.placeWhy}); put it against the ${face} face anyway`);
+        return true;
+      }
     }
     return false;
   }
@@ -818,7 +894,7 @@ export class Homestead {
       if (!id) break;
       if (!S.inReach(b)) await S.goNear(gen, standFor(fur, b), 0.4, 2);
       if (!S.inReach(b)) await S.goNear(gen, b, 2, 2);
-      if (!(await this.placeAt(gen, b, id))) { missed++; trace(`house: couldn't place ${b.material} lx ${b.lx} lz ${b.lz} h ${b.h} (${b.x} ${b.y} ${b.z}) from ${Math.round(this.sim.location.x)} ${Math.round(this.sim.location.y)} ${Math.round(this.sim.location.z)}`); }
+      if (!(await this.placeAt(gen, b, id))) { missed++; trace(`house: couldn't place ${b.material} lx ${b.lx} lz ${b.lz} h ${b.h} (${b.x} ${b.y} ${b.z}) from ${Math.round(this.sim.location.x)} ${Math.round(this.sim.location.y)} ${Math.round(this.sim.location.z)}: ${this.placeWhy}`); }
     }
     if (built.missed) trace(`house: the sweep missed ${built.missed}, the second pass left ${missed}`);
     if (missed > 3) { this.a.say(`Couldn't place ${missed} blocks of the house.`); }
@@ -1653,7 +1729,8 @@ export class Homestead {
     if (h.bed && sleep) await this.S.goNear(gen, fur.bed.standAt, 0.5, 2);
     else await this.S.goNear(gen, fur.stand, 0.5, 2);
     let tries = 0;
-    while (isNight(world.getTimeOfDay())) {
+    // (Told to work nights while we sit here, `!bot goal nights off`: out we go, the plan takes over.)
+    while (isNight(world.getTimeOfDay()) && !this.a.workNights?.(invCounts(this.sim))) {
       // Beds only work once it's properly dark (from about 12540).
       if (h.bed && sleep && !this.sim.isSleeping && world.getTimeOfDay() >= 12600 && tries++ < 20) {
         try { this.sim.interactWithBlock(fur.bed.foot, Direction.Up); } catch {}
@@ -1661,7 +1738,7 @@ export class Homestead {
       await this.S.wait(gen, 40);
     }
     if (this.sim.isSleeping) { try { this.sim.stopInteracting(); } catch {} this.a.body.jump(); await this.S.wait(gen, 10); }
-    this.a.say('Morning.');
+    if (!isNight(world.getTimeOfDay())) this.a.say('Morning.');
     return true;
   }
 

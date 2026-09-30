@@ -49,7 +49,7 @@ function makeGame({ unbreakable = /^bedrock$/ } = {}) {
   };
   const give = (id, n) => { const it = new ItemStack(id, n); pack.addItem(it); };
   const feet = () => ({ x: Math.floor(bot.location.x), y: Math.floor(bot.location.y), z: Math.floor(bot.location.z) });
-  const eye = () => ({ x: bot.location.x, y: bot.location.y + 1.62, z: bot.location.z });
+  const eye = () => ({ x: bot.location.x, y: bot.location.y + 1.52, z: bot.location.z });
   const inReach = (p) => d3(eye(), { x: p.x + 0.5, y: p.y + 0.5, z: p.z + 0.5 }) <= 4.5;
   const standable = (p) => !SOLIDISH(get(p)) && !SOLIDISH(get({ ...p, y: p.y + 1 })) && get({ ...p, y: p.y - 1 }) !== 'air';
   // Is there a walk from a to b through open cells (feet and head), the house's door passable? (A
@@ -126,7 +126,7 @@ function makeGame({ unbreakable = /^bedrock$/ } = {}) {
       for (let dx = -5; dx <= 5; dx++) for (let dy = -3; dy <= 2; dy++) for (let dz = -5; dz <= 5; dz++) {
         const c = { x: Math.floor(p.x) + dx, y: Math.floor(p.y) + dy, z: Math.floor(p.z) + dz };
         if (!standable(c)) continue;
-        const e = { x: c.x + 0.5, y: c.y + 1.62, z: c.z + 0.5 };
+        const e = { x: c.x + 0.5, y: c.y + 1.52, z: c.z + 0.5 };
         if (d3(e, { x: p.x + 0.5, y: p.y + 0.5, z: p.z + 0.5 }) <= 4.2 && ok(e)) cand.push(c);
       }
       cand.sort((a, b) => d3(a, feet()) - d3(b, feet()));
@@ -139,7 +139,7 @@ function makeGame({ unbreakable = /^bedrock$/ } = {}) {
         for (let up = 1; up <= 4; up++) {
           const top = { ...g0, y: 64 + up };
           if (SOLIDISH(get(top)) || SOLIDISH(get({ ...top, y: top.y + 1 }))) break;
-          const e = { x: top.x + 0.5, y: top.y + 1.62, z: top.z + 0.5 };
+          const e = { x: top.x + 0.5, y: top.y + 1.52, z: top.z + 0.5 };
           const pc = { x: p.x + 0.5, y: p.y + 0.5, z: p.z + 0.5 };
           let at = d3(e, pc) <= 4.2 && ok(e) ? top : null;
           // (Or up the pillar and on across what it's up against: onto the roof.)
@@ -147,7 +147,7 @@ function makeGame({ unbreakable = /^bedrock$/ } = {}) {
             for (let yy = 64; yy < top.y; yy++) set({ ...g0, y: yy }, 'cobblestone');
             for (let ax = -5; ax <= 5 && !at; ax++) for (let az = -5; az <= 5 && !at; az++) {
               const c = { x: Math.floor(p.x) + ax, y: top.y, z: Math.floor(p.z) + az };
-              const ce = { x: c.x + 0.5, y: c.y + 1.62, z: c.z + 0.5 };
+              const ce = { x: c.x + 0.5, y: c.y + 1.52, z: c.z + 0.5 };
               if (standable(c) && d3(ce, pc) <= 4.2 && ok(ce) && walk(top, c)) at = c;
             }
             for (let yy = 64; yy < top.y; yy++) set({ ...g0, y: yy }, 'air');

@@ -6,13 +6,14 @@ import { isNight } from '../core/settle.js';
 import { wetCones, towardWet, ExploreStall } from '../core/explore.js';
 import { tourStops, sweepOrder } from '../core/flow.js';
 import { EYE_HEIGHT } from '../core/motor.js';
+import { TUNING } from '../core/calibrate.js'; // (useGap: ticks between one item use and the next, the game refuses sooner)
 import { smoothPath, Cell, isWalkMove, isGround, DEFAULT_COSTS } from '../core/pathfinder.js';
 import { dist3D, viewVector } from '../core/mathutil.js';
 import { toolFor, planCrafts, applyCraft, isLog, isPlanks, STONE_TARGETS, SHOVEL_BLOCKS, PICKAXE_BLOCKS, TOOL_STONE, count } from '../core/recipes.js';
 import { canBreak, chooseTool, breakSeconds, cheapestPlaceable, spendableBlocks, blockSourceCost, itemValue, plankReserve } from '../core/costs.js';
 import { invCounts, hold, take, give, container, findSlot } from './inventory.js';
 import { chooseSource, chooseSourceSticky, sourceKey, trustFor, trunksOf, EXPLORE_S, DIG_DOWN_S } from '../core/sourcing.js';
-import { castRay, canSee, ONE_TAP, isWatery } from './world.js';
+import { THIN_COVER, castRay, canSee, ONE_TAP, isWatery } from './world.js';
 import { CONFIG } from '../config.js';
 import { wantScore, biomeName } from '../core/biomes.js';
 import { trace } from './bridge.js';
@@ -50,6 +51,7 @@ const TUNNELS_KEY = 'agent:tunnels';
 const UNBREAKABLE = /^(bedrock|barrier|command_block|chain_command_block|repeating_command_block|structure_block|jigsaw|end_portal_frame|end_portal|portal|end_gateway|obsidian|crying_obsidian|reinforced_deepslate|respawn_anchor|light_block.*|allow|deny|border_block)$/;
 // Nothing to stand on or bump into (air and plants you walk through).
 const OPEN = /^(air|short_grass|tall_grass|fern|large_fern|dead_bush|deadbush|snow_layer|vine|sweet_berry_bush|tall_dry_grass|short_dry_grass|bush|firefly_bush|leaf_litter|wildflowers|pink_petals|.*_flower|dandelion|poppy|.*_tulip|azure_bluet|allium|blue_orchid|oxeye_daisy|cornflower|lily_of_the_valley|light_block.*|structure_void)$/;
+const TORCH = /^(wall_|soul_|redstone_|underwater_)?torch$/;
 // Never land on these.
 const BAD_LANDING = /lava|magma|fire|cactus|campfire|sweet_berry|powder_snow|pointed_dripstone|wither_rose/;
 // Raycast filter: only ids this game version knows (an unknown id would make every raycast throw).
@@ -299,7 +301,7 @@ export class Skills {
     const d = { x: c.x - e.x, y: c.y - e.y, z: c.z - e.z };
     const len = Math.hypot(d.x, d.y, d.z);
     try {
-      const hit = castRay(this.dim, e, d, len + 0.5);
+      const hit = castRay(this.dim, e, d, len + 0.5, { vines: true }); // (a vine on the block is in the way: break it first)
       return hit?.block.location;
     } catch {
       return undefined;
@@ -450,12 +452,14 @@ export class Skills {
    * a placement the player is looking at, so finish the (already smooth) turn with an exact aim.
    */
   async placeOn(gen, slot, neighbor, face, faceLoc, cell) {
-    for (let attempt = 0; attempt < 2; attempt++) {
+    for (let attempt = 0; attempt < 3; attempt++) {
       // First go: from where the crosshair already is (the aim before this got it near), no snap.
       // Didn't take: look straight at the face and try once more, the plain way.
       if (attempt) { try { this.sim.lookAtBlock(neighbor); } catch {} await this.wait(gen, 1); }
+      await this.useGap(gen);
       let ok = false;
-      try { ok = attempt ? this.sim.useItemInSlotOnBlock(slot, neighbor, face) : this.sim.useItemInSlotOnBlock(slot, neighbor, face, faceLoc); } catch {}
+      try { ok = attempt === 1 ? this.sim.useItemInSlotOnBlock(slot, neighbor, face) : this.sim.useItemInSlotOnBlock(slot, neighbor, face, faceLoc); } catch {}
+      this.lastUseTick = system.currentTick;
       for (let k = 0; k < 2; k++) {
         await this.wait(gen, 1);
         if (!OPEN.test(this.blockAt(cell) ?? 'air')) { this.a.cellChanged?.(); this.afterUse(slot); return true; }
@@ -463,6 +467,18 @@ export class Skills {
       if (ok) { this.a.cellChanged?.(); this.afterUse(slot); return !OPEN.test(this.blockAt(cell) ?? 'air'); }
     }
     return false;
+  }
+
+  /**
+   * The game takes one item use every 10 ticks (measured on BDS 1.26.51: 9 is refused, 10 taken;
+   * game/calibrate.js measures it again at spawn) and refuses one sooner: it comes back `false`
+   * and does nothing. Blocks laid one after another, or a seed right after a hoe, went nowhere
+   * for that. So leave the gap since the last use.
+   */
+  async useGap(gen) {
+    const gap = TUNING.useGap - (system.currentTick - (this.lastUseTick ?? -100));
+    if (gap > 0) await this.wait(gen, gap);
+    this.check(gen);
   }
 
   /**
@@ -831,22 +847,37 @@ export class Skills {
     // the leaves before the trunk, grass before the flower, the next block) comes out first, or we
     // step round to where we can get at it. No more breaking things through other things.
     let tp = this.targetPoint(p);
-    for (let k = 0; !tp.pt && k < 3; k++) {
-      const hit = tp.blocker;
-      if (hit) {
-        const hid = this.blockAt(hit) ?? '';
-        const f0 = this.feet();
-        const ownFloor = hit.x === f0.x && hit.z === f0.z && hit.y < f0.y;
-        const soft = ONE_TAP.test(hid) || /leaves|vine|grass|fern|flower|bush|snow_layer|lichen|roots|web|fire|litter|petals/.test(hid) || SHOVEL_BLOCKS.has(hid);
-        // On an essential job, whatever's in front of it goes too (not our house, not liquid).
-        const clearIt = !ownFloor && depth < 3 && !this.isProtected(hit) && (soft || (this.essential && !UNBREAKABLE.test(hid) && !/water|lava/.test(hid) && !this.a.homestead?.isHouseBlock?.(hit)));
-        if (clearIt) {
-          if (!(await this.mine(gen, hit, { collect: !soft, depth: depth + 1 }))) break;
-          tp = this.targetPoint(p);
-          continue;
+    // (A few rounds: what's in front, then a vine on the line to the block, then what that uncovers.)
+    for (let round = 0; round < 3; round++) {
+      for (let k = 0; !tp.pt && k < 3; k++) {
+        const hit = tp.blocker;
+        if (hit) {
+          const hid = this.blockAt(hit) ?? '';
+          const f0 = this.feet();
+          const ownFloor = hit.x === f0.x && hit.z === f0.z && hit.y < f0.y;
+          const soft = ONE_TAP.test(hid) || /leaves|vine|grass|fern|flower|bush|snow_layer|lichen|roots|web|fire|litter|petals/.test(hid) || SHOVEL_BLOCKS.has(hid);
+          // On an essential job, whatever's in front of it goes too (not our house, not liquid).
+          const clearIt = !ownFloor && depth < 3 && !this.isProtected(hit) && (soft || (this.essential && !UNBREAKABLE.test(hid) && !/water|lava/.test(hid) && !this.a.homestead?.isHouseBlock?.(hit)));
+          if (clearIt) {
+            if (!(await this.mine(gen, hit, { collect: !soft, depth: depth + 1 }))) break;
+            tp = this.targetPoint(p);
+            continue;
+          }
         }
+        if (!(await this.goSee(gen, p, (e) => !!this.targetPoint(p, e).pt))) break;
+        tp = this.targetPoint(p);
       }
-      if (!(await this.goSee(gen, p, (e) => !!this.targetPoint(p, e).pt))) break;
+      if (!tp.pt) break;
+      // A vine is a thin sheet on the face of the block behind it. The crosshair can slip past its edge,
+      // or take the block by its bare underside, but the vine is still hanging there: a player would look
+      // at it and take it off first. Any vine on the line to the block's middle goes before the block does.
+      const vh = depth < 3 ? this.firstHit(p) : null;
+      if (!vh || (vh.x === p.x && vh.y === p.y && vh.z === p.z)) break;
+      if (!THIN_COVER.test(this.blockAt(vh) ?? '') || this.isProtected(vh)) break;
+      const f1 = this.feet();
+      this.log(`vine over ${id} at ${p.x} ${p.y} ${p.z}: ${this.blockAt(vh)} at ${vh.x} ${vh.y} ${vh.z} first (from ${f1.x} ${f1.y} ${f1.z}), taking it off`);
+      // (A vine can drop off by itself as the block it hung on goes: then there's nothing to take off.)
+      if (!(await this.mine(gen, vh, { collect: false, depth: depth + 1 })) && THIN_COVER.test(this.blockAt(vh) ?? '')) { this.log(`couldn't take the ${this.blockAt(vh)} at ${vh.x} ${vh.y} ${vh.z} off ${id} at ${p.x} ${p.y} ${p.z}`); return false; }
       tp = this.targetPoint(p);
     }
     if (!tp.pt) { this.log(`can't get the crosshair on ${id} at ${p.x} ${p.y} ${p.z} (${tp.blocker ? `${this.blockAt(tp.blocker)} in the way` : 'out of sight'})`); return false; }
@@ -871,6 +902,23 @@ export class Skills {
     // Crosshair on it before the swing (the view could have moved while the tool came out).
     if (!(await this.aimOn(gen, p, tp.pt)) && !(await this.aimOn(gen, p))) { this.log(`crosshair wouldn't settle on ${id} at ${p.x} ${p.y} ${p.z}`); return false; }
     const expect = breakTicks(id, tool);
+    // Last look before the swing: the view, or we, may have shifted since the check above. A vine
+    // that's first on the line now comes off first, and then the crosshair goes back on the block.
+    for (let round = 0; round < 3 && depth < 3; round++) {
+      const late = this.firstHit(p);
+      if (!late || (late.x === p.x && late.y === p.y && late.z === p.z)) break;
+      if (!THIN_COVER.test(this.blockAt(late) ?? '') || this.isProtected(late)) break;
+      const fl = this.feet(), e = this.eye();
+      this.log(`vine still first at the swing: ${this.blockAt(late)} at ${late.x} ${late.y} ${late.z} over ${id} at ${p.x} ${p.y} ${p.z}, feet ${fl.x} ${fl.y} ${fl.z} eye ${e.x.toFixed(2)} ${e.y.toFixed(2)} ${e.z.toFixed(2)}, pt ${JSON.stringify(tp.pt)}`);
+      if (!(await this.mine(gen, late, { collect: false, depth: depth + 1 })) && THIN_COVER.test(this.blockAt(late) ?? '')) return false;
+      if (this.blockAt(p) !== id) return this.blockAt(p) === 'air' || !this.blockAt(p);
+      tp = this.targetPoint(p);
+      if (!tp.pt || !(await this.aimOn(gen, p, tp.pt))) return false;
+    }
+    {
+      const late = this.firstHit(p);
+      if (late && !(late.x === p.x && late.y === p.y && late.z === p.z) && THIN_COVER.test(this.blockAt(late) ?? '')) { this.log(`won't break ${id} at ${p.x} ${p.y} ${p.z} through the ${this.blockAt(late)} at ${late.x} ${late.y} ${late.z}`); return false; }
+    }
     this.a.breaking = true; // (the step profile: breaking, not thinking)
     try {
       this.sim.breakBlock(p);
@@ -994,7 +1042,7 @@ export class Skills {
     if (home) avoid.push({ x: home.x, z: home.z, r: 8, why: 'too close to the house' });
     const farmW = mem.data.farm?.water;
     if (farmW) avoid.push({ x: farmW.x, z: farmW.z, r: 10, why: 'would shade the farm' });
-    for (const cat of ['crafting_table', 'furnace']) for (const e of mem.list(cat, this.dim.id, stump).filter((e) => e.dist < 12)) avoid.push({ x: e.pos.x, z: e.pos.z, r: 3, why: `next to our ${cat.replace('_', ' ')}` });
+    for (const cat of ['crafting_table', 'furnace']) for (const e of mem.list(cat, this.dim.id, stump).filter((e) => e.dist < 12 && (this.blockAt(e.pos) ?? cat).includes(cat))) avoid.push({ x: e.pos.x, z: e.pos.z, r: 3, why: `next to our ${cat.replace('_', ' ')}` });
     for (const k of [...(mem.data.stairs ?? []), ...(mem.data.quarry?.steps ?? [])]) {
       const [x, , z] = k.split(',').map(Number);
       if (Math.abs(x - stump.x) < 6 && Math.abs(z - stump.z) < 6) avoid.push({ x, z, r: 2.5, why: 'on the quarry stairs' });
@@ -1126,8 +1174,23 @@ export class Skills {
   async tap(gen, c, tol = 25, next = null, pt = null) {
     const id = this.blockAt(c) ?? 'air';
     if (!ONE_TAP.test(id) || !this.inReach(c) || this.isProtected(c)) return false;
-    // (Only what the crosshair gets onto: grass behind grass is the next swipe's.)
-    if (!(await this.aimOn(gen, c, pt, 6))) return false;
+    // (Only what the crosshair gets onto.) Grass among grass: it lands on a neighbour of the same
+    // kind, whose top is as good as any. That one's coming out anyway; punch it and look again, the
+    // way a player works through a patch, until the one wanted is in the clear.
+    let aimed = await this.aimOn(gen, c, pt, 6);
+    for (let k = 0; !aimed && k < 4; k++) {
+      const ch = this.crosshair();
+      const cid = ch ? this.blockAt(ch.location) ?? '' : '';
+      if (!ch || !ONE_TAP.test(cid) || this.isProtected(ch.location)) break;
+      if (ch.location.x === c.x && ch.location.y === c.y && ch.location.z === c.z) break;
+      try { this.sim.breakBlock(ch.location); } catch {}
+      await this.wait(gen, 1);
+      try { this.sim.stopBreakingBlock(); } catch {}
+      if (this.blockAt(ch.location) === cid) { try { this.dim.runCommand(`setblock ${ch.location.x} ${ch.location.y} ${ch.location.z} air destroy`); } catch {} }
+      this.a.cellChanged?.();
+      aimed = await this.aimOn(gen, c, this.targetPoint(c).pt ?? pt, 6);
+    }
+    if (!aimed) return false;
     try { this.sim.breakBlock(c); } catch {}
     // On to the next one as it goes (the hand sweeps through; it doesn't stop on each).
     if (next) this.a.motor.setFocus({ x: next.x + 0.5, y: next.y + 0.25, z: next.z + 0.5 });
@@ -1266,7 +1329,7 @@ export class Skills {
     const stray = this.strayDrops(playerNear ? 6 : 3.5);
     for (const s of stray) {
       const spot = { x: s.loc.x, y: Math.floor(s.loc.y + 0.1), z: s.loc.z };
-      const eye = { x: spot.x, y: spot.y + 1.62, z: spot.z };
+      const eye = { x: spot.x, y: spot.y + EYE_HEIGHT, z: spot.z };
       const reachNext = Math.hypot(next.x + 0.5 - eye.x, next.y + 0.5 - eye.y, next.z + 0.5 - eye.z) <= 4.5;
       if (!reachNext && !playerNear) continue;
       const res = await this.a.plan(this.sim.location, spot, 0.8, 200);
@@ -1841,12 +1904,13 @@ export class Skills {
       if (len < 0.05) return true;
       let hit;
       try {
-        hit = castRay(this.dim, from, d, len + 0.5);
+        hit = castRay(this.dim, from, d, len + 0.5, { vines: true });
       } catch { return false; }
       if (!hit) return false;
       const h = hit.block.location;
       if (h.x === p.x && h.y === p.y && h.z === p.z) return true;
-      if (!throughLeaves || !/leaves/.test(hit.block.typeId)) return false;
+      // (For a look, leaves and vines can be cut through in a moment: a trunk wrapped in vines is still in sight.)
+      if (!throughLeaves || !(/leaves/.test(hit.block.typeId) || THIN_COVER.test(hit.block.typeId))) return false;
       // Carry on from just inside this leaf block (the walk skips the cell it starts in).
       const f = hit.faceLocation ?? { x: 0.5, y: 0.5, z: 0.5 };
       from = { x: h.x + f.x + (d.x / len) * 0.01, y: h.y + f.y + (d.y / len) * 0.01, z: h.z + f.z + (d.z / len) * 0.01 };
@@ -2095,6 +2159,7 @@ export class Skills {
   async walkShaft(gen, to) {
     const q = this.quarry;
     if (!q) return false;
+    await this.mendHoleUnderUs(gen, q);
     let from = this.shaftIndexHere(q);
     // Thrown off them into a crater beside them: back onto the nearest step, and on from there.
     if (from < 0 && dist3D(this.sim.location, this.shaftStand(q, this.nearestStep(q))) <= 6) {
@@ -2120,7 +2185,16 @@ export class Skills {
     for (const i of idx) { const s = this.shaftStand(q, i); for (const dy of [0, 1]) if (this.waterDepth({ ...s, y: s.y + dy }) !== null) wet.push({ ...s, y: s.y + dy }); }
     if (wet.length) await this.stopFlow(gen, wet);
     for (let a = 0; a < idx.length; a += 40) {
-      const wps = idx.slice(Math.max(0, a - 1), a + 40).map((i) => { const s = this.shaftStand(q, i); return { x: s.x + 0.5, y: s.y, z: s.z + 0.5 }; });
+      const chunk = idx.slice(Math.max(0, a - 1), a + 40);
+      // A step that's gone (a blast took the tread, rock fell into the way): look before walking
+      // and mend it as we come to it. Following the recorded steps into a 2-high gap was the bot
+      // jumping at a wall, over and over, before it gave in and found a way round.
+      const bad = chunk.findIndex((s, n) => n > 0 && !this.stepFine(q, chunk[n - 1], s));
+      if (bad > 0) {
+        this.log(`quarry: step ${chunk[bad]} is broken (${this.blockAt({ ...this.shaftStand(q, chunk[bad]), y: this.shaftStand(q, chunk[bad]).y - 1 }) ?? '?'} under it): mending before walking on`);
+        return (await this.rebuildStairs(gen, q, to)) || this.pastDamage(gen, q, to);
+      }
+      const wps = chunk.map((i) => { const s = this.shaftStand(q, i); return { x: s.x + 0.5, y: s.y, z: s.z + 0.5 }; });
       const r = await this.a.motor.followPath(wps);
       this.check(gen);
       if (r.status !== 'arrived') {
@@ -2263,6 +2337,7 @@ export class Skills {
    */
   async rebuildStairs(gen, q, to) {
     const t0 = system.currentTick;
+    await this.mendHoleUnderUs(gen, q);
     let i = this.shaftIndexHere(q);
     if (i < 0) {
       // Thrown into the crater beside them: onto the nearest step we can stand on.
@@ -2321,9 +2396,22 @@ export class Skills {
     return true;
   }
 
+  /**
+   * Down in the hole where a tread should be (the blast took it from under us, or we fell through):
+   * put it back from inside, jumping up onto it. Walking "the stairs" from down here is a jump at
+   * a wall of 2 blocks, over and over.
+   */
+  async mendHoleUnderUs(gen, q) {
+    const f = this.feet();
+    const i = q.steps.indexOf(`${f.x},${f.y},${f.z}`);
+    if (i < 0 || !OPEN.test(this.blockAt(f) ?? 'air')) return false;
+    this.log(`quarry: in the hole where step ${i} was: putting it back from inside`);
+    return this.putTread(gen, q, i);
+  }
+
   /** Feet and head free, and something solid to stand on. */
   standableAt(s) {
-    const open = (c) => OPEN.test(this.blockAt(c) ?? 'air');
+    const open = (c) => OPEN.test(this.blockAt(c) ?? 'air') || TORCH.test(this.blockAt(c) ?? ''); // (a torch on a step is walked through)
     return open(s) && open({ ...s, y: s.y + 1 }) && !open({ ...s, y: s.y - 1 }) && !this.isLiquid({ ...s, y: s.y - 1 });
   }
 
@@ -2342,6 +2430,11 @@ export class Skills {
    */
   async putTread(gen, q, i) {
     const s = this.shaftStand(q, i);
+    // Standing in the hole where it should be (fallen through, or the blast took it from under us):
+    // a block can't go into the cell we're in. Jump and put it down under our feet, the way a player
+    // pillars up one: it's the tread, and we end up on it.
+    const f = this.feet();
+    if (f.x === s.x && f.z === s.z && f.y === s.y - 1 && (await this.stepUp(gen))) return true;
     const walkway = [];
     for (let k = Math.max(0, i - 2); k <= Math.min(q.steps.length - 1, i + 2); k++) { const w = this.shaftStand(q, k); for (const h of [0, 1, 2]) walkway.push({ ...w, y: w.y + h }); }
     return this.putTreadAt(gen, { x: s.x, y: s.y - 1, z: s.z }, walkway);
@@ -2369,15 +2462,18 @@ export class Skills {
       }
       q2 = nextQ;
     }
-    if (!end) return false;
+    if (!end) { this.log(`tread at ${tread.x} ${tread.y} ${tread.z}: nothing solid within 4 cells of it in reach to build from`); return false; }
     const chain = [];
     for (let c = end; c; c = prev.get(key(c))) chain.push(c);
     const block = () => cheapestPlaceable(invCounts(this.sim), this.blockReserve(invCounts(this.sim)));
     for (const c of chain) {
       this.check(gen);
       const id = block();
-      if (!id) return false;
-      if (!(await this.a.homestead.placeAt(gen, c, id, null, null, { liquid: true }))) return false;
+      if (!id) { this.log(`tread at ${tread.x} ${tread.y} ${tread.z}: no block to build with`); return false; }
+      if (!(await this.a.homestead.placeAt(gen, c, id, null, null, { liquid: true }))) {
+        this.log(`tread at ${tread.x} ${tread.y} ${tread.z}: couldn't place ${id} at ${c.x} ${c.y} ${c.z} (in reach ${this.inReach(c)}, from ${this.feet().x} ${this.feet().y} ${this.feet().z})`);
+        return false;
+      }
       this.markPlaced(c);
     }
     this.a.cellChanged?.();

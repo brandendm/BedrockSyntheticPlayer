@@ -28,6 +28,8 @@
 //                 up a step square-on (not jump into the seam beside it) and get on top
 //   leap          a 1-wide, 2-deep trench across a walled corridor: jump it, don't climb through
 //   bridge        a 3-wide, 7-deep chasm across a walled corridor (16 dirt given): bridge it
+//   calibrate     measures the head height, a jump and the item-use gap in the game (game/calibrate.js)
+//                 on a flat patch, and checks they match what the code was built on
 //   husk          a husk walks up: fight it from the edge of reach (reports the closest it got)
 //   creeper       calibration, nothing explodes: a creeper's walk speed and the distance it starts
 //                 hissing at (the bot stands still; the creeper is removed the moment it hisses),
@@ -36,13 +38,15 @@
 // The bot keeps whatever it's carrying; give it a pickaxe or sword first to test with one.
 
 import { dist3D } from '../core/mathutil.js';
+import { castRay } from './world.js';
 import { sendEvent } from './bridge.js';
+import { EXPECTED } from '../core/calibrate.js';
 import { CONFIG } from '../config.js';
-import { system, world, ItemStack } from '@minecraft/server';
+import { system, world, ItemStack, EquipmentSlot } from '@minecraft/server';
 import { blueprint, furnishings } from '../core/house.js';
 import { invCounts as invCountsOf, hold, container as packOf } from './inventory.js';
 
-const NAMES = ['roof', 'tower', 'hole', 'pit', 'trap', 'climb', 'ledge', 'ladder', 'husk', 'creeper', 'sheep', 'pen', 'smelt', 'smeltlogs', 'shelter', 'house', 'resume', 'ghostlog', 'quarry', 'dark', 'replant', 'litter', 'trader', 'iron', 'farm', 'equip', 'water', 'bucketfarm', 'treetop', 'corner', 'leap', 'bridge', 'fall'];
+const NAMES = ['roof', 'tower', 'hole', 'pit', 'trap', 'climb', 'ledge', 'ladder', 'husk', 'creeper', 'sheep', 'pen', 'smelt', 'smeltlogs', 'shelter', 'house', 'resume', 'ghostlog', 'quarry', 'dark', 'replant', 'litter', 'trader', 'iron', 'farm', 'equip', 'water', 'bucketfarm', 'treetop', 'corner', 'leap', 'bridge', 'fall', 'vines', 'stairgap', 'loot', 'shield', 'skel', 'rest', 'nights', 'calibrate'];
 let running = false;
 
 export async function runTests(agent, player, args) {
@@ -79,6 +83,13 @@ async function runOne(agent, player, name, arg) {
   }
   agent.newTask(null);
   agent.motor.stop();
+  // Tables and furnaces remembered from earlier tests (their blocks were put back when those ended)
+  // would change what the bot does here: replanting keeps clear of "our table", crafting walks
+  // off to it. Every test starts without them; the ones that need one place it themselves.
+  for (const cat of ['crafting_table', 'furnace']) agent.memory.forgetNear(cat, dim.id, { x, y: gy, z }, 40);
+  // Items lying about from earlier tests (logs from the vine tree, saplings) would have it digging
+  // through the fresh rock to fetch them: the site starts with none.
+  try { for (const e of dim.getEntities({ type: 'minecraft:item', location: { x, y: gy, z }, maxDistance: 48 })) e.remove(); } catch {}
   const t0 = system.currentTick;
   const hp0 = agent.health();
   const secs = () => ((system.currentTick - t0) / 20).toFixed(0);
@@ -505,6 +516,8 @@ async function runOne(agent, player, name, arg) {
       }
       case 'equip': {
         const inv = sim.getComponent('minecraft:inventory').container;
+        // (Whatever an earlier test left it wearing comes off first: the extras would just stay in the pack.)
+        try { const eq = sim.getComponent('minecraft:equippable'); for (const slot of [EquipmentSlot.Head, EquipmentSlot.Chest, EquipmentSlot.Legs, EquipmentSlot.Feet, EquipmentSlot.Offhand]) eq.setEquipment(slot, undefined); } catch {}
         for (const id of ['iron_helmet', 'iron_chestplate', 'iron_leggings', 'iron_boots', 'shield']) inv.addItem(new ItemStack(`minecraft:${id}`, 1));
         const n = agent.equipArmor();
         const worn = agent.worn();
@@ -518,7 +531,7 @@ async function runOne(agent, player, name, arg) {
         const bucket = arg === 1;
         cmd(`fill ${x - 20} ${gy - 2} ${z - 20} ${x + 34} ${gy} ${z + 20} grass_block`);
         cmd(`fill ${x - 20} ${gy + 1} ${z - 20} ${x + 34} ${gy + 6} ${z + 20} air`);
-        cmd(`fill ${x - 12} ${gy + 1} ${z - 12} ${x + 12} ${gy + 1} ${z + 12} short_grass replace air`);
+        if (arg !== 2) cmd(`fill ${x - 12} ${gy + 1} ${z - 12} ${x + 12} ${gy + 1} ${z + 12} short_grass replace air`); // (arg 2: bare ground, to test the planting on its own)
         const pond = bucket ? { x: x + 30, z } : { x: x + 10, z };
         cmd(`fill ${pond.x - 1} ${gy} ${pond.z - 1} ${pond.x + 1} ${gy} ${pond.z + 1} water`);
         cmd(`fill ${pond.x - 1} ${gy + 1} ${pond.z - 1} ${pond.x + 1} ${gy + 1} ${pond.z + 1} air`);
@@ -559,6 +572,29 @@ async function runOne(agent, player, name, arg) {
         pass = got >= 1;
         detail = `${got} leads in ${secs()}s`;
         for (const e of dim.getEntities({ type: 'minecraft:trader_llama', location: { x, y: gy, z }, maxDistance: 30 })) try { e.remove(); } catch {}
+        break;
+      }
+      case 'calibrate': {
+        cmd(`fill ${x - 5} ${gy - 1} ${z - 5} ${x + 5} ${gy} ${z + 5} grass_block`);
+        cmd(`fill ${x - 5} ${gy + 1} ${z - 5} ${x + 5} ${gy + 6} ${z + 5} air`);
+        tp(x, gy + 1, z);
+        await system.waitTicks(20);
+        const inv = sim.getComponent('minecraft:inventory').container;
+        if ((invCountsOf(sim).cobblestone ?? 0) < 8) inv.addItem(new ItemStack('minecraft:cobblestone', 8));
+        const before = invCountsOf(sim).cobblestone ?? 0;
+        const summary = await agent.calibration.runNow();
+        const m = agent.calibration.measured;
+        const after = invCountsOf(sim).cobblestone ?? 0;
+        const problems = [];
+        if (m.head === undefined || Math.abs(m.head - EXPECTED.head) > 0.02) problems.push(`head ${m.head}`);
+        if (m.apex === undefined || Math.abs(m.apex - EXPECTED.apex) > 0.06 || Math.abs(m.airTicks - EXPECTED.airTicks) > 1) problems.push(`jump ${m.apex}/${m.airTicks}`);
+        if (m.useGap === undefined || m.useGap < 2 || m.useGap > 16) problems.push(`item use gap ${m.useGap}`);
+        if (after !== before) problems.push(`cobblestone ${before} -> ${after}`);
+        for (const [dx, dz] of [[3, 0], [-3, 0], [0, 3], [0, -3], [2, 2], [-2, -2], [2, -2], [-2, 2], [1, 0], [0, 1]]) {
+          if (S.blockAt({ x: x + dx, y: gy + 1, z: z + dz }) === 'cobblestone') problems.push(`block left at ${x + dx} ${z + dz}`);
+        }
+        pass = problems.length === 0;
+        detail = pass ? summary : `${problems.join('; ')} (${summary})`;
         break;
       }
       case 'iron': {
@@ -775,6 +811,432 @@ async function runOne(agent, player, name, arg) {
         log.push(`calibration.json: ${JSON.stringify(cal)}`);
         detail += log.join('; ');
         console.warn(`[test] creeper calibration: ${detail}`);
+        break;
+      }
+
+      case 'vines': {
+        // A trunk wrapped in vines on every side (a jungle tree): chopping it must clear the vine in
+        // front of each log first, the way a player has to (the crosshair lands on the vine), not
+        // punch the log through it. Watched every tick: a log that breaks while a vine is the first
+        // thing between the eye and it is a punch through the vine.
+        cmd(`fill ${x - 6} ${gy - 1} ${z - 6} ${x + 8} ${gy} ${z + 6} grass_block`);
+        cmd(`fill ${x - 6} ${gy + 1} ${z - 6} ${x + 8} ${gy + 8} ${z + 6} air`);
+        const tx = x + 4, H = 4;
+        cmd(`fill ${tx - 2} ${gy + H + 1} ${z - 2} ${tx + 2} ${gy + H + 2} ${z + 2} oak_leaves`);
+        cmd(`fill ${tx} ${gy + 1} ${z} ${tx} ${gy + H + 1} ${z} oak_log`);
+        // (vine_direction_bits: south 1, west 2, north 4, east 8: the side of the vine's block it hangs on)
+        const sides = [[-1, 0, 8], [1, 0, 2], [0, -1, 1], [0, 1, 4]];
+        const vineCells = [];
+        for (let h = 1; h <= H; h++) for (const [dx, dz, bits] of sides) {
+          if (cmd(`setblock ${tx + dx} ${gy + h} ${z + dz} vine ["vine_direction_bits"=${bits}]`)) vineCells.push({ x: tx + dx, y: gy + h, z: z + dz });
+        }
+        tp(x, gy + 1, z);
+        await system.waitTicks(10);
+        const inv = sim.getComponent('minecraft:inventory').container;
+        if (!Object.keys(invCountsOf(sim)).some((id) => /_axe$/.test(id))) inv.addItem(new ItemStack('minecraft:stone_axe', 1));
+        const vinesLeft = () => vineCells.filter((c) => /vine/.test(S.blockAt(c) ?? '')).length;
+        const v0 = vinesLeft();
+        // Every tick: for each log still standing, is a vine the first block on the line from the eye to it?
+        const logCells = []; for (let h = 1; h <= H; h++) logCells.push({ x: tx, y: gy + h, z });
+        const behindVine = new Set(), punched = [], lastSeen = new Map();
+        const watch = system.runInterval(() => {
+          try {
+            const e = S.eye();
+            for (const c of logCells) {
+              const k = `${c.x},${c.y},${c.z}`;
+              const here = S.blockAt(c) ?? '';
+              if (!/_log$/.test(here)) {
+                if (behindVine.has(k)) {
+                  punched.push(`${c.y - gy}`); behindVine.delete(k);
+                  console.warn(`[test] vines: log ${k} broke with a vine first on the ray; last tick ${JSON.stringify(lastSeen.get(k))}; now eye ${e.x.toFixed(2)} ${e.y.toFixed(2)} ${e.z.toFixed(2)}, feet ${JSON.stringify(S.feet())}, crosshair ${JSON.stringify(S.crosshair()?.location)}`);
+                }
+                continue;
+              }
+              const d = { x: c.x + 0.5 - e.x, y: c.y + 0.5 - e.y, z: c.z + 0.5 - e.z };
+              const hit = castRay(dim, e, d, Math.hypot(d.x, d.y, d.z) + 0.5, { vines: true });
+              lastSeen.set(k, { eye: [e.x.toFixed(2), e.y.toFixed(2), e.z.toFixed(2)], first: hit ? `${hit.block.typeId}@${hit.block.location.x},${hit.block.location.y},${hit.block.location.z}` : null, cross: S.crosshair()?.location ? JSON.stringify(S.crosshair().location) : null, tick: system.currentTick });
+              if (hit && /vine/.test(hit.block.typeId)) behindVine.add(k); else behindVine.delete(k);
+            }
+          } catch {}
+        }, 1);
+        const logs0 = Object.entries(invCountsOf(sim)).filter(([id]) => /_log$/.test(id)).reduce((a, [, n]) => a + n, 0);
+        const gen = agent.newTask({ kind: 'test' });
+        agent.memory.forgetNear('log', dim.id, { x: tx, y: gy + 1, z }, 64);
+        await S.gatherLogs(gen, logs0 + H).catch((e) => { detail = `${e}`; });
+        system.clearRun(watch);
+        const got = Object.entries(invCountsOf(sim)).filter(([id]) => /_log$/.test(id)).reduce((a, [, n]) => a + n, 0) - logs0;
+        pass = got >= H - 1 && punched.length === 0;
+        detail = `${got} logs in ${secs()}s; ${punched.length ? `punched through a vine at height ${punched.join(', ')}` : 'no log broken through a vine'}; vines cleared ${v0 - vinesLeft()} of ${v0}`;
+        break;
+      }
+      case 'stairgap': {
+        // Our quarry stairs (recorded as the quarry) with one tread blown out: from the bottom the
+        // way up has a 2-high gap. Up twice. Watched: jumps made (a jump that gains nothing is a
+        // jump at the gap) and how long each trip took. The second trip should be a plain walk or
+        // the same detour, not the same jumping again.
+        const N = 7, x0 = x;
+        cmd(`fill ${x - 3} ${gy - N - 1} ${z - 3} ${x + N + 4} ${gy} ${z + 3} stone`);
+        cmd(`fill ${x - 3} ${gy + 1} ${z - 3} ${x + N + 4} ${gy + 6} ${z + 3} air`);
+        const steps = [];
+        for (let i = 0; i <= N; i++) {
+          cmd(`fill ${x0 + i} ${gy - i + 1} ${z} ${x0 + i} ${gy - i + 3} ${z} air`);
+          steps.push(`${x0 + i},${gy - i},${z}`);
+        }
+        agent.memory.data.quarry = { d: dim.id, steps, dir: 0, fails: 0, started: Date.now() };
+        agent.memory.save();
+        S._protected = null;
+        // arg: tread to take out (default 4); +10: the first trip starts down in the hole it left;
+        // +20: nothing missing but a torch on two of the steps (they must not be taken for damage).
+        const raw = arg ?? 4, variant = Math.floor(raw / 10), k = raw % 10 || 4;
+        if (variant === 2) {
+          for (const i of [2, 5]) cmd(`setblock ${x0 + i} ${gy - i + 1} ${z} torch`);
+        } else cmd(`setblock ${x0 + k} ${gy - k} ${z} air`); // the missing tread: 2 up, 2 across
+        const inv = sim.getComponent('minecraft:inventory').container;
+        if (!Object.keys(invCountsOf(sim)).some((id) => /_pickaxe$/.test(id))) inv.addItem(new ItemStack('minecraft:stone_pickaxe', 1));
+        if ((invCountsOf(sim).cobblestone ?? 0) < 12) inv.addItem(new ItemStack('minecraft:cobblestone', 12));
+        const trips = [];
+        for (let trip = 0; trip < 2; trip++) {
+          if (variant === 1 && trip === 0) tp(x0 + k, gy - k, z); else tp(x0 + N, gy - N + 1, z);
+          await system.waitTicks(15);
+          let jumps = 0, wasOn = true, lastY = sim.location.y;
+          const w = system.runInterval(() => {
+            try {
+              const on = sim.isOnGround;
+              if (wasOn && !on && sim.getVelocity().y > 0.2) jumps++;
+              wasOn = on;
+            } catch {}
+          }, 1);
+          const t1 = system.currentTick;
+          const gen = agent.newTask({ kind: 'test' });
+          const ok = await S.walkShaft(gen, 0).catch((e) => { detail += `${e}; `; return false; });
+          system.clearRun(w);
+          const f = S.feet();
+          trips.push({ ok, up: f.y >= gy, jumps, s: ((system.currentTick - t1) / 20).toFixed(0), treadBack: !/air/.test(S.blockAt({ x: x0 + k, y: gy - k, z }) ?? 'air'), torches: variant === 2 ? [2, 5].filter((i) => /torch/.test(S.blockAt({ x: x0 + i, y: gy - i + 1, z }) ?? '')).length : null });
+          agent.newTask(null);
+          await system.waitTicks(10);
+        }
+        pass = trips.every((tr) => tr.up) && trips[1].jumps <= N + 3 && Number(trips[1].s) <= 15 && trips[0].jumps <= N + 8 && (variant !== 2 || trips.every((tr) => tr.torches === 2));
+        detail = trips.map((tr, n) => `trip ${n + 1}: ${tr.up ? 'out' : 'NOT out'} in ${tr.s}s, ${tr.jumps} jumps, tread ${tr.treadBack ? 'there' : 'MISSING'}${tr.torches === null ? '' : `, ${tr.torches} of 2 torches left`}`).join('; ');
+        break;
+      }
+      case 'loot': {
+        // Died a way off: the gear is lying on a stone pad 17 blocks away, and it's ours to go back
+        // for. With auto on, the bot must get all of it (not declare it gone after a few seconds).
+        const px = x + 11, pz = z; // (the room, ±3, stays inside the backed-up and flattened box: x+14)
+        cmd(`fill ${x - 8} ${gy - 3} ${z - 8} ${x + 14} ${gy} ${z + 8} stone`);      // flat, open ground all round
+        cmd(`fill ${x - 8} ${gy + 1} ${z - 8} ${x + 14} ${gy + 8} ${z + 8} air`);
+        tp(x - 6, gy + 1, z);
+        await system.waitTicks(10);
+        const inv = sim.getComponent('minecraft:inventory').container;
+        for (let i = 0; i < inv.size; i++) inv.setItem(i, undefined); // (it died: nothing on us)
+        // arg 1 (2): sealed in a stone room (no way in for a bare-handed bot) that opens after 12 s (45 s): it must
+        // keep trying for its things, not write them off at the first "no way there".
+        if (arg === 1 || arg === 2) {
+          cmd(`fill ${px - 3} ${gy + 1} ${pz - 3} ${px + 3} ${gy + 4} ${pz + 3} obsidian`); // (nothing to break it with)
+          cmd(`fill ${px - 2} ${gy + 1} ${pz - 2} ${px + 2} ${gy + 3} ${pz + 2} air`);
+          system.runTimeout(() => { cmd(`fill ${px - 3} ${gy + 1} ${pz} ${px - 3} ${gy + 2} ${pz} air`); }, 20 * (arg === 2 ? 45 : 12));
+        }
+        const gear = ['iron_helmet', 'iron_chestplate', 'iron_leggings', 'iron_boots', 'iron_pickaxe', 'iron_sword', 'bucket', 'shield'];
+        for (const [n, id] of gear.entries()) dim.spawnItem(new ItemStack(`minecraft:${id}`, 1), { x: px - 1 + (n % 3), y: gy + 1, z: pz - 1 + Math.floor(n / 3) });
+        agent.deathSpot = { x: px + 0.5, y: gy + 1, z: pz + 0.5, d: dim.id, at: Date.now() - 5000 };
+        let gaveUp = false;
+        agent.autoEnabled = true;
+        agent.autoDone = false;
+        agent.startAuto();
+        const left = () => dim.getEntities({ type: 'minecraft:item', location: { x: px, y: gy + 1, z: pz }, maxDistance: 6 }).length;
+        const wallAt = () => `${S.blockAt({ x: px - 3, y: gy + 1, z: pz })}/${S.blockAt({ x: px + 3, y: gy + 1, z: pz })}/${S.blockAt({ x: px, y: gy + 4, z: pz })}`;
+        const series = [`walls ${wallAt()}`];
+        for (let i = 0; i < 90 * 2 && left() > 0; i++) { await system.waitTicks(10); if (i % 4 === 0) { const f = S.feet(); series.push(`${i / 2}s:${left()}@${f.x - px},${f.y - gy},${f.z - pz}${agent.deathSpot ? '' : ' nospot'}`); } if (!agent.deathSpot && left() > 0) { gaveUp = true; break; } }
+        agent.autoEnabled = false;
+        agent.newTask(null);
+        if (arg === 1 || arg === 2) {
+          const rows = [];
+          for (let yy = gy + 4; yy >= gy + 1; yy--) { let row = ''; for (let xx = px - 4; xx <= px + 4; xx++) { const b = S.blockAt({ x: xx, y: yy, z: pz }) ?? '?'; row += b === 'air' ? '.' : b === 'obsidian' ? '#' : b[0]; } rows.push(row); }
+          const holes = [];
+          for (let xx = px - 3; xx <= px + 3; xx++) for (let yy = gy + 1; yy <= gy + 4; yy++) for (let zz = pz - 3; zz <= pz + 3; zz++) {
+            const inside = Math.abs(xx - px) <= 2 && Math.abs(zz - pz) <= 2 && yy <= gy + 3;
+            if (!inside && S.blockAt({ x: xx, y: yy, z: zz }) !== 'obsidian') holes.push(`${xx - px},${yy - gy},${zz - pz}:${S.blockAt({ x: xx, y: yy, z: zz })}`);
+          }
+          detail += `shell holes: ${holes.join(' ') || 'none'}; `;
+          const f = S.feet();
+          detail += `room slice (x ${px - 4}..${px + 4}, y up top-down): ${rows.join(' / ')}; bot at ${f.x - px},${f.y - gy},${f.z - pz} from the pad; `;
+        }
+        const got = gear.length - Math.min(gear.length, left());
+        pass = got === gear.length && !gaveUp;
+        detail += `${got}/${gear.length} pieces picked up in ${secs()}s${gaveUp ? ', GAVE UP on them' : ''} (left lying ${left()}) [${series.join(' ')}; walls now ${wallAt()}]`;
+        for (const e of dim.getEntities({ type: 'minecraft:item', location: { x: px, y: gy + 1, z: pz }, maxDistance: 10 })) try { e.remove(); } catch {}
+        break;
+      }
+      case 'shield':
+      case 'skel': {
+        // A skeleton down a sealed lane (a stone roof: it doesn't burn). 'shield': the bot stands
+        // still facing it, three ways: bare, shield up (crouched), shield in the off hand but standing.
+        // How many arrows are loosed and how much health is lost tells whether a raised shield
+        // works for a simulated player at all. 'skel': the bot's own reflexes take it on (a sword
+        // and, with arg 1, a shield): how long, how much health, does it close in and kill it.
+        let fy = gy;
+        for (let lx = x - 3; lx <= x + 14; lx++) for (let lz = z - 4; lz <= z + 4; lz++) {
+          try { const top = dim.getTopmostBlock({ x: lx, z: lz }); if (top) fy = Math.max(fy, top.location.y); } catch {}
+        }
+        fy = Math.min(fy, gy + 10);
+        cmd(`fill ${x - 3} ${fy} ${z - 4} ${x + 14} ${fy + 5} ${z + 4} stone`);
+        cmd(`fill ${x - 2} ${fy + 1} ${z - 3} ${x + 13} ${fy + 4} ${z + 3} air`);
+        cmd(`fill ${x - 2} ${fy} ${z - 3} ${x + 13} ${fy} ${z + 3} stone`);
+        const eq = sim.getComponent('minecraft:equippable');
+        const hpNow = () => { try { return sim.getComponent('minecraft:health').currentValue; } catch { return 0; } };
+        const heal = () => { try { sim.getComponent('minecraft:health').resetToMaxValue(); } catch {} };
+        const okE = (e) => { try { return !!e?.isValid; } catch { return false; } };
+        const lane = { x: x + 6, y: fy + 1, z: z + 0.5 };
+        const skeletons = () => { try { return dim.getEntities({ type: 'minecraft:skeleton', location: lane, maxDistance: 16 }); } catch { return []; } };
+        const clear = () => { for (const e of skeletons()) try { e.remove(); } catch {} for (const e of dim.getEntities({ type: 'minecraft:arrow', location: lane, maxDistance: 16 })) try { e.remove(); } catch {} };
+        const summon = async (dx) => { cmd(`summon skeleton ${x + dx} ${fy + 1} ${z}`); await system.waitTicks(2); return skeletons()[0] ?? null; };
+        const sword = () => { if (!invCountsOf(sim).stone_sword && !invCountsOf(sim).iron_sword) packOf(sim)?.addItem(new ItemStack('minecraft:stone_sword', 1)); agent.equipBestWeapon(); };
+        const results = [];
+        if (name === 'shield') {
+          agent.testHold = true; agent.endCombat();
+          for (const [label, withShield, crouch] of [['bare', false, false], ['shield up', true, true], ['shield, standing', true, false]]) {
+            clear();
+            try { tp(x, fy + 1, z); } catch {}
+            try { eq.setEquipment(EquipmentSlot.Offhand, withShield ? new ItemStack('minecraft:shield', 1) : undefined); } catch (e) { detail += `offhand ${e}; `; }
+            heal();
+            await system.waitTicks(5);
+            const sk = await summon(9);
+            if (!sk) { results.push(`${label}: couldn't summon`); continue; }
+            const seen = new Set();
+            let prev = hpNow(), hits = 0, dmg = 0;
+            for (let i = 0; i < 20 * 20; i++) {
+              try { const l = okE(sk) ? sk.location : null; if (l) { agent.motor.setFocus({ x: l.x, y: l.y + 1.4, z: l.z }); sim.lookAtEntity(sk); } } catch {}
+              try { sim.isSneaking = crouch; } catch {}
+              await system.waitTicks(1);
+              try { for (const a of dim.getEntities({ type: 'minecraft:arrow', location: lane, maxDistance: 16 })) seen.add(a.id); } catch {}
+              const h = hpNow();
+              if (h < prev - 0.3) { hits++; dmg += prev - h; }
+              prev = h;
+              if (h <= 2) heal();
+            }
+            results.push(`${label}: ${seen.size} arrows, ${hits} hit, ${dmg.toFixed(1)} damage`);
+            clear();
+          }
+          try { sim.isSneaking = false; } catch {}
+          try { eq.setEquipment(EquipmentSlot.Offhand, undefined); } catch {}
+          agent.testHold = false; agent.motor.setFocus(null);
+          pass = true;
+          detail = results.join('; ');
+        } else if (arg === 8) {
+          // Terrain fuzz: the same sealed lane, the skeleton on the flat, up a step, up two, down a
+          // pit, behind a pillar. How long each takes (or that it doesn't), health lost, what the bot did.
+          /** @type {Array<[string, (b: (c: string) => boolean) => { dx: number, dy: number }]>} */
+          const trials = [
+            ['flat 6', () => ({ dx: 6, dy: 0 })],
+            ['1 up', (b) => { b(`fill ${x + 4} ${fy + 1} ${z - 3} ${x + 13} ${fy + 1} ${z + 3} stone`); return { dx: 7, dy: 1 }; }],
+            ['2 up', (b) => { b(`fill ${x + 5} ${fy + 1} ${z - 3} ${x + 13} ${fy + 2} ${z + 3} stone`); return { dx: 8, dy: 2 }; }],
+            ['pit 2 deep', (b) => { b(`fill ${x + 5} ${fy - 1} ${z - 1} ${x + 8} ${fy} ${z + 1} stone`); b(`fill ${x + 6} ${fy - 1} ${z} ${x + 7} ${fy} ${z} air`); return { dx: 6, dy: -2 }; }],
+            ['behind a pillar', (b) => { b(`fill ${x + 3} ${fy + 1} ${z} ${x + 3} ${fy + 3} ${z} stone`); return { dx: 8, dy: 0 }; }],
+            ['close 3', () => ({ dx: 3, dy: 0 })],
+          ];
+          agent.testHold = false;
+          for (const [label, build] of trials) {
+            clear();
+            cmd(`fill ${x - 2} ${fy} ${z - 3} ${x + 13} ${fy} ${z + 3} stone`);
+            cmd(`fill ${x - 2} ${fy + 1} ${z - 3} ${x + 13} ${fy + 4} ${z + 3} air`);
+            const { dx, dy } = build(cmd);
+            try { tp(x, fy + 1, z); } catch {}
+            sword(); agent.equipBestWeapon(); agent.endCombat(); heal();
+            await system.waitTicks(15);
+            let sk = null;
+            cmd(`summon skeleton ${x + dx} ${fy + 1 + dy} ${z}`);
+            await system.waitTicks(2);
+            sk = skeletons()[0] ?? null;
+            if (!sk) { results.push(`${label}: couldn't summon`); continue; }
+            const t1 = system.currentTick;
+            let minHp = hpNow(), hits = 0, prevHp = hpNow(), modes = new Set();
+            for (let i = 0; i < 20 * 25 && okE(sk); i++) {
+              await system.waitTicks(1);
+              modes.add(agent.mode);
+              const h = hpNow();
+              if (h < prevHp - 0.3) hits++;
+              prevHp = h; minHp = Math.min(minHp, h);
+              if (h <= 6) heal();
+            }
+            const killed = !okE(sk);
+            results.push(`${label}: ${killed ? `killed in ${((system.currentTick - t1) / 20).toFixed(0)}s` : 'NOT killed'}, ${hits} hits, ${[...modes].join('/')}`);
+            clear();
+          }
+          pass = results.every((r) => /killed/.test(r) && !/NOT/.test(r));
+          detail = results.join('; ');
+        } else if (arg === 6 || arg === 7) {
+          // Indoors: a small room, the skeleton just outside the doorway (6: the wooden door open;
+          // 7: a fence gate open) shooting in, or (8 -> arg 7 with furniture) - the bot must go out and
+          // kill it, not stand there swinging at nothing (the house fights that went half a minute).
+          clear();
+          const wallX = x + 3;
+          cmd(`fill ${wallX} ${fy + 1} ${z - 3} ${wallX} ${fy + 4} ${z + 3} stone`);          // the room's east wall
+          const dz = z;
+          if (arg === 6) {
+            cmd(`setblock ${wallX} ${fy + 1} ${dz} wooden_door ["minecraft:cardinal_direction"="east","open_bit"=true]`);
+            cmd(`setblock ${wallX} ${fy + 2} ${dz} wooden_door ["upper_block_bit"=true,"open_bit"=true]`);
+          } else {
+            cmd(`setblock ${wallX} ${fy + 1} ${dz} fence_gate ["minecraft:cardinal_direction"="east","open_bit"=true]`);
+            cmd(`setblock ${wallX} ${fy + 2} ${dz} air`);
+          }
+          await system.waitTicks(2);
+          let st = '?';
+          try { st = JSON.stringify(dim.getBlock({ x: wallX, y: fy + 1, z: dz }).permutation.getAllStates()); } catch {}
+          detail += `door ${dim.getBlock({ x: wallX, y: fy + 1, z: dz })?.typeId} ${st}; `;
+          try { tp(x, fy + 1, z); } catch {}
+          sword();
+          agent.equipBestWeapon();
+          heal();
+          await system.waitTicks(10);
+          const sk = await summon(5);   // (x+5: 2 blocks outside the door)
+          if (!sk) { detail += "couldn't summon"; break; }
+          const t1 = system.currentTick;
+          let minHp = hpNow(), modes = new Set();
+          for (let i = 0; i < 20 * 30 && okE(sk); i++) {
+            await system.waitTicks(1);
+            modes.add(agent.mode);
+            minHp = Math.min(minHp, hpNow());
+            if (hpNow() <= 0) break;
+          }
+          const killed = !okE(sk);
+          pass = killed;
+          detail += `${killed ? 'killed it' : 'skeleton still alive'} after ${((system.currentTick - t1) / 20).toFixed(0)}s, lowest hp ${minHp.toFixed(0)}, modes ${[...modes].join('/')}`;
+          clear();
+        } else if (arg === 4 || arg === 5) {
+          // 4: the flip-flop damper's on (it silences reactions for 30 s) and an archer shoots from 12:
+          // it must still take him on. 5: three of them at 10, 12 and 14: what the bot does (lives, or not).
+          clear();
+          try { tp(x, fy + 1, z); } catch {}
+          sword();
+          agent.equipBestWeapon();
+          heal();
+          await system.waitTicks(10);
+          const sks = [];
+          for (const dx of arg === 4 ? [12] : [10, 12, 14]) { const q = await summon(dx); if (q) sks.push(q); await system.waitTicks(1); }
+          const t1 = system.currentTick;
+          let minHp = hpNow(), modes = new Set();
+          for (let i = 0; i < 20 * 45 && sks.some(okE); i++) {
+            if (arg === 4) agent.ignoreThreatsUntil = system.currentTick + 600;
+            await system.waitTicks(1);
+            modes.add(agent.mode);
+            minHp = Math.min(minHp, hpNow());
+            if (hpNow() <= 0) break;
+          }
+          const left = sks.filter(okE).length;
+          agent.ignoreThreatsUntil = 0;
+          const alive = hpNow() > 0;
+          pass = arg === 4 ? left === 0 : alive;
+          detail = `${sks.length} skeleton${sks.length === 1 ? '' : 's'}: ${left} left after ${((system.currentTick - t1) / 20).toFixed(0)}s, lowest hp ${minHp.toFixed(0)}, ${alive ? 'alive' : 'died'}, modes ${[...modes].join('/')}`;
+          clear();
+        } else if (arg === 3) {
+          // What the bot can tell about a skeleton at range: does `target` name us, is it visible.
+          agent.testHold = true; agent.endCombat();
+          clear();
+          try { tp(x, fy + 1, z); } catch {}
+          heal();
+          await system.waitTicks(10);
+          const sk = await summon(12);
+          if (!sk) { detail = "couldn't summon"; break; }
+          const rows = [];
+          for (let i = 0; i < 20 * 12; i++) {
+            await system.waitTicks(1);
+            if (i % 30 !== 0) continue;
+            const m = agent.scanMobs(24).find((q) => q.type === 'skeleton');
+            let tg = '?';
+            try { tg = sk.target ? sk.target.typeId.replace('minecraft:', '') : 'none'; } catch (e) { tg = `err`; }
+            rows.push(m ? `${(i / 20).toFixed(0)}s d${m.dist.toFixed(0)} tgt=${m.targetingMe ? 1 : 0}(${tg}) vis=${m.visible ? 1 : 0}` : `${(i / 20).toFixed(0)}s gone`);
+          }
+          agent.testHold = false;
+          clear();
+          pass = true;
+          detail = rows.join('; ');
+        } else {
+          for (const withShield of arg === 1 ? [true] : arg === 0 ? [false] : [false, true]) {
+            clear();
+            try { tp(x, fy + 1, z); } catch {}
+            sword();
+            try { eq.setEquipment(EquipmentSlot.Offhand, withShield ? new ItemStack('minecraft:shield', 1) : undefined); } catch {}
+            agent.equipBestWeapon();
+            heal();
+            await system.waitTicks(10);
+            const sk = await summon(12);
+            if (!sk) { results.push("couldn't summon"); continue; }
+            const t1 = system.currentTick;
+            let minD = Infinity, hp0 = hpNow(), blocked = 0, modes = new Set();
+            for (let i = 0; i < 20 * 40 && okE(sk); i++) {
+              await system.waitTicks(1);
+              try { minD = Math.min(minD, dist3D(sim.location, sk.location)); } catch {}
+              modes.add(agent.mode);
+              if (agent.blocking) blocked++;
+              if (hpNow() <= 0) break;
+            }
+            const killed = !okE(sk);
+            results.push(`${withShield ? 'with' : 'without'} a shield: ${killed ? 'killed it' : 'skeleton still alive'} in ${((system.currentTick - t1) / 20).toFixed(0)}s, closest ${minD.toFixed(1)}, lost ${Math.max(0, hp0 - hpNow()).toFixed(0)} hp, shield up ${blocked} ticks, modes ${[...modes].join('/')}`);
+            clear();
+          }
+          try { eq.setEquipment(EquipmentSlot.Offhand, undefined); } catch {}
+          pass = results.length > 0 && results.every((r) => /killed it/.test(r));
+          detail = results.join('; ');
+        }
+        break;
+      }
+      case 'rest': {
+        // Hurt to 3 hp with the plan free to go anywhere: it must stop and heal first, not go off
+        // working (arg 0: fed, with cooked beef; 1: hungry, with cooked beef; 2: hungry, nothing to eat: can't
+        // heal, so it must not sit there waiting; healing burns the food bar: 1.5 points an hp).
+        cmd(`fill ${x - 8} ${gy - 3} ${z - 8} ${x + 14} ${gy} ${z + 8} grass_block`);
+        cmd(`fill ${x - 8} ${gy + 1} ${z - 8} ${x + 14} ${gy + 8} ${z + 8} air`);
+        tp(x, gy + 1, z);
+        await system.waitTicks(10);
+        const inv = sim.getComponent('minecraft:inventory').container;
+        for (let i = 0; i < inv.size; i++) inv.setItem(i, undefined);
+        inv.addItem(new ItemStack('minecraft:stone_sword', 1));
+        inv.addItem(new ItemStack('minecraft:stone_pickaxe', 3));
+        inv.addItem(new ItemStack('minecraft:cobblestone', 20));
+        if (arg !== 2) inv.addItem(new ItemStack('minecraft:cooked_beef', 6));
+        agent.equipBestWeapon();
+        const setHunger = (n) => { try { sim.getComponent('minecraft:player.hunger').setCurrentValue(n); } catch (e) { detail += `hunger ${e}; `; } };
+        setHunger(arg === 1 || arg === 2 ? 10 : 20);
+        try { sim.getComponent('minecraft:player.saturation').setCurrentValue(0); } catch {}
+        try { sim.getComponent('minecraft:health').setCurrentValue(3); } catch {}
+        const start = { ...sim.location };
+        agent.autoEnabled = true; agent.resting = false; agent.restCoolUntil = 0;
+        agent.startAuto();
+        const t1 = system.currentTick;
+        let restedTicks = 0, healedAt = -1;
+        for (let i = 0; i < 20 * 100; i++) {
+          await system.waitTicks(1);
+          if (agent.autoStep === 'rest') restedTicks++;
+          if (healedAt < 0 && agent.health() >= 14) { healedAt = i; if (arg !== 2) break; }
+          if (arg === 2 && i > 20 * 12) break;
+        }
+        const moved = Math.hypot(sim.location.x - start.x, sim.location.z - start.z);
+        const hp = agent.health();
+        agent.autoEnabled = false; agent.newTask(null); agent.motor.stop();
+        pass = arg === 2 ? restedTicks < 20 * 4 : healedAt >= 0 && restedTicks > 20 * 5 && moved < 12;
+        detail = `${arg === 2 ? 'hungry, nothing to eat' : arg === 1 ? 'hungry, cooked beef' : 'fed, cooked beef'}: hp ${hp.toFixed(0)} after ${((system.currentTick - t1) / 20).toFixed(0)}s, resting ${(restedTicks / 20).toFixed(0)}s, moved ${moved.toFixed(0)} blocks, step ${agent.autoStep}`;
+        break;
+      }
+      case 'nights': {
+        // Night, a sword and full health, `goal nights off`: it must carry on working (not go home
+        // and sit) - and with it on, go home. arg 0: off; 1: on. The house is a stub: the bot only
+        // has to pick the right step.
+        const was = agent.memory.data.settings?.nights;
+        agent.setGoal('nights', arg === 1);
+        const inv = sim.getComponent('minecraft:inventory').container;
+        if (!Object.keys(invCountsOf(sim)).some((id) => /_sword$/.test(id))) inv.addItem(new ItemStack('minecraft:stone_sword', 1));
+        try { sim.getComponent('minecraft:health').resetToMaxValue(); } catch {}
+        const timeWas = world.getTimeOfDay();
+        try { world.setTimeOfDay(14000); } catch {}
+        await system.waitTicks(5);
+        const works = agent.workNights(invCountsOf(sim));
+        const step = agent.planStep(invCountsOf(sim), 0, 0);
+        try { world.setTimeOfDay(timeWas); } catch {}
+        agent.setGoal('nights', was !== false);
+        const home = ['go_home', 'shelter'].includes(step.step);
+        // (Without a house, an armed bot works the night either way: what shows the switch is workNights.)
+        pass = arg === 1 ? !works : works && !home;
+        detail = `nights ${arg === 1 ? 'on' : 'off'}: works through the night ${works}, at night the plan is "${step.step}"${step.why ? ` (${step.why})` : ''}`;
         break;
       }
       case 'husk': {

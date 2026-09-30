@@ -118,6 +118,61 @@ function handle(text, player) {
     }
     return reply(player, 'testcave: none found');
   }
+  if (lower === 'aimprobe') {
+    // Debug: how far off the crosshair lands from where the bot means it (head vs eye, turn error).
+    const A = agent; if (!A?.sim) return reply(player, 'spawn first');
+    (async () => {
+      const sim = A.sim, S = A.skills, f = S.feet();
+      const tests = [];
+      for (const [dx, dz] of [[2, 0], [3, 0], [2, 2], [0, 3], [-3, 1], [4, -1]]) for (const dy of [-1, 0, 1]) tests.push({ x: f.x + dx + 0.5, y: f.y + dy + 0.5, z: f.z + dz + 0.5 });
+      const h0 = sim.getHeadLocation(), e0 = S.eye();
+      console.warn(`[aimprobe] feet ${sim.location.x.toFixed(3)} ${sim.location.y.toFixed(3)} ${sim.location.z.toFixed(3)} head ${h0.x.toFixed(3)} ${h0.y.toFixed(3)} ${h0.z.toFixed(3)} eye ${e0.x.toFixed(3)} ${e0.y.toFixed(3)} ${e0.z.toFixed(3)} sneaking ${sim.isSneaking}`);
+      for (const t of tests) {
+        A.motor.setFocus(t);
+        let k = 0; for (; k < 30 && S.aimError(t) > 0.3; k++) await system.waitTicks(1);
+        const r = sim.getRotation(), h = sim.getHeadLocation();
+        const dx = t.x - h.x, dy = t.y - h.y, dz = t.z - h.z;
+        const yaw = Math.atan2(-dx, dz) * 180 / Math.PI, pitch = -Math.atan2(dy, Math.hypot(dx, dz)) * 180 / Math.PI;
+        console.warn(`[aimprobe] target ${t.x.toFixed(1)} ${t.y.toFixed(1)} ${t.z.toFixed(1)}: ticks ${k}, err yaw ${(((yaw - r.y + 540) % 360) - 180).toFixed(2)} pitch ${(pitch - r.x).toFixed(2)}, aimError ${S.aimError(t).toFixed(2)}`);
+      }
+      A.motor.setFocus(null);
+    })();
+    return;
+  }
+  if (lower === 'resetmem') {
+    // Debug (tests): forget everything remembered about the world (tables, trees, the house...), so a test starts clean.
+    const A = agent; if (!A?.sim) return reply(player, 'spawn first');
+    A.memory.data = { v: 3, res: [] };
+    A.memory.saveNow?.();
+    return reply(player, 'memory wiped');
+  }
+  if (lower === 'calibrate') {
+    // Debug: measure the head height, a jump and the item-use gap now (game/calibrate.js), say what came out.
+    const A = agent; if (!A?.sim) return reply(player, 'spawn first');
+    A.calibration.runNow().then((r) => reply(player, `calibration: ${r}`)).catch((e) => reply(player, `calibration failed: ${e}`));
+    return;
+  }
+  if (lower === 'dump') {
+    // Debug: print the blocks around the bot, one layer per level ('.' air, L leaves, T log, # solid, ~ liquid).
+    const sim = agent?.sim; if (!sim) return reply(player, 'spawn first');
+    const d = sim.dimension, o = { x: Math.floor(sim.location.x), y: Math.floor(sim.location.y), z: Math.floor(sim.location.z) };
+    console.warn(`[dump] feet ${o.x} ${o.y} ${o.z}`);
+    for (let y = o.y + 4; y >= o.y - 4; y--) {
+      const rows = [];
+      for (let z = o.z - 5; z <= o.z + 5; z++) {
+        let r = '';
+        for (let x = o.x - 5; x <= o.x + 5; x++) {
+          let b; try { b = d.getBlock({ x, y, z }); } catch {}
+          const id = b?.typeId ?? '?';
+          r += !b ? '?' : b.isAir ? '.' : b.isLiquid ? '~' : /leaves/.test(id) ? 'L' : /_log$/.test(id) ? 'T' : /vine/.test(id) ? 'v' : /grass|fern|flower|sapling/.test(id) ? ',' : '#';
+        }
+        rows.push(r);
+      }
+      console.warn(`[dump] y=${y}${y === o.y ? ' (feet)' : ''}`);
+      for (const r of rows) console.warn(`[dump]   ${r}`);
+    }
+    return;
+  }
   if (lower === 'logscan') {
     // Debug: run the real tree scan and show, for the nearest few, what's at each spot and what we see.
     const S = agent?.skills; if (!S) return;

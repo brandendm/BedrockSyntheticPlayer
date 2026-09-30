@@ -24,7 +24,11 @@ import {
 import { gaitFor, landingAlong, reachFrom } from './jump.js';
 
 export const TICK = 0.05;
-export const EYE_HEIGHT = 1.62;
+// The simulated player's head is 1.52 above its feet in BDS 1.26 (measured: feet y 72.000, head 73.520), not the
+// 1.62 of the Java-edition player. With 1.62 every aim came out 2-3 degrees low (a block short at 2 blocks out).
+// (Live binding: game/calibrate.js sets it from what the game reports when the bot spawns.)
+export let EYE_HEIGHT = 1.52;
+export function setEyeHeight(h) { EYE_HEIGHT = h; }
 
 export const DEFAULTS = Object.freeze({
   omega: 11,            // spring stiffness (rad/s-ish); higher = snappier head

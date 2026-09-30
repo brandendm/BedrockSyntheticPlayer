@@ -45,7 +45,22 @@ test('no wood for the shield: the pickaxe goes ahead, the shield keeps its ingot
   const f = { ...base, farm: { tiles: 24, ripe: 0 }, waterNearHouse: true };
   const bare = { ...kit, oak_planks: 0 };
   assert.deepEqual(advanceStep({ ...f, inv: { ...bare, iron_ingot: 4 } }).items, ['iron_pickaxe']);
-  assert.equal(advanceStep({ ...f, inv: { ...bare, iron_ingot: 3 } }).step, 'get_iron');
+  // (Three ingots: the pickaxe can't be made with the shield's kept back; the logs first, then the shield.)
+  assert.equal(advanceStep({ ...f, inv: { ...bare, iron_ingot: 3 } }).step, 'gather_logs');
+  assert.equal(advanceStep({ ...f, underground: true, inv: { ...bare, iron_ingot: 3 } }).step, 'get_iron');
+});
+
+test('the shield waits on wood only until a wood trip is worth it: then it goes for the logs', () => {
+  const f = { ...base, farm: { tiles: 24, ripe: 0 }, waterNearHouse: true };
+  const bare = { ...kit, oak_planks: 0 };
+  // One ingot, no wood: the shield's ingot is kept and two logs fetched (not mining on, and never made).
+  const r = advanceStep({ ...f, inv: { ...bare, iron_ingot: 1 } });
+  assert.equal(r.step, 'gather_logs');
+  assert.deepEqual(r.wanted, ['shield']);
+  // Down the mine: carry on with the iron, the logs come with the next trip up.
+  assert.equal(advanceStep({ ...f, underground: true, inv: { ...bare, iron_ingot: 1 } }).step, 'get_iron');
+  // Wood in hand: it's crafted at once.
+  assert.deepEqual(advanceStep({ ...f, inv: { ...kit, iron_ingot: 1, oak_planks: 6 } }).items, ['shield']);
 });
 
 test('armor gets worn; ripe wheat gets harvested; bread when hungry', () => {

@@ -116,7 +116,7 @@ function slabOnTop(b) {
  * the like don't stop a ray; liquids only when asked. The cell we start in is skipped.
  * Returns { block, location, faceLocation (0..1 within the block) } or undefined.
  */
-export function castRay(dimension, from, dir, maxDistance, { liquids = false, crosshair = false } = {}) {
+export function castRay(dimension, from, dir, maxDistance, { liquids = false, crosshair = false, vines = false } = {}) {
   const len = Math.hypot(dir.x, dir.y, dir.z) || 1;
   const d = { x: dir.x / len, y: dir.y / len, z: dir.z / len };
   let x = Math.floor(from.x), y = Math.floor(from.y), z = Math.floor(from.z);
@@ -133,7 +133,7 @@ export function castRay(dimension, from, dir, maxDistance, { liquids = false, cr
     let b;
     try { b = dimension.getBlock({ x, y, z }); } catch { return undefined; }
     if (!b) return undefined; // not loaded: can't see into it
-    if (!(crosshair ? stopsCrosshair(b) : stopsRay(b, liquids))) continue;
+    if (!(crosshair ? stopsCrosshair(b) : stopsRay(b, liquids, vines))) continue;
     const hp = { x: from.x + d.x * t, y: from.y + d.y * t, z: from.z + d.z * t };
     // (face: the outward normal of the face the ray came in through)
     return { block: b, location: { x, y, z }, faceLocation: { x: hp.x - x, y: hp.y - y, z: hp.z - z }, face };
@@ -141,10 +141,16 @@ export function castRay(dimension, from, dir, maxDistance, { liquids = false, cr
   return undefined;
 }
 
-function stopsRay(b, liquids) {
+// A vine (and its kind) is a thin sheet on the face of the block behind it. To LOOK through it is
+// fine (it's mostly holes); to reach the block behind it is not: the crosshair lands on the vine,
+// which has to be broken first. castRay's `vines` option makes them stop the ray for that.
+export const THIN_COVER = /vine|glow_lichen|sculk_vein|hanging_roots/;
+
+function stopsRay(b, liquids, vines = false) {
   if (b.isAir) return false;
   if (b.isLiquid || WATER_PLANTS.test(b.typeId)) return liquids;
   const id = b.typeId;
+  if (vines && THIN_COVER.test(id)) return true;
   if (PASSABLE.has(id) || PASSABLE_RE.test(id) || CLIMBABLE.test(id)) return false;
   return true;
 }

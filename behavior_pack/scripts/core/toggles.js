@@ -5,6 +5,7 @@
 
 export const GOALS = [
   { key: 'beds', label: 'Sleep at night (a bed, and sheep for its wool)' },
+  { key: 'nights', label: 'Go home when it gets dark (off: work through the night, if armed and healthy)' },
   { key: 'house', label: 'Build a house (without one: dig in at night)' },
   { key: 'torches', label: 'Make torches and light the house' },
   { key: 'farm', label: 'Wheat farm (once there is a bucket)' },
@@ -24,7 +25,7 @@ export function goalsOf(settings = {}) {
 /** A goal name as typed ("iron", "Farm", "torch") -> its key, or null. */
 export function goalKey(name) {
   const n = String(name ?? '').toLowerCase().replace(/[^a-z]/g, '');
-  const alias = { sleep: 'beds', bed: 'beds', torch: 'torches', hunt: 'hunting', food: 'hunting', chests: 'storage', store: 'storage', witch: 'witches', mining: 'iron' };
+  const alias = { sleep: 'beds', bed: 'beds', torch: 'torches', hunt: 'hunting', food: 'hunting', chests: 'storage', store: 'storage', witch: 'witches', mining: 'iron', night: 'nights', dark: 'nights', home: 'nights', dusk: 'nights' };
   const k = alias[n] ?? n;
   return GOALS.some((g) => g.key === k) ? k : null;
 }
