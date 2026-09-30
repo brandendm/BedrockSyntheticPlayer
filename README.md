@@ -38,6 +38,8 @@ If Minecraft can't reach 127.0.0.1, run **tools\fix_minecraft_localhost.bat** as
 
 The first time, if this folder's files were copied in by hand and differ from the branch, run it with `-Adopt`: every differing (and every new) file is copied to `..\bedrock-agent-backup-<time>\` first, and after you type YES the folder is made to match GitHub. After that, builds are just commits: no more `uNN-all.tgz` files. `tools/test_update.sh` tests the script against scratch repos (16 checks; needs `pwsh`).
 
+A fresh clone of the repo is only the code. It has no `server\` (the Bedrock server and your worlds) and no `brain\config.json` (your Jev key), because git ignores both. When moving to a new folder, copy those two from the old one before running anything; **Use My World.bat** stops with a message if there's no server, and **Start Agent.bat** if there's no `bedrock_server.exe`.
+
 ## Dashboard
 
 **Start Agent.bat** opens it in your browser: **http://127.0.0.1:8765/**. It updates every second.

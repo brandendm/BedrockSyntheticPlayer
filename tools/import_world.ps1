@@ -7,6 +7,14 @@ $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
 $server = Join-Path $root 'server'
 
+# A fresh clone has no server\ (git ignores it). Say so before copying or moving anything.
+if (-not (Test-Path (Join-Path $server 'server.properties'))) {
+  Write-Host "There's no Bedrock server in $server (no server.properties there)." -ForegroundColor Yellow
+  Write-Host "The 'server' folder isn't part of the git repo. Copy it, and brain\config.json, from your old agent folder into this one,"
+  Write-Host "or set a server up as in the README ('Setup from scratch'), then run this again. Nothing was changed."
+  exit 1
+}
+
 if (Get-Process bedrock_server -ErrorAction SilentlyContinue) {
   Write-Host "The server is running. Type 'stop' in the server window first, then run this again." -ForegroundColor Yellow
   exit 1
