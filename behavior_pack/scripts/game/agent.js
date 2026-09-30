@@ -1006,6 +1006,31 @@ export class Agent {
         repeats = key === last && sig === lastSig ? repeats + 1 : 0;
         last = key;
         lastSig = sig;
+        // Going round in circles: two or three steps taking turns (get stone, craft, get stone, craft:
+        // each one "succeeds" and sets up the other), which the same-step counts above never see.
+        // Five turns of the same step in the last 4 minutes among at most 3 different ones, with
+        // nothing crafted or built between: the most repeated one that isn't a stint goes aside.
+        {
+          const nowT = system.currentTick;
+          const hist = (this.autoHist ??= []);
+          hist.push({ key, step: step.step, t: nowT, sk: stepKey(step) });
+          while (hist.length && nowT - hist[0].t > 4800) hist.shift();
+          const counts = new Map();
+          for (const h of hist) counts.set(h.key, (counts.get(h.key) ?? 0) + 1);
+          // (Only the fetching steps: crafting and furnishing take many turns one after another, and that's progress.)
+          const fetching = ['get_stone', 'gather_logs', 'hunt', 'goto_table', 'place_table'];
+          const top = [...counts].filter(([k]) => fetching.includes(hist.find((h) => h.key === k).step)).sort((a, b) => b[1] - a[1])[0];
+          if (top && top[1] >= 5 && counts.size <= 3) {
+            const h = hist.find((q) => q.key === top[0]);
+            const cyc = [...counts.keys()].join(' <-> ');
+            this.deferred.set(h.sk, { until: Date.now() + 180000, step: h.step });
+            trace(`auto: going round in circles (${cyc}): setting ${h.step} aside for 3 min`);
+            this.sayOnce(`circles:${h.step}`, `I keep going back and forth on ${h.step.replace(/_/g, ' ')}: setting it aside for a bit.`, 120000);
+            this.autoHist = [];
+            last = ''; repeats = 0; same = 0;
+            continue;
+          }
+        }
         // The same step straight back after failing in no time (a placement that didn't take, a
         // craft with no table): give it a moment instead of burning through the retries in a second.
         if (repeats > 0 && system.currentTick - (this.lastStepAt ?? 0) < 20) await S.wait(gen, 40);
