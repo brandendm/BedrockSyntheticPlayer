@@ -1371,7 +1371,18 @@ export class Agent {
           d.legs = (d.legs ?? 0) + 1;
           const after = dist3D(this.sim.location, d);
           reached = after <= 4;
-          if (!ok && after > before - 2) { failed = true; break; } // no headway on a leg that ran to its end
+          if (!ok && after > before - 2) {
+            // Things far below and no walking way down from here (a path search from the surface runs out of nodes
+            // long before 97 blocks of rock): go down our own shaft first and search from its bottom, once per trip.
+            // (They were 97 blocks down in a cave off the mine; it gave up after 236 s without trying the stairs.)
+            const q = S.homeQuarry(), b = q ? S.shaftBottom(q) : null;
+            if (b && !d.viaShaft && d.y < this.sim.location.y - 12 && Math.hypot(b.x - d.x, b.z - d.z) < 120 && Math.abs(b.y - d.y) < 60) {
+              d.viaShaft = true;
+              trace(`loot: no walking way down; via the quarry's bottom at ${b.x} ${b.y} ${b.z}`);
+              if (await S.toShaftBottom(gen)) { leg = -1; continue; }
+            }
+            failed = true; break;
+          } // no headway on a leg that ran to its end
         }
         if (failed) {
           d.fails = (d.fails ?? 0) + 1;
