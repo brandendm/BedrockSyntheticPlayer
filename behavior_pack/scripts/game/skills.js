@@ -4420,6 +4420,16 @@ export class Skills {
     const towardWater = (ang) => towardWet(ang, cones);
     // Explored for this twice lately and found nothing (open plains, no trees for miles): ask the
     // world seed where the nearest good biome is and head that way, instead of wandering.
+    // A village we know of has beds (the wool's work done), farms and animals: it beats wandering
+    // for sheep or food (and for iron when it has workstations: a blacksmith's chest).
+    if (want === 'sheep' || want === 'food') {
+      const vil = this.a.villages?.pick(want);
+      if (vil && !this.a.villages.busy) {
+        const res = await this.a.villages.visit(gen, vil, want);
+        this.log(`explore: village visit for ${what}: ${res}`);
+        if (res === 'looked round' || /took/.test(res)) { this.exploreMiss[want] = { n: 0, at: 0, since: 0 }; return; }
+      }
+    }
     const now = system.currentTick;
     const miss = this.exploreMiss[want ?? '-'] ?? { n: 0, at: 0, since: now };
     if (now - miss.at < 1800) miss.n++; else { miss.n = 1; miss.since = now; }

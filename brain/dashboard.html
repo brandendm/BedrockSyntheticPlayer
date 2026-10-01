@@ -566,6 +566,7 @@ function drawTrail(s, f) {
   const pts = f.trail || [];
   const marks = [];
   if (s.house) marks.push({ x: s.house.x, z: s.house.z, c: '#d98c14', l: 'home' });
+  for (const v of s.villages || []) marks.push({ x: v.x, z: v.z, c: v.danger ? '#d64545' : '#2a9d5c', l: v.danger ? 'village (raiders)' : v.visited ? 'village ✓' : 'village' });
   if (!pts.length) { $('trailnote').textContent = 'no movement recorded yet'; return; }
   const xs = [...pts.map((p) => p[0]), ...marks.map((m) => m.x)], zs = [...pts.map((p) => p[1]), ...marks.map((m) => m.z)];
   let x0 = Math.min(...xs), x1 = Math.max(...xs), z0 = Math.min(...zs), z1 = Math.max(...zs);
@@ -586,7 +587,7 @@ function drawTrail(s, f) {
   g.fillStyle = '#d64545'; g.beginPath(); g.arc(X(last[0]), Z(last[1]), 5, 0, 7); g.fill();
   const walked = pts.reduce((a, p, i) => i ? a + Math.hypot(p[0] - pts[i - 1][0], p[1] - pts[i - 1][1]) : a, 0);
   const net = Math.hypot(last[0] - pts[0][0], last[1] - pts[0][1]);
-  $('trailnote').textContent = `walked ~${Math.round(walked)} blocks, ${Math.round(net)} from where this started · red dot: now, orange square: home`;
+  $('trailnote').textContent = `walked ~${Math.round(walked)} blocks, ${Math.round(net)} from where this started · red dot: now, orange square: home, green: villages it has recognised`;
 }
 
 async function tick() {

@@ -46,6 +46,14 @@ export class Container {
     for (let i = 0; i < this.size && left > 0; i++) if (!this.slots[i]) { const k = Math.min(64, left); this.slots[i] = new ItemStack(it.typeId, k); left -= k; }
     return left > 0 ? new ItemStack(it.typeId, left) : undefined;
   }
+  /** Move slot i's stack into `other`; what didn't fit is returned (and stays here). */
+  transferItem(i, other) {
+    const it = this.slots[i];
+    if (!it) return undefined;
+    const left = other.addItem(it.clone());
+    this.slots[i] = left ?? undefined;
+    return left;
+  }
 }
 export const Direction = { Up: 'Up', Down: 'Down', North: 'North', South: 'South', East: 'East', West: 'West' };
 export const EntityComponentTypes = { Inventory: 'minecraft:inventory', Equippable: 'minecraft:equippable' };

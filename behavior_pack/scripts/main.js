@@ -102,6 +102,19 @@ function handle(text, player) {
     }
     return reply(player, agent.demo.status());
   }
+  // !bot village [visit]: the villages it has recognised from afar (game/villages.js); `visit` goes now.
+  if (lower === 'village' || lower === 'villages' || lower.startsWith('village ')) {
+    if (!agent) return reply(player, 'spawn first');
+    const here = agent.sim.location;
+    const list = agent.villages.status().map((v) => `${v.x} ${v.y} ${v.z} (${Math.round(Math.hypot(v.x - here.x, v.z - here.z))} away, score ${v.score}${v.danger ? ', RAIDERS' : ''}${v.visited ? ', visited' : ''})`);
+    if (lower.endsWith('visit')) {
+      const v = agent.villages.pick('bed') ?? agent.villages.pick('food');
+      if (!v) return reply(player, list.length ? 'None to go to now (raiders, visited lately or too far).' : 'No village known yet.');
+      agent.startVillage(v);
+      return reply(player, `Going to the village at ${v.x} ${v.y} ${v.z}.`);
+    }
+    return reply(player, list.length ? `Villages: ${list.join('; ')}` : 'No village known yet (it looks every 3 s out to 64 blocks).');
+  }
   // !bot profile on|off|show|refresh: use (or not) what it learned from you.
   if (lower === 'profile' || lower.startsWith('profile ')) {
     if (!agent) return reply(player, 'spawn first');

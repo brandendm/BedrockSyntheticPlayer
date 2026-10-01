@@ -13,6 +13,7 @@ import { world, system } from '@minecraft/server';
 import { classifyTop, traitsOf, biomeName, searchFor, onIsland } from '../core/biomes.js';
 import { STONE_TARGETS, isLog } from '../core/recipes.js';
 import { trace } from './bridge.js';
+import { CONFIG } from '../config.js';
 import { castRay } from './world.js';
 
 const KEY = 'agent:map';
@@ -91,6 +92,7 @@ export class Lookout {
     try { eye = sim.getHeadLocation(); } catch { return; }
     const dim = this.dim, dimId = dim.id, now = Date.now();
     const mem = this.a.memory;
+    const vill = [];
     this.turn++;
     const spin = (this.turn * 0.618) % 1; // golden-ratio rotation: covers every direction over time
     for (let i = 0; i < PER_GLANCE; i++) {
@@ -111,6 +113,8 @@ export class Lookout {
         if (hit) visible = false;
       } catch {}
       if (!visible) continue;
+      const ve = this.a.villages?.seeBlock(id, tl.x, tl.y, tl.z);
+      if (ve) vill.push(ve);
       const kind = classifyTop(id);
       this.rings.push({ kind, x: tl.x, y: tl.y, z: tl.z, dist: Math.hypot(tl.x - eye.x, tl.z - eye.z), at: now });
       const c = this.chunk(chunkKey(x, z));
@@ -134,6 +138,7 @@ export class Lookout {
       }
       this.markDirty();
     }
+    try { if (vill.length) this.a.villages.feed(vill); if (this.turn % 3 === 0) this.a.villages?.scanEntities(); } catch (e) { if (CONFIG.debug) console.warn(`[agent] villages: ${e}`); }
     this.rings = this.rings.filter((s) => now - s.at < 120000).slice(-120);
     // Animals further out than the survey looks (entity queries are cheap).
     if (this.turn % 2 === 0) { try { this.a.homestead?.rememberAnimals(48); } catch {} }

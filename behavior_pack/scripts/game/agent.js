@@ -25,6 +25,7 @@ import { FULL_SLOTS } from '../core/storage.js';
 import { itemValue, armorUpgrades, armorTotal } from '../core/wants.js';
 import { lootPlan, lootWorth, backoffMs, LOOT_WINDOW_MS } from '../core/loot.js';
 import { Homestead, FOOD_ANIMALS } from './homestead.js';
+import { Villages } from './villages.js';
 import { Lookout } from './lookout.js';
 import { Skills, Aborted, markVisited } from './skills.js';
 import { invCounts, hold, container, usesLeft, kitOf, emptyHanded, restoreKit } from './inventory.js';
@@ -90,6 +91,7 @@ export class Agent {
     this.homestead = new Homestead(this);
     this.farm = new Farm(this);
     this.lookout = new Lookout(this);
+    this.villages = new Villages(this); // (villages seen from afar: game/villages.js)
     system.runTimeout(() => { try { this.restoreKit(); } catch (e) { this.kitChecked = true; console.warn(`[agent] kit: ${e}`); } try { this.restoreState(); } catch {} }, 40);
     this.badCells = new Map();   // "x,y,z" -> until (ms): cells we got stuck walking into
     this.deferred = new Map();   // stepKey -> {until (ms), step}: ladder steps that kept failing, set aside (core/focus.js)
@@ -1408,6 +1410,7 @@ export class Agent {
       flight: (() => { try { return this.flight.summary(); } catch { return null; } })(),
       deaths: this.deathCount ?? 0,
       learn: { recording: this.demo.on ? this.demo.name : null, status: this.demo.status(), params: this.profile.params, notes: this.profile.notes, using: CONFIG.useProfile !== false },
+      villages: (() => { try { return this.villages.status(); } catch { return []; } })(),
       build: CONFIG.build,
     };
   }
@@ -2712,6 +2715,12 @@ export class Agent {
   startGoto(target, tolerance) {
     const gen = this.newTask({ kind: 'goto', target, tolerance });
     this.runGoto(gen, target, tolerance).catch((e) => console.error(`[agent] goto failed: ${e}\n${e.stack}`));
+  }
+
+  /** `!bot village visit`: go to the best known village now and use it (a bed, the chests' food and iron). */
+  startVillage(v, want = 'bed') {
+    const gen = this.newTask({ kind: 'village', target: v });
+    this.villages.visit(gen, v, want).then((r) => { if (gen === this.taskGen) { this.say(`Village: ${r}.`); this.newTask(null); } }).catch((e) => { if (gen === this.taskGen) { this.newTask(null); } else return; console.warn(`[agent] village visit: ${e}`); });
   }
 
   async runGoto(gen, target, tolerance) {

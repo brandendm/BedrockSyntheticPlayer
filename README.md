@@ -511,6 +511,7 @@ node tools/sim_combat.mjs --weapons 150  # the same fights with each loadout: sw
 node tools/sim_combat.mjs --ambush 500   # creepers catching the bot in its quarry and mine (down the stairs behind it, dropped in, in the dark tunnel, from a side branch, on the stairs)
 node tools/sim_quarry.mjs 300    # creeper craters in the quarry stairs: can it still get down and back up?
 node tools/sim_learn.mjs           # the recorder: only the player named, nothing recorded while off
+node tools/sim_village.mjs         # village sense: constructed village, villagers, raiders, a visit taking a bed and chest loot
 node tools/sim_flight.mjs          # the flight recorder: a stuck bot trips the watchdog and the report carries the evidence
 node tools/sim_reach.mjs           # only what a player could: no breaking through vines or leaves, no building through walls
 node tools/sim_parkour.mjs 300  # jump courses over the void: the real planner and motor on a body with the game's momentum (--jumps: each jump alone; HARD=1: 20 jumps, mostly pillars)
@@ -536,6 +537,16 @@ python -m unittest discover -s brain/tests -t .   # brain (21 tests)
 tools/test_update.sh             # Update Agent.bat's script against scratch git repos (16 checks; needs PowerShell 7 as pwsh, skipped without)
 npm install; npm run typecheck # checks pack code against the real Script API typings
 ```
+
+
+## Village sense
+
+A player looks at a skyline and knows it's a village. The bot doesn't need a picture for that: every part of a village is a block id or an entity it can already read. `game/lookout.js` glances every 3 s at ~10 surface columns out to 64 blocks; what it sees there (dirt paths, hay bales, farmland and crops, workstations, beds, a bell) and, every 9 s, the villagers (and raiders) in the loaded chunks within 64 blocks, go to `core/village.js`. That clusters the evidence within 48 blocks, scores each cluster (a bell 8, a villager 4 up to three, hay 3, a workstation 3, paths 2, beds 1.5, farmland 1), and calls it a village at 9 or more **on at least two kinds of evidence** (a lone farm, or a pile of paths, never is). Rules, no learning, nothing it can get dangerously wrong: the worst case is a walk to a farm someone built.
+
+- **Remembered** in the world memory (`villages`, best 8), updated as more is seen; the dashboard's trail map shows them in green (red with raiders, ticked once visited). `!bot village` lists them with distances; `!bot village visit` goes now.
+- **Used by the plan.** Looking for sheep (the bed's wool) or food with a village known, and it goes there before wandering or a world-seed search: a village has beds, and a bed is the wool's work done. At the village it looks round (feeding more evidence back), takes a bed (not one near its own house), and takes what's worth having from the chests (iron, food, a blacksmith's tools, emeralds; not the junk) before moving on. A visited village is left for 15 minutes; at night only one within 48 blocks is picked.
+- **Raiders.** A pillager, vindicator, evoker or ravager seen within 64 blocks of a village marks it dangerous for 10 minutes: not picked, and a visit already under way turns back.
+- **Checks:** `tests/village.test.js` (a constructed village found at about its middle, evidence arriving a piece at a time, two villages kept apart, scattered evidence not adding up, raiders, picking, loot) and `node tools/sim_village.mjs` (the game side on a stand-in agent: glances, villagers, a visit taking the bed and the chest's iron and bread but not the sticks).
 
 ## Making the simulators match your game
 
