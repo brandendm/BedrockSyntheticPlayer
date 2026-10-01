@@ -242,7 +242,11 @@ export class Homestead {
     const S = this.S;
     if (this.a.weaponId) hold(this.sim, this.a.weaponId);
     let kills = 0, lost = 0;
-    const skip = new Set();
+    // Animals given up on stay skipped for 3 min across hunt() calls (the planner re-enters it).
+    /** @type {Map<string, number>} */
+    // @ts-ignore
+    const hs = (this.huntSkip ??= new Map());
+    const skip = { has: (id) => (hs.get(id) ?? 0) > system.currentTick, add: (id) => hs.set(id, system.currentTick + 3600) };
     while (!enough() && system.currentTick - t0 < maxS * 20) {
       S.check(gen);
       const inv = invCounts(this.sim);
@@ -285,10 +289,12 @@ export class Homestead {
       // Dead counts from the moment its health hits 0, not when the body disappears a second later.
       const hp = () => { try { return target.getComponent('minecraft:health')?.currentValue ?? 0; } catch { return 0; } };
       const dead = () => { try { return !target.isValid || hp() <= 0; } catch { return true; } };
-      let swings = 0, landed = 0, lastHp = hp(), lastLand = start, closeIn = 0;
+      let swings = 0, landed = 0, lastHp = hp(), lastLand = start, closeIn = 0, bestD = Infinity, bestAt = start;
       while (!dead() && system.currentTick - start < 400) {
         await S.wait(gen, 2);
         if (dead()) break;
+        // Not getting any closer for 4 s (partial route, a drop or wall between): write it off.
+        { const dd = dist3D(this.sim.location, target.location); if (dd < bestD - 0.5) { bestD = dd; bestAt = system.currentTick; } else if (system.currentTick - bestAt > 80 && landed === 0) break; }
         last = { ...target.location };
         const p = this.sim.location;
         const d = dist3D(p, last);
