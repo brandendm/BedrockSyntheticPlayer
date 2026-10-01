@@ -52,6 +52,7 @@ _recent: collections.deque = collections.deque(maxlen=400)
 _traces: collections.deque = collections.deque(maxlen=5000)
 _trace_seq = 0
 _flights: collections.deque = collections.deque(maxlen=12)
+_why: collections.deque = collections.deque(maxlen=3000)  # the planner's reasons, one per step chosen (brain/logs/why.jsonl)
 _tests: dict = {"batch": None, "results": {}}
 
 
@@ -292,6 +293,9 @@ def make_handler(engine: DecisionEngine, key: str | None = None):
                     "jev": {"enabled": j.available, "usd_today": round(j.budget.usd_today, 6),
                             "calls_last_hour": j.budget.calls_last_hour},
                 })
+            if self.path == "/api/why":
+                with _lock:
+                    return self._send(200, {"why": list(_why)})
             if self.path == "/api/about":
                 return self._send(200, ABOUT)
             if self.path == "/api/events":
@@ -374,6 +378,20 @@ def make_handler(engine: DecisionEngine, key: str | None = None):
                 return self._send(400, {"error": "bad json"})
             if evt.get("type") == "demo":
                 store_demo(evt)
+                return self._send(200, {"actions": []})
+            if evt.get("type") == "why":
+                rec = {"t": time.strftime("%H:%M:%S"), **{k: v for k, v in evt.items() if k != "type"}}
+                with _lock:
+                    _why.append(rec)
+                try:
+                    LOG_DIR.mkdir(exist_ok=True)
+                    f = LOG_DIR / "why.jsonl"
+                    if f.exists() and f.stat().st_size > 4_000_000:
+                        f.replace(f.with_suffix(".old.jsonl"))
+                    with f.open("a", encoding="utf-8") as fh:
+                        fh.write(json.dumps(rec) + "\n")
+                except OSError:
+                    pass
                 return self._send(200, {"actions": []})
             if evt.get("type") == "learned_house":
                 store_house(evt)

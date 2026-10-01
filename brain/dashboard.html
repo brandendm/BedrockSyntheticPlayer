@@ -269,6 +269,7 @@
       <button id="tclear">Clear</button>
       <button id="tcopy">Copy shown</button>
       <button id="tcopyall">Copy all decisions</button>
+      <button id="whycopy" title="Why the plan chose each step: the step and the facts it was looking at, one line each">Copy planner log</button>
     </div>
     <div class="trace" id="trace"></div>
   </section>
@@ -548,6 +549,7 @@ async function fullReport() {
   out.push(section('BRAIN', `jev: ${j(st?.jev)}`));
   const lines = (tr?.lines || []);
   out.push(section(`DECISIONS (all ${lines.length} the brain holds, oldest first, with the bot's position)`, lines.map((l) => `${(l.t || '').slice(11)} ${l.msg}${l.p ? ` @${l.p.join(',')}` : ''}`).join('\n')));
+  { const w = (await getJSON('/api/why'))?.why || []; out.push(section(`PLANNER REASONS (last ${Math.min(60, w.length)} of ${w.length}; the whole log: Copy planner log)`, w.slice(-60).map((r) => `${r.t} @${(r.pos || []).join(',')} ${r.key} | ${JSON.stringify(r.facts)}`).join('\n'))); }
   out.push(section('WHAT IT SAID (chat/log events)', (ev?.events || []).map((e) => `${(e.t || '').slice(11)} ${e.text ?? e.message ?? j(e)}${e.pos ? ` @${e.pos.x},${e.pos.y},${e.pos.z}` : ''}`).join('\n')));
   out.push(section(`FLIGHT REPORTS (${(fl?.reports || []).length})`, (fl?.reports || []).map((r) => `--- ${r.t} ${r.why}\n${(r.report || []).join('\n')}`).join('\n\n')));
   const res = ts?.results || {};
@@ -557,6 +559,11 @@ async function fullReport() {
 // (#report in the address: the report shown on the page, for a phone where the clipboard won't take it.)
 if (location.hash === '#report') setTimeout(async () => { const pre = document.createElement('pre'); pre.id = 'reporttext'; pre.style.cssText = 'white-space:pre-wrap;font-size:11px;padding:12px'; pre.textContent = await fullReport(); document.body.prepend(pre); }, 1500);
 $('fullcopy').onclick = async () => { toast('Gathering…'); copyText(await fullReport(), 'Full report copied'); };
+$('whycopy').onclick = async () => {
+  const d = await getJSON('/api/why'), rows = d?.why || [];
+  const line = (r) => `${r.t} @${(r.pos || []).join(',')} ${r.key} | ${r.step} | ${JSON.stringify(r.facts)}`;
+  copyText(`PLANNER LOG (${rows.length} choices, build ${rows.length ? rows[rows.length - 1].build : '?'})\n${rows.map(line).join('\n')}`, `Planner log copied (${rows.length} choices)`);
+};
 $('tcopyall').onclick = () => copyText(traceLines.map((l) => `${(l.t || '').slice(11)} ${l.msg}${l.p ? ` @${l.p.join(',')}` : ''}`).join('\n'), `All ${traceLines.length} decisions copied`);
 
 // ---------------------------------------------------------------- flight reports

@@ -387,3 +387,25 @@ class LearnTests(unittest.TestCase):
         finally:
             server.LOG_DIR = old
             server._house.update(at=0.0, data=None)
+
+    def test_the_planner_log_is_kept(self):
+        import threading, tempfile, pathlib, json, urllib.request
+        from http.server import ThreadingHTTPServer
+        from brain import server
+        old = server.LOG_DIR
+        server.LOG_DIR = pathlib.Path(tempfile.mkdtemp())
+        try:
+            engine = DecisionEngine(JevClient("", transport=fake_transport()), NO_LLM)
+            httpd = ThreadingHTTPServer(("127.0.0.1", 0), server.make_handler(engine))
+            threading.Thread(target=httpd.serve_forever, daemon=True).start()
+            base = f"http://127.0.0.1:{httpd.server_address[1]}"
+            body = json.dumps({"type": "why", "tick": 5, "build": "u105", "pos": [1, 2, 3], "step": "{\"step\":\"craft\"}", "key": "craftfurnace", "facts": {"wood": 3}}).encode()
+            urllib.request.urlopen(urllib.request.Request(base + "/event", data=body, headers={"Content-Type": "application/json"})).read()
+            got = json.loads(urllib.request.urlopen(base + "/api/why").read())["why"]
+            self.assertEqual(got[-1]["key"], "craftfurnace")
+            self.assertEqual(got[-1]["facts"]["wood"], 3)
+            self.assertTrue((server.LOG_DIR / "why.jsonl").exists())
+            httpd.shutdown()
+        finally:
+            server.LOG_DIR = old
+            server._why.clear()

@@ -1022,6 +1022,7 @@ export class Agent {
         const tableDy = near || !known ? 0 : known.pos.y - this.sim.location.y;
         // Hurt enough to stop working first (core/rest.js): a mine at night on 2 hp was how it died.
         const step = this.restNeeded(inv) ? { step: 'rest' } : this.planStep(inv, tableDist, tableDy);
+        this.whyLog(step, inv, { tableDist, tableDy, tableNear: near ? Math.round(dist3D(this.sim.location, near)) : null, tableKnown: known ? Math.round(known.dist) : null });
         // A mining trip lasts till the plan has us doing something that isn't done down the mine.
         if (step.step === 'get_iron') this.miningTrip = true;
         else if (!MINE_STEPS.has(step.step) && step.step !== 'shelter' && step.step !== 'rest') this.miningTrip = false;
@@ -1417,6 +1418,35 @@ export class Agent {
   }
 
   /** Everything the dashboard shows (brain/dashboard.html), sent to the brain once a second. */
+  /**
+   * Why the plan chose this step: the step as the planner built it and the facts it was looking at (the table, the
+   * furnaces, the house, what's set aside, the pack's working stock, health, time). Its own log (the dashboard's Planner
+   * log, brain/logs/why.jsonl), not the decisions list: one line per choice, for questions like "why did it craft a
+   * furnace with one in the pack".
+   */
+  whyLog(step, inv, extra = {}) {
+    try {
+      const keep = ['crafting_table', 'furnace', 'cobblestone', 'coal', 'charcoal', 'raw_iron', 'iron_ingot', 'stick', 'torch', 'bucket', 'water_bucket', 'bed', 'shield', 'oak_planks', 'oak_log'];
+      const pack = Object.fromEntries(keep.filter((k) => inv[k]).map((k) => [k, inv[k]]));
+      const tools = Object.keys(inv).filter((k) => /_(pickaxe|sword|axe|shovel|spear)$/.test(k)).map((k) => `${k}${inv[k] > 1 ? ` x${inv[k]}` : ''}`);
+      const woodish = count(inv, isLog) + Math.floor(count(inv, isPlanks) / 4);
+      const H = this.homestead, here = this.sim.location;
+      const furn = this.memory.list('furnace', this.dim.id, here).map((f) => ({ d: Math.round(f.dist), camp: !!H.isCamp?.(f.pos) }));
+      const rec = {
+        type: 'why', tick: system.currentTick, build: CONFIG.build,
+        pos: [Math.round(here.x * 10) / 10, Math.round(here.y * 10) / 10, Math.round(here.z * 10) / 10],
+        step: JSON.stringify(step).slice(0, 400), key: stepKey(step),
+        facts: {
+          ...extra, wood: woodish, pack, tools, furnaces: furn, house: !!H.house, project: !!H.project,
+          deferred: [...this.deferred.values()].filter((d) => d.until > Date.now()).map((d) => d.step),
+          toggles: this.toggles(), hp: Math.round(this.health()), food: Math.round(H.hunger()), time: world.getTimeOfDay(),
+          under: this.minedUnderground?.() ?? null, trip: !!this.miningTrip, last: this.autoStep ?? null,
+        },
+      };
+      sendEvent(rec).catch(() => {});
+    } catch { /* a log never stops the plan */ }
+  }
+
   /** How long each agent tick takes (ms) and how fast the server is turning over, for the diagnostics. */
   notePerf(ms) {
     const P = this.perf ??= { n: 0, sum: 0, max: 0, slow: 0, win: [], startedAt: Date.now(), tick0: system.currentTick, lastTickAt: Date.now(), lastTick: system.currentTick, tps: 20 };
