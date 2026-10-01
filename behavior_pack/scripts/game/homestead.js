@@ -148,7 +148,7 @@ export class Homestead {
    */
   async maybeEat(gen) {
     const hunger = this.hunger(), health = this.a.health();
-    if (!(hunger <= 14 || (health < 16 && hunger < 20))) return false;
+    if (!(hunger <= (this.a.profile?.params?.eat_at ?? 14) || (health < 16 && hunger < 20))) return false; // (eat_at: when you eat, once it has seen enough: core/profile.js)
     const inv = invCounts(this.sim);
     const cookingSoon = this.jobs.some((j) => j.kind === 'food' && dist3D(this.sim.location, j.pos) <= 32);
     const best = chooseFood(inv, { hunger, saturation: this.saturation(), health, cookingSoon });

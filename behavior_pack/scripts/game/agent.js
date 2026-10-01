@@ -15,6 +15,8 @@ import { goalChain } from '../core/goals.js';
 import { advanceStep, advanceProgress, ironHave, IRON_GOAL } from '../core/advance.js';
 import { Farm } from './farm.js';
 import { Flight } from './flight.js';
+import { Demo } from './demo.js';
+import { adopt as adoptProfile, DEFAULTS as PROFILE_DEFAULTS } from '../core/profile.js';
 import { chooseStep, needs as goalNeeds, stepKey } from '../core/focus.js';
 import { inside as houseInside } from '../core/house.js';
 import { mlgNow, ticksToLand } from '../core/fall.js';
@@ -29,7 +31,7 @@ import { invCounts, hold, container, usesLeft, kitOf, emptyHanded, restoreKit } 
 import { WorldMemory } from './memory.js';
 import { SimBodyAdapter } from './body.js';
 import { makeClassifier, canSee, isWatery, OPENABLE } from './world.js';
-import { sendEvent, trace } from './bridge.js';
+import { sendEvent, trace, fetchProfile } from './bridge.js';
 import { parseLocal } from './localCommands.js';
 import { CONFIG } from '../config.js';
 import { isWorkPickaxe } from '../core/costs.js';
@@ -129,6 +131,8 @@ export class Agent {
     this.threatsNow = [];        // the last survive() pass's threats
     this.hunting = false;        // homestead.hunt is steering the head
     this.trail = [];             // recent positions, newest last: {x, y, z, under}
+    this.demo = new Demo(this); // (watching the player play, only when switched on: !bot learn on)
+    this.profile = { params: { ...PROFILE_DEFAULTS }, notes: [], at: 0 }; // (what it has learned from them: core/profile.js)
     this.flight = new Flight(this); // (what it was doing, dumped when something goes wrong: game/flight.js)
     this.calibration = new Calibration(this); // (the head height at once, the rest from the auto loop)
     const follow = this.motor.followPath.bind(this.motor);
@@ -234,6 +238,8 @@ export class Agent {
     if (!this.sim.isValid) return;
     const t = system.currentTick;
     this.flight.tick(t);
+    this.demo.tick(t);
+    if (t % 6000 === 100) this.refreshProfile();
     if (t % SURVIVE_EVERY === 0) this.survive(t);
     if (t % ENDERMAN_SCAN_EVERY === 0) this.watchEndermen();
     if (t % 40 === 0) this.equipBestWeapon();
@@ -1401,6 +1407,7 @@ export class Agent {
       setAside: [...this.deferred.values()].filter((d) => d.until > Date.now()).map((d) => d.step),
       flight: (() => { try { return this.flight.summary(); } catch { return null; } })(),
       deaths: this.deathCount ?? 0,
+      learn: { recording: this.demo.on ? this.demo.name : null, status: this.demo.status(), params: this.profile.params, notes: this.profile.notes, using: CONFIG.useProfile !== false },
       build: CONFIG.build,
     };
   }
@@ -1728,6 +1735,23 @@ export class Agent {
     this.armor = armorTotal(this.worn());
     if (n) this.say(`Put on ${n} piece${n > 1 ? 's' : ''} of gear (armor ${this.armor.points}).`);
     return n;
+  }
+
+  /**
+   * What it has learned from watching the player (brain/learn.py): the numbers it takes up, within
+   * limits (core/profile.js), every 5 minutes. `!bot profile off` goes back to the defaults.
+   */
+  async refreshProfile(force = false) {
+    const raw = CONFIG.useProfile === false ? null : await fetchProfile();
+    const got = adoptProfile(raw);
+    const changed = JSON.stringify(got.params) !== JSON.stringify(this.profile.params);
+    this.profile = { ...got, at: system.currentTick, raw };
+    Skills.IRON_Y = got.params.iron_y;
+    if (changed || force) {
+      trace(`profile: ${got.notes.length ? got.notes.join('; ') : 'defaults'}`);
+      if (got.notes.length) this.sayOnce('profile', `Learned from watching you: ${got.notes.join('; ')}.`, 600000);
+    }
+    return got;
   }
 
   /**

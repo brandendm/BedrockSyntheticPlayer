@@ -5,3 +5,4 @@ brain/usage.json
 server/
 brain/logs/
 brain/access_key.txt
+brain/profile.json

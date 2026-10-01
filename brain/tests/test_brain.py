@@ -295,3 +295,70 @@ class PhoneAccessTests(unittest.TestCase):
             httpd.shutdown()
         finally:
             server.authorized = orig
+
+
+class LearnTests(unittest.TestCase):
+    """What the bot works out of recordings of the player."""
+
+    def recording(self):
+        rows = [{"k": "start"}]
+        t = 0
+        # Eats at food 12, eight times (a golden apple at full food and a potion are not meals).
+        for _ in range(8):
+            rows += [{"t": t, "k": "s", "x": 0, "y": 64, "z": 0, "food": 12, "sp": 1, "sn": 0, "g": 1}, {"t": t + 5, "k": "eat", "item": "cooked_beef"}]
+            t += 20
+        rows += [{"t": t, "k": "s", "x": 0, "y": 64, "z": 0, "food": 20}, {"t": t, "k": "eat", "item": "golden_apple"}, {"t": t, "k": "eat", "item": "potion"}]
+        # Iron at Y -50 (nine blocks), underground, a few torches 6 apart.
+        for i in range(9):
+            rows += [{"t": t, "k": "s", "x": i, "y": -50, "z": 0, "food": 18, "sp": 0, "sn": 1, "g": 1}, {"t": t, "k": "b", "id": "deepslate_iron_ore", "x": i, "y": -50, "z": 0, "tool": "stone_pickaxe"}]
+        for i in range(4):
+            rows.append({"t": t, "k": "p", "id": "torch", "x": i * 6, "y": -50, "z": 0})
+        rows += [{"k": "hurt", "cause": "entityAttack", "amt": 3, "by": "zombie"}, {"k": "kill", "mob": "zombie"}, {"k": "die"}]
+        return rows
+
+    def test_what_you_eat_at_and_where_you_find_iron(self):
+        from brain import learn
+        p = learn.analyze([self.recording()])
+        self.assertEqual(p["params"]["eat_at"]["value"], 12)
+        self.assertEqual(p["params"]["eat_at"]["n"], 8)          # golden apple and potion left out
+        self.assertEqual(p["params"]["iron_y"]["value"], -50)
+        self.assertEqual(p["params"]["iron_y"]["n"], 9)
+        self.assertEqual(p["stats"]["torch_gap"], 6.0)
+        self.assertEqual(p["stats"]["deaths"], 1)
+        self.assertEqual(p["stats"]["kills"], [("zombie", 1)])
+        self.assertGreater(p["stats"]["underground_pct"], 30)
+
+    def test_nothing_recorded_is_not_a_crash(self):
+        from brain import learn
+        p = learn.analyze([])
+        self.assertIsNone(p["params"]["eat_at"]["value"])
+        self.assertIn("0 recording", learn.report(p))
+
+    def test_the_game_only_gets_the_numbers(self):
+        from brain import learn
+        g = learn.for_game(learn.analyze([self.recording()]))
+        self.assertEqual(g, {"params": {"eat_at": {"value": 12, "n": 8}, "iron_y": {"value": -50, "n": 9}}})
+
+    def test_recording_over_http_becomes_a_profile(self):
+        import threading, tempfile, pathlib, json, urllib.request
+        from http.server import ThreadingHTTPServer
+        from brain import server
+        old = server.LOG_DIR
+        server.LOG_DIR = pathlib.Path(tempfile.mkdtemp())
+        try:
+            engine = DecisionEngine(JevClient("", transport=fake_transport()), NO_LLM)
+            httpd = ThreadingHTTPServer(("127.0.0.1", 0), server.make_handler(engine))
+            threading.Thread(target=httpd.serve_forever, daemon=True).start()
+            base = f"http://127.0.0.1:{httpd.server_address[1]}"
+            body = json.dumps({"type": "demo", "player": "Br/anden", "session": "2026-10-01", "rows": self.recording()}).encode()
+            urllib.request.urlopen(urllib.request.Request(base + "/event", data=body, headers={"Content-Type": "application/json"})).read()
+            prof = json.loads(urllib.request.urlopen(base + "/profile").read())
+            self.assertEqual(prof["params"]["eat_at"]["value"], 12)
+            full = json.loads(urllib.request.urlopen(base + "/api/profile").read())
+            self.assertEqual(full["demo"]["recording"], "Br_anden")   # (the name can't make a path)
+            self.assertIn("you eat at food: 12", full["report"])
+            self.assertTrue(list((server.LOG_DIR / "demos").glob("Br_anden-*.jsonl")))
+            httpd.shutdown()
+        finally:
+            server.LOG_DIR = old
+            server._profile.update(at=0.0, data=None)

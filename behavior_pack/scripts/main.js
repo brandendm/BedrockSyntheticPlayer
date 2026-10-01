@@ -88,6 +88,29 @@ function handle(text, player) {
     return;
   }
   if (lower === 'version') return reply(player, `Bedrock Agent build ${CONFIG.build}`);
+  // !bot learn on [name] | off | status: record a player's play so it can learn from it (game/demo.js).
+  if (lower === 'learn' || lower.startsWith('learn ')) {
+    if (!agent) return reply(player, 'spawn first');
+    const [, sub = 'status', who] = lower.split(/\s+/);
+    if (sub === 'off') { agent.demo.stop(); return reply(player, 'Stopped watching you.'); }
+    if (sub === 'on') {
+      const pl = world.getPlayers().find((p) => p.name.toLowerCase() === String(who ?? player?.name ?? '').toLowerCase())
+        ?? world.getPlayers().find((p) => p.id !== agent.sim.id);
+      if (!pl) return reply(player, 'Who? `!bot learn on <name>`.');
+      agent.demo.start(pl.name);
+      return reply(player, `Watching ${pl.name} play: what you break, place, eat and fight, once a second where you are. \`!bot learn off\` stops. Nothing leaves this computer.`);
+    }
+    return reply(player, agent.demo.status());
+  }
+  // !bot profile on|off|show|refresh: use (or not) what it learned from you.
+  if (lower === 'profile' || lower.startsWith('profile ')) {
+    if (!agent) return reply(player, 'spawn first');
+    const sub = lower.split(/\s+/)[1] ?? 'show';
+    if (sub === 'off' || sub === 'on') { CONFIG.useProfile = sub === 'on'; agent.refreshProfile(true); return reply(player, `Learned numbers ${sub}.`); }
+    if (sub === 'refresh') { agent.refreshProfile(true).then((g) => reply(player, g.notes.length ? g.notes.join('; ') : 'Defaults (nothing learned yet).')); return; }
+    const pr = agent.profile;
+    return reply(player, `${CONFIG.useProfile === false ? 'OFF. ' : ''}eat at ${pr.params.eat_at}, iron at Y ${pr.params.iron_y}. ${pr.notes.length ? pr.notes.join('; ') : 'All defaults.'}`);
+  }
   // !bot reshield: put the shield on again so it's drawn (clear, set, replaceitem); see agent.refreshShield.
   if (lower === 'reshield') {
     if (!agent) return reply(player, 'spawn first');
@@ -308,8 +331,12 @@ system.afterEvents.scriptEventReceive.subscribe((ev) => {
 });
 
 // Remember who hits us: provoked neutral mobs become threats, and we hit back at the right one.
+world.afterEvents.playerBreakBlock.subscribe((ev) => { try { agent?.demo.onBreak(ev); } catch { /* recording never breaks play */ } });
+world.afterEvents.playerPlaceBlock.subscribe((ev) => { try { agent?.demo.onPlace(ev); } catch { /* */ } });
+world.afterEvents.itemCompleteUse.subscribe((ev) => { try { agent?.demo.onEat(ev); } catch { /* */ } });
 world.afterEvents.entityHurt.subscribe((ev) => {
   if (!agent) return;
+  try { agent.demo.onHurt(ev); } catch { /* */ }
   // Following someone: what goes for them, and what they go for, is ours to fight too.
   if (ev.hurtEntity.id !== agent.sim.id) { try { agent.onEscortHurt(ev.hurtEntity, ev.damageSource.damagingEntity); } catch {} return; }
   agent.onHurt(ev.damageSource.damagingEntity, ev.damageSource.cause, ev.damage);
@@ -317,6 +344,7 @@ world.afterEvents.entityHurt.subscribe((ev) => {
 
 // Dead simulated players don't respawn on their own.
 world.afterEvents.entityDie.subscribe((ev) => {
+  if (agent) { try { agent.demo.onDie(ev); } catch { /* */ } }
   if (!agent || ev.deadEntity.id !== agent.sim.id) return;
   const src = ev.damageSource;
   const by = src.damagingEntity ? src.damagingEntity.typeId.replace('minecraft:', '') : src.cause;

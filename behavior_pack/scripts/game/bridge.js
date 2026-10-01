@@ -43,6 +43,18 @@ export async function sendEvent(event) {
   }
 }
 
+/** GET the learned profile (brain/learn.py) or null. */
+export async function fetchProfile() {
+  if (system.currentTick < backoffUntil) return null;
+  try {
+    const req = new HttpRequest(`${CONFIG.brainUrl}/profile`);
+    req.method = HttpRequestMethod.Get;
+    req.timeout = 2;
+    const res = await http.request(req);
+    return res.status === 200 ? JSON.parse(res.body) : null;
+  } catch { return null; }
+}
+
 /**
  * Dashboard link: send the bot's status, get back any commands typed on the dashboard
  * (brain/dashboard.html). Local HTTP once a second; nothing leaves the machine.

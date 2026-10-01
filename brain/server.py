@@ -59,6 +59,45 @@ def append_traces(traces: list) -> None:
                 _traces.append({"id": _trace_seq, **rec})
 
 
+_demo = {"player": None, "last": 0.0, "rows": 0}
+_profile = {"at": 0.0, "data": None}
+
+
+def store_demo(evt: dict) -> None:
+    """Keep a batch of rows from the player's recording (brain/logs/demos/<player>-<session>.jsonl)."""
+    import re
+    rows = evt.get("rows") or []
+    if not isinstance(rows, list):
+        return
+    player = re.sub(r"[^A-Za-z0-9_-]", "_", str(evt.get("player", "player")))[:32]
+    session = re.sub(r"[^0-9A-Za-z_-]", "_", str(evt.get("session", "x")))[:32]
+    d = LOG_DIR / "demos"
+    d.mkdir(parents=True, exist_ok=True)
+    with (d / f"{player}-{session}.jsonl").open("a", encoding="utf-8") as fh:
+        for r in rows[:2000]:
+            if isinstance(r, dict):
+                fh.write(json.dumps(r) + "\n")
+    with _lock:
+        _demo.update(player=player, last=time.time(), rows=_demo["rows"] + len(rows))
+        _profile["at"] = 0.0  # worked out afresh next time it's asked for
+
+
+def get_profile() -> dict:
+    """The profile from the recordings, worked out again at most every 20 s."""
+    from . import learn
+    with _lock:
+        if _profile["data"] is not None and time.time() - _profile["at"] < 20:
+            return _profile["data"]
+    data = learn.build(LOG_DIR / "demos")
+    try:
+        learn.write(data)
+    except OSError:
+        pass
+    with _lock:
+        _profile.update(at=time.time(), data=data)
+    return data
+
+
 def remember(evt: dict) -> None:
     """Keep what the dashboard shows from a logged event: flight reports, test results, the last batch."""
     kind = evt.get("type")
@@ -247,6 +286,14 @@ def make_handler(engine: DecisionEngine, key: str | None = None):
             if self.path == "/api/tests":
                 with _lock:
                     return self._send(200, {"batch": _tests["batch"], "results": dict(_tests["results"])})
+            if self.path == "/profile":
+                from . import learn
+                return self._send(200, learn.for_game(get_profile()))
+            if self.path == "/api/profile":
+                from . import learn
+                with _lock:
+                    rec = {"recording": _demo["player"] if time.time() - _demo["last"] < 20 else None, "rows": _demo["rows"]}
+                return self._send(200, {**get_profile(), "demo": rec, "report": learn.report(get_profile())})
             if self.path == "/health":
                 return self._send(200, {"ok": True})
             self._send(404, {"error": "not found"})
@@ -284,6 +331,9 @@ def make_handler(engine: DecisionEngine, key: str | None = None):
                 evt = json.loads(self.rfile.read(n) or b"{}")
             except ValueError:
                 return self._send(400, {"error": "bad json"})
+            if evt.get("type") == "demo":
+                store_demo(evt)
+                return self._send(200, {"actions": []})
             if evt.get("type") in ("log", "test_result", "test_batch", "flight"):
                 # What the bot said and test results, kept on disk so they can be read later
                 # without watching the server window. No decisions, no API calls.

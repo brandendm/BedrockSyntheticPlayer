@@ -237,6 +237,20 @@
   </section>
 
   <section class="wide">
+    <h2>Learning from you</h2>
+    <div class="row">
+      <button class="primary" id="learnon">Start recording me</button>
+      <button id="learnoff">Stop</button>
+      <button id="profon">Use what it learned</button>
+      <button id="profoff">Back to defaults</button>
+      <span class="muted" id="learnstat">—</span>
+    </div>
+    <table class="tests"><thead><tr><th>Habit</th><th>You</th><th>Samples</th><th>Default</th><th>Bot uses</th></tr></thead><tbody id="learnrows"></tbody></table>
+    <pre class="trace" id="learnreport" style="white-space:pre-wrap;margin-top:10px">Nothing recorded yet. Press Start, play for a while (mine, fight, eat), then it shows what it picked up.</pre>
+    <p class="note">Records only the player picked above, only while on: where you are each second, what you break, place, eat and fight. It stays on this computer (brain/logs/demos/). The bot takes up two numbers (when you eat, the height you mine iron at) once it has seen enough, inside safe limits; the rest is a report.</p>
+  </section>
+
+  <section class="wide">
     <h2>Decisions (live)</h2>
     <div class="row tight">
       <input id="tfilter" placeholder="filter: auto:, hurt, quarry, stuck…">
@@ -411,6 +425,22 @@ function renderGoals(s) {
 }
 const esc = (x) => String(x ?? '').replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
 
+// ---------------------------------------------------------------- learning from you
+let learnUsing = {};
+$('learnon').onclick = () => { const p = $('player').value; if (!p) return toast('Pick a player first'); send(`learn on ${p}`); setTimeout(loadLearn, 1500); };
+$('learnoff').onclick = () => { send('learn off'); setTimeout(loadLearn, 1500); };
+$('profon').onclick = () => { send('profile on'); setTimeout(loadLearn, 1500); };
+$('profoff').onclick = () => { send('profile off'); setTimeout(loadLearn, 1500); };
+async function loadLearn() {
+  try {
+    const d = await (await fetch('/api/profile', { cache: 'no-store' })).json();
+    $('learnstat').textContent = d.demo?.recording ? `● recording ${d.demo.recording} (${d.demo.rows} rows)` : `not recording${d.demo?.rows ? ` (${d.demo.rows} rows this session)` : ''}`;
+    const NAMES = { eat_at: 'You eat at food level', iron_y: 'You mine iron at Y' };
+    $('learnrows').innerHTML = Object.entries(d.params || {}).map(([k, v]) => `<tr><td>${NAMES[k] || k}</td><td>${v.value == null ? '—' : +v.value.toFixed(1)}</td><td>${v.n}</td><td>${v.default}</td><td>${learnUsing[k] ?? '—'}</td></tr>`).join('');
+    $('learnreport').textContent = d.report || '';
+  } catch {}
+}
+
 // ---------------------------------------------------------------- command history (↑ / ↓ in the box)
 let hist = []; try { hist = JSON.parse(localStorage.getItem('hist') || '[]'); } catch {}
 let hpos = hist.length;
@@ -565,16 +595,18 @@ async function tick() {
     const d = await r.json();
     render(d);
     try { if (d.status?.online) renderFlight(d.status); } catch (e) { console.warn(e); }
+    try { const l = d.status?.learn; if (l) learnUsing = l.using ? l.params : Object.fromEntries(Object.keys(l.params).map((k) => [k, 'default (off)'])); } catch {}
   } catch {
     $('dot').className = 'dot off';
     $('conn').textContent = 'brain not reachable (is Start Agent.bat running?)';
   }
 }
-tick(); loadTests(); loadTrace(); loadFlights();
+tick(); loadTests(); loadTrace(); loadFlights(); loadLearn();
 setInterval(tick, 1000);
 setInterval(loadTrace, 2000);
 setInterval(loadTests, 5000);
 setInterval(loadFlights, 4000);
+setInterval(loadLearn, 8000);
 </script>
 </body>
 </html>
