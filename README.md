@@ -565,6 +565,7 @@ npm install; npm run typecheck # checks pack code against the real Script API ty
 
 - **Mined and not picked up:** the last block of a job (a packed-up crafting table or furnace, a lone block) now waits for its drop and picks it up; before, only blocks with another coming after skipped the wait, and the pack-up walked off leaving the table and furnace lying there (then made new ones). The closing pickup after a run of blocks does the same.
 - **Wood before the mine:** setting out for iron from the surface with under about six logs' worth of wood (logs, planks/4, sticks/8) and a tree known within 48 blocks, it fetches the difference first. Three 90-second climbs out of the mine for one log each, in one run, were the cost.
+- **Time wasters (u103):** finding a tree while exploring clears the "set aside" on wood (a run wandered its whole 3 minutes past logs it had just spotted); coal ore is only walked to under 12 coal in the pack (it mined 30 in a few minutes with 16 in hand; 37 iron smelts on about 5); a cave with nothing in view after three legs and 40 s is left (four of them cost ~1.5 min for no veins).
 - **Craft loop guard:** the same craft chosen three times in 90 s with what it makes already in the pack is set aside for 3 minutes, with a flight report and the facts the plan saw; every craft step now logs the pack and the known tables after it (`craft: ... -> pack now ...`), so the 8 furnaces and 6 crafting tables of one run can be explained next time.
 
 ## Village sense

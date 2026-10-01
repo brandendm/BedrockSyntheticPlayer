@@ -3170,7 +3170,8 @@ export class Skills {
     const t0 = system.currentTick, origin = this.feet(), seen = new Set();
     let ore = 0, legs = 0;
     const cell = (x, y, z) => `${x >> 2},${y >> 2},${z >> 2}`;
-    while (legs < 8 && system.currentTick - t0 < 90 * 20 && more()) {
+    // (Nothing in view after three legs and 40 s: not a cave with ore in it, on to the mine. Four of these in one run took ~1.5 min for no veins.)
+    while (legs < 8 && system.currentTick - t0 < 90 * 20 && more() && !(ore === 0 && legs >= 3 && system.currentTick - t0 > 40 * 20)) {
       this.check(gen);
       ore += await this.oreInView(gen, 16, { maxWalk: 30, minY: level - 8 });
       await this.lightQuarry(gen, null);
@@ -4579,6 +4580,10 @@ export class Skills {
     if (this.spotted) {
       this.exploreMiss[want ?? '-'] = { n: 0, at: 0 };
       this.log(`explore: spotted ${want} at ${this.spotted.x} ${this.spotted.y} ${this.spotted.z} on the way (${Math.round(dist3D(from, this.sim.location))} blocks in)`);
+      // What was set aside because it kept failing (no trees near enough) is worth another go now that one's in sight:
+      // left aside, a run spent its 3 minutes wandering past the logs it had just found.
+      const asideFor = { log: 'gather_logs', sheep: 'hunt', food: 'hunt' }[want ?? ''];
+      if (asideFor) for (const [k, d] of this.a.deferred) if (d.step === asideFor) this.a.deferred.delete(k);
       this.spotted = null;
       return;
     }

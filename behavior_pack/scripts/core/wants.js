@@ -74,9 +74,10 @@ const bestTier = (inv, kind) => Math.max(0, ...Object.keys(inv).map(toolTier).fi
 export function blockValue(id, { inv = {}, worn = [] } = {}) {
   const b = String(id).replace(/^minecraft:/, '').replace(/^deepslate_/, '');
   if (b === 'coal_ore') {
-    // Torches (a coal and a stick make 4) and the furnace: never too much of it early on.
+    // Torches (a coal and a stick make 4) and the furnace: 37 iron smelts on about 5 coal. A run mined 30 coal in a few
+    // minutes of detours with 16 already in the pack; walked to up to a dozen, and only what's right there after that.
     const fuel = n(inv, /^(coal|charcoal)$/);
-    return fuel < 32 ? 6 : fuel < 96 ? 3 : 1;
+    return fuel < 12 ? 6 : fuel < 24 ? 2 : 0;
   }
   if (b === 'iron_ore') return ironHave(inv, worn) < IRON_GOAL + 6 ? 8 : 3; // (spares: a bucket, a shield, shears)
   if (b === 'diamond_ore') return bestTier(inv, 'pickaxe') >= 3 ? 10 : 0;   // (needs an iron pickaxe to drop)
