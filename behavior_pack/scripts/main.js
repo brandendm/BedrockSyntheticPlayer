@@ -10,6 +10,7 @@ import { runTests } from './game/scenarios.js';
 import { poll, sendEvent } from './game/bridge.js';
 import { CONFIG } from './config.js';
 import { orderOf } from './core/toggles.js';
+import { chainItem, chainOutline } from './core/chain.js';
 import { getPlan, setPlan, planMaterials, describe } from './core/learnhouse.js';
 
 /** @type {Agent | null} */
@@ -141,6 +142,22 @@ function handle(text, player) {
     const sub = lower.split(/\s+/)[1] ?? 'status';
     if (sub === 'on' || sub === 'off') agent.setSetting('chat', sub === 'on');
     return reply(player, `In-game chat from the bot is ${agent.chatOn() ? 'ON' : 'OFF'} (the dashboard shows everything either way).`);
+  }
+  // !bot get <item> [n] / !bot chain [clear]: AltoClef-style task chains (core/chain.js). Asks for an item and the bot works out
+  // and does everything it takes: wood, a table, a pickaxe, stone, iron, a furnace, smelting, the crafting.
+  if (lower === 'chain' || lower.startsWith('chain ') || lower.startsWith('get ')) {
+    if (!agent) return reply(player, 'spawn first');
+    const words = lower.replace(/^(chain|get)\s*/, '').split(/\s+/).filter(Boolean);
+    if (words[0] === 'clear') { agent.clearChain(); return reply(player, 'Chain queue cleared.'); }
+    if (!words.length) {
+      const q = agent.chainQueue();
+      return reply(player, q.length ? `Working on: ${q.map((g) => `${g.n} ${g.item}`).join(' > ')}. Steps for the first: ${chainOutline(q[0].item).join(' > ')}.` : 'No chain queued. `!bot get iron_pickaxe`, `!bot get 20 cobblestone`, `!bot get 3 iron_ingot` (names: anything it can craft, log, cobblestone, raw_iron, iron_ingot).');
+    }
+    const n = /^\d+$/.test(words[0]) ? Math.min(256, +words.shift()) : 1;
+    const item = chainItem(words.join('_'));
+    if (!item) return reply(player, `I don't know how to get "${words.join(' ')}" yet (anything craftable, logs, cobblestone, raw iron and iron ingots).`);
+    agent.addChain(item, n);
+    return reply(player, `Chain: ${n} ${item}: ${chainOutline(item).join(' > ')}.`);
   }
   // !bot order [village farm iron]: which goal after moving in comes first (what's named first, the rest in the usual order).
   if (lower === 'order' || lower.startsWith('order ')) {

@@ -24,6 +24,7 @@ import { inside as houseInside } from '../core/house.js';
 import { mlgNow, ticksToLand } from '../core/fall.js';
 import { GOALS, goalsOf, goalKey, orderOf, parseOrder } from '../core/toggles.js';
 import { biomeName } from '../core/biomes.js';
+import { chainStep, chainItem, chainOutline, held } from '../core/chain.js';
 import { FULL_SLOTS } from '../core/storage.js';
 import { itemValue, armorUpgrades, armorTotal } from '../core/wants.js';
 import { lootPlan, lootWorth, backoffMs, LOOT_WINDOW_MS } from '../core/loot.js';
@@ -582,6 +583,16 @@ export class Agent {
   setBeds(on) { this.setGoal('beds', on); }
   /** The goals switched on and off (core/toggles.js), from the world's settings. */
   toggles() { return goalsOf({ ...(this.memory.data.settings ?? {}), beds: this.bedsOn() }); }
+  /** Task chains asked for (core/chain.js): [{ item, n }], first is being worked on. Kept in the world. */
+  chainQueue() { return this.memory.data.chain ?? []; }
+  popChain() { this.memory.data.chain = this.chainQueue().slice(1); this.memory.save(); this.deferred.clear(); }
+  addChain(item, n) {
+    this.memory.data.chain = [...this.chainQueue(), { item, n }];
+    this.memory.save();
+    this.autoEnabled = true; this.autoDone = false; this.nextAutoTry = 0;
+  }
+  clearChain() { this.memory.data.chain = []; this.memory.save(); }
+
   /** The order of the movable goals after moving in (core/toggles.js): `!bot order farm iron village`. */
   setOrder(text) {
     const order = parseOrder(text);
@@ -1218,7 +1229,10 @@ export class Agent {
             await S.travelToward(gen, { x: b.pos.x, y: b.pos.y, z: b.pos.z }, 6);
             V.scanEntities();
             this.villageMisses = (this.villageMisses ?? 0) + 1;
-            if (Math.hypot(this.sim.location.x - from.x, this.sim.location.z - from.z) < 8 || this.villageMisses >= 6) { this.villageMisses = 0; this.villageHoldUntil = Date.now() + 1800000; trace('village hunt: got nowhere / six legs without one; not again for 30 min'); }
+            // One short leg (a partial path that ended in the quarry's crater) isn't "nowhere": three in a row, or six legs without a village, is.
+            if (Math.hypot(this.sim.location.x - from.x, this.sim.location.z - from.z) < 8) this.villageStuck = (this.villageStuck ?? 0) + 1; else this.villageStuck = 0;
+            if (this.villageStuck > 0 && this.villageStuck < 3) await S.explore(gen, 'a village', null); // (the straight way ended in a dead end: fresh ground by the usual search)
+            if (this.villageStuck >= 3 || this.villageMisses >= 6) { this.villageMisses = 0; this.villageStuck = 0; this.villageHoldUntil = Date.now() + 1800000; trace('village hunt: got nowhere / six legs without one; not again for 30 min'); }
             break;
           }
           case 'gather_logs': {
@@ -1687,6 +1701,18 @@ export class Agent {
     // at dusk and standing about till morning. (Unarmed or hurt, it still takes cover.)
     if (!dayTime && this.workNights(inv)) dayTime = true;
     const night = !dayTime && isNight(world.getTimeOfDay());
+    if (!night) {
+      for (let guard = 0; guard < 4; guard++) {
+        const g = this.chainQueue()[0];
+        if (!g) break;
+        const f = { ...this.advanceFacts(inv, tableDist), tableDist, furnaceKnown: this.memory.list('furnace', this.dim.id, this.sim.location).length > 0 || !!this.homestead.house?.furnace };
+        const cs = chainStep(g.item, g.n, f);
+        if (!cs) { this.say(`Chain done: ${held(inv, g.item)} ${g.item.replace(/_/g, ' ')}.`, true); this.popChain(); continue; }
+        if (cs.step === 'blocked') { this.say(`Can't get ${g.item.replace(/_/g, ' ')} yet: no way to get ${cs.missing}. Dropping that one.`, true); this.popChain(); continue; }
+        this.autoOpportunity = null;
+        return { ...cs, chain: g.item };
+      }
+    }
     /** @type {any} */
     let step = nextStep({ inv, tableDist, tableDy, exposedStoneKnown: this.knownSurfaceStone, spears: Skills.itemExists('stone_spear') });
     if (step.step === 'done') step = settleStep({ ...this.settleFacts(inv, tableDist), ...(dayTime ? { time: 6000 } : {}) });
