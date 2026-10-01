@@ -88,6 +88,12 @@ function handle(text, player) {
     return;
   }
   if (lower === 'version') return reply(player, `Bedrock Agent build ${CONFIG.build}`);
+  // !bot dump [why]: the flight report now, printed to the server console ([flight] lines) and sent to the brain.
+  if (lower === 'dump' || lower.startsWith('dump ')) {
+    if (!agent) return reply(player, 'spawn first');
+    agent.flight.dump(`asked for${lower.length > 4 ? `: ${lower.slice(5)}` : ''}`);
+    return reply(player, 'Flight report printed to the server log ([flight] lines).');
+  }
   if (lower === 'debug') {
     debugLog = !debugLog;
     CONFIG.debug = debugLog;

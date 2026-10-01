@@ -14,6 +14,7 @@ import { shouldRest, REST_MAX_S } from '../core/rest.js';
 import { goalChain } from '../core/goals.js';
 import { advanceStep, advanceProgress, ironHave, IRON_GOAL } from '../core/advance.js';
 import { Farm } from './farm.js';
+import { Flight } from './flight.js';
 import { chooseStep, needs as goalNeeds, stepKey } from '../core/focus.js';
 import { inside as houseInside } from '../core/house.js';
 import { mlgNow, ticksToLand } from '../core/fall.js';
@@ -128,6 +129,7 @@ export class Agent {
     this.threatsNow = [];        // the last survive() pass's threats
     this.hunting = false;        // homestead.hunt is steering the head
     this.trail = [];             // recent positions, newest last: {x, y, z, under}
+    this.flight = new Flight(this); // (what it was doing, dumped when something goes wrong: game/flight.js)
     this.calibration = new Calibration(this); // (the head height at once, the rest from the auto loop)
     const follow = this.motor.followPath.bind(this.motor);
     this.motor.followPath = async (wps, opts) => {
@@ -148,6 +150,7 @@ export class Agent {
 
   say(text) {
     console.warn(`[agent] <${this.sim.name}> ${text}`);
+    this.flight?.note('say', text);
     sendEvent({ type: 'log', text, state: this.snapshot() }).catch(() => {}); // brain/logs/events.jsonl
     try {
       this.sim.chat(text);
@@ -166,6 +169,7 @@ export class Agent {
   }
 
   onDeath() {
+    try { this.flight.dump(`died (mode ${this.mode}, step ${this.autoStep ?? '-'})`); } catch { /* a report never stops the respawn */ }
     // Everything we carried is on the ground here for 5 minutes: go back for it after respawning.
     const p = this.body.getPos();
     // What was on us (the pack as last saved): gear is worth going back for through the night.
@@ -219,6 +223,7 @@ export class Agent {
     // For the combat log (brain/logs/trace.jsonl): what hit us, how hard, from how far.
     let who = '', d = '';
     try { who = attacker ? attacker.typeId.replace('minecraft:', '') : ''; d = attacker ? dist3D(this.body.getPos(), attacker.location).toFixed(2) : ''; } catch {}
+    this.flight.note('hurt', `${cause}${who ? ` by ${who}` : ''} ${Number(amount).toFixed(1)}${d ? ` at ${d}` : ''}, hp ${this.health()}, mode ${this.mode}`);
     trace(`hurt: ${cause}${who ? ` by ${who}` : ''} ${Number(amount).toFixed(1)}${d ? ` at ${d}` : ''}, hp ${this.health()}, mode ${this.mode}, blocking ${this.blocking}`);
   }
 
@@ -227,6 +232,7 @@ export class Agent {
   tick() {
     if (!this.sim.isValid) return;
     const t = system.currentTick;
+    this.flight.tick(t);
     if (t % SURVIVE_EVERY === 0) this.survive(t);
     if (t % ENDERMAN_SCAN_EVERY === 0) this.watchEndermen();
     if (t % 40 === 0) this.equipBestWeapon();
@@ -1026,6 +1032,7 @@ export class Agent {
             this.deferred.set(h.sk, { until: Date.now() + 180000, step: h.step });
             trace(`auto: going round in circles (${cyc}): setting ${h.step} aside for 3 min`);
             this.sayOnce(`circles:${h.step}`, `I keep going back and forth on ${h.step.replace(/_/g, ' ')}: setting it aside for a bit.`, 120000);
+            this.flight.dump(`going round in circles: ${cyc}`);
             this.autoHist = [];
             last = ''; repeats = 0; same = 0;
             continue;

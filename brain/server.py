@@ -59,7 +59,7 @@ def append_log(evt: dict) -> None:
         rec["task"] = evt["state"].get("task")
     with _lock:
         _recent.append(rec)
-    names = ["events.jsonl"] + (["tests.jsonl"] if evt.get("type") in ("test_result", "test_batch") else [])
+    names = ["events.jsonl"] + (["tests.jsonl"] if evt.get("type") in ("test_result", "test_batch") else []) + (["flight.jsonl"] if evt.get("type") == "flight" else [])
     for name in names:
         f = LOG_DIR / name
         if f.exists() and f.stat().st_size > 2_000_000:

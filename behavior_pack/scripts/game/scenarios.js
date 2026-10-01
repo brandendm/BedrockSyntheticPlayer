@@ -1321,6 +1321,7 @@ async function runOne(agent, player, name, arg) {
 
 function report(agent, name, pass, detail) {
   agent.say(`Test ${name}: ${pass ? 'PASS' : 'FAIL'} - ${detail}.`);
+  if (!pass) { try { agent.flight.dump(`test ${name} failed: ${String(detail).slice(0, 120)}`); } catch { /* */ } }
   sendEvent({ type: 'test_result', name, pass, detail, state: agent.snapshot() }).catch(() => {});
   return { name, pass, detail };
 }

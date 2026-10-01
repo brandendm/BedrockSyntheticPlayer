@@ -9,9 +9,14 @@ let backoffUntil = 0;
 // Decision traces ("logs: need 3, 0 in sight, best explore"): buffered here, shipped with the
 // next dashboard poll, written by the brain to brain/logs/trace.jsonl. Costs nothing extra.
 const traces = [];
+const traceListeners = [];
+/** Also hand every trace line to fn(tick, msg) (the flight recorder keeps them even with no brain running). */
+export function onTrace(fn) { traceListeners.push(fn); }
 export function trace(msg) {
-  traces.push({ tick: system.currentTick, msg: String(msg).slice(0, 300) });
+  const tick = system.currentTick;
+  traces.push({ tick, msg: String(msg).slice(0, 300) });
   if (traces.length > 300) traces.splice(0, traces.length - 300);
+  for (const f of traceListeners) { try { f(tick, msg); } catch { /* a listener never breaks a trace */ } }
 }
 let warned = false;
 
