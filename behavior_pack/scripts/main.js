@@ -117,6 +117,13 @@ function handle(text, player) {
     }
     return reply(player, agent.demo.status());
   }
+  // !bot chat on|off: the bot's running commentary (what it's doing and why) in the game's chat. Off by default; the dashboard shows it either way.
+  if (lower === 'chat' || lower.startsWith('chat ')) {
+    if (!agent) return reply(player, 'spawn first');
+    const sub = lower.split(/\s+/)[1] ?? 'status';
+    if (sub === 'on' || sub === 'off') agent.setSetting('chat', sub === 'on');
+    return reply(player, `In-game chat from the bot is ${agent.chatOn() ? 'ON' : 'OFF'} (the dashboard shows everything either way).`);
+  }
   // !bot village [visit]: the villages it has recognised from afar (game/villages.js); `visit` goes now.
   if (lower === 'village' || lower === 'villages' || lower.startsWith('village ')) {
     if (!agent) return reply(player, 'spawn first');

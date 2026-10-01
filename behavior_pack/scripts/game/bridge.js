@@ -12,9 +12,14 @@ const traces = [];
 const traceListeners = [];
 /** Also hand every trace line to fn(tick, msg) (the flight recorder keeps them even with no brain running). */
 export function onTrace(fn) { traceListeners.push(fn); }
+let posFn = null;
+/** Every trace line carries where the bot was when it was written (fn() -> {x, y, z}). */
+export function tracePosition(fn) { posFn = fn; }
 export function trace(msg) {
   const tick = system.currentTick;
-  traces.push({ tick, msg: String(msg).slice(0, 300) });
+  let p;
+  try { const l = posFn?.(); if (l) p = [Math.round(l.x * 10) / 10, Math.round(l.y * 10) / 10, Math.round(l.z * 10) / 10]; } catch { /* between a death and the respawn */ }
+  traces.push({ tick, msg: String(msg).slice(0, 300), p });
   if (traces.length > 300) traces.splice(0, traces.length - 300);
   for (const f of traceListeners) { try { f(tick, msg); } catch { /* a listener never breaks a trace */ } }
 }

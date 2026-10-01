@@ -32,7 +32,7 @@ import { invCounts, hold, container, usesLeft, kitOf, emptyHanded, restoreKit } 
 import { WorldMemory } from './memory.js';
 import { SimBodyAdapter } from './body.js';
 import { makeClassifier, canSee, isWatery, OPENABLE } from './world.js';
-import { sendEvent, trace, fetchProfile } from './bridge.js';
+import { sendEvent, trace, fetchProfile, tracePosition } from './bridge.js';
 import { parseLocal } from './localCommands.js';
 import { CONFIG } from '../config.js';
 import { isWorkPickaxe } from '../core/costs.js';
@@ -91,7 +91,8 @@ export class Agent {
     this.homestead = new Homestead(this);
     this.farm = new Farm(this);
     this.lookout = new Lookout(this);
-    this.villages = new Villages(this); // (villages seen from afar: game/villages.js)
+    this.villages = new Villages(this);
+    tracePosition(() => this.sim.location); // (villages seen from afar: game/villages.js)
     system.runTimeout(() => { try { this.restoreKit(); } catch (e) { this.kitChecked = true; console.warn(`[agent] kit: ${e}`); } try { this.restoreState(); } catch {} }, 40);
     this.badCells = new Map();   // "x,y,z" -> until (ms): cells we got stuck walking into
     this.deferred = new Map();   // stepKey -> {until (ms), step}: ladder steps that kept failing, set aside (core/focus.js)
@@ -154,10 +155,16 @@ export class Agent {
     return this.sim.dimension;
   }
 
-  say(text) {
+  /** Is the bot's running commentary said in the game's chat? (`!bot chat on|off`; off by default: it's all on the dashboard either way.) */
+  chatOn() { return this.memory.data.settings?.chat ?? CONFIG.chat ?? false; }
+  setSetting(key, on) { this.memory.data.settings = { ...(this.memory.data.settings ?? {}), [key]: !!on }; this.memory.save(); }
+
+  /** Say something: always to the log and the dashboard; in the game's chat only if chat is on (or `force`: the answer to something you asked). */
+  say(text, force = false) {
     console.warn(`[agent] <${this.sim.name}> ${text}`);
     this.flight?.note('say', text);
-    sendEvent({ type: 'log', text, state: this.snapshot() }).catch(() => {}); // brain/logs/events.jsonl
+    sendEvent({ type: 'log', text, state: this.snapshot() }).catch(() => {}); // brain/logs/events.jsonl, the dashboard
+    if (!force && !this.chatOn()) return;
     try {
       this.sim.chat(text);
     } catch {
@@ -299,7 +306,7 @@ export class Agent {
       const night = isNight(world.getTimeOfDay());
       const mining = MINE_STEPS.has(this.autoStep) && (this.minedUnderground() || this.onMiningTrip());
       if (night && !this.wasNight) trace(`dusk: step ${this.autoStep}, in the mine ${mining} (underground ${this.minedUnderground()}, trip ${this.onMiningTrip()})`);
-      if (night && !this.wasNight && this.task?.kind === 'auto' && !mining && !['go_home', 'shelter', 'build_house'].includes(this.autoStep) && !this.workNights(invCounts(this.sim))) this.startAuto();
+      if (night && !this.wasNight && this.task?.kind === 'auto' && !['go_home', 'shelter', 'build_house'].includes(this.autoStep) && !this.workNights(invCounts(this.sim))) this.startAuto();
       this.wasNight = night;
     }
     // Something well worth having dropped near us (armor, a better sword: a player's gift, a mob's
@@ -1126,7 +1133,9 @@ export class Agent {
             // the list (tools, fittings, sticks) is counted too, so we don't walk back for two logs.
             const later = Math.max(0, this.focusFacts(inv).need.logs - Math.max(0, step.count - count(inv, isLog)));
             const firm = Math.min(12, later);
-            const target = step.count + (step.opportunity ? 0 : firm);
+            // At least a few in hand each trip: three trips for one log each in 45 s (the log of a real run)
+            // cost more than the extra swings. Planks and sticks come out of them.
+            const target = Math.max(step.count + (step.opportunity ? 0 : firm), step.opportunity ? 0 : count(inv, isLog) + 4);
             if (!repeats && !step.opportunity) this.say(`Getting wood: ${target - count(inv, isLog)} logs for ${step.wanted.map((w) => w.replace(/_/g, ' ')).join(', ')}${firm && target > step.count ? ' and what comes after' : ''}.`);
             this.stockTarget = { step: 'gather_logs', n: target };
             try { await S.gatherLogs(gen, target, Math.min(8, Math.max(0, later - firm))); } finally { this.stockTarget = null; }
@@ -1411,6 +1420,7 @@ export class Agent {
       deaths: this.deathCount ?? 0,
       learn: { recording: this.demo.on ? this.demo.name : null, status: this.demo.status(), params: this.profile.params, notes: this.profile.notes, using: CONFIG.useProfile !== false },
       villages: (() => { try { return this.villages.status(); } catch { return []; } })(),
+      chat: this.chatOn(),
       build: CONFIG.build,
     };
   }
@@ -1478,39 +1488,6 @@ export class Agent {
     // half health or more): nights are for working like days. It was still going home or digging in
     // at dusk and standing about till morning. (Unarmed or hurt, it still takes cover.)
     if (!dayTime && this.workNights(inv)) dayTime = true;
-    // Down the mine when night falls: a lit tunnel is as safe as the house, and climbing out to walk
-    // home in the dark (then all the way back down in the morning) wastes the night. Keep mining if
-    // that's what the day's plan says to do; anything else (home, the farm, the furnace) waits for the
-    // usual night plan.
-    const inMine = !dayTime && isNight(world.getTimeOfDay()) && (this.minedUnderground() || this.onMiningTrip());
-    if (inMine) {
-      const day = this.planStep(inv, tableDist, tableDy, { opportunities: false, dayTime: true });
-      trace(`night in the mine: the day's plan is ${day.step}`);
-      // Anything that's done down here (the camp's furnace and table, putting gear on) carries on.
-      // (The furnace one only if it's the camp's down here: not a walk home through the dark to the
-      // house's and back down.)
-      const furnaceStep = ['smelt', 'collect_smelt', 'wait_smelt'].includes(day.step);
-      const job = furnaceStep ? this.homestead.planJob() : null;
-      const farFurnace = furnaceStep && !(job?.pos && dist3D(this.sim.location, job.pos) <= 24);
-      if (MINE_STEPS.has(day.step) && !farFurnace && !(day.step === 'craft' && day.needsTable && !(tableDist <= 16))) {
-        this.sayOnce('mine-night', "It's night, but I'm down the mine: carrying on here.", 600000);
-        return day;
-      }
-      // The day plan wants something up top (the farm, the chest), but there's still iron to find:
-      // mine on till morning rather than walk home through the dark and back down after.
-      const short = IRON_GOAL - ironHave(inv, this.worn());
-      if (this.homestead.house && short > 0 && day.step !== 'store') {
-        this.sayOnce('mine-night', "It's night, but I'm down the mine: carrying on here.", 600000);
-        return { step: 'get_iron', need: short, why: 'iron gear (night in the mine)' };
-      }
-      // Pack full (getIron already tossed what stone it could): hole up down here till morning, then
-      // take it home by daylight.
-      if (day.step === 'store') {
-        this.sayOnce('mine-full', "My pack's full and it's night: staying down the mine till morning.", 600000);
-        return { step: 'shelter', why: 'pack full, night in the mine' };
-      }
-      trace(`night in the mine: nothing to do down here (${day.step}), going home`);
-    }
     const night = !dayTime && isNight(world.getTimeOfDay());
     /** @type {any} */
     let step = nextStep({ inv, tableDist, tableDy, exposedStoneKnown: this.knownSurfaceStone, spears: Skills.itemExists('stone_spear') });
@@ -1889,7 +1866,12 @@ export class Agent {
       let ign = '?'; // its walking speed: a swelling creeper stands still
       try { const v = e.getVelocity(); ign = Math.hypot(v.x, v.z).toFixed(3); } catch {}
       const f2 = (v) => v.toFixed(2);
-      trace(`creeper ${e.id.slice(-4)} t${t} d${f2(d)} me${f2(me.x)},${f2(me.y)},${f2(me.z)} c${f2(mob.x)},${f2(mob.y)},${f2(mob.z)} v${ign} lit${lit ? 1 : 0} w=${swingWith ?? 'hand'}${canSwing ? '' : '(cd)'} r${reach} -> ${mv.swing ? 'SWING ' : ''}${mv.stop ? 'stop' : mv.away ? `away${f2(mv.away)}` : mv.goal ? 'approach' : 'hold'}${mv.block ? ' block' : ''} busy${this.motor.busy ? 1 : 0}`);
+      // (Every tick only with CONFIG.combatLog, for calibrating tools/sim_combat.mjs; else when the move changes, on a swing, and every 5 ticks: a creeper fight was 190 lines in 7 s and pushed everything else out of the buffer.)
+      const act = `${mv.swing ? 'S' : ''}${mv.stop ? 'stop' : mv.away ? 'away' : mv.goal ? 'approach' : 'hold'}${mv.block ? 'b' : ''}`;
+      const noisy = CONFIG.combatLog === true || mv.swing || act !== this.creeperLogAct || t - (this.creeperLogAt ?? -99) >= 5;
+      this.creeperLogAct = act;
+      if (noisy) { this.creeperLogAt = t;
+      trace(`creeper ${e.id.slice(-4)} t${t} d${f2(d)} me${f2(me.x)},${f2(me.y)},${f2(me.z)} c${f2(mob.x)},${f2(mob.y)},${f2(mob.z)} v${ign} lit${lit ? 1 : 0} w=${swingWith ?? 'hand'}${canSwing ? '' : '(cd)'} r${reach} -> ${mv.swing ? 'SWING ' : ''}${mv.stop ? 'stop' : mv.away ? `away${f2(mv.away)}` : mv.goal ? 'approach' : 'hold'}${mv.block ? ' block' : ''} busy${this.motor.busy ? 1 : 0}`); }
     } else {
       if (this.heldWeapon && this.heldWeapon !== this.weaponId && this.weaponId) { hold(this.sim, this.weaponId); this.heldWeapon = this.weaponId; }
       // Tall melee mobs coming at a dead end: a kill slot across the way in, and fight from it.
@@ -2720,7 +2702,7 @@ export class Agent {
   /** `!bot village visit`: go to the best known village now and use it (a bed, the chests' food and iron). */
   startVillage(v, want = 'bed') {
     const gen = this.newTask({ kind: 'village', target: v });
-    this.villages.visit(gen, v, want).then((r) => { if (gen === this.taskGen) { this.say(`Village: ${r}.`); this.newTask(null); } }).catch((e) => { if (gen === this.taskGen) { this.newTask(null); } else return; console.warn(`[agent] village visit: ${e}`); });
+    this.villages.visit(gen, v, want).then((r) => { if (gen === this.taskGen) { this.say(`Village: ${r}.`, true); this.newTask(null); } }).catch((e) => { if (gen === this.taskGen) { this.newTask(null); } else return; console.warn(`[agent] village visit: ${e}`); });
   }
 
   async runGoto(gen, target, tolerance) {

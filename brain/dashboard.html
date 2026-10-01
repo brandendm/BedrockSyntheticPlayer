@@ -202,6 +202,7 @@
     <div class="row">
       <input id="cmd" placeholder="Tell the bot anything: goto 120 64 -40, follow Steve, dig…">
       <button class="primary" id="send">Send</button>
+      <label class="muted" style="white-space:nowrap"><input type="checkbox" id="chatbox"> bot speaks in game chat</label>
     </div>
     <h2 style="margin-top:14px">Admin (server commands)</h2>
     <div class="row">
@@ -494,7 +495,7 @@ function drawTrace() {
   const f = $('tfilter').value.toLowerCase();
   const shown = traceLines.filter((l) => !f || l.msg.toLowerCase().includes(f)).slice(-250);
   const el = $('trace'), near = el.scrollHeight - el.scrollTop - el.clientHeight < 30;
-  el.innerHTML = shown.map((l) => `<div class="${tclass(l.msg)}"><span class="tk">${(l.t || '').slice(11)}</span>${esc(l.msg)}</div>`).join('');
+  el.innerHTML = shown.map((l) => `<div class="${tclass(l.msg)}"><span class="tk">${(l.t || '').slice(11)}</span>${esc(l.msg)}${l.p ? `<span class="tk"> @${l.p.map((v) => Math.round(v)).join(' ')}</span>` : ''}</div>`).join('');
   if (near) el.scrollTop = el.scrollHeight;
   return shown;
 }
@@ -507,9 +508,10 @@ async function loadTrace() {
     if (d.lines.length) drawTrace();
   } catch {}
 }
+$('chatbox').onchange = () => send(`chat ${$('chatbox').checked ? 'on' : 'off'}`);
 $('tfilter').oninput = drawTrace;
 $('tclear').onclick = () => { traceLines = []; drawTrace(); };
-$('tcopy').onclick = () => copyText(drawTrace().map((l) => `${l.t.slice(11)} ${l.msg}`).join('\n'), 'Decisions copied');
+$('tcopy').onclick = () => copyText(drawTrace().map((l) => `${l.t.slice(11)} ${l.msg}${l.p ? ` @${l.p.join(',')}` : ''}`).join('\n'), 'Decisions copied');
 
 // ---------------------------------------------------------------- flight reports
 let lastReports = [], seenReports = null;
@@ -611,6 +613,7 @@ async function tick() {
     const r = await fetch('/api/status', { cache: 'no-store' });
     const d = await r.json();
     render(d);
+    try { if (d.status && document.activeElement !== $('chatbox')) $('chatbox').checked = !!d.status.chat; } catch {}
     try { if (d.status?.online) renderFlight(d.status); } catch (e) { console.warn(e); }
     try { const l = d.status?.learn; if (l) learnUsing = l.using ? l.params : Object.fromEntries(Object.keys(l.params).map((k) => [k, 'default (off)'])); } catch {}
   } catch {
