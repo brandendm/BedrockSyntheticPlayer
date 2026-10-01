@@ -1146,7 +1146,9 @@ export class Agent {
         // A table made or set down in the mine (the nearest one's 150 blocks up): done where we are. Climbing out first for it
         // (the planner picked "new table" because the walk was far) took the bot to the surface and its old table every time:
         // two 2.5-minute round trips in one real run, for a stone pickaxe.
-        const tableHere = this.skills.isUnderground() && (step.step === 'place_table' || (step.step === 'craft' && step.items?.[0] === 'crafting_table'));
+        // (And walking to a table that's down here with us: "walk 2s < new table 6s" for a table 10 blocks off in the mine climbed 78 blocks to the surface first, then crafted at the stairs' top table: a real run, 12:50.)
+        const tableNearby = step.step === 'goto_table' && this.skills.isUnderground() && Number.isFinite(tableDist) && tableDist <= 30 && Math.abs(tableDy) <= 5;
+        const tableHere = tableNearby || this.skills.isUnderground() && (step.step === 'place_table' || (step.step === 'craft' && step.items?.[0] === 'crafting_table'));
         if (!['get_stone', 'get_iron', 'shelter', 'go_home'].includes(step.step) && !campJob && !craftHere && !tableHere && (await S.needsEscape(gen))) {
           last = ''; // getting out first isn't the step failing: don't count it toward giving up on it
           await S.toSurface(gen);
