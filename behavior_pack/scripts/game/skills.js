@@ -968,7 +968,7 @@ export class Skills {
   async sweep(gen, near, radius = 6, pred = null, maxS = 10, waitNear = true) {
     // Items we couldn't get to: written off for 2 minutes (they may be reachable from elsewhere),
     // plus ones skipped just for this sweep.
-    const t0 = system.currentTick, writtenOff = this.unreachableItems, local = new Set();
+    const t0 = system.currentTick, writtenOff = this.unreachableItems, local = new Set(), tours = new Map();
     if (writtenOff.size > 500) writtenOff.clear();
     const skip = { has: (id) => local.has(id) || (writtenOff.get(id) ?? 0) > system.currentTick, add: (id) => writtenOff.set(id, system.currentTick + 2400) };
     for (let i = 0; i < 12 && system.currentTick - t0 < maxS * 20; i++) {
@@ -985,6 +985,39 @@ export class Skills {
       const withPos = items.map((e) => { try { return { e, id: e.id, loc: { ...e.location } }; } catch { return null; } }).filter(Boolean);
       if (!withPos.length) break;
       withPos.sort((a, b) => dist3D(here, a.loc) - dist3D(here, b.loc));
+      // Several out of reach: one route through them (the next nearest from each), walked without
+      // stopping, picked up as we pass: a player runs over a tree's drops or a patch of litter, he
+      // doesn't walk to one, stand, plan and walk to the next. A plan that fails ends the route there;
+      // the one-at-a-time way below (breaking through to it, writing it off) takes what's left.
+      const far = withPos.filter((w) => dist3D(here, w.loc) >= (waitNear ? 1.2 : 1.8));
+      if (far.length >= 2) {
+        const chain = [];
+        let at = here, left = far.slice();
+        while (left.length && chain.length < 10) {
+          left.sort((a, b) => dist3D(at, a.loc) - dist3D(at, b.loc));
+          const w = left.shift();
+          chain.push(w);
+          at = w.loc;
+        }
+        let path = [], from = here;
+        for (const w of chain) {
+          const res = await this.a.plan(from, w.loc, 0.9, 1500);
+          this.check(gen);
+          if (!res.complete || !res.path.length) break;
+          // (Each leg smoothed on its own: smoothing the whole route would cut straight past the items.)
+          const leg = smoothPath(this.a.classifier(), res.path);
+          path = path.length ? path.concat(leg.slice(1)) : leg;
+          const end = res.path[res.path.length - 1];
+          from = { x: end.x + 0.5, y: end.y, z: end.z + 0.5 };
+        }
+        if (path.length >= 2) {
+          await this.a.motor.followPath(path);
+          this.check(gen);
+          // Any still lying there after the pass: a second pass at most, then written off for now.
+          for (const w of chain) { try { if (w.e.isValid && dist3D(this.sim.location, w.e.location) > 1.5) { const n = (tours.get(w.id) ?? 0) + 1; tours.set(w.id, n); if (n >= 2) skip.add(w.id); } } catch { /* gone */ } }
+          continue;
+        }
+      }
       const { e: it, id: itId, loc } = withPos[0];
       const gone = () => { try { return !it.isValid; } catch { return true; } };
       const stillFar = () => { try { return it.isValid && dist3D(this.sim.location, it.location) > 1.5; } catch { return false; } };

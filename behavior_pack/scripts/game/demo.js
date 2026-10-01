@@ -190,7 +190,17 @@ export class Demo {
     try { held = nm(p.getComponent('minecraft:inventory')?.container?.getItem(p.selectedSlotIndex)?.typeId) || null; } catch {}
     const l = p.location;
     this.row({ k: 's', x: Math.round(l.x * 10) / 10, y: Math.round(l.y * 10) / 10, z: Math.round(l.z * 10) / 10, hp, food, h: held,
-      sp: p.isSprinting ? 1 : 0, sn: p.isSneaking ? 1 : 0, g: p.isOnGround ? 1 : 0, d: nm(p.dimension?.id) });
+      sp: p.isSprinting ? 1 : 0, sn: p.isSneaking ? 1 : 0, g: p.isOnGround ? 1 : 0, d: nm(p.dimension?.id), ...this.pose(p) });
+  }
+
+  /** Where the player stands and looks right now: { px, py, pz, yw (yaw), pt (pitch), sn, sp }, tenths of a block and a degree. */
+  pose(p) {
+    const r1 = (v) => Math.round(v * 10) / 10;
+    const o = {};
+    try { const l = p.location; o.px = r1(l.x); o.py = r1(l.y); o.pz = r1(l.z); } catch { /* */ }
+    try { const r = p.getRotation(); o.pt = r1(r.x); o.yw = r1(r.y); } catch { /* */ }
+    try { o.sn = p.isSneaking ? 1 : 0; o.sp = p.isSprinting ? 1 : 0; o.g = p.isOnGround ? 1 : 0; } catch { /* */ }
+    return o;
   }
 
   // --- events (main.js hands them over) ---
@@ -198,13 +208,20 @@ export class Demo {
   onBreak(ev) {
     if (!this.mine(ev)) return;
     const l = ev.block.location;
-    this.row({ k: 'b', id: nm(ev.brokenBlockPermutation?.type?.id), x: l.x, y: l.y, z: l.z, tool: nm(ev.itemStackBeforeBreak?.typeId) || null });
+    this.row({ k: 'b', id: nm(ev.brokenBlockPermutation?.type?.id), x: l.x, y: l.y, z: l.z, tool: nm(ev.itemStackBeforeBreak?.typeId) || null, ...this.pose(ev.player) });
     if (this.mode === 'house') this.placed.delete(`${l.x},${l.y},${l.z}`);
   }
   onPlace(ev) {
     if (!this.mine(ev)) return;
     const l = ev.block.location;
-    this.row({ k: 'p', id: nm(ev.block.typeId), x: l.x, y: l.y, z: l.z });
+    // Where they stood and looked, and the face of the neighbour they clicked (when the game says), so how they place can be learned.
+    let face = null, fl = null;
+    try { face = ev.face ?? null; const f = ev.faceLocation; if (f) fl = [Math.round((f.x - Math.floor(f.x)) * 100) / 100, Math.round((f.y - Math.floor(f.y)) * 100) / 100, Math.round((f.z - Math.floor(f.z)) * 100) / 100]; } catch { /* */ }
+    let held = null;
+    try { held = nm(ev.player.getComponent('minecraft:inventory')?.container?.getItem(ev.player.selectedSlotIndex)?.typeId) || null; } catch { /* */ }
+    let st = null;
+    try { const s0 = ev.block.permutation.getAllStates(); if (Object.keys(s0).length) st = s0; } catch { /* */ }
+    this.row({ k: 'p', id: nm(ev.block.typeId), x: l.x, y: l.y, z: l.z, face, fl, h: held, st, ...this.pose(ev.player) });
     if (this.mode === 'house') {
       const id = nm(ev.block.typeId), key = `${l.x},${l.y},${l.z}`;
       this.placed.set(key, id);
