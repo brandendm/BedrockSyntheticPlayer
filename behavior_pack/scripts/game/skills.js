@@ -2791,9 +2791,13 @@ export class Skills {
    */
   async ensureCampChest(gen) {
     const q = this.homeQuarry(), c = q?.camp;
-    if (!c || c.chest || (c.chestTry && Date.now() - c.chestTry < 300000)) return false;
+    if (!c || (c.chest && c.chest2) || (c.chestTry && Date.now() - c.chestTry < 300000)) return false;
     const dx = Math.sign(c.furnace.x - c.stand.x), dz = Math.sign(c.furnace.z - c.stand.z);
-    const cell = { x: c.stand.x + dz, y: c.stand.y, z: c.stand.z - dx };
+    // Two chests side by side along (dz, -dx), both facing along the furnace's axis: a double chest.
+    const cells = [1, 2].map((k) => ({ x: c.stand.x + dz * k, y: c.stand.y, z: c.stand.z - dx * k }));
+    const faceName = (vx, vz) => (vx > 0 ? 'east' : vx < 0 ? 'west' : vz > 0 ? 'south' : 'north');
+    const opposite = { north: 'south', south: 'north', east: 'west', west: 'east' };
+    const facing = faceName(-dx, -dz); // (setChest takes the door side and faces the other way)
     const f = this.feet();
     if (Math.hypot(f.x - c.stand.x, f.z - c.stand.z) > 10 || Math.abs(f.y - c.stand.y) > 2) return false;
     const inv = invCounts(this.sim);
@@ -2802,17 +2806,25 @@ export class Skills {
     this.a.memory.save();
     const H = this.a.homestead;
     await this.goNear(gen, { x: c.stand.x + 0.5, y: c.stand.y, z: c.stand.z + 0.5 }, 0.6, 2);
-    if (!invCounts(this.sim).chest && !(await this.craft(gen, ['chest'], true, true))) { this.log('camp chest: not made (wood or table)'); return false; }
-    const here = this.blockAt(cell) ?? 'air';
-    if (!OPEN.test(here) && !/chest/.test(here) && !(await this.mine(gen, cell))) { this.log(`camp chest: couldn't clear ${cell.x} ${cell.y} ${cell.z}`); return false; }
-    if (!/chest/.test(this.blockAt(cell) ?? '') && !(await H.placeAt(gen, cell, 'chest')) && !(await H.setChest(gen, cell, { dir: 'north' }))) { this.log('camp chest: the chest didn\'t go down'); return false; }
-    c.chest = { x: cell.x, y: cell.y, z: cell.z };
-    this.protect(cell);
+    let made = 0;
+    for (const [i, cell] of cells.entries()) {
+      const key = i === 0 ? 'chest' : 'chest2';
+      if (c[key]) continue;
+      const have = invCounts(this.sim);
+      if (!have.chest && count(have, isPlanks) + 4 * count(have, isLog) < 8) break; // (the second one when there's more wood)
+      if (!have.chest && !(await this.craft(gen, ['chest'], true, true))) { this.log('camp chest: not made (wood or table)'); break; }
+      const here = this.blockAt(cell) ?? 'air';
+      if (!OPEN.test(here) && !/chest/.test(here) && !(await this.mine(gen, cell))) { this.log(`camp chest: couldn't clear ${cell.x} ${cell.y} ${cell.z}`); break; }
+      if (!/chest/.test(this.blockAt(cell) ?? '') && !(await H.placeAt(gen, cell, 'chest')) && !(await H.setChest(gen, cell, { dir: opposite[facing] }))) { this.log('camp chest: the chest didn\'t go down'); break; }
+      c[key] = { x: cell.x, y: cell.y, z: cell.z };
+      this.protect(cell);
+      made++;
+      this.log(`camp chest: ${cell.x} ${cell.y} ${cell.z} facing ${facing}${i === 1 ? `, size ${this.a.homestead.container(cell)?.size ?? '?'} (54 = a double chest)` : ''}`);
+    }
     this.a.memory.save();
     this.restHands();
-    this.a.say('Put a chest at the camp: spare stone and mob drops go in it when my pack fills.');
-    this.log(`camp chest: ${cell.x} ${cell.y} ${cell.z}`);
-    return true;
+    if (made) this.a.say(c.chest2 ? 'A double chest at the camp now: spare stone and drops go in it when my pack fills.' : 'Put a chest at the camp: spare stone and mob drops go in it when my pack fills.');
+    return made > 0;
   }
 
   /** Pack nearly full: the camp chest if there is one in reach, otherwise junk stone thrown away. */
@@ -2830,35 +2842,42 @@ export class Skills {
    * Full or unreachable: said once, not tried again for 10 minutes.
    */
   async stashAtCamp(gen) {
-    const q = this.homeQuarry(), c = q?.camp, ch = c?.chest;
-    if (!ch || (c.chestFullAt && Date.now() - c.chestFullAt < 600000) || this.a.toggles().storage === false) return false;
-    if (!/chest/.test(this.blockAt(ch) ?? 'chest')) { c.chest = null; this.a.memory.save(); return false; }
+    const q = this.homeQuarry(), c = q?.camp;
+    const chests = [c?.chest, c?.chest2].filter(Boolean);
+    if (!chests.length || (c.chestFullAt && Date.now() - c.chestFullAt < 600000) || this.a.toggles().storage === false) return false;
+    for (const key of ['chest', 'chest2']) if (c[key] && !/chest/.test(this.blockAt(c[key]) ?? 'chest')) { c[key] = null; this.a.memory.save(); }
+    const ch0 = c.chest ?? c.chest2;
+    if (!ch0) return false;
     const f = this.feet();
-    if (Math.hypot(f.x - ch.x, f.z - ch.z) > 40 || Math.abs(f.y - ch.y) > 3) return false;
+    if (Math.hypot(f.x - ch0.x, f.z - ch0.z) > 40 || Math.abs(f.y - ch0.y) > 3) return false;
     const inv = invCounts(this.sim);
     const plan = depositPlan(inv);
     if (plan.cobblestone) { plan.cobblestone = Math.max(0, (inv.cobblestone ?? 0) - 128); if (!plan.cobblestone) delete plan.cobblestone; }
     if (!Object.keys(plan).length) return false;
     const back = { x: f.x + 0.5, y: f.y, z: f.z + 0.5 };
-    if (!(await this.reach(gen, ch))) { c.chestFullAt = Date.now(); this.log('camp stash: couldn\'t reach the chest'); return false; }
-    await this.a.motor.lookAt(center(ch), 8, 30);
-    this.check(gen);
-    const chest = this.a.homestead.container(ch), pack = container(this.sim);
-    if (!chest || !pack) return false;
+    const pack = container(this.sim);
     let stored = 0;
-    for (let i = 0; i < pack.size; i++) {
-      const it = pack.getItem(i);
-      if (!it) continue;
-      const id = strip(it.typeId);
-      const want = plan[id] ?? 0;
-      if (want <= 0) continue;
-      let moved;
-      if (want >= it.amount) { const left = pack.transferItem(i, chest); moved = it.amount - (left?.amount ?? 0); }
-      else { const left = chest.addItem(new ItemStack(it.typeId, want)); moved = want - (left?.amount ?? 0); if (moved > 0) take(this.sim, id, moved); }
-      stored += moved;
-      plan[id] -= moved;
+    for (const ch of [c.chest, c.chest2].filter(Boolean)) {
+      if (!Object.keys(plan).some((id) => plan[id] > 0)) break;
+      if (!(await this.reach(gen, ch))) { this.log(`camp stash: couldn't reach the chest at ${ch.x} ${ch.y} ${ch.z}`); continue; }
+      await this.a.motor.lookAt(center(ch), 8, 30);
+      this.check(gen);
+      const chest = this.a.homestead.container(ch);
+      if (!chest || !pack) continue;
+      for (let i = 0; i < pack.size; i++) {
+        const it = pack.getItem(i);
+        if (!it) continue;
+        const id = strip(it.typeId);
+        const want = plan[id] ?? 0;
+        if (want <= 0) continue;
+        let moved;
+        if (want >= it.amount) { const left = pack.transferItem(i, chest); moved = it.amount - (left?.amount ?? 0); }
+        else { const left = chest.addItem(new ItemStack(it.typeId, want)); moved = want - (left?.amount ?? 0); if (moved > 0) take(this.sim, id, moved); }
+        stored += moved;
+        plan[id] -= moved;
+      }
+      await this.wait(gen, 6);
     }
-    await this.wait(gen, 6);
     this.restHands();
     const left = Object.values(plan).reduce((a, n) => a + Math.max(0, n), 0);
     if (left) c.chestFullAt = Date.now(); // (what didn't fit is tossed as junk by the caller's next pass)
