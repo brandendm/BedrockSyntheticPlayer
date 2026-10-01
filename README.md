@@ -644,3 +644,4 @@ Say (in chat to the bot, `!bot ...`, or the dashboard box) things like **"make i
 - u131: a torch in the tunnel's way no longer stops the branch mine (the 13:49 run paced 10 min at -12 17 26 with "tunnel blocked: feet torch"): torches count as diggable and break in a hit.
 - u132: "Got what I needed; moving on" no longer restarts the auto loop every 2 s (the 14:06 run froze 5 min at get_stone with 25 cobblestone: each restart cancelled the loop before it ever planned); the step is cleared when it fires.
 - u133: with the nights or beds toggle off the bot never takes cover at night (it walled itself in at the end of the mine on low HP): it works through, and hurt is the rest step's job.
+- u134: a floor hole in the mine only counts as filled once the block is really there (the 15:03 run "filled" a hole with a placement that never took, walked into an 18-block drop and died four times at the same spot); otherwise the branch turns back.

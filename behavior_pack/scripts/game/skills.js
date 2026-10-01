@@ -3311,9 +3311,12 @@ export class Skills {
     const inv = invCounts(this.sim);
     const block = cheapestPlaceable(inv, this.blockReserve(inv));
     if (!block || !this.inReach(cell)) return false;
-    const ok = await this.a.homestead.placeAt(gen, cell, block);
+    let ok = await this.a.homestead.placeAt(gen, cell, block);
     this.restHands();
+    // (Only what the world shows counts: a fill "put against the West face anyway" that never took let the mine walk on into an 18-block drop, four deaths at one spot in a 15:03 run.)
+    if (ok) { await this.wait(gen, 3); ok = !OPEN.test(this.blockAt(cell) ?? 'air') && !this.isLiquid(cell); }
     if (ok) { this.markPlaced(cell); this.log(`mine: filled a hole in the floor at ${cell.x} ${cell.y} ${cell.z}`); }
+    else this.log(`mine: couldn't fill the hole in the floor at ${cell.x} ${cell.y} ${cell.z}; turning back`);
     return ok;
   }
 
