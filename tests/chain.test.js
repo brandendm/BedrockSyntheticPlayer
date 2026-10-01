@@ -34,3 +34,16 @@ test('the outline reads in the order it is worked', () => {
   assert.ok(o.indexOf('stone_pickaxe') < o.indexOf('raw_iron'));
   assert.ok(o.indexOf('iron_ingot') < o.indexOf('iron_pickaxe'));
 });
+
+test('a horse chain: find it, tame it, saddle it, get on', () => {
+  assert.equal(chainItem('horse'), 'saddled_horse');
+  assert.equal(chainItem('ride'), 'riding_horse');
+  const base = (h) => f({}, { horse: h });
+  assert.equal(chainStep('saddled_horse', 1, base({ found: false }))?.step, 'blocked');
+  assert.deepEqual(chainStep('saddled_horse', 1, base({ found: true, tamed: false })), { step: 'horse', do: 'tame' });
+  assert.deepEqual(chainStep('saddled_horse', 1, base({ found: true, tamed: true, saddled: false, saddleInPack: true })), { step: 'horse', do: 'saddle' });
+  assert.equal(chainStep('saddled_horse', 1, base({ found: true, tamed: true, saddled: false, saddleInPack: false }))?.step, 'blocked'); // (no way to make a saddle)
+  assert.equal(chainStep('saddled_horse', 1, base({ found: true, tamed: true, saddled: true })), null);
+  assert.deepEqual(chainStep('riding_horse', 1, base({ found: true, tamed: true, saddled: true })), { step: 'horse', do: 'mount' });
+  assert.equal(chainStep('riding_horse', 1, base({ found: true, tamed: true, saddled: true, mounted: true })), null);
+});

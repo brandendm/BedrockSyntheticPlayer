@@ -158,7 +158,8 @@ export class Flight {
   summary() {
     const S = this.samples;
     let watch = null;
-    try { watch = diagnose(S, { windowS: 30 }); } catch { /* too little yet */ }
+    // Auto off (or a test running): standing still is what it was told to do, not a freeze (the dashboard alerted every few minutes).
+    try { if (this.a.autoEnabled !== false && !this.a.testHold) watch = diagnose(S, { windowS: 30 }); } catch { /* too little yet */ }
     const trail = [];
     for (let i = Math.max(0, S.length - 300); i < S.length; i += 3) trail.push([Math.round(S[i].x), Math.round(S[i].z), Math.round(S[i].y)]);
     const steps = stepRuns(S.slice(-360)).slice(-14).map((r) => ({ k: r.k, s: r.n }));

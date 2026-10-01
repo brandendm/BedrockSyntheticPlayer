@@ -93,11 +93,12 @@ export async function runTests(agent, player, args) {
       const t0 = system.currentTick;
       // The cap: at the deadline the task ends, so waits on it return and the test reports.
       let capped = false;
-      const cap = system.runTimeout(() => { capped = true; agent.newTask(null); agent.motor.stop(); }, CAP_S * 20);
+      const capS = n === 'leadboat' ? 480 : CAP_S;
+      const cap = system.runTimeout(() => { capped = true; agent.newTask(null); agent.motor.stop(); }, capS * 20);
       let r;
       try { r = await runOne(agent, player, n, argN); } finally { try { system.clearRun(cap); } catch {} }
       r.secs = Math.round((system.currentTick - t0) / 20);
-      if (capped) { r.pass = false; r.detail = `cut off after ${CAP_S} s; ${r.detail}`; }
+      if (capped) { r.pass = false; r.detail = `cut off after ${capS} s; ${r.detail}`; }
       results.push(r);
     }
   } finally {
@@ -1310,46 +1311,59 @@ async function runOne(agent, player, name, arg) {
         break;
       }
       case 'portal': {
-        // A flat, clear patch with the frame standing in the x/y plane at z.
-        cmd(`fill ${x - 4} ${gy} ${z - 4} ${x + 7} ${gy} ${z + 4} grass_block`);
-        cmd(`fill ${x - 4} ${gy + 1} ${z - 4} ${x + 7} ${gy + 8} ${z + 4} air`);
+        // A clear, flat patch; the frame stands in the x/y plane at z, 4 wide and 5 tall (12 obsidian: the
+        // two bottom corners give the columns something to stand on, the top corners aren't needed).
+        cmd(`fill ${x - 6} ${gy} ${z - 4} ${x + 9} ${gy} ${z + 6} grass_block`);
+        cmd(`fill ${x - 6} ${gy + 1} ${z - 4} ${x + 9} ${gy + 8} ${z + 6} air`);
         const c = packOf(sim);
-        c.addItem(new ItemStack('minecraft:obsidian', 10));
+        c.addItem(new ItemStack('minecraft:obsidian', 12));
         c.addItem(new ItemStack('minecraft:flint_and_steel', 1));
-        tp(x + 1, gy + 1, z + 3);
+        c.addItem(new ItemStack('minecraft:cobblestone', 6));
+        tp(x + 1, gy + 1, z + 4);
         await system.waitTicks(20);
         const H = agent.homestead;
         const gen = agent.newTask({ kind: 'test' });
-        const frame = [];
-        for (const fx of [x + 1, x + 2]) frame.push({ x: fx, y: gy + 1, z }); // bottom
-        for (const fy of [gy + 2, gy + 3, gy + 4]) { frame.push({ x, y: fy, z }); frame.push({ x: x + 3, y: fy, z }); } // sides
-        for (const fx of [x + 1, x + 2]) frame.push({ x: fx, y: gy + 5, z }); // top
         let byBot = 0, byCmd = 0;
-        for (const cell of frame) {
+        const put = async (cell, item) => {
           let ok = false;
-          try { ok = await H.placeAt(gen, cell, 'obsidian'); } catch (e) { console.warn(`[test] portal placeAt: ${e}`); }
-          if (ok && S.blockAt(cell) === 'obsidian') byBot++;
-          else if (cmd(`setblock ${cell.x} ${cell.y} ${cell.z} obsidian`)) byCmd++;
-        }
+          try { ok = await H.placeAt(gen, cell, item); } catch (e) { if (e?.constructor?.name === 'Aborted') throw e; console.warn(`[test] portal placeAt: ${e}`); }
+          if (ok && S.blockAt(cell) === item) { if (item === 'obsidian') byBot++; return true; }
+          if (cmd(`setblock ${cell.x} ${cell.y} ${cell.z} ${item}`)) { if (item === 'obsidian') byCmd++; return true; }
+          return false;
+        };
+        // 1. The bottom row, from the front, against the ground.
+        for (const fx of [x, x + 1, x + 2, x + 3]) await put({ x: fx, y: gy + 1, z }, 'obsidian');
+        // 2. The way a player reaches the top: a little cobblestone stair in front (three blocks), up it
+        //    to eye height with the upper frame, then it's taken down again.
+        const steps = [{ x: x + 1, y: gy + 1, z: z + 3 }, { x: x + 1, y: gy + 1, z: z + 2 }, { x: x + 1, y: gy + 2, z: z + 2 }];
+        for (const cell of steps) await put(cell, 'cobblestone');
+        await S.goNear(gen, { x: x + 1.5, y: gy + 3, z: z + 2.5 }, 0.7, 3);
+        // 3. The two columns, low to high, then the top row against their sides.
+        for (const fy of [gy + 2, gy + 3, gy + 4]) { await put({ x, y: fy, z }, 'obsidian'); await put({ x: x + 3, y: fy, z }, 'obsidian'); }
+        for (const fx of [x + 1, x + 2]) await put({ x: fx, y: gy + 5, z }, 'obsidian');
+        for (const cell of [steps[2], steps[1], steps[0]]) { try { await S.mine(gen, cell); } catch (e) { if (e?.constructor?.name === 'Aborted') throw e; } }
+        const frame = [...[x, x + 1, x + 2, x + 3].map((fx) => ({ x: fx, y: gy + 1, z })), ...[gy + 2, gy + 3, gy + 4].flatMap((fy) => [{ x, y: fy, z }, { x: x + 3, y: fy, z }]), ...[x + 1, x + 2].map((fx) => ({ x: fx, y: gy + 5, z }))];
         const built = frame.filter((cell) => S.blockAt(cell) === 'obsidian').length;
         if (built < frame.length) { detail = `frame incomplete (${built}/${frame.length} obsidian; the bot placed ${byBot})`; break; }
-        // Light it: flint and steel on the top of the bottom edge, from in front.
+        // 4. Light it: flint and steel on the top of a bottom block, from in front, one use every 10 ticks.
+        await S.goNear(gen, { x: x + 1.5, y: gy + 1, z: z + 3.5 }, 0.8, 3);
         const inner = [{ x: x + 1, y: gy + 2, z }, { x: x + 2, y: gy + 2, z }];
-        await S.goNear(gen, { x: x + 1.5, y: gy + 1, z: z + 2.5 }, 1, 2);
-        hold(sim, 'flint_and_steel');
-        await agent.motor.lookAt({ x: x + 1.5, y: gy + 2, z: z + 0.5 }, 8, 30);
-        let lit = false, tries = 0;
-        for (; tries < 4 && !lit; tries++) {
-          try { sim.interactWithBlock({ x: x + 1, y: gy + 1, z }, Direction.Up); } catch (e) { console.warn(`[test] ignite: ${e}`); }
-          await system.waitTicks(15);
+        const slot = hold(sim, 'flint_and_steel');
+        let lit = false, tries = 0, used = '';
+        for (; tries < 5 && !lit; tries++) {
+          await agent.motor.lookAt({ x: x + 1.5, y: gy + 2.2, z: z + 0.5 }, 8, 30);
+          await S.useGap(gen);
+          try { used = String(sim.useItemInSlotOnBlock(slot, { x: x + 1, y: gy + 1, z }, Direction.Up, { x: 0.5, y: 1, z: 0.5 })); } catch (e) { used = `threw ${e}`; }
+          S.lastUseTick = system.currentTick;
+          await system.waitTicks(12);
           lit = inner.some((cell) => /nether_portal/.test(S.blockAt(cell) ?? ''));
         }
-        if (!lit) { detail = `built the frame (${byBot} placed by the bot, ${byCmd} by command) but it didn't light after ${tries} tries (inner block: ${S.blockAt(inner[0])})`; break; }
-        // Walk in and wait for the game to move us (about 4 s inside it in survival).
+        if (!lit) { detail = `built the frame (${byBot} placed by the bot, ${byCmd} by command) but it didn't light after ${tries} tries (use returned ${used}, slot ${slot}, inner block ${S.blockAt(inner[0])}, held ${sim.getComponent('minecraft:inventory').container.getItem(sim.selectedSlotIndex)?.typeId ?? 'nothing'})`; break; }
+        // 5. Walk in and wait for the game to move us (about 4 s inside it).
         const there = { x: x + 1.5, y: gy + 2, z: z + 0.5 };
         let dimNow = sim.dimension.id;
         for (let i = 0; i < 20 * 20 && dimNow === dim.id; i++) {
-          if (i % 20 === 0) { try { sim.moveToLocation(there, { speed: 1 }); } catch {} }
+          if (i % 20 === 0) { try { sim.moveToLocation(there, { speed: 0.6 }); } catch {} }
           await system.waitTicks(1);
           dimNow = sim.dimension.id;
         }
@@ -1365,68 +1379,74 @@ async function runOne(agent, player, name, arg) {
       }
       case 'horse': {
         flatPatch(cmd, x, gy, z);
-        const c = packOf(sim);
-        c.addItem(new ItemStack('minecraft:saddle', 1));
+        packOf(sim).addItem(new ItemStack('minecraft:saddle', 1));
         tp(x, gy + 1, z);
         const horse = dim.spawnEntity('minecraft:horse', { x: x + 4.5, y: gy + 1, z: z + 0.5 });
         cleanup.push(() => { try { horse.remove(); } catch {} });
         await system.waitTicks(20);
-        const r = await getHorseReady(agent, sim, horse, secs);
-        if (!r.ok) { detail = r.detail; break; }
-        // Ride it: hold still-hand, get on, steer 8 blocks away.
         const gen = agent.newTask({ kind: 'test' });
-        const ride = await rideAcross(agent, sim, horse, { x: x + 4.5, y: gy + 1, z: z + 0.5 }, 8);
-        agent.newTask(null);
-        pass = r.ok && ride.mounted && ride.moved >= 4;
+        const r = await horseReady(agent, gen, horse, secs);
+        if (!r.ok) { detail = r.detail; break; }
+        const ride = await rideAcross(agent, gen, horse, 8);
+        pass = ride.mounted && ride.moved >= 4;
         detail = `${r.detail}; ${ride.detail}`;
-        void gen;
         break;
       }
       case 'leadboat': {
+        // A lane 7 wide and 18 long along +x with things to get a boat over: up one block, up another, down
+        // one, and a 1-wide trench. The bot leads a boat along it at two speeds, then does it riding a horse.
         flatPatch(cmd, x, gy, z);
+        cmd(`fill ${x - 3} ${gy + 1} ${z - 3} ${x + 13} ${gy + 1} ${z + 3} stone`);        // up one at x-3
+        cmd(`fill ${x + 2} ${gy + 2} ${z - 3} ${x + 8} ${gy + 2} ${z + 3} stone`);         // up another at x+2
+        cmd(`fill ${x + 11} ${gy} ${z - 3} ${x + 11} ${gy + 1} ${z + 3} air`);             // a trench at x+11
+        const heightAt = (xx) => (xx < x - 3 ? 0 : xx < x + 2 ? 1 : xx < x + 9 ? 2 : 1);
+        const lane = [];
+        for (let xx = x - 6; xx <= x + 12; xx += 2) lane.push({ x: xx + 0.5, y: gy + 1 + heightAt(xx), z: z + 0.5 });
         const c = packOf(sim);
-        c.addItem(new ItemStack('minecraft:lead', 2));
+        c.addItem(new ItemStack('minecraft:lead', 3));
         c.addItem(new ItemStack('minecraft:saddle', 1));
-        const cal = { walk: {}, horse: null };
+        const gen = agent.newTask({ kind: 'test' });
+        const cal = { legs: {} };
         const lines = [];
         let walkOk = true;
-        // On foot, at three speeds: the boat starts on the lead, the bot walks straight away from it.
-        for (const speed of [0.4, 0.7, 1.0]) {
-          tp(x, gy + 1, z);
+        const goalAt = lane[lane.length - 1];
+        for (const speed of [0.5, 1.0]) {
+          tp(x - 6, gy + 1, z);
           await system.waitTicks(10);
-          const boat = dim.spawnEntity('minecraft:boat', { x: x + 2.5, y: gy + 1, z: z + 0.5 });
+          const boat = dim.spawnEntity('minecraft:boat', { x: x - 8.5, y: gy + 1, z: z + 0.5 });
           cleanup.push(() => { try { boat.remove(); } catch {} });
           await system.waitTicks(10);
           const via = leashTo(sim, boat);
           if (!via) { detail = `couldn't put a lead on the boat (leashable: ${!!boat.getComponent('minecraft:leashable')})`; walkOk = false; try { boat.remove(); } catch {} break; }
-          const m = await walkAway(sim, boat, { x: x + 0.5, y: gy + 1, z: z + 0.5 }, speed, 22);
-          cal.walk[speed] = m;
-          lines.push(`walk ${speed}: pulled from ${m.pullAt?.toFixed(1) ?? 'never'}, furthest ${m.maxSep.toFixed(1)}, ${m.snapped ? `SNAPPED at ${m.snapAt?.toFixed(1)}` : 'held'}, boat moved ${m.boatMoved.toFixed(1)}${m.soft != null ? ` (the game's lead limits: soft ${m.soft}, hard ${m.hard}, max ${m.max})` : ''}`);
+          const m = await leadWalk(gen, S, sim, boat, lane, speed);
+          cal.legs[`walk ${speed}`] = m;
+          lines.push(`walk ${speed}: ${leadLine(m, goalAt)}`);
+          if (!m.arrived || m.snapped) walkOk = false;
           try { boat.remove(); } catch {}
         }
-        if (!walkOk) break;
-        // Mounted: a tame saddled horse, the boat on a lead.
-        tp(x, gy + 1, z);
-        const horse = dim.spawnEntity('minecraft:horse', { x: x + 3.5, y: gy + 1, z: z + 3.5 });
+        if (!walkOk && !lines.length) break;
+        // Riding: a tame saddled horse, the boat on a lead behind it, the same lane.
+        tp(x - 6, gy + 1, z);
+        const horse = dim.spawnEntity('minecraft:horse', { x: x - 4.5, y: gy + 1, z: z + 2.5 });
         cleanup.push(() => { try { horse.remove(); } catch {} });
         await system.waitTicks(20);
-        const r = await getHorseReady(agent, sim, horse, secs);
+        const r = await horseReady(agent, gen, horse, secs);
         let horseOk = false;
         if (!r.ok) lines.push(`horse leg: ${r.detail}`);
         else {
-          const boat = dim.spawnEntity('minecraft:boat', { x: x + 2.5, y: gy + 1, z: z + 0.5 });
+          const boat = dim.spawnEntity('minecraft:boat', { x: x - 8.5, y: gy + 1, z: z + 0.5 });
           cleanup.push(() => { try { boat.remove(); } catch {} });
           await system.waitTicks(10);
-          const ride = await rideAcross(agent, sim, horse, { x: x + 3.5, y: gy + 1, z: z + 3.5 }, 0, true);
+          const ride = await rideAcross(agent, gen, horse, 0);
           if (!ride.mounted) lines.push(`horse leg: ${ride.detail}`);
-          else if (!leashTo(sim, boat)) lines.push('horse leg: couldn\'t lead the boat from the saddle');
+          else if (!leashTo(sim, boat)) lines.push("horse leg: couldn't lead the boat from the saddle");
           else {
-            const m = await walkAway(sim, boat, { x: x + 0.5, y: gy + 1, z: z + 0.5 }, 1.0, 24, horse);
-            cal.horse = m;
-            horseOk = m.boatMoved > 0 || m.maxSep > 0;
-            lines.push(`horse: pulled from ${m.pullAt?.toFixed(1) ?? 'never'}, furthest ${m.maxSep.toFixed(1)}, ${m.snapped ? `SNAPPED at ${m.snapAt?.toFixed(1)}` : 'held'}, horse moved ${m.rideMoved.toFixed(1)}, boat moved ${m.boatMoved.toFixed(1)}`);
-            if (m.rideMoved < 3) horseOk = false;
+            const m = await leadWalk(gen, S, sim, boat, lane, 1.0, horse);
+            cal.legs.horse = m;
+            lines.push(`${r.detail}; horse: ${leadLine(m, goalAt)}`);
+            horseOk = m.arrived && !m.snapped;
           }
+          try { await agent.horses.getOff(gen); } catch {}
         }
         agent.memory.data.leadCal = { ...cal, at: Date.now(), build: CONFIG.build };
         agent.memory.save();
@@ -1466,50 +1486,26 @@ function report(agent, name, pass, detail) {
 
 // ---------- helpers for the portal, horse and lead tests ----------
 
-/** A flat, clear patch of grass around the site. */
+/** A flat, clear patch of grass around the site (inside the backed-up box: x-8..x+14, z-8..z+8). */
 function flatPatch(cmd, x, gy, z) {
-  cmd(`fill ${x - 10} ${gy} ${z - 10} ${x + 14} ${gy} ${z + 10} grass_block`);
-  cmd(`fill ${x - 10} ${gy + 1} ${z - 10} ${x + 14} ${gy + 6} ${z + 10} air`);
+  cmd(`fill ${x - 8} ${gy} ${z - 8} ${x + 14} ${gy} ${z + 8} grass_block`);
+  cmd(`fill ${x - 8} ${gy + 1} ${z - 8} ${x + 14} ${gy + 8} ${z + 8} air`);
 }
 
-const tamed = (e) => { try { return e.hasComponent('minecraft:is_tamed') || !!e.getComponent('minecraft:is_tamed'); } catch { return false; } };
-const riders = (e) => { try { return e.getComponent('minecraft:rideable')?.getRiders() ?? []; } catch { return []; } };
-const saddled = (e) => { try { return /saddle/.test(e.getComponent('minecraft:inventory')?.container?.getItem(0)?.typeId ?? ''); } catch { return false; } };
-
-/**
- * Tame, then saddle, a horse the way a player does: get on, get thrown off, again (each try raises its
- * temper until it accepts), then right-click it with a saddle. { ok, detail }.
- */
-async function getHorseReady(agent, sim, horse, secs) {
-  let tries = 0;
-  for (; tries < 30 && !tamed(horse); tries++) {
-    try { hold(sim, null); sim.interactWithEntity(horse); } catch (e) { return { ok: false, detail: `couldn't get on the horse: ${e}` }; }
-    await system.waitTicks(40);
-    if (riders(horse).length) { try { sim.isSneaking = true; await system.waitTicks(4); sim.isSneaking = false; } catch {} }
-    await system.waitTicks(10);
-  }
-  if (!tamed(horse)) return { ok: false, detail: `not tame after ${tries} tries (${secs()}s)` };
-  const tameTries = tries;
-  let saddleTries = 0;
-  for (; saddleTries < 4 && !saddled(horse); saddleTries++) {
-    hold(sim, 'saddle');
-    try { sim.interactWithEntity(horse); } catch (e) { return { ok: false, detail: `tame after ${tameTries} tries, but couldn't use the saddle: ${e}` }; }
-    await system.waitTicks(10);
-  }
-  if (!saddled(horse)) return { ok: false, detail: `tame after ${tameTries} tries, not saddled after ${saddleTries} (slot 0: ${horse.getComponent('minecraft:inventory')?.container?.getItem(0)?.typeId ?? 'empty'})` };
-  return { ok: true, detail: `tamed in ${tameTries} tries and saddled (${secs()}s)` };
+/** Tame (by riding; the game's own taming after 8 tries) and saddle a horse. { ok, detail }. */
+async function horseReady(agent, gen, horse, secs) {
+  const r = await agent.horses.tame(gen, horse, 8);
+  if (!r.ok) return { ok: false, detail: `not tame after ${r.tries} tries (${r.how}, ${secs()}s)` };
+  const saddled = await agent.horses.saddle(gen, horse);
+  if (!saddled) return { ok: false, detail: `tame after ${r.tries} tries (${r.how}) but not saddled` };
+  return { ok: true, detail: `tamed in ${r.tries} tries ${r.how} and saddled (${secs()}s)` };
 }
 
-/**
- * Get on a saddled horse and steer it `blocks` straight away (x). stayOn: just mount. { mounted, moved, detail }.
- */
-async function rideAcross(agent, sim, horse, from, blocks, stayOn = false) {
-  hold(sim, null);
-  try { sim.interactWithEntity(horse); } catch (e) { return { mounted: false, moved: 0, detail: `couldn't get on: ${e}` }; }
-  await system.waitTicks(20);
-  const mounted = riders(horse).some((r) => r.id === sim.id);
-  if (!mounted) return { mounted: false, moved: 0, detail: 'saddled, but it would not take a rider' };
-  if (stayOn || !blocks) return { mounted, moved: 0, detail: 'on the horse' };
+/** Get on a saddled horse and, if blocks > 0, steer it that far along +x. { mounted, moved, detail }. */
+async function rideAcross(agent, gen, horse, blocks) {
+  const sim = agent.sim;
+  if (!(await agent.horses.getOn(gen, horse))) return { mounted: false, moved: 0, detail: 'saddled, but it would not take a rider' };
+  if (!blocks) return { mounted: true, moved: 0, detail: 'on the horse' };
   const start = { ...horse.location };
   const goal = { x: start.x + blocks, y: start.y, z: start.z };
   for (let i = 0; i < 20 * 8; i++) {
@@ -1518,8 +1514,8 @@ async function rideAcross(agent, sim, horse, from, blocks, stayOn = false) {
     if (Math.hypot(horse.location.x - start.x, horse.location.z - start.z) >= blocks) break;
   }
   const moved = Math.hypot(horse.location.x - start.x, horse.location.z - start.z);
-  try { sim.isSneaking = true; await system.waitTicks(4); sim.isSneaking = false; } catch {}
-  return { mounted, moved, detail: `rode ${moved.toFixed(1)} of ${blocks} blocks` };
+  await agent.horses.getOff(gen);
+  return { mounted: true, moved, detail: `rode ${moved.toFixed(1)} of ${blocks} blocks` };
 }
 
 /** A lead from us to `e`: by using one on it (what a player does), else the API's own. Returns how, or null. */
@@ -1532,34 +1528,73 @@ function leashTo(sim, e) {
   return comp()?.isLeashed ? 'leashTo' : null;
 }
 
+const flat = (p, q) => Math.hypot(p.x - q.x, p.z - q.z);
+
 /**
- * Walk (or ride, `mount`) away from `e`, which is on a lead from us, in a straight line along +x for
- * `blocks`, sampling every tick: how far apart we were when it first moved (the lead going taut), the
- * furthest apart, and whether the lead broke. { pullAt, maxSep, snapped, snapAt, boatMoved, rideMoved }.
+ * Lead a boat along `lane` (waypoints), on foot or on a horse, without breaking the lead. The game's
+ * limits are read from the lead (soft, hard, max distance); the bot holds up when the two are further
+ * apart than 60% of max, lets the boat catch up (a boat stuck on a step doesn't: the bot comes back
+ * to it and tries again from beside it), and goes on. Measured: how far apart they were when the boat
+ * first moved (the lead going taut), the furthest apart, holds, tugs, whether the lead broke.
  */
-async function walkAway(sim, e, origin, speed, blocks, mount = null) {
+async function leadWalk(gen, S, sim, boat, lane, speed, mount = null) {
   const subject = mount ?? sim;
-  const e0 = { ...e.location }, s0 = { ...subject.location };
-  const goal = { x: s0.x + blocks, y: s0.y, z: s0.z };
-  let pullAt = null, maxSep = 0, snapped = false, snapAt = null, last = { ...e.location };
-  for (let i = 0; i < 20 * 40; i++) {
-    try { sim.moveToLocation(goal, { speed }); } catch {}
-    await system.waitTicks(1);
-    if (!e.isValid) { snapped = true; break; }
-    const sep = Math.hypot(subject.location.x - e.location.x, subject.location.z - e.location.z);
-    maxSep = Math.max(maxSep, sep);
-    if (pullAt === null && Math.hypot(e.location.x - last.x, e.location.z - last.z) > 0.05) pullAt = sep;
-    last = { ...e.location };
-    let leashed = true;
-    try { leashed = !!e.getComponent('minecraft:leashable')?.isLeashed; } catch {}
-    if (!leashed) { snapped = true; snapAt = sep; break; }
-    if (Math.hypot(subject.location.x - s0.x, subject.location.z - s0.z) >= blocks) break;
-  }
-  const out = {
-    pullAt, maxSep, snapped, snapAt,
-    boatMoved: e.isValid ? Math.hypot(e.location.x - e0.x, e.location.z - e0.z) : 0,
-    rideMoved: Math.hypot(subject.location.x - s0.x, subject.location.z - s0.z),
+  const lead = () => { try { return boat.getComponent('minecraft:leashable'); } catch { return null; } };
+  const lim = { soft: lead()?.softDistance, hard: lead()?.hardDistance, max: lead()?.maxDistance };
+  const pauseAt = (lim.max ?? 12) * 0.6;
+  const m = { speed, ...lim, pauseAt, pullAt: null, maxSep: 0, snapped: false, snapAt: null, holds: 0, tugs: 0, arrived: false, secs: 0, boatMoved: 0, boatEnd: null };
+  const t0 = system.currentTick, b0 = { ...boat.location };
+  let last = { ...boat.location };
+  const sample = () => {
+    if (!boat.isValid) { m.snapped = true; return false; }
+    const sep = flat(subject.location, boat.location);
+    m.maxSep = Math.max(m.maxSep, sep);
+    if (m.pullAt === null && flat(boat.location, last) > 0.05) m.pullAt = sep;
+    last = { ...boat.location };
+    if (lead() && !lead().isLeashed) { m.snapped = true; m.snapAt = sep; return false; }
+    return true;
   };
-  try { const l = e.getComponent('minecraft:leashable'); out.soft = l?.softDistance; out.hard = l?.hardDistance; out.max = l?.maxDistance; } catch {}
-  return out;
+  const go = (to) => {
+    try { if (mount) sim.moveToLocation(to, { speed }); else sim.navigateToLocation(to, speed); } catch { try { sim.moveToLocation(to, { speed }); } catch {} }
+  };
+  for (const wp of lane) {
+    let stuckTicks = 0, tries = 0;
+    for (let i = 0; i < 20 * 12; i++) {
+      S.check(gen);
+      if (!sample()) break;
+      if (flat(subject.location, wp) < 1.3) break;
+      const sep = flat(subject.location, boat.location);
+      if (sep > pauseAt) {
+        // Too far apart: stand and let it catch up; if it isn't (stuck), go back to it and come on again.
+        m.holds++;
+        try { sim.stopMoving(); } catch {}
+        const before = { ...boat.location };
+        for (let k = 0; k < 40 && sample() && flat(subject.location, boat.location) > pauseAt * 0.7; k++) await system.waitTicks(1);
+        if (m.snapped) break;
+        if (flat(boat.location, before) < 0.2 && flat(subject.location, boat.location) > pauseAt * 0.7) {
+          if (++tries > 3) break;
+          m.tugs++;
+          go({ x: boat.location.x + 1.5, y: subject.location.y, z: boat.location.z + 1.5 });
+          for (let k = 0; k < 60 && flat(subject.location, boat.location) > 3; k++) { await system.waitTicks(1); sample(); }
+        }
+        continue;
+      }
+      go(wp);
+      await system.waitTicks(1);
+      stuckTicks = flat(subject.location, last) < 0.01 ? stuckTicks + 1 : 0;
+    }
+    if (m.snapped) break;
+  }
+  m.secs = Math.round((system.currentTick - t0) / 20);
+  m.arrived = !m.snapped && flat(subject.location, lane[lane.length - 1]) < 2.5;
+  m.boatMoved = boat.isValid ? flat(boat.location, b0) : 0;
+  m.boatEnd = boat.isValid ? { x: Math.round(boat.location.x), z: Math.round(boat.location.z) } : null;
+  try { sim.stopMoving(); } catch {}
+  return m;
+}
+
+/** One line for a leg's result. */
+function leadLine(m, goal) {
+  const f = (v) => (v == null ? '?' : Number(v).toFixed(1));
+  return `${m.arrived ? 'got there' : 'DID NOT get there'} in ${m.secs}s, boat ${m.boatEnd ? `${f(flat(m.boatEnd, goal))} from the goal` : 'gone'}; first pulled at ${f(m.pullAt)}, furthest ${f(m.maxSep)} apart, ${m.snapped ? `lead SNAPPED at ${f(m.snapAt)}` : 'lead held'}, held up ${m.holds}x, tugged ${m.tugs}x (game limits soft ${m.soft}, hard ${m.hard}, max ${m.max}; held at ${f(m.pauseAt)})`;
 }

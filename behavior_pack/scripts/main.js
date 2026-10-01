@@ -155,10 +155,13 @@ function handle(text, player) {
     }
     const n = /^\d+$/.test(words[0]) ? Math.min(256, +words.shift()) : 1;
     const item = chainItem(words.join('_'));
-    if (!item) return reply(player, `I don't know how to get "${words.join(' ')}" yet (anything craftable, logs, cobblestone, raw iron and iron ingots).`);
+    if (!item) return reply(player, `I don't know how to get "${words.join(' ')}" yet (anything craftable, logs, cobblestone, raw iron, iron ingots, horse, ride).`);
     agent.addChain(item, n);
     return reply(player, `Chain: ${n} ${item}: ${chainOutline(item).join(' > ')}.`);
   }
+  // !bot mount / !bot dismount: get on its horse (tamed and saddled first if it can), and off again.
+  if (lower === 'mount' || lower === 'get on' || lower === 'ride') { if (!agent) return reply(player, 'spawn first'); agent.startMount(); return reply(player, 'Going to its horse.'); }
+  if (lower === 'dismount' || lower === 'get off') { if (!agent) return reply(player, 'spawn first'); agent.startDismount(); return reply(player, 'Getting off.'); }
   // !bot order [village farm iron]: which goal after moving in comes first (what's named first, the rest in the usual order).
   if (lower === 'order' || lower.startsWith('order ')) {
     if (!agent) return reply(player, 'spawn first');

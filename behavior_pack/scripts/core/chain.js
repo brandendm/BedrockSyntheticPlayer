@@ -9,13 +9,13 @@ import { count, has, isLog, isPlanks, isWool, RECIPES, TOOL_STONE } from './reci
 import { craftStep } from './settle.js';
 import { planFuel } from './fuel.js';
 
-const ALIAS = { logs: 'log', wood: 'log', stone: 'cobblestone', cobble: 'cobblestone', iron: 'iron_ingot', ingot: 'iron_ingot', ingots: 'iron_ingot', ore: 'raw_iron', table: 'crafting_table', sticks: 'stick', plank: 'planks', wool: 'wool' };
+const ALIAS = { logs: 'log', wood: 'log', stone: 'cobblestone', cobble: 'cobblestone', iron: 'iron_ingot', ingot: 'iron_ingot', ingots: 'iron_ingot', ore: 'raw_iron', table: 'crafting_table', sticks: 'stick', plank: 'planks', wool: 'wool', horse: 'saddled_horse', tame: 'saddled_horse', ride: 'riding_horse', riding: 'riding_horse', mount: 'riding_horse', ride_horse: 'riding_horse', ride_a_horse: 'riding_horse', tame_horse: 'saddled_horse' };
 
 /** A name as typed ("Iron Pickaxe", "minecraft:logs") -> an item id the chain knows, or null. */
 export function chainItem(name) {
   const id = String(name ?? '').toLowerCase().replace(/^minecraft:/, '').trim().replace(/[\s-]+/g, '_');
   const k = ALIAS[id] ?? id;
-  if (['log', 'cobblestone', 'raw_iron', 'iron_ingot'].includes(k) || RECIPES[k]) return k;
+  if (['log', 'cobblestone', 'raw_iron', 'iron_ingot', 'saddled_horse', 'riding_horse'].includes(k) || RECIPES[k]) return k;
   return null;
 }
 
@@ -37,6 +37,16 @@ export function held(inv, item) {
  */
 export function chainStep(item, n, f) {
   const inv = f.inv;
+  // A horse (game/horse.js): tame it, saddle it (a saddle can't be crafted: loot or a trade), get on.
+  if (item === 'saddled_horse' || item === 'riding_horse') {
+    const h = f.horse ?? { found: false };
+    if (item === 'riding_horse' && h.mounted) return null;
+    if (item === 'saddled_horse' && h.tamed && h.saddled) return null;
+    if (!h.found) return { step: 'blocked', missing: 'a horse within 64 blocks' };
+    if (!h.tamed) return { step: 'horse', do: 'tame' };
+    if (!h.saddled) return h.saddleInPack ? { step: 'horse', do: 'saddle' } : { step: 'blocked', missing: 'a saddle (they cannot be crafted: loot or a trade)' };
+    return { step: 'horse', do: 'mount' };
+  }
   const have = held(inv, item);
   if (item === 'crafting_table' && Number.isFinite(f.tableDist)) return null;
   if (item === 'furnace' && (f.furnaceKnown || have > 0)) return null;
@@ -82,6 +92,8 @@ export function chainStep(item, n, f) {
  * 'cobblestone', 'stone_pickaxe', 'raw_iron', 'furnace', 'iron_ingot', 'iron_pickaxe'].
  */
 export function chainOutline(item) {
+  if (item === 'saddled_horse') return ['find a horse', 'tame it', 'saddle it'];
+  if (item === 'riding_horse') return ['find a horse', 'tame it', 'saddle it', 'get on'];
   const out = [];
   const add = (x) => { if (!out.includes(x)) out.push(x); };
   const visit = (x) => {

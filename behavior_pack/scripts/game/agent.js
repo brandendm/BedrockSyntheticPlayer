@@ -25,6 +25,7 @@ import { mlgNow, ticksToLand } from '../core/fall.js';
 import { GOALS, goalsOf, goalKey, orderOf, parseOrder } from '../core/toggles.js';
 import { biomeName } from '../core/biomes.js';
 import { chainStep, chainItem, chainOutline, held } from '../core/chain.js';
+import { Horses } from './horse.js';
 import { FULL_SLOTS } from '../core/storage.js';
 import { itemValue, armorUpgrades, armorTotal } from '../core/wants.js';
 import { lootPlan, lootWorth, backoffMs, LOOT_WINDOW_MS } from '../core/loot.js';
@@ -106,6 +107,7 @@ export class Agent {
     this.farm = new Farm(this);
     this.lookout = new Lookout(this);
     this.villages = new Villages(this);
+    this.horses = new Horses(this);
     tracePosition(() => this.sim.location); // (villages seen from afar: game/villages.js)
     system.runTimeout(() => { this.restoreSettings().catch(() => {}); }, 30);
     system.runTimeout(() => { try { this.restoreKit(); } catch (e) { this.kitChecked = true; console.warn(`[agent] kit: ${e}`); } try { this.restoreState(); } catch {} }, 40);
@@ -1176,7 +1178,7 @@ export class Agent {
         }
         // Steps that run in stints (iron mining is time-boxed and repeats on purpose) or handle their
         // own failure (the farm) never get set aside: exploring doesn't help them.
-        if ((repeats >= 3 || same >= 8) && !['go_home', 'shelter', 'rest', 'wait_smelt', 'explore', 'seek_village', 'get_iron', 'make_farm', 'tend_farm', 'check_water', 'equip'].includes(step.step)) {
+        if ((repeats >= 3 || same >= 8) && !['go_home', 'shelter', 'rest', 'wait_smelt', 'explore', 'seek_village', 'horse', 'riding', 'dismount', 'get_iron', 'make_farm', 'tend_farm', 'check_water', 'equip'].includes(step.step)) {
           // It keeps failing: set it aside for a few minutes and do the cheapest other thing on the
           // list (core/focus.js); it only goes exploring when nothing else is doable.
           if (step.step === 'hunt' && step.what === 'sheep') this.bedDeferredUntil = Date.now() + 300000;
@@ -1236,6 +1238,28 @@ export class Agent {
             if (this.villageStuck >= 3 || this.villageMisses >= 6) { this.villageMisses = 0; this.villageStuck = 0; this.villageHoldUntil = Date.now() + 1800000; trace('village hunt: got nowhere / six legs without one; not again for 30 min'); }
             break;
           }
+          case 'horse': {
+            const Hs = this.horses;
+            const h = Hs.mounted() ?? Hs.find(64);
+            if (!h) { await S.wait(gen, 40); break; }
+            if (step.do === 'tame') {
+              this.sayOnce('horse-tame', 'Taming the horse: getting on until it lets me.', 60000);
+              const r = await Hs.tame(gen, h);
+              this.say(r.ok ? `The horse is tame (${r.tries} tries, ${r.how}).` : `Couldn't tame the horse: ${r.how}.`, true);
+              if (!r.ok) this.popChain();
+            } else if (step.do === 'saddle') {
+              const ok = await Hs.saddle(gen, h);
+              this.say(ok ? 'Saddled the horse.' : "The saddle won't go on.", true);
+              if (!ok) this.popChain();
+            } else {
+              const ok = await Hs.getOn(gen, h);
+              this.say(ok ? 'On the horse. `!bot dismount` to get off.' : "Couldn't get on the horse.", true);
+              if (ok) this.keepRiding = true; else this.popChain();
+            }
+            break;
+          }
+          case 'dismount': await this.horses.getOff(gen); break;
+          case 'riding': await S.wait(gen, 60); break;
           case 'gather_logs': {
             // Logs we put away in the chest come first, if we're near the house anyway.
             if (await this.fromChest(gen, isLog, step.count - count(inv, isLog))) break;
@@ -1702,13 +1726,20 @@ export class Agent {
     // at dusk and standing about till morning. (Unarmed or hurt, it still takes cover.)
     if (!dayTime && this.workNights(inv)) dayTime = true;
     const night = !dayTime && isNight(world.getTimeOfDay());
+    // Riding (commanded, or a chain's goal): the plan waits till we're told to get off; riding when nothing asked for it: get off.
+    {
+      const riding = !!this.horses.mounted();
+      const wantsRide = this.keepRiding || this.chainQueue()[0]?.item === 'riding_horse';
+      if (riding && wantsRide && !this.chainQueue()[0]) return { step: 'riding' };
+      if (riding && !wantsRide) return { step: 'dismount' };
+    }
     if (!night) {
       for (let guard = 0; guard < 4; guard++) {
         const g = this.chainQueue()[0];
         if (!g) break;
-        const f = { ...this.advanceFacts(inv, tableDist), tableDist, furnaceKnown: this.memory.list('furnace', this.dim.id, this.sim.location).length > 0 || !!this.homestead.house?.furnace };
+        const f = { ...this.advanceFacts(inv, tableDist), tableDist, horse: this.horses.state(), furnaceKnown: this.memory.list('furnace', this.dim.id, this.sim.location).length > 0 || !!this.homestead.house?.furnace };
         const cs = chainStep(g.item, g.n, f);
-        if (!cs) { this.say(`Chain done: ${held(inv, g.item)} ${g.item.replace(/_/g, ' ')}.`, true); this.popChain(); continue; }
+        if (!cs) { this.say(g.item.endsWith('horse') ? `Chain done: ${g.item.replace(/_/g, ' ')}.` : `Chain done: ${held(inv, g.item)} ${g.item.replace(/_/g, ' ')}.`, true); if (g.item === 'riding_horse') this.keepRiding = true; this.popChain(); continue; }
         if (cs.step === 'blocked') { this.say(`Can't get ${g.item.replace(/_/g, ' ')} yet: no way to get ${cs.missing}. Dropping that one.`, true); this.popChain(); continue; }
         this.autoOpportunity = null;
         return { ...cs, chain: g.item };
@@ -1859,6 +1890,9 @@ export class Agent {
     const aside = step.setAside ? ` (set "${(STEP_WORDS[step.setAside] ?? step.setAside).replace(/_/g, ' ')}" aside for now: it kept failing)` : '';
     const side = step.opportunity && !step.setAside ? ' (right here, so doing it now)' : '';
     switch (step.step) {
+      case 'horse': return { tame: 'taming the horse', saddle: 'saddling the horse', mount: 'getting on the horse' }[step.do] ?? 'with the horse';
+      case 'riding': return 'riding my horse (!bot dismount to get off)';
+      case 'dismount': return 'getting off the horse';
       case 'seek_village': return step.known ? 'heading for the village I saw' : 'looking for a village';
       case 'explore': return `looking further out for ${{ log: 'trees', sheep: 'sheep', food: 'animals' }[step.want] ?? 'supplies'}${aside}`;
       case 'gather_logs': return `getting wood: ${step.count} logs${step.wanted && step.wanted[0] !== 'later' ? ` for ${step.wanted.join(', ').replace(/_/g, ' ')}` : ''}${side}${aside}`;
@@ -2992,6 +3026,30 @@ export class Agent {
   startGoto(target, tolerance) {
     const gen = this.newTask({ kind: 'goto', target, tolerance });
     this.runGoto(gen, target, tolerance).catch((e) => console.error(`[agent] goto failed: ${e}\n${e.stack}`));
+  }
+
+  /** `!bot mount`: get on its horse (taming and saddling it first if it needs that and can). */
+  startMount() {
+    const gen = this.newTask({ kind: 'mount' });
+    (async () => {
+      const Hs = this.horses;
+      const h = Hs.mounted() ?? Hs.find(64);
+      if (!h) return this.say('No horse within 64 blocks.', true);
+      const st = Hs.state();
+      if (!st.tamed) { const r = await Hs.tame(gen, h); if (!r.ok) return this.say(`Couldn't tame the horse: ${r.how}.`, true); }
+      if (!st.saddled && st.saddleInPack) await Hs.saddle(gen, h);
+      const ok = await Hs.getOn(gen, h);
+      if (ok) this.keepRiding = true;
+      this.say(ok ? 'On the horse. `!bot dismount` to get off.' : "Couldn't get on the horse.", true);
+    })().catch((e) => { if (e?.constructor?.name !== 'Aborted') console.warn(`[agent] mount: ${e}`); }).finally(() => { if (gen === this.taskGen) this.newTask(null); });
+  }
+
+  /** `!bot dismount`: off the horse; the plan carries on. */
+  startDismount() {
+    this.keepRiding = false;
+    if (this.chainQueue()[0]?.item === 'riding_horse') this.popChain();
+    const gen = this.newTask({ kind: 'dismount' });
+    this.horses.getOff(gen).then((ok) => this.say(ok ? 'Off the horse.' : "Couldn't get off.", true)).catch(() => {}).finally(() => { if (gen === this.taskGen) this.newTask(null); });
   }
 
   /** `!bot village visit`: go to the best known village now and use it (a bed, the chests' food and iron). */
