@@ -1849,6 +1849,9 @@ export class Agent {
     if (step.step === this.autoStep) return;
     if (CONFIG.debug) console.warn(`[agent] have enough for ${this.autoStep} now; next: ${step.step}`);
     this.sayOnce(`enough:${this.autoStep}`, 'Got what I needed; moving on.', 30000);
+    // (The step's cleared so this doesn't fire again every 2 s while the new loop is still in its preamble: each restart cancelled
+    // the last, and a 14:06 run sat frozen 5 min at "got what I needed" without ever planning.)
+    this.autoStep = null;
     this.startAuto();
   }
 
