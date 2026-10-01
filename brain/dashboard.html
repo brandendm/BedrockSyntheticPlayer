@@ -245,6 +245,14 @@
       <button id="profoff">Back to defaults</button>
       <span class="muted" id="learnstat">—</span>
     </div>
+    <h3 style="margin:14px 0 6px">Your house</h3>
+    <div class="row">
+      <button class="primary" id="housestart">Record me building a house</button>
+      <button id="housestop">Done: learn it</button>
+      <button id="houseon">Build mine</button>
+      <button id="houseoff">Build the starter</button>
+    </div>
+    <pre class="trace" id="housereport" style="white-space:pre-wrap;margin-top:10px">No house learned yet. "Record me building a house" puts your inventory aside, gives you everything a house takes, and watches; "Done" reads what you built, checks it (closed, door, bed, table, furnace, chest, reachable) and gives your things back.</pre>
     <table class="tests"><thead><tr><th>Habit</th><th>You</th><th>Samples</th><th>Default</th><th>Bot uses</th></tr></thead><tbody id="learnrows"></tbody></table>
     <pre class="trace" id="learnreport" style="white-space:pre-wrap;margin-top:10px">Nothing recorded yet. Press Start, play for a while (mine, fight, eat), then it shows what it picked up.</pre>
     <p class="note">Records only the player picked above, only while on: where you are each second, what you break, place, eat and fight. It stays on this computer (brain/logs/demos/). The bot takes up two numbers (when you eat, the height you mine iron at) once it has seen enough, inside safe limits; the rest is a report.</p>
@@ -429,6 +437,10 @@ const esc = (x) => String(x ?? '').replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<'
 let learnUsing = {};
 $('learnon').onclick = () => { const p = $('player').value; if (!p) return toast('Pick a player first'); send(`learn on ${p}`); setTimeout(loadLearn, 1500); };
 $('learnoff').onclick = () => { send('learn off'); setTimeout(loadLearn, 1500); };
+$('housestart').onclick = () => { const p = $('player').value; if (!p) return toast('Pick a player first'); if (confirm('This puts your inventory aside and gives you a house kit. It all comes back when you press Done. Start?')) { send(`learn house ${p}`); setTimeout(loadLearn, 1500); } };
+$('housestop').onclick = () => { send('learn off'); setTimeout(loadLearn, 4000); };
+$('houseon').onclick = () => send('house learned on');
+$('houseoff').onclick = () => send('house learned off');
 $('profon').onclick = () => { send('profile on'); setTimeout(loadLearn, 1500); };
 $('profoff').onclick = () => { send('profile off'); setTimeout(loadLearn, 1500); };
 async function loadLearn() {
@@ -438,6 +450,10 @@ async function loadLearn() {
     const NAMES = { eat_at: 'You eat at food level', iron_y: 'You mine iron at Y' };
     $('learnrows').innerHTML = Object.entries(d.params || {}).map(([k, v]) => `<tr><td>${NAMES[k] || k}</td><td>${v.value == null ? '—' : +v.value.toFixed(1)}</td><td>${v.n}</td><td>${v.default}</td><td>${learnUsing[k] ?? '—'}</td></tr>`).join('');
     $('learnreport').textContent = d.report || '';
+  } catch {}
+  try {
+    const h = (await (await fetch('/api/house', { cache: 'no-store' })).json()).house;
+    if (h) $('housereport').textContent = (h.ok ? `Learned (${new Date(h.at * 1000).toLocaleTimeString()}): ${h.stats.floor} floor cells, ${h.stats.stone} stone + ${h.stats.planks} wood blocks, ${h.stats.covered}% reachable from inside.\n` : `Not usable: ${(h.problems || []).join('; ')}\n`) + (h.notes || []).map((n) => `note: ${n}\n`).join('') + (h.ascii || []).join('\n');
   } catch {}
 }
 

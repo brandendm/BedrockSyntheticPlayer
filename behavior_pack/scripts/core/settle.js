@@ -10,6 +10,7 @@
 // what it needs, or digs in for the night if it doesn't).
 import { count, has, isLog, isPlanks, isWool, planCrafts, tableStep, TOOL_STONE, RECIPES } from './recipes.js';
 import { materials, NEW_LAYOUT } from './house.js';
+import { getPlan, planMaterials } from './learnhouse.js';
 import { planFuel, charcoalInput } from './fuel.js';
 
 export const DUSK = 11500;      // head home (sunset is 12000, mobs from ~13000)
@@ -281,8 +282,9 @@ export function fittingsPlanks(inv, house = null, layout = NEW_LAYOUT) {
   if (!has(inv, 'wooden_door') && !house?.door) n += 6;
   if (!has(inv, 'bed') && !house?.bed) n += 3;
   if (!has(inv, 'crafting_table') && !house?.table) n += 4;
-  const chests = layout === 'chests' ? 4 : 1;
-  const signs = layout === 'chests' ? 4 : 0;
+  const learned = layout === 'learned' && getPlan() ? planMaterials(getPlan()) : null;
+  const chests = learned ? learned.chests : layout === 'chests' ? 4 : 1;
+  const signs = learned ? 0 : layout === 'chests' ? 4 : 0;
   const chestsLeft = house?.chest ? 0 : Math.max(0, chests - (inv.chest ?? 0) - (house?.chestsPlaced ?? 0));
   n += 8 * chestsLeft;
   const signsLeft = house?.signs ? 0 : Math.max(0, signs - count(inv, (id) => /_sign$/.test(id)) - (house?.signsPlaced ?? 0));

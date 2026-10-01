@@ -10,6 +10,13 @@
 //               leaves, a lump of dirt) counted as already built
 import { siteWork, siteScore, BUILD_S } from '../behavior_pack/scripts/core/site.js';
 import { blueprint, clearance, footing, NEW_LAYOUT } from '../behavior_pack/scripts/core/house.js';
+import { setPlan } from '../behavior_pack/scripts/core/learnhouse.js';
+import { plan as learnedPlan } from '../tests/learn_fixture.js';
+// LAYOUT=learned: the house learned off a player's (tests/learn_fixture.js): the site choice, the count
+// of what's missing and the build, with its own footprint instead of the starter's.
+const LEARNED = process.env.LAYOUT === 'learned';
+if (LEARNED) setPlan(learnedPlan().plan);
+const LAYOUT = LEARNED ? 'learned' : NEW_LAYOUT;
 import { cheapestPlaceable, plankReserve } from '../behavior_pack/scripts/core/costs.js';
 import { fittingsPlanks } from '../behavior_pack/scripts/core/settle.js';
 import { isLog, isPlanks, TOOL_STONE, count } from '../behavior_pack/scripts/core/recipes.js';
@@ -96,7 +103,7 @@ function findSite(w, f, inv, secondsLeft) {
     const x = f.x + dx, z = f.z + dz, g = w.groundTop(x, z);
     let work = 0, bad = false;
     for (let a = -2; a <= 2 && !bad; a++) for (let b = -2; b <= 2 && !bad; b++) { const h = w.groundTop(x + a, z + b); if (Math.abs(h - g) > 2) bad = true; else work += Math.abs(h - g); }
-    if (!bad) cands.push({ x, y: g + 1, z, layout: NEW_LAYOUT, rough: work * 1.2 + r / 4.3 }); // (the house with its chest room)
+    if (!bad) cands.push({ x, y: g + 1, z, layout: LAYOUT, rough: work * 1.2 + r / 4.3 }); // (the house with its chest room)
   }
   cands.sort((a, b) => a.rough - b.rough);
   let best = null;
@@ -126,7 +133,7 @@ function houseNeeds(w, site, dir, inv, { fittings = false } = {}) {
   const spare = Math.max(0, haveStone - stone) + Math.max(0, havePlanks - planks);
   const walls = shortStone + shortPlanks <= spare ? { stone: 0, planks: 0 } : { stone: shortStone, planks: shortPlanks };
   if (!fittings) return walls;
-  const fitShort = Math.max(0, fittingsPlanks(inv) + 4 - Math.max(0, havePlanks - planks));
+  const fitShort = Math.max(0, fittingsPlanks(inv, null, LAYOUT) + 4 - Math.max(0, havePlanks - planks));
   return { stone: walls.stone, planks: walls.planks + fitShort };
 }
 const add = (inv, id, n = 1) => { inv[id] = (inv[id] ?? 0) + n; if (inv[id] <= 0) delete inv[id]; };
@@ -217,7 +224,7 @@ for (let i = 0; i < N; i++) {
   }
   // The fittings (door, bed, table, chest) from what wood is left.
   const wood = count(inv, isPlanks) + count(inv, isLog) * 4;
-  if (wood < fittingsPlanks({})) o.fittingsShort++;
+  if (wood < fittingsPlanks({}, null, LAYOUT)) o.fittingsShort++;
   if (VERBOSE) console.log(`${kind} #${i}: site ${site.x},${site.z} ${site.dir}, ${site.work.seconds.toFixed(0)} s to clear (${r.cleared.logs} logs), short ${r.outOf}, wood left ${wood}`);
 }
 console.log(`${N} houses (${FIXCOUNT ? 'natural blocks in a wall\'s place counted as missing' : 'the old count'}):`);

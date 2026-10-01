@@ -9,6 +9,8 @@ export const system = {
   run(fn) { return this.runTimeout(fn, 1); },
   runInterval() { return 0; },
   clearRun() {},
+  /** A job (generator): run to the end at once (the game spreads it over ticks). */
+  runJob(gen) { for (const _ of gen) { /* each yield is a tick in the game */ } return 0; },
   /** The sim's clock: n ticks on, running what fell due. */
   advance(n = 1) {
     for (let i = 0; i < n; i++) {

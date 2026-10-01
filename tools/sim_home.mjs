@@ -13,7 +13,12 @@ const { Skills } = await import('../behavior_pack/scripts/game/skills.js');
 const { castRay } = await import('../behavior_pack/scripts/game/world.js');
 const { settleStep } = await import('../behavior_pack/scripts/core/settle.js');
 const { blueprint, footing, furnishings, keepClear } = await import('../behavior_pack/scripts/core/house.js');
+const { setPlan } = await import('../behavior_pack/scripts/core/learnhouse.js');
 const { system, ItemStack, Container } = MC;
+// LAYOUT=learned: the same house, built from the plan learned off a player's house (core/learnhouse.js),
+// held to the cases that aren't about the starter layout's own moving-round-obsidian rules.
+const LEARNED = process.env.LAYOUT === 'learned';
+if (LEARNED) { const { plan } = await import('../tests/learn_fixture.js'); const r = plan(); if (!r.ok) throw new Error(`fixture: ${r.problems}`); setPlan(r.plan); }
 const VERBOSE = process.argv.includes('-v');
 
 const key = (p) => `${Math.floor(p.x)},${Math.floor(p.y)},${Math.floor(p.z)}`;
@@ -25,7 +30,7 @@ function makeGame({ unbreakable = /^bedrock$/ } = {}) {
   const items = []; // item entities on the ground
   const said = [], log = [];
   const pack = new Container(36);
-  const house = { x: 0, y: 64, z: 0, dir: 'south', layout: 'chests', d: 'minecraft:overworld', bed: true, table: true, furnace: true, chest: true };
+  const house = { x: 0, y: 64, z: 0, dir: 'south', layout: LEARNED ? 'learned' : 'chests', d: 'minecraft:overworld', bed: true, table: true, furnace: true, chest: true };
   const get = (p) => blocks.get(key(p)) ?? (Math.floor(p.y) < 64 ? 'stone' : 'air');
   const set = (p, id) => blocks.set(key(p), id);
   // The house as built: walls and roof, furniture, door, torches, the ground under it.
@@ -35,7 +40,7 @@ function makeGame({ unbreakable = /^bedrock$/ } = {}) {
   for (const c of fur.chests) set(c, 'chest');
   set(fur.door, 'wooden_door'); set({ ...fur.door, y: fur.door.y + 1 }, 'wooden_door');
   for (const s of fur.signs) set(s.cell, 'oak_wall_sign');
-  for (const t of [fur.torchInside, fur.torchChests, ...fur.torchesOutside]) set(t.toward, 'wall_torch');
+  for (const t of [fur.torchInside, fur.torchChests, ...fur.torchesOutside].filter(Boolean)) set(t.toward, 'wall_torch');
   const dim = {
     id: 'minecraft:overworld',
     getBlock: (p) => { const id = get(p); return { typeId: `minecraft:${id}`, isAir: id === 'air', isLiquid: /water|lava/.test(id), location: { x: Math.floor(p.x), y: Math.floor(p.y), z: Math.floor(p.z) }, permutation: { getState: () => false } }; },
@@ -229,7 +234,7 @@ const inside = (g) => g.H.isHome();
 
 // 3. Night, the doorway and doorstep filled with something it can't break (bedrock): the door moves
 // along the front wall (the old doorway walled up round it) and in it goes; no digging in outside.
-{
+if (!LEARNED) {
   const g = makeGame();
   g.set(g.fur.door, 'bedrock'); g.set({ ...g.fur.door, y: g.fur.door.y + 1 }, 'bedrock');
   g.set(g.fur.doorstep, 'bedrock'); g.set({ ...g.fur.doorstep, y: g.fur.doorstep.y + 1 }, 'bedrock');
@@ -245,7 +250,7 @@ const inside = (g) => g.H.isHome();
 // 4. The wrong thing in our furniture's spots (a player's furnace where the table goes, a block on the bed).
 {
   const g = makeGame();
-  g.set(g.fur.table, 'furnace'); g.set(g.fur.bed.head, 'cobblestone'); g.set(g.fur.chests[2], 'glass');
+  g.set(g.fur.table, 'furnace'); g.set(g.fur.bed.head, 'cobblestone'); g.set(LEARNED ? g.fur.furnace : g.fur.chests[2], 'glass');
   const st = g.H.houseStateNow();
   await g.H.clearHouse(0);
   const left = g.H.houseObstructions();
@@ -269,7 +274,7 @@ const inside = (g) => g.H.isHome();
   const front = blueprint(g.house, g.house.dir).filter((b) => Math.abs(b.x - g.fur.door.x) + Math.abs(b.z - g.fur.door.z) <= 2 && b.y <= 65);
   for (const b of front) g.set(b, 'air');
   for (const p of footing(g.house, g.house.dir).slice(-4)) g.set(p, 'air');
-  g.set(g.fur.chests[3], 'air');
+  g.set(g.fur.chests.at(-1), 'air');
   for (let i = 0; i < 6; i++) g.items.push({ id: `spill${i}`, isValid: true, location: { x: g.house.x + i - 3, y: 64, z: g.house.z + 4 }, what: 'cobblestone' });
   const st = g.H.houseStateNow();
   const plan = settleStep({ ...houseFacts(g.H), inv: { cobblestone: 40, oak_planks: 40 } }).step;
@@ -283,8 +288,9 @@ const inside = (g) => g.H.isHome();
 {
   const g = makeGame();
   const bp = blueprint(g.house, g.house.dir);
-  const roof = bp.filter((b) => b.h === 3);
-  const fires = [...roof.slice(0, 5).map((b) => ({ ...b, y: b.y + 1 })), { x: g.house.x + 3, y: 64, z: g.house.z - 2 }, { x: g.house.x - 3, y: 65, z: g.house.z - 4 }];
+  const top = Math.max(...bp.map((b) => b.h));
+  const roof = bp.filter((b) => b.h === top);
+  const fires = [...roof.slice(0, 5).map((b) => ({ ...b, y: b.y + 1 })), ...(LEARNED ? [{ x: g.fur.doorstep.x + 1, y: 64, z: g.fur.doorstep.z }] : [{ x: g.house.x + 3, y: 64, z: g.house.z - 2 }, { x: g.house.x - 3, y: 65, z: g.house.z - 4 }])];
   for (const f of fires) g.set(f, 'fire');
   const plan = settleStep({ ...houseFacts(g.H), time: 14000 }).step;
   await g.H.fightFire(0);
@@ -301,7 +307,7 @@ const inside = (g) => g.H.isHome();
 
 // 9. Obsidian where the crafting table goes (no diamond pickaxe): never swung at; the table's spot
 // moves to a free one in the room, out of the way through.
-{
+if (!LEARNED) {
   const g = makeGame();
   g.set(g.fur.table, 'obsidian');
   const before = g.H.houseStateNow().blocked;
@@ -314,7 +320,7 @@ const inside = (g) => g.H.isHome();
 
 // 10. Obsidian somewhere harmless (over the furnace, head height by the wall): left be; the house
 // no longer counts as blocked (it used to try, fail, and come back every 3 minutes).
-{
+if (!LEARNED) {
   const g = makeGame();
   const spot = { ...g.fur.furnace, y: g.fur.furnace.y + 1 };
   g.set(spot, 'obsidian');
@@ -324,7 +330,7 @@ const inside = (g) => g.H.isHome();
 }
 
 // 11. Obsidian in the chest room's doorway: the doorway moves along the partition.
-{
+if (!LEARNED) {
   const g = makeGame();
   const fur0 = furnishings(g.house, g.house.dir);
   g.set(fur0.doorway, 'obsidian');

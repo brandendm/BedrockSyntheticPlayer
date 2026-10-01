@@ -20,6 +20,8 @@
 // back wall is -2 in a cabin and -6 with the chest room), h height above the floor (0..3, 3 = the
 // roof). World = origin + lx * right + lz * forward.
 
+import { getPlan, planMaterials, planFrame } from './learnhouse.js';
+
 export const DIRS = {
   north: { x: 0, z: -1 }, south: { x: 0, z: 1 }, east: { x: 1, z: 0 }, west: { x: -1, z: 0 },
 };
@@ -27,8 +29,22 @@ export const DIRS = {
 /** The layout new houses get. */
 export const NEW_LAYOUT = 'chests';
 /** A house's (or site's) layout: 'chests', or 'cabin' for one saved before there was a choice. */
-export const layoutOf = (o) => (o?.layout === 'chests' ? 'chests' : 'cabin');
+export const layoutOf = (o) => (o?.layout === 'chests' ? 'chests' : o?.layout === 'learned' && getPlan() ? 'learned' : 'cabin');
 const backOf = (layout) => (layout === 'chests' ? -6 : -2);
+
+/**
+ * 'learned': a house built from the plan watched from the player (core/learnhouse.js), whose origin is
+ * the cell just inside the door: everything below that's learned-specific is built from it, and the
+ * starter layouts above are untouched.
+ */
+const isLearned = (o) => layoutOf(o) === 'learned';
+const lcell = (o, dir) => { const at = planFrame(o, dir); return ([lx, lz], h = 0) => at(lx, lz, h); };
+
+/** The house's box in local cells, for what needs to look all round it (fire): { lx0, lx1, lz0, lz1, h1 }. */
+export function bounds(o) {
+  if (isLearned(o)) return getPlan().box;
+  return { lx0: -2, lx1: 2, lz0: backOf(layoutOf(o)), lz1: 2, h1: 3 };
+}
 
 /** Local -> world transform for a house whose door faces `dir`. */
 export function frame(origin, dir) {
@@ -72,6 +88,10 @@ function shape(layout, d = 0, dw = 0) {
  * (each roof block leans on one already placed). material: 'stone' | 'planks'.
  */
 export function blueprint(origin, dir) {
+  if (isLearned(origin)) {
+    const at = planFrame(origin, dir);
+    return getPlan().shell.map(([lx, lz, h, m]) => ({ ...at(lx, lz, h), lx, lz, h, material: m === 's' ? 'stone' : 'planks' }));
+  }
   const layout = layoutOf(origin);
   const A = adapt(origin);
   const { back, isWall, isCorner, skip } = shape(layout, A.d, A.dw);
@@ -94,6 +114,16 @@ export function blueprint(origin, dir) {
 
 /** Cells that must be clear (air or plants) before building: the whole footprint up to the roof, plus the doorstep. */
 export function clearance(origin, dir) {
+  if (isLearned(origin)) {
+    const P = getPlan(), at = planFrame(origin, dir), seen = new Set(), out = [];
+    const add = (lx, lz, h) => { const k = `${lx},${lz},${h}`; if (seen.has(k)) return; seen.add(k); out.push(at(lx, lz, h)); };
+    for (const [lx, lz, h] of P.air) add(lx, lz, h);
+    for (const [lx, lz, h] of P.shell) if (h >= 0) add(lx, lz, h);
+    for (const [lx, lz, h] of P.open) add(lx, lz, h);
+    for (let h = 0; h <= 3; h++) add(0, 2, h);
+    add(0, 1, 0); add(0, 1, 1);
+    return out;
+  }
   const at = frame(origin, dir), back = backOf(layoutOf(origin)), d = adapt(origin).d;
   const out = [];
   for (let lx = -2; lx <= 2; lx++) for (let lz = back; lz <= 3; lz++) {
@@ -105,6 +135,16 @@ export function clearance(origin, dir) {
 
 /** Ground cells (one below the floor) that must be solid: the footprint and the doorstep. */
 export function footing(origin, dir) {
+  if (isLearned(origin)) {
+    const P = getPlan(), at = planFrame(origin, dir);
+    const floored = new Set(P.shell.filter((c) => c[2] === -1).map((c) => `${c[0]},${c[1]}`)); // (a floor you built is in the blueprint)
+    const cols = new Map();
+    for (const [lx, lz] of P.floor) cols.set(`${lx},${lz}`, [lx, lz]);
+    for (const [lx, lz, h] of P.shell) if (h === 0) cols.set(`${lx},${lz}`, [lx, lz]);
+    for (const c of [P.table, ...P.furnaces, ...P.chests, P.bed.foot, P.bed.head]) cols.set(`${c[0]},${c[1]}`, c);
+    cols.set('0,1', [0, 1]); cols.set('0,2', [0, 2]);
+    return [...cols].filter(([k]) => !floored.has(k)).map(([, [lx, lz]]) => at(lx, lz, -1));
+  }
   const at = frame(origin, dir), back = backOf(layoutOf(origin)), d = adapt(origin).d;
   const out = [];
   for (let lx = -2; lx <= 2; lx++) for (let lz = back; lz <= 3; lz++) {
@@ -124,6 +164,25 @@ export const CHEST_KINDS = [
 
 /** Where things go inside, and where to stand to place them. */
 export function furnishings(origin, dir) {
+  if (isLearned(origin)) {
+    const P = getPlan(), cell = lcell(origin, dir), at = planFrame(origin, dir);
+    const stands = P.stands.map((c) => cell(c));
+    const chests = P.chests.map((c) => cell(c));
+    const chestStand = chests[0] ? stands.slice().sort((a, b) => Math.hypot(a.x - chests[0].x, a.z - chests[0].z) - Math.hypot(b.x - chests[0].x, b.z - chests[0].z))[0] : stands[0];
+    return {
+      layout: 'chests', // (what the storage and furnishing code calls a house with its chests listed: the plan's, signs none)
+      stand: stands[0], stands, chestStand,
+      doorstep: at(0, 2, 0), door: at(0, 1, 0),
+      table: cell(P.table), furnace: cell(P.furnaces[0]), furnace2: P.furnaces[1] ? cell(P.furnaces[1]) : null,
+      bed: { foot: cell(P.bed.foot), head: cell(P.bed.head), standAt: cell(P.bed.standAt) },
+      torchesOutside: P.torchOut.map((t) => ({ on: at(...t.on), toward: at(...t.toward) })),
+      noRoom: [],
+      torchInside: { on: at(...P.torchIn.on), toward: at(...P.torchIn.toward) },
+      torchChests: null,
+      chests, chestKinds: P.chestKinds.slice(0, chests.length),
+      signs: [], doorway: null,
+    };
+  }
   const at0 = frame(origin, dir);
   const layout = layoutOf(origin);
   const A = adapt(origin);
@@ -193,6 +252,25 @@ export function furnishings(origin, dir) {
  * creeper's crater filled with junk, a block of ours left behind) is in the way and comes out.
  */
 export function keepClear(origin, dir) {
+  if (isLearned(origin)) {
+    const P = getPlan(), at = planFrame(origin, dir), fur = furnishings(origin, dir);
+    const k = (p) => `${p.x},${p.y},${p.z}`;
+    const want = new Map();
+    want.set(k(fur.table), 'crafting_table');
+    for (const f of [fur.furnace, fur.furnace2].filter(Boolean)) want.set(k(f), 'furnace');
+    want.set(k(fur.bed.foot), 'bed'); want.set(k(fur.bed.head), 'bed');
+    for (const c of fur.chests) want.set(k(c), 'chest');
+    for (const t of [fur.torchInside, ...fur.torchesOutside]) want.set(k(t.toward), 'torch');
+    want.set(k(fur.door), 'door'); want.set(k({ ...fur.door, y: fur.door.y + 1 }), 'door');
+    const acc = new Set(adapt(origin).accepted.map((c) => c.join(',')));
+    const out = [], seen = new Set();
+    const add = (p, local) => { if (acc.has(local.join(',')) || seen.has(k(p))) return; seen.add(k(p)); const w = want.get(k(p)); out.push(w ? { ...p, want: w } : { ...p }); };
+    for (const [lx, lz, h] of P.air) if (h <= 2) add(at(lx, lz, h), [lx, lz, h]);
+    add(at(0, 1, 0), [0, 1, 0]); add(at(0, 1, 1), [0, 1, 1]);
+    add(at(0, 2, 0), [0, 2, 0]); add(at(0, 2, 1), [0, 2, 1]);
+    for (const t of fur.torchesOutside) if (!seen.has(k(t.toward))) { seen.add(k(t.toward)); out.push({ ...t.toward, want: 'torch' }); }
+    return out;
+  }
   const at = frame(origin, dir), layout = layoutOf(origin), back = backOf(layout);
   const fur = furnishings(origin, dir);
   const k = (p) => `${p.x},${p.y},${p.z}`;
@@ -237,6 +315,12 @@ export function keepClear(origin, dir) {
  * Returns the house's new fields { doorLx, doorwayLx, moved, accepted } (the old ones kept).
  */
 export function planAroundFixed(origin, dir, fixed) {
+  if (isLearned(origin)) {
+    // (A learned house isn't rearranged round what can't be moved: it's left as it is.)
+    const A0 = adapt(origin), accepted = [...A0.accepted];
+    for (const p of fixed) { const c = toLocal(origin, dir, p); if (!accepted.some((a) => a.join(',') === c.join(','))) accepted.push(c); }
+    return { doorLx: 0, doorwayLx: 0, moved: {}, accepted };
+  }
   const layout = layoutOf(origin), back = backOf(layout);
   const A = adapt(origin);
   let d = A.d, dw = A.dw;
@@ -341,6 +425,7 @@ export function standFor(fur, cell) {
 
 /** Materials for the shell (a new house's unless `layout` says otherwise). */
 export function materials(layout = NEW_LAYOUT) {
+  if (layout === 'learned' && getPlan()) return planMaterials(getPlan());
   const bp = blueprint({ x: 0, y: 0, z: 0, layout }, 'north');
   return {
     stone: bp.filter((b) => b.material === 'stone').length,
@@ -354,6 +439,10 @@ export function materials(layout = NEW_LAYOUT) {
 
 /** Is p inside the house's footprint (walls included)? */
 export function inside(house, p) {
+  if (isLearned(house)) {
+    const [lx, lz, h] = toLocal(house, house.dir, p), b = getPlan().box;
+    return lx >= b.lx0 && lx <= b.lx1 && lz >= b.lz0 && lz <= 1 && h >= -1 && h <= b.h1;
+  }
   const f = DIRS[house.dir];
   const r = { x: -f.z, z: f.x };
   const dx = Math.floor(p.x) - house.x, dz = Math.floor(p.z) - house.z;

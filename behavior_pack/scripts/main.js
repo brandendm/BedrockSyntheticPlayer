@@ -9,6 +9,7 @@ import { Agent } from './game/agent.js';
 import { runTests } from './game/scenarios.js';
 import { poll } from './game/bridge.js';
 import { CONFIG } from './config.js';
+import { getPlan, setPlan, planMaterials, describe } from './core/learnhouse.js';
 
 /** @type {Agent | null} */
 let agent = null;
@@ -92,8 +93,22 @@ function handle(text, player) {
   if (lower === 'learn' || lower.startsWith('learn ')) {
     if (!agent) return reply(player, 'spawn first');
     const [, sub = 'status', who] = lower.split(/\s+/);
-    if (sub === 'off') { agent.demo.stop(); return reply(player, 'Stopped watching you.'); }
+    if (sub === 'off') { const was = agent.demo.mode === 'house'; agent.demo.stop(); return reply(player, was ? 'Reading the house you built...' : 'Stopped watching you.'); }
+    // `learn house [name]`: your things put aside, a house kit given, the build recorded; `learn off` learns it and gives your things back.
+    if (sub === 'house') {
+      if (agent.demo.on) return reply(player, `Already recording: ${agent.demo.status()}`);
+      const pl = world.getPlayers().find((p) => p.name.toLowerCase() === String(who ?? player?.name ?? '').toLowerCase())
+        ?? world.getPlayers().find((p) => p.id !== agent.sim.id);
+      if (!pl) return reply(player, 'Who? `!bot learn house <name>`.');
+      return reply(player, agent.demo.startHouse(pl));
+    }
+    if (sub === 'restore') {
+      const pl = world.getPlayers().find((p) => p.name.toLowerCase() === String(who ?? player?.name ?? '').toLowerCase()) ?? world.getPlayers().find((p) => p.id !== agent.sim.id);
+      if (!pl) return reply(player, 'Who? `!bot learn restore <name>`.');
+      return reply(player, agent.demo.restoreFor(pl) ? 'Your things are back.' : 'Nothing of yours is put aside.');
+    }
     if (sub === 'on') {
+      if (agent.demo.mode === 'house') return reply(player, 'Recording a house: `!bot learn off` first.');
       const pl = world.getPlayers().find((p) => p.name.toLowerCase() === String(who ?? player?.name ?? '').toLowerCase())
         ?? world.getPlayers().find((p) => p.id !== agent.sim.id);
       if (!pl) return reply(player, 'Who? `!bot learn on <name>`.');
@@ -114,6 +129,23 @@ function handle(text, player) {
       return reply(player, `Going to the village at ${v.x} ${v.y} ${v.z}.`);
     }
     return reply(player, list.length ? `Villages: ${list.join('; ')}` : 'No village known yet (it looks every 3 s out to 64 blocks).');
+  }
+  // !bot house learned on|off|show|clear: build the next house like the one you built (`!bot learn house`), or the starter.
+  if (lower === 'house' || lower.startsWith('house ')) {
+    if (!agent) return reply(player, 'spawn first');
+    const [, what, sub = 'show'] = lower.split(/\s+/);
+    if (what !== 'learned') return reply(player, 'Usage: !bot house learned on | off | show | clear');
+    const plan = getPlan();
+    if (sub === 'on') {
+      if (!plan) return reply(player, 'No learned house yet: `!bot learn house` and build one.');
+      agent.setGoal('learnedHouse', true);
+      return reply(player, agent.homestead.house ? 'The next house gets your layout (the one standing now stays as it is).' : 'The house will be built like yours.');
+    }
+    if (sub === 'off') { agent.setGoal('learnedHouse', false); return reply(player, 'Back to the starter house.'); }
+    if (sub === 'clear') { setPlan(null); try { world.setDynamicProperty('agent:houseplan', undefined); } catch {} agent.setGoal('learnedHouse', false); return reply(player, 'Forgot your house.'); }
+    if (!plan) return reply(player, 'No learned house.');
+    const m = planMaterials(plan);
+    return reply(player, `${agent.memory.data.settings?.learnedHouse ? 'IN USE' : 'not in use'}: ${m.stone} stone + ${m.planks} wood blocks, ${plan.floor.length} floor cells, ${plan.chests.length} chest(s).\n${describe(plan).join('\n')}`);
   }
   // !bot profile on|off|show|refresh: use (or not) what it learned from you.
   if (lower === 'profile' || lower.startsWith('profile ')) {
@@ -359,6 +391,7 @@ system.afterEvents.scriptEventReceive.subscribe((ev) => {
 });
 
 // Remember who hits us: provoked neutral mobs become threats, and we hit back at the right one.
+world.afterEvents.playerSpawn.subscribe((ev) => { try { if (ev.initialSpawn && ev.player.id !== agent?.sim.id) agent?.demo.restoreOnJoin(ev.player); } catch { /* */ } });
 world.afterEvents.playerBreakBlock.subscribe((ev) => { try { agent?.demo.onBreak(ev); } catch { /* recording never breaks play */ } });
 world.afterEvents.playerPlaceBlock.subscribe((ev) => { try { agent?.demo.onPlace(ev); } catch { /* */ } });
 world.afterEvents.itemCompleteUse.subscribe((ev) => { try { agent?.demo.onEat(ev); } catch { /* */ } });

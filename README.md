@@ -511,6 +511,7 @@ node tools/sim_combat.mjs --weapons 150  # the same fights with each loadout: sw
 node tools/sim_combat.mjs --ambush 500   # creepers catching the bot in its quarry and mine (down the stairs behind it, dropped in, in the dark tunnel, from a side branch, on the stairs)
 node tools/sim_quarry.mjs 300    # creeper craters in the quarry stairs: can it still get down and back up?
 node tools/sim_learn.mjs           # the recorder: only the player named, nothing recorded while off
+node tools/sim_learnhouse.mjs     # learn-my-house: items put aside and back exactly, the kit, a bad house refused, a restart, rejoining
 node tools/sim_village.mjs         # village sense: constructed village, villagers, raiders, a visit taking a bed and chest loot
 node tools/sim_flight.mjs          # the flight recorder: a stuck bot trips the watchdog and the report carries the evidence
 node tools/sim_reach.mjs           # only what a player could: no breaking through vines or leaves, no building through walls
@@ -538,6 +539,17 @@ tools/test_update.sh             # Update Agent.bat's script against scratch git
 npm install; npm run typecheck # checks pack code against the real Script API typings
 ```
 
+
+## Learn my house
+
+`!bot learn house` (or **Record me building a house** on the dashboard's Learning panel): the bot watches you build a house and can build the next one like it.
+
+- **Your inventory is looked after.** Your stacks are put aside exactly as they are (enchantments, names, books: the very same stacks, plus a copy in the world memory in case the server restarts), and you're given everything a house takes: 128 cobblestone, 192 planks, 32 dirt, glass, two doors, a bed, a crafting table, two furnaces, four chests, signs, 16 torches, three stone tools, bread. `!bot learn off` (or **Done**) reads what you built and gives everything back, and a later `!bot learn restore` or just rejoining does it if something went wrong. Armor you're wearing is never touched.
+- **It reads the house, not your clicks.** The blocks you placed (minus the ones you broke) say where the house is; at the end it reads the world there, so doors, beds and chests come out right whatever order you built in. The entrance is the door with a closed room on exactly one side; everything is then stored relative to it, so the plan works facing any way (`core/learnhouse.js`).
+- **It has to pass what the starter house is held to, or it says why and the starter stays:** the room is closed (nothing can walk in but through the door; one-block holes high up and glass up high count as windows), a solid doorstep outside the door with headroom, a bed, a crafting table, a furnace and a chest, every one reachable on foot from the door, at least 9 cells of floor, no bigger than 17 by 17 by 8 or 600 wall blocks, and enough of it within reach from inside to build from there (85%+).
+- **What it keeps is the shape.** The walls, roof and floor are rebuilt in its own cheap blocks: stone-like blocks in yours become cobblestone, everything else planks. Stairs, slabs and fences count as full blocks, and furnishings have to be at floor level. A hillside wall you didn't place isn't built. Where you hung no torch inside, it hangs one.
+- **Using it is your call.** `!bot house learned on` makes the next house use your layout (the one standing stays as it is), `off` goes back to the starter, `show` draws it (`#` stone, `=` wood, `o` window, `T` table, `F` furnace, `C` chest, `B` bed, `D` door), `clear` forgets it. The starter house remains the default. The plan feeds the same site choice, block count, build, furnishing, clearing and repair code as the starter house (`core/house.js` answers for either), so it's held to the same checks: `LAYOUT=learned node tools/sim_home.mjs` runs the house-kept-usable cases (junk in the rooms, door bricked up, wrong things on the furniture spots, water, a creeper blast, fire) on a learned house, and `LAYOUT=learned node tools/sim_house.mjs` the site choice and counting in woods.
+- **Checks:** `tests/learnhouse.test.js` (a house turned all four ways gives the same plan, leaks, each missing piece named, unreachable furnishings, windows, a hillside wall, too big or small, and the house code agreeing with the plan) and `node tools/sim_learnhouse.mjs` (the recording: your things put aside and back stack for stack, the kit given, a bad house refused, a restart, rejoining). Not tried in the real game yet: the first run shows whether the game's block ids and the recording events match what the stand-ins assume.
 
 ## Village sense
 

@@ -6,7 +6,8 @@ import { standOff } from '../core/threat.js';
 import { isLog, isPlanks, TOOL_STONE, count } from '../core/recipes.js';
 import { RAW, isNight, TORCH_GOAL, fittingsPlanks, chooseFood } from '../core/settle.js';
 import { planFuel, burnsFor, charcoalInput } from '../core/fuel.js';
-import { blueprint, clearance, footing, furnishings, inside, houseMissing, standFor, layoutOf, NEW_LAYOUT, keepClear, inTheWay, frame, planAroundFixed, toLocal } from '../core/house.js';
+import { blueprint, clearance, footing, furnishings, inside, houseMissing, standFor, layoutOf, NEW_LAYOUT, keepClear, inTheWay, frame, planAroundFixed, toLocal, bounds } from '../core/house.js';
+import { getPlan } from '../core/learnhouse.js';
 import { cheapestPlaceable, plankReserve, canBreak } from '../core/costs.js';
 import { siteWork, siteScore } from '../core/site.js';
 import { depositPlan, takePlan, sortIntoChests } from '../core/storage.js';
@@ -691,7 +692,7 @@ export class Homestead {
           if (!Number.isFinite(h) || Math.abs(h - g) > 2) bad = true;
           else work += Math.abs(h - g);
         }
-        if (!bad) cands.push({ x, y: g + 1, z, layout: NEW_LAYOUT, rough: work * 1.2 + r / 4.3 });
+        if (!bad) cands.push({ x, y: g + 1, z, layout: this.newLayout(), rough: work * 1.2 + r / 4.3 });
         if (++n % 60 === 0) await S.wait(gen, 1);
       }
     }
@@ -713,6 +714,9 @@ export class Homestead {
     if (best) S.log(`house site: ${best.x} ${best.y} ${best.z} facing ${best.dir}, ${best.biome ?? '?'}, ${Math.round(best.work.seconds)} s to clear (${best.work.logs} logs, ${best.work.moves} to move), score ${Math.round(best.score)}`);
     return best && Number.isFinite(best.score) ? { x: best.x, y: best.y, z: best.z, dir: best.dir, layout: best.layout } : null;
   }
+
+  /** The layout a new house gets: the one learned from the player (`!bot house learned on`, a plan that passed), else the starter's. */
+  newLayout() { return this.a.memory.data.settings?.learnedHouse && getPlan() ? 'learned' : NEW_LAYOUT; }
 
   /** What's at the site now, for core/site.js: the room's volume and the ground under the floor. */
   siteCells(o, dir) {
@@ -1005,7 +1009,7 @@ export class Homestead {
   isHouseBlock(p) {
     const h = this.house;
     if (!h) return false;
-    const k = `${h.x},${h.y},${h.z},${h.dir},${layoutOf(h)},${h.doorLx ?? 0},${h.doorwayLx ?? 0},${JSON.stringify(h.moved ?? {})}`;
+    const k = `${h.x},${h.y},${h.z},${h.dir},${layoutOf(h)},${getPlan()?.at ?? 0},${h.doorLx ?? 0},${h.doorwayLx ?? 0},${JSON.stringify(h.moved ?? {})}`;
     if (this._houseCells?.k !== k) {
       // The walls and roof, and the ground under the house and its doorstep (the floor).
       const walls = new Set([...blueprint(h, h.dir), ...footing(h, h.dir)].map((b) => `${b.x},${b.y},${b.z}`));
@@ -1115,17 +1119,17 @@ export class Homestead {
   houseFires() {
     const h = this.house;
     if (!h || !this.houseLoaded()) return [];
-    const at = frame(h, h.dir), back = layoutOf(h) === 'chests' ? -6 : -2;
+    const at = frame(h, h.dir), bd = bounds(h), back = bd.lz0;
     // One engine query for the box (it's asked every couple of seconds near the house: ~550 block
     // reads each time otherwise), block by block where that isn't available.
-    const a = at(-3, back - 1, -1), b = at(3, 4, 5);
+    const a = at(bd.lx0 - 1, back - 1, -1), b = at(bd.lx1 + 1, bd.lz1 + 2, bd.h1 + 2);
     try {
       const vol = new BlockVolume({ x: Math.min(a.x, b.x), y: a.y, z: Math.min(a.z, b.z) }, { x: Math.max(a.x, b.x), y: b.y, z: Math.max(a.z, b.z) });
       const hits = this.dim.getBlocks(vol, { includeTypes: ['minecraft:fire', 'minecraft:soul_fire'] }, true);
       return [...hits.getBlockLocationIterator()].map((p) => ({ x: p.x, y: p.y, z: p.z }));
     } catch {}
     const out = [];
-    for (let lx = -3; lx <= 3; lx++) for (let lz = back - 1; lz <= 4; lz++) for (let dy = -1; dy <= 5; dy++) {
+    for (let lx = bd.lx0 - 1; lx <= bd.lx1 + 1; lx++) for (let lz = back - 1; lz <= bd.lz1 + 2; lz++) for (let dy = -1; dy <= bd.h1 + 2; dy++) {
       const p = at(lx, lz, dy);
       if (/^(fire|soul_fire)$/.test(this.S.blockAt(p) ?? '')) out.push(p);
     }
@@ -1346,7 +1350,9 @@ export class Homestead {
         // (tested: direction 0 = head to the south). Setting it at the foot cell put the foot in
         // the back wall, knocking a hole in it: so set the head cell, facing the front.
         take(this.sim, 'bed', 1);
-        const direction = { south: 0, west: 1, north: 2, east: 3 }[h.dir];
+        // (head toward the front in the starter's rooms; a learned house's bed may lie any way: head minus foot says which)
+        const hv = { x: Math.sign(fur.bed.head.x - fur.bed.foot.x), z: Math.sign(fur.bed.head.z - fur.bed.foot.z) };
+        const direction = hv.z > 0 ? 0 : hv.x < 0 ? 1 : hv.z < 0 ? 2 : 3;
         const clearBeds = () => {
           for (let dx = -2; dx <= 2; dx++) for (let dz = -2; dz <= 2; dz++) {
             const c = { x: fur.bed.head.x + dx, y: fur.bed.head.y, z: fur.bed.head.z + dz };

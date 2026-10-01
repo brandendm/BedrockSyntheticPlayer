@@ -362,3 +362,28 @@ class LearnTests(unittest.TestCase):
         finally:
             server.LOG_DIR = old
             server._profile.update(at=0.0, data=None)
+
+    def test_a_learned_house_is_kept_and_shown(self):
+        import threading, tempfile, pathlib, json, urllib.request
+        from http.server import ThreadingHTTPServer
+        from brain import server
+        old = server.LOG_DIR
+        server.LOG_DIR = pathlib.Path(tempfile.mkdtemp())
+        try:
+            engine = DecisionEngine(JevClient("", transport=fake_transport()), NO_LLM)
+            httpd = ThreadingHTTPServer(("127.0.0.1", 0), server.make_handler(engine))
+            threading.Thread(target=httpd.serve_forever, daemon=True).start()
+            base = f"http://127.0.0.1:{httpd.server_address[1]}"
+            none = json.loads(urllib.request.urlopen(base + "/api/house").read())
+            self.assertIsNone(none["house"])
+            evt = {"type": "learned_house", "ok": False, "problems": ["no bed"], "notes": [], "stats": None, "ascii": [], "plan": None, "player": "B"}
+            body = json.dumps(evt).encode()
+            urllib.request.urlopen(urllib.request.Request(base + "/event", data=body, headers={"Content-Type": "application/json"})).read()
+            got = json.loads(urllib.request.urlopen(base + "/api/house").read())["house"]
+            self.assertFalse(got["ok"])
+            self.assertEqual(got["problems"], ["no bed"])
+            self.assertTrue((server.LOG_DIR / "learned_house.jsonl").exists())
+            httpd.shutdown()
+        finally:
+            server.LOG_DIR = old
+            server._house.update(at=0.0, data=None)

@@ -61,6 +61,7 @@ def append_traces(traces: list) -> None:
 
 _demo = {"player": None, "last": 0.0, "rows": 0}
 _profile = {"at": 0.0, "data": None}
+_house = {"at": 0.0, "data": None}  # the last house learned off the player (core/learnhouse.js): verdict, picture, plan
 
 
 def store_demo(evt: dict) -> None:
@@ -80,6 +81,20 @@ def store_demo(evt: dict) -> None:
     with _lock:
         _demo.update(player=player, last=time.time(), rows=_demo["rows"] + len(rows))
         _profile["at"] = 0.0  # worked out afresh next time it's asked for
+
+
+def store_house(evt: dict) -> None:
+    """Keep the verdict on a house the player built (brain/logs/learned_house.jsonl, the last one in memory)."""
+    keep = {k: evt.get(k) for k in ("ok", "problems", "notes", "stats", "ascii", "plan", "player")}
+    keep["at"] = time.time()
+    try:
+        LOG_DIR.mkdir(parents=True, exist_ok=True)
+        with (LOG_DIR / "learned_house.jsonl").open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(keep) + "\n")
+    except OSError:
+        pass
+    with _lock:
+        _house.update(at=keep["at"], data=keep)
 
 
 def get_profile() -> dict:
@@ -294,6 +309,9 @@ def make_handler(engine: DecisionEngine, key: str | None = None):
                 with _lock:
                     rec = {"recording": _demo["player"] if time.time() - _demo["last"] < 20 else None, "rows": _demo["rows"]}
                 return self._send(200, {**get_profile(), "demo": rec, "report": learn.report(get_profile())})
+            if self.path == "/api/house":
+                with _lock:
+                    return self._send(200, {"house": _house["data"]})
             if self.path == "/health":
                 return self._send(200, {"ok": True})
             self._send(404, {"error": "not found"})
@@ -333,6 +351,9 @@ def make_handler(engine: DecisionEngine, key: str | None = None):
                 return self._send(400, {"error": "bad json"})
             if evt.get("type") == "demo":
                 store_demo(evt)
+                return self._send(200, {"actions": []})
+            if evt.get("type") == "learned_house":
+                store_house(evt)
                 return self._send(200, {"actions": []})
             if evt.get("type") in ("log", "test_result", "test_batch", "flight"):
                 # What the bot said and test results, kept on disk so they can be read later
