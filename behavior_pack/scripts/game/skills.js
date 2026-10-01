@@ -2922,6 +2922,7 @@ export class Skills {
       if (!/chest/.test(this.blockAt(cell) ?? '') && !(await H.placeAt(gen, cell, 'chest')) && !(await H.setChest(gen, cell, { dir: opposite[facing] }))) { this.log('camp chest: the chest didn\'t go down'); break; }
       c[key] = { x: cell.x, y: cell.y, z: cell.z };
       this.protect(cell);
+      { const up = { x: cell.x, y: cell.y + 1, z: cell.z }; if (!OPEN.test(this.blockAt(up) ?? 'air')) await this.clearCampCell(gen, up); } // (a block on top and it won't open)
       made++;
       this.log(`camp chest: ${cell.x} ${cell.y} ${cell.z} facing ${facing}${i === 1 ? `, size ${this.a.homestead.container(cell)?.size ?? '?'} (54 = a double chest)` : ''}`);
     }
@@ -2929,6 +2930,23 @@ export class Skills {
     this.restHands();
     if (made) this.a.say(c.chest2 ? 'A double chest at the camp now: spare stone and drops go in it when my pack fills.' : 'Put a chest at the camp: spare stone and mob drops go in it when my pack fills.');
     return made > 0;
+  }
+
+  /**
+   * Open a chest the way a player does: a chest won't open with a block on top of it, so clear that
+   * first (mined, destroy fallback), then look at it and use it. Returns the container or null.
+   */
+  async openChest(gen, ch) {
+    const above = { x: ch.x, y: ch.y + 1, z: ch.z };
+    if (!OPEN.test(this.blockAt(above) ?? 'air') && !/chest/.test(this.blockAt(above) ?? '')) {
+      this.log(`chest: clearing ${this.blockAt(above)} off the top of the chest at ${ch.x} ${ch.y} ${ch.z}`);
+      await this.clearCampCell(gen, above);
+    }
+    await this.a.motor.lookAt(center(ch), 8, 30);
+    this.check(gen);
+    try { this.sim.interactWithBlock(ch, Direction.Up); } catch (e) { this.log(`chest: open: ${e}`); }
+    await this.wait(gen, 6);
+    return this.a.homestead.container(ch);
   }
 
   /** Pack nearly full: the camp chest if there is one in reach, otherwise junk stone thrown away. */
@@ -2964,9 +2982,7 @@ export class Skills {
     for (const ch of [c.chest, c.chest2].filter(Boolean)) {
       if (!Object.keys(plan).some((id) => plan[id] > 0)) break;
       if (!(await this.reach(gen, ch))) { this.log(`camp stash: couldn't reach the chest at ${ch.x} ${ch.y} ${ch.z}`); continue; }
-      await this.a.motor.lookAt(center(ch), 8, 30);
-      this.check(gen);
-      const chest = this.a.homestead.container(ch);
+      const chest = await this.openChest(gen, ch);
       if (!chest || !pack) continue;
       for (let i = 0; i < pack.size; i++) {
         const it = pack.getItem(i);
@@ -3908,8 +3924,26 @@ export class Skills {
     return v;
   }
 
+  /**
+   * Out of a ravine/canyon (open sky overhead but walls 3+ high round us, a long corridor so the
+   * trapped test never trips): looking for trees along its floor just paces the walls. Climbs out
+   * with the surface machinery. Not retried for 2 minutes after a failure.
+   */
+  async ravineOut(gen) {
+    if (this.a.homestead?.isHome() || this.rimClimb() < 4) return false;
+    if (this.ravineFailAt && Date.now() - this.ravineFailAt < 120000) return false;
+    this.log(`ravine: walls ${this.rimClimb()} high at ${this.feet().x} ${this.feet().y} ${this.feet().z}, climbing out`);
+    this.a.sayOnce('ravine', "I'm down in a ravine: climbing out to look for trees up top.", 60000);
+    this.inRavine = true;
+    let ok = false;
+    try { ok = await this.toSurface(gen); } finally { this.inRavine = false; }
+    if (!ok) this.ravineFailAt = Date.now();
+    return ok;
+  }
+
   async needsEscape(gen) {
     if (this.a.homestead?.isHome()) return false; // our own house: the door is the way out
+    if (this.inRavine && this.rimClimb() >= 3) return true;
     if (this.isUnderground()) { this.log(`escape: underground at ${this.feet().x} ${this.feet().y} ${this.feet().z}`); return true; }
     if (await this.isTrapped(gen)) { this.log(`escape: hemmed in at ${this.feet().x} ${this.feet().y} ${this.feet().z}`); return true; }
     return false;
@@ -4673,6 +4707,7 @@ export class Skills {
     const st = this.exploreStall ?? (this.exploreStall = new ExploreStall());
     st.start(this.sim.location, want ?? what);
     try {
+      if (await this.ravineOut(gen)) return;
       const v = st.verdict();
       if (v === 'giveup') {
         this.exploreGaveUp[want ?? what] = Date.now() + 600000;
