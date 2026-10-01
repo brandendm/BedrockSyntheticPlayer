@@ -149,3 +149,8 @@ test('a farm tend that did nothing rests the farm (it was sent straight back, fo
   assert.equal(advanceStep(f).step, 'tend_farm');
   assert.notEqual(advanceStep({ ...f, farm: { ...f.farm, resting: true } }).step, 'tend_farm');
 });
+
+test('no house (the house goal off): the farm is skipped, iron carries on', () => {
+  const s = advanceStep({ ...base, inv: kit, farm: null, waterNearHouse: null, goals: { farm: false } });
+  assert.equal(s.step, 'get_iron');
+});

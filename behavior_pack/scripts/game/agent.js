@@ -1062,7 +1062,11 @@ export class Agent {
         // Down our own mine, the camp's jobs (smelting, crafting a spare, putting on armor) happen
         // right there: climbing out first sent it to the surface to do them.
         const campJob = ['smelt', 'collect_smelt', 'wait_smelt', 'craft', 'goto_table', 'equip'].includes(step.step) && !!S.campFurnace() && this.minedUnderground();
-        if (!['get_stone', 'get_iron', 'shelter', 'go_home'].includes(step.step) && !campJob && (await S.needsEscape(gen))) {
+        // Crafting at a table that's right here (in reach and in view): do it where we stand, then climb out.
+        // Climbing out first and walking back down to the table (it was set down in the hole) for each
+        // try was a loop: craft, escape, goto_table, craft, escape... for 2.5 minutes.
+        const craftHere = step.step === 'craft' && step.needsTable !== false && tableDist === 0;
+        if (!['get_stone', 'get_iron', 'shelter', 'go_home'].includes(step.step) && !campJob && !craftHere && (await S.needsEscape(gen))) {
           last = ''; // getting out first isn't the step failing: don't count it toward giving up on it
           await S.toSurface(gen);
           continue;
@@ -1499,6 +1503,12 @@ export class Agent {
     if (step.step === 'done') step = settleStep({ ...this.settleFacts(inv, tableDist), ...(dayTime ? { time: 6000 } : {}) });
     // Moved in: a farm, iron, iron gear (core/advance.js).
     if (step.step === 'done' && this.homestead.house) step = advanceStep(this.advanceFacts(inv, tableDist));
+    // The house goal switched off (!bot goal house off): no home to farm by, but iron is still a goal.
+    // Without this it said "all goals done" and stood about with iron and the farm still switched on.
+    else if (step.step === 'done' && !this.homestead.house && this.toggles().house === false) {
+      const f = this.advanceFacts(inv, tableDist);
+      step = advanceStep({ ...f, goals: { ...f.goals, farm: false } });
+    }
     // Nothing else left and still no bed (the sheep search put off, noteSearch): look now rather than
     // stand about till the wait's over.
     if (step.step === 'done' && this.homestead.house && this.toggles().beds !== false && !this.homestead.houseState()?.bed && !inv.bed &&
