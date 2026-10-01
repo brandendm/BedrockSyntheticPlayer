@@ -391,9 +391,15 @@ export class Homestead {
   }
 
   /** Load the furnace and leave it working. input: 'log' (charcoal) or 'food' (raw meat). */
-  async startSmelt(gen, input, n, fuelPlanks) {
-    const pos = await this.ensureFurnace(gen, input);
+  async startSmelt(gen, input, n, fuelPlanks, at = null) {
+    let pos = at ?? await this.ensureFurnace(gen, input);
     if (!pos) return false;
+    // Iron at the camp with its second furnace free: half in each (the second goes in below, after this one).
+    let second = null;
+    if (!at && input === 'ore' && n >= 4) {
+      const c2 = this.S.campFurnace2?.(), c1 = this.S.campFurnace?.();
+      if (c1 && c2 && dist3D(pos, c1) < 0.5 && !this.busy(c2) && !this.jobAt(c2)) { second = c2; n = Math.ceil(Math.min(n, invCounts(this.sim).raw_iron ?? 0) / 2); }
+    }
     // Still cooking something else: never load over it (the plan will come back when it's done).
     const busy = this.jobAt(pos);
     if (busy && system.currentTick < busy.readyAt) { this.S.log('smelt: that furnace is still going'); return false; }
@@ -440,6 +446,10 @@ export class Homestead {
     this.setJob({ pos, readyAt: system.currentTick + k * 200 + 20, kind: input, n: k });
     this.a.saveState();
     this.a.say(`Furnace going: ${k} ${inId.replace(/_/g, ' ')} (${Math.round(k * 10)} s). I'll get on with other things.`);
+    if (second && (invCounts(this.sim).raw_iron ?? 0) > 0) {
+      this.S.log('smelt: the rest in the camp\'s second furnace');
+      await this.startSmelt(gen, input, invCounts(this.sim).raw_iron, fuelPlanks, second).catch((e) => { if (e?.constructor?.name === 'Aborted') throw e; this.S.log(`smelt: second furnace: ${e}`); });
+    }
     return true;
   }
 

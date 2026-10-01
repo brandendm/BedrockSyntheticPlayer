@@ -2729,12 +2729,18 @@ export class Skills {
     return c && /furnace/.test(this.blockAt(c.furnace) ?? 'furnace') ? c.furnace : null;
   }
 
+  /** The camp's second furnace (iron cooks in both at once), if there is one still standing. */
+  campFurnace2() {
+    const c = this.homeQuarry()?.camp;
+    return c?.furnace2 && /furnace/.test(this.blockAt(c.furnace2) ?? 'furnace') ? c.furnace2 : null;
+  }
+
   /** Is p the camp's table or furnace (theirs to stay put)? */
   isCampBlock(p) {
     const c = this.quarry?.camp;
     if (!c) return false;
     const same = (a) => a && Math.floor(p.x) === a.x && Math.floor(p.y) === a.y && Math.floor(p.z) === a.z;
-    return same(c.furnace) || same(c.table);
+    return same(c.furnace) || same(c.table) || same(c.furnace2);
   }
 
   /**
@@ -2790,6 +2796,40 @@ export class Skills {
     return true;
   }
 
+
+  /**
+   * A second furnace at the camp, beside the first (in line with the table): a batch of iron is
+   * split over both, so 18 iron is about 90 s of waiting, not 180. Needs 8 cobblestone (or a furnace
+   * in the pack); tried again after 5 minutes if it can't be.
+   */
+  async ensureCampFurnace2(gen) {
+    const q = this.homeQuarry(), c = q?.camp;
+    if (!c || c.furnace2 || (c.furnace2Try && Date.now() - c.furnace2Try < 300000)) return false;
+    const f = this.feet();
+    if (Math.hypot(f.x - c.stand.x, f.z - c.stand.z) > 10 || Math.abs(f.y - c.stand.y) > 2) return false;
+    const inv = invCounts(this.sim);
+    if (!inv.furnace && count(inv, (id) => TOOL_STONE.has(id)) < 8) return false; // (no stone yet: not worth marking it tried)
+    const dx = Math.sign(c.furnace.x - c.stand.x), dz = Math.sign(c.furnace.z - c.stand.z);
+    const cell = { x: c.furnace.x - dz, y: c.furnace.y, z: c.furnace.z + dx };
+    c.furnace2Try = Date.now();
+    this.a.memory.save();
+    const here = this.blockAt(cell) ?? 'air';
+    const ok = OPEN.test(here) || (this.isDiggable([cell]) && !this.touchesLiquid(cell) && !this.isProtected(cell));
+    if (!ok) { this.log(`camp furnace 2: ${cell.x} ${cell.y} ${cell.z} is ${here}, not diggable`); return false; }
+    const H = this.a.homestead;
+    await this.goNear(gen, { x: c.stand.x + 0.5, y: c.stand.y, z: c.stand.z + 0.5 }, 0.6, 2);
+    if (!OPEN.test(here) && !(await this.mine(gen, cell))) { this.log(`camp furnace 2: couldn't clear ${cell.x} ${cell.y} ${cell.z}`); return false; }
+    if (!invCounts(this.sim).furnace && !(await this.craft(gen, ['furnace'], true, true))) { this.log('camp furnace 2: not made'); return false; }
+    if (!(await H.placeAt(gen, cell, 'furnace'))) { this.log('camp furnace 2: it didn\'t go down'); return false; }
+    this.a.memory.remember('furnace', this.dim.id, cell);
+    c.furnace2 = { x: cell.x, y: cell.y, z: cell.z };
+    this.protect(cell);
+    this.a.memory.save();
+    this.restHands();
+    this.log(`camp furnace 2: ${cell.x} ${cell.y} ${cell.z}`);
+    this.a.say('A second furnace at the camp: iron cooks twice as fast.');
+    return true;
+  }
 
   /**
    * A chest at the mine camp, on the side of the stand opposite the table: what a player does, so a
@@ -2998,6 +3038,7 @@ export class Skills {
     if (this.feet().y < IRON_Y - 4 && !(await this.backToLevel(gen, IRON_Y))) return false;
     // 3. The camp at the foot of the stairs (once), then the branch mine.
     await this.ensureCamp(gen).catch((e) => { if (e instanceof Aborted) throw e; this.log(`camp: ${e}`); });
+    await this.ensureCampFurnace2(gen).catch((e) => { if (e instanceof Aborted) throw e; this.log(`camp furnace 2: ${e}`); });
     await this.ensureCampChest(gen).catch((e) => { if (e instanceof Aborted) throw e; this.log(`camp chest: ${e}`); });
     // Iron seen on an earlier trip and not mined (night fell, a fight, a full pack): that first.
     if (await this.pendingIron(gen, more)) this.a.sayOnce('iron-pending', 'Back for the iron I saw last time.', 120000);
