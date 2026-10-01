@@ -534,7 +534,7 @@ export class Skills {
     let climbs = 0;
     for (let i = 0; i < tries + climbs; i++) {
       this.check(gen);
-      const res = await this.a.plan(this.sim.location, pos, tolerance, 8000);
+      const res = await this.a.plan(this.sim.location, pos, tolerance, i === 0 ? 8000 : 4000);
       this.check(gen);
       // Around, or through? A walking route that winds far past the straight line (a mangrove
       // swamp, a hedge of leaves, a wall of dirt) gets priced against one that breaks its way

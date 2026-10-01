@@ -8,7 +8,8 @@ const base = { tableDist: 0, time: 1000, furnace: null, smelt: null, house: null
 const tools = { stone_pickaxe: 1, stone_sword: 1 };
 
 test('ladder: furnace, then sheep, then charcoal, then the house', () => {
-  assert.deepEqual(settleStep({ ...base, inv: { ...tools, cobblestone: 2 } }), { step: 'get_stone', need: 6, why: 'furnace' });
+  assert.deepEqual(settleStep({ ...base, inv: { ...tools, cobblestone: 2 } }), { step: 'get_stone', need: 15, why: 'furnace' }); // 6 for the furnace + 9 for the spare pickaxes, one trip
+  assert.equal(settleStep({ ...base, inv: { ...tools, stone_pickaxe: 2, cobblestone: 2 } }).need, 6);
   assert.equal(settleStep({ ...base, inv: { ...tools, cobblestone: 8, oak_log: 2 } }).items[0], 'furnace');
   const s = settleStep({ ...base, sheep: true, inv: { ...tools, furnace: 1, white_wool: 1 } });
   assert.deepEqual([s.step, s.what, s.need], ['hunt', 'sheep', 2]);

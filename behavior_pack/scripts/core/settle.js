@@ -21,6 +21,9 @@ export const FAR_FROM_HOME = 128; // blocks: further than this at dusk, dig in f
 const HOUSE = materials();
 
 const stone = (inv) => count(inv, (id) => TOOL_STONE.has(id));
+// The furnace trip also digs the 9 stone for the spare pickaxes the mine wants (core/advance.js), so the bot climbs
+// the stairs once, not once for the furnace and again for the spares.
+const spareStone = (inv) => (count(inv, (id) => /_pickaxe$/.test(id)) >= 1 && count(inv, (id) => /^(stone|iron|diamond|netherite)_pickaxe$/.test(id)) < 2 ? 9 : 0);
 const wool = (inv) => Math.max(0, ...Object.entries(inv).filter(([id]) => isWool(id)).map(([, n]) => n));
 export const FOODS = {
   cooked_beef: 8, cooked_porkchop: 8, cooked_mutton: 6, cooked_chicken: 6, cooked_rabbit: 5, cooked_cod: 5,
@@ -141,7 +144,7 @@ export function settleStep(f) {
   // 1. Furnace.
   const haveFurnace = has(inv, 'furnace') || !!f.furnace || !!f.house?.furnace;
   if (!haveFurnace) {
-    if (stone(inv) < 8) return { step: 'get_stone', need: 8 - stone(inv), why: 'furnace' };
+    if (stone(inv) < 8) return { step: 'get_stone', need: 8 - stone(inv) + spareStone(inv), why: 'furnace' };
     return craftStep(inv, ['furnace'], f.tableDist);
   }
 
@@ -215,7 +218,7 @@ export function settleStep(f) {
     if (has(inv, 'furnace') || (f.furnace && !f.furnace.inHouse && !f.smelt)) return { step: 'furnish' };
     if (f.smelt) return { step: 'wait_smelt' }; // it's cooking: collect, then carry the furnace home
     if (!f.furnace) {
-      if (stone(inv) < 8) return { step: 'get_stone', need: 8 - stone(inv), why: 'furnace' };
+      if (stone(inv) < 8) return { step: 'get_stone', need: 8 - stone(inv) + spareStone(inv), why: 'furnace' };
       return craftStep(inv, ['furnace'], f.tableDist);
     }
   }
