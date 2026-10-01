@@ -1126,7 +1126,7 @@ export class Skills {
     if (!b) return;
     let light, sky;
     try { light = b.getLightLevel(); sky = b.getSkyLightLevel(); } catch { return; }
-    if (sky > 7 || light > 5) return;
+    if (sky > 7 || light > 3) return;
     if (!invCounts(this.sim).torch) {
       const inv = invCounts(this.sim);
       if ((inv.charcoal ?? 0) + (inv.coal ?? 0) > 0) await this.craft(gen, ['torch'], false, true);
@@ -1674,7 +1674,7 @@ export class Skills {
     }
     if (chopped) this.memVisits.clear(); // trips paid off: nothing to hold against those memories
     await this.descendPillar(gen); // built up to reach the top logs: come back down the same way
-    await this.grabLitter(gen); // free fuel within reach: the sweep below picks it up with the logs
+    { const f = invCounts(this.sim); if ((f.coal ?? 0) + (f.charcoal ?? 0) < 8) await this.grabLitter(gen); } // free fuel within reach (only while short of it): the sweep below picks it up with the logs
     await this.sweep(gen, trunk, 7, null, 8); // every log that fell, and saplings/apples while we're here
     // Every log we broke should be in the inventory now. Missing some: they're on the ground
     // (or up in the leaves): look harder before moving on to another tree.

@@ -616,3 +616,7 @@ Debug from the server console: `scriptevent agent:cmd spawn`, `scriptevent agent
 5. Jev tactical layer on combat and target selection; LLM recovery when stuck; LLM-proposed recipes validated by the solver and cached
 6. Blueprint builder (`.mcstructure` → ordered placements, site selection)
 7. Iron farm: villager transport and zombie capture
+
+### From the u110 log (u111)
+- Wood before the trip: up to 8 logs' worth fetched whenever starting a trip from the surface (even if the quarry was visited earlier).
+- Leaf-litter swiping only while fuel is under 8; quarry torches only at light 3 or less.
