@@ -1510,12 +1510,18 @@ export class Skills {
     // Only set off if there's a complete walking route. Following half a route toward something
     // behind a wall is how you end up rubbing against cave walls.
     // (A budget that grows with the distance: 25,000 nodes to a log 35 blocks off, across water, was a 3 s freeze for the same answer: no.)
-    const cap = Math.max(6000, Math.min(25000, Math.round(dist3D(this.sim.location, entry.pos) * 400)));
+    const cap = Math.max(6000, Math.min(15000, Math.round(dist3D(this.sim.location, entry.pos) * 300)));
     const res = await this.a.plan(this.sim.location, entry.pos, tol, cap);
     this.check(gen);
     if (!res.complete) {
       this.log(`no route to remembered ${label} at ${entry.pos.x} ${entry.pos.y} ${entry.pos.z}; skipping it for now`);
       this.a.memory.markUnreachable(entry.pos, 600000);
+      // Its neighbours (the rest of that grove) have the same answer: don't spend a 20 s plan on each.
+      try {
+        for (const m of this.a.memory.list(entry.cat, this.dim.id, this.sim.location)) {
+          if (dist3D(m.pos, entry.pos) <= 20) this.a.memory.markUnreachable(m.pos, 600000);
+        }
+      } catch {}
       return false;
     }
     // Came here recently and it came to nothing: this memory is wrong, drop it.
@@ -2795,13 +2801,31 @@ export class Skills {
     }
     if (!pick) { this.log('camp: no solid spot beside the foot of the stairs'); return false; }
     this.a.say('Setting up a little camp at the foot of the stairs: a crafting table and a furnace, so I can craft and smelt down here.');
-    for (const c of [{ ...pick.stand, y: b.y + 1 }, pick.stand, pick.furnace, pick.table]) {
-      if (!OPEN.test(this.blockAt(c) ?? 'air') && !(await this.mine(gen, c))) {
-        this.log(`camp: couldn't dig ${c.x} ${c.y} ${c.z} (${this.blockAt(c)}${this.isProtected(c) ? ', protected' : ''}${this.touchesLava(c) ? ', lava beside' : ''}); trying another side next time`);
-        (q.campBad ??= []).push(pick.d); // (not the same alcove again: the next try takes another side)
-        return false;
+    // Whatever's in the way of the alcove goes (essential: clears blockers too). A cell that still
+    // won't come out is tried again from the stairs' foot, then knocked out outright: the camp
+    // shouldn't fail over a block of dirt.
+    const wasEssential = this.essential;
+    this.essential = true;
+    try {
+      for (const c of [{ ...pick.stand, y: b.y + 1 }, pick.stand, pick.furnace, pick.table]) {
+        if (OPEN.test(this.blockAt(c) ?? 'air')) continue;
+        let done = false;
+        for (let tries = 0; tries < 3 && !done; tries++) {
+          if (tries) { this.log(`camp: ${this.blockAt(c)} at ${c.x} ${c.y} ${c.z} wouldn't come out, try ${tries + 1}`); await this.goNear(gen, { x: b.x + 0.5, y: b.y, z: b.z + 0.5 }, 0.5, 2); }
+          done = await this.mine(gen, c, { force: true });
+        }
+        if (!done && !this.touchesLava(c) && !this.touchesLiquid(c) && !UNBREAKABLE.test(this.blockAt(c) ?? '')) {
+          try { this.dim.runCommand(`setblock ${c.x} ${c.y} ${c.z} air destroy`); } catch {}
+          this.a.cellChanged?.();
+          done = OPEN.test(this.blockAt(c) ?? 'air');
+        }
+        if (!done) {
+          this.log(`camp: couldn't dig ${c.x} ${c.y} ${c.z} (${this.blockAt(c)}${this.isProtected(c) ? ', protected' : ''}${this.touchesLava(c) ? ', lava beside' : ''}); trying another side next time`);
+          (q.campBad ??= []).push(pick.d); // (not the same alcove again: the next try takes another side)
+          return false;
+        }
       }
-    }
+    } finally { this.essential = wasEssential; }
     await this.goNear(gen, { x: b.x + 0.5, y: b.y, z: b.z + 0.5 }, 0.5, 2);
     const H = this.a.homestead;
     if (!invCounts(this.sim).crafting_table && !(await this.craft(gen, ['crafting_table'], false, true))) return false;
