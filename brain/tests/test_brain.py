@@ -249,3 +249,49 @@ class DashboardEndpointTests(unittest.TestCase):
         self.assertEqual(again["lines"], [])
         self.call("/poll", {"status": {"online": True}, "traces": [{"tick": 3, "msg": "new one"}]})
         self.assertEqual([l["msg"] for l in self.call(f"/api/trace?since={d['next']}")["lines"]], ["new one"])
+
+
+class PhoneAccessTests(unittest.TestCase):
+    """Off this PC the dashboard needs the key (it can run server commands); this PC and the game never do."""
+
+    def test_this_pc_never_needs_it(self):
+        from brain.server import authorized
+        self.assertEqual(authorized("127.0.0.1", "", "", "secret"), "ok")
+        self.assertEqual(authorized("::1", "", "", "secret"), "ok")
+
+    def test_no_key_set_means_open(self):
+        from brain.server import authorized
+        self.assertEqual(authorized("192.168.1.50", "", "", None), "ok")
+
+    def test_phone_needs_key_then_cookie(self):
+        from brain.server import authorized
+        self.assertEqual(authorized("192.168.1.50", "", "", "secret"), "no")
+        self.assertEqual(authorized("192.168.1.50", "", "wrong", "secret"), "no")
+        self.assertEqual(authorized("192.168.1.50", "", "secret", "secret"), "set")
+        self.assertEqual(authorized("192.168.1.50", "a=1; scout_key=secret", "", "secret"), "ok")
+        self.assertEqual(authorized("192.168.1.50", "scout_key=nope", "", "secret"), "no")
+
+    def test_over_http_a_stranger_is_refused_and_the_key_makes_a_cookie(self):
+        import threading, http.client
+        from http.server import ThreadingHTTPServer
+        from brain import server
+        engine = DecisionEngine(JevClient("", transport=fake_transport()), NO_LLM)
+        # (Connections here come from 127.0.0.1, which is always allowed: pretend it isn't.)
+        orig = server.authorized
+        server.authorized = lambda ip, cookie, q, key: orig("10.0.0.9", cookie, q, key)
+        try:
+            httpd = ThreadingHTTPServer(("127.0.0.1", 0), server.make_handler(engine, "secret"))
+            threading.Thread(target=httpd.serve_forever, daemon=True).start()
+            c = http.client.HTTPConnection("127.0.0.1", httpd.server_address[1])
+            c.request("GET", "/api/status"); r = c.getresponse(); r.read()
+            self.assertEqual(r.status, 401)
+            c.request("POST", "/api/command", body='{"text":"/gamemode creative"}', headers={"Content-Type": "application/json"}); r = c.getresponse(); r.read()
+            self.assertEqual(r.status, 401)
+            c.request("GET", "/?key=secret"); r = c.getresponse(); r.read()
+            self.assertEqual(r.status, 302)
+            self.assertIn("scout_key=secret", r.getheader("Set-Cookie"))
+            c.request("GET", "/api/status", headers={"Cookie": "scout_key=secret"}); r = c.getresponse(); r.read()
+            self.assertEqual(r.status, 200)
+            httpd.shutdown()
+        finally:
+            server.authorized = orig

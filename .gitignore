@@ -4,3 +4,4 @@ brain/config.json
 brain/usage.json
 server/
 brain/logs/
+brain/access_key.txt

@@ -125,7 +125,46 @@ def build_engine(cfg: dict) -> DecisionEngine:
     return DecisionEngine(jev, llm, cfg["min_confidence"])
 
 
-def make_handler(engine: DecisionEngine):
+def lan_ip() -> str:
+    """This PC's address on the local network (what a phone types), or 127.0.0.1 if there's none."""
+    import socket
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sk:
+            sk.connect(("10.255.255.255", 1))  # (no packet is sent: it only picks the interface)
+            return sk.getsockname()[0]
+    except OSError:
+        return "127.0.0.1"
+
+
+def access_key(cfg: dict) -> str:
+    """The key a phone needs: config's "access_key", else one made once and kept in brain/access_key.txt."""
+    if cfg.get("access_key"):
+        return str(cfg["access_key"])
+    f = ROOT / "access_key.txt"
+    if f.exists() and f.read_text().strip():
+        return f.read_text().strip()
+    import secrets
+    k = secrets.token_urlsafe(9)
+    f.write_text(k + "\n")
+    return k
+
+
+def authorized(client_ip: str, cookie: str, query_key: str, key: str | None) -> str:
+    """'ok' (this PC, or no key needed, or the cookie matches), 'set' (the key in the URL: hand out the
+    cookie), or 'no'. The game talks from this PC, so it never needs the key; a phone on the Wi-Fi does."""
+    if key is None or client_ip in ("127.0.0.1", "::1", "localhost"):
+        return "ok"
+    import hmac
+    for part in (cookie or "").split(";"):
+        name, _, val = part.strip().partition("=")
+        if name == "scout_key" and hmac.compare_digest(val, key):
+            return "ok"
+    if query_key and hmac.compare_digest(query_key, key):
+        return "set"
+    return "no"
+
+
+def make_handler(engine: DecisionEngine, key: str | None = None):
     class Handler(BaseHTTPRequestHandler):
         def _send(self, code: int, obj: dict):
             body = json.dumps(obj).encode()
@@ -139,8 +178,32 @@ def make_handler(engine: DecisionEngine):
             n = int(self.headers.get("Content-Length", 0))
             return json.loads(self.rfile.read(n) or b"{}")
 
+        def _gate(self) -> bool:
+            """False if the request was answered here (not allowed, or the key turned into a cookie)."""
+            from urllib.parse import urlparse, parse_qs
+            q = parse_qs(urlparse(self.path).query).get("key", [""])[0]
+            verdict = authorized(self.client_address[0], self.headers.get("Cookie", ""), q, key)
+            if verdict == "ok":
+                return True
+            if verdict == "set":
+                self.send_response(302)
+                self.send_header("Set-Cookie", f"scout_key={key}; Path=/; Max-Age=31536000; SameSite=Strict")
+                self.send_header("Location", "/")
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+                return False
+            body = b"Scout dashboard: open the link with ?key=... that the brain window printed."
+            self.send_response(401)
+            self.send_header("Content-Type", "text/plain")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return False
+
         def do_GET(self):
-            if self.path in ("/", "/index.html", "/dashboard"):
+            if self.path != "/health" and not self._gate():
+                return
+            if self.path.split("?")[0] in ("/", "/index.html", "/dashboard"):
                 body = (ROOT / "dashboard.html").read_bytes()
                 self.send_response(200)
                 self.send_header("Content-Type", "text/html; charset=utf-8")
@@ -189,6 +252,8 @@ def make_handler(engine: DecisionEngine):
             self._send(404, {"error": "not found"})
 
         def do_POST(self):
+            if not self._gate():
+                return
             if self.path == "/poll":
                 try:
                     body = self._read_json()
@@ -240,10 +305,19 @@ def main():
     cfg = load_config()
     engine = build_engine(cfg)
     host, port = cfg["host"], cfg["port"]
+    key = None
+    # Phone mode: "lan": true listens on the local network too (the dashboard can run server
+    # commands, so anything off this PC needs the key: this PC and the game never do).
+    if cfg.get("lan"):
+        host = "0.0.0.0"
+        key = access_key(cfg)
     log.info("brain on http://%s:%d  (Jev %s, local LLM %s)", host, port,
              "ON" if engine.jev.available else "off: rules only",
              cfg.get("ollama_url") or "off")
-    ThreadingHTTPServer((host, port), make_handler(engine)).serve_forever()
+    if key:
+        log.info("PHONE: on the same Wi-Fi, open  http://%s:%d/?key=%s", lan_ip(), port, key)
+        log.info("(first time only: allow Python through the Windows firewall for Private networks)")
+    ThreadingHTTPServer((host, port), make_handler(engine, key)).serve_forever()
 
 
 if __name__ == "__main__":
