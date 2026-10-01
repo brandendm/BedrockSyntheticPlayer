@@ -1734,7 +1734,9 @@ export class Agent {
    */
   workNights(inv) {
     const tg = this.toggles();
-    return (this.bedsOn() === false || tg.beds === false || tg.nights === false) && SWORD_OK.test(Object.keys(inv).join(' ')) && this.health() >= 10;
+    // (Switched off on purpose: no shelter either, armed or not, hurt or not: hurt is the rest step's job. A run on 4 hp walled itself in at the end of the mine till morning.)
+    if (tg.nights === false || tg.beds === false) return true;
+    return this.bedsOn() === false && SWORD_OK.test(Object.keys(inv).join(' ')) && this.health() >= 10;
   }
 
   /**
