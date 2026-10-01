@@ -435,3 +435,30 @@ class LearnTests(unittest.TestCase):
         finally:
             server.LOG_DIR = old
             server._paths.clear()
+
+    def test_settings_are_kept_for_new_worlds(self):
+        import threading, tempfile, pathlib, json, urllib.request
+        from http.server import ThreadingHTTPServer
+        from brain import server
+        oldf = server.SETTINGS_FILE
+        server.SETTINGS_FILE = pathlib.Path(tempfile.mkdtemp()) / "settings.json"
+        try:
+            engine = DecisionEngine(JevClient("", transport=fake_transport()), NO_LLM)
+            httpd = ThreadingHTTPServer(("127.0.0.1", 0), server.make_handler(engine))
+            threading.Thread(target=httpd.serve_forever, daemon=True).start()
+            base = f"http://127.0.0.1:{httpd.server_address[1]}"
+            post = lambda o: urllib.request.urlopen(urllib.request.Request(base + "/event", data=json.dumps(o).encode(), headers={"Content-Type": "application/json"})).read()
+            get = lambda: json.loads(urllib.request.urlopen(base + "/api/settings").read())["settings"]
+            self.assertEqual(get(), {})
+            post({"type": "setting", "key": "beds", "on": False})
+            post({"type": "setting", "key": "chat", "on": True})
+            post({"type": "setting", "key": "../etc", "on": True})        # not a setting: ignored
+            self.assertEqual(get(), {"beds": False, "chat": True})
+            self.assertTrue(server.SETTINGS_FILE.exists())                  # (so a restart of the brain keeps them)
+            post({"type": "setting", "key": "beds", "on": True})
+            self.assertEqual(get()["beds"], True)
+            post({"type": "setting", "reset": True})
+            self.assertEqual(get(), {})
+            httpd.shutdown()
+        finally:
+            server.SETTINGS_FILE = oldf

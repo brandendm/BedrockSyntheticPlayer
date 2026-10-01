@@ -77,6 +77,31 @@ def append_traces(traces: list) -> None:
                 _traces.append({"id": _trace_seq, **rec})
 
 
+SETTINGS_FILE = ROOT / "settings.json"
+_SETTING_KEYS = {"beds", "nights", "house", "torches", "farm", "iron", "hunting", "storage", "witches", "chat", "learnedHouse"}
+
+
+def load_settings() -> dict:
+    """The goal toggles and chat setting kept for every new world (brain/settings.json)."""
+    try:
+        d = json.loads(SETTINGS_FILE.read_text(encoding="utf-8"))
+        return {k: bool(v) for k, v in (d.get("settings") or {}).items() if k in _SETTING_KEYS}
+    except (OSError, ValueError):
+        return {}
+
+
+def save_setting(key: str | None, on: bool = True, reset: bool = False) -> dict:
+    with _lock:
+        cur = {} if reset else load_settings()
+        if key in _SETTING_KEYS:
+            cur[key] = bool(on)
+        try:
+            SETTINGS_FILE.write_text(json.dumps({"settings": cur}, indent=1), encoding="utf-8")
+        except OSError:
+            pass
+        return cur
+
+
 _demo = {"player": None, "last": 0.0, "rows": 0}
 _profile = {"at": 0.0, "data": None}
 _house = {"at": 0.0, "data": None}  # the last house learned off the player (core/learnhouse.js): verdict, picture, plan
@@ -317,6 +342,8 @@ def make_handler(engine: DecisionEngine, key: str | None = None):
                     "jev": {"enabled": j.available, "usd_today": round(j.budget.usd_today, 6),
                             "calls_last_hour": j.budget.calls_last_hour},
                 })
+            if self.path == "/api/settings":
+                return self._send(200, {"settings": load_settings()})
             if self.path == "/api/paths":
                 with _lock:
                     rows = list(_paths)
@@ -406,6 +433,9 @@ def make_handler(engine: DecisionEngine, key: str | None = None):
                 return self._send(400, {"error": "bad json"})
             if evt.get("type") == "demo":
                 store_demo(evt)
+                return self._send(200, {"actions": []})
+            if evt.get("type") == "setting":
+                save_setting(evt.get("key"), bool(evt.get("on", True)), bool(evt.get("reset")))
                 return self._send(200, {"actions": []})
             if evt.get("type") == "paths":
                 rows = [r for r in (evt.get("rows") or [])[:500] if isinstance(r, dict)]

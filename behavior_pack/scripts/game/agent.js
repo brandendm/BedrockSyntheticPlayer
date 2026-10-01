@@ -34,7 +34,7 @@ import { invCounts, hold, container, usesLeft, kitOf, emptyHanded, restoreKit } 
 import { WorldMemory } from './memory.js';
 import { SimBodyAdapter } from './body.js';
 import { makeClassifier, canSee, isWatery, OPENABLE } from './world.js';
-import { sendEvent, trace, fetchProfile, tracePosition } from './bridge.js';
+import { sendEvent, trace, fetchProfile, fetchSettings, tracePosition } from './bridge.js';
 import { parseLocal } from './localCommands.js';
 import { CONFIG } from '../config.js';
 import { isWorkPickaxe } from '../core/costs.js';
@@ -105,6 +105,7 @@ export class Agent {
     this.lookout = new Lookout(this);
     this.villages = new Villages(this);
     tracePosition(() => this.sim.location); // (villages seen from afar: game/villages.js)
+    system.runTimeout(() => { this.restoreSettings().catch(() => {}); }, 30);
     system.runTimeout(() => { try { this.restoreKit(); } catch (e) { this.kitChecked = true; console.warn(`[agent] kit: ${e}`); } try { this.restoreState(); } catch {} }, 40);
     this.badCells = new Map();   // "x,y,z" -> until (ms): cells we got stuck walking into
     this.deferred = new Map();   // stepKey -> {until (ms), step}: ladder steps that kept failing, set aside (core/focus.js)
@@ -171,7 +172,31 @@ export class Agent {
 
   /** Is the bot's running commentary said in the game's chat? (`!bot chat on|off`; off by default: it's all on the dashboard either way.) */
   chatOn() { return this.memory.data.settings?.chat ?? CONFIG.chat ?? false; }
-  setSetting(key, on) { this.memory.data.settings = { ...(this.memory.data.settings ?? {}), [key]: !!on }; this.memory.save(); }
+  setSetting(key, on) { this.memory.data.settings = { ...(this.memory.data.settings ?? {}), [key]: !!on }; this.memory.save(); this.keepSetting(key, on); }
+
+  /** Kept on this computer by the brain (brain/settings.json), so the next world starts with the same goals on and off. */
+  keepSetting(key, on) { sendEvent({ type: 'setting', key, on: !!on }).catch(() => {}); }
+
+  /**
+   * At spawn: the settings the brain kept from before (goal toggles, chat) go back on, over a new world's defaults.
+   * Whatever's switched after that is the live choice (and kept in turn).
+   */
+  async restoreSettings(tries = 0) {
+    const kept = await fetchSettings();
+    if (kept === null) { if (tries < 6) system.runTimeout(() => { this.restoreSettings(tries + 1).catch(() => {}); }, 200); return 0; } // (the brain isn't up yet: try again in 10 s)
+    if (!Object.keys(kept).length) {
+      // Nothing kept yet: what this world has is kept, so the next one starts the same.
+      for (const [k, v] of Object.entries(this.memory.data.settings ?? {})) this.keepSetting(k, !!v);
+      return 0;
+    }
+    this.memory.data.settings = { ...(this.memory.data.settings ?? {}), ...kept };
+    this.memory.save();
+    this.autoDone = false; this.nextAutoTry = 0;
+    const off = Object.entries(kept).filter(([, v]) => !v).map(([k]) => k);
+    trace(`settings: restored from the brain: ${Object.entries(kept).map(([k, v]) => `${k}=${v ? 'on' : 'off'}`).join(' ')}`);
+    this.sayOnce('settings-restored', `Your saved settings are back${off.length ? ` (off: ${off.join(', ')})` : ''}.`, 600000);
+    return Object.keys(kept).length;
+  }
 
   /** Say something: always to the log and the dashboard; in the game's chat only if chat is on (or `force`: the answer to something you asked). */
   say(text, force = false) {
@@ -559,6 +584,7 @@ export class Agent {
   setGoal(key, on) {
     this.memory.data.settings = { ...(this.memory.data.settings ?? {}), [key]: !!on };
     this.memory.save();
+    this.keepSetting(key, on);
     this.autoDone = false; this.nextAutoTry = 0; // (re-plan now)
   }
 

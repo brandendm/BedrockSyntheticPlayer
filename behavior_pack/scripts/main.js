@@ -7,7 +7,7 @@ import { system, world, GameMode, EquipmentSlot } from '@minecraft/server';
 import { spawnSimulatedPlayer } from '@minecraft/server-gametest';
 import { Agent } from './game/agent.js';
 import { runTests } from './game/scenarios.js';
-import { poll } from './game/bridge.js';
+import { poll, sendEvent } from './game/bridge.js';
 import { CONFIG } from './config.js';
 import { getPlan, setPlan, planMaterials, describe } from './core/learnhouse.js';
 
@@ -125,6 +125,13 @@ function handle(text, player) {
     const txt = lines.join('\n');
     agent.say(`Surroundings:\n${txt}`);
     return reply(player, 'Picture of the surroundings is in the log and on the dashboard.');
+  }
+  // !bot settings show|reset: the goal toggles and chat setting the brain keeps for every new world (brain/settings.json).
+  if (lower === 'settings' || lower.startsWith('settings ')) {
+    if (!agent) return reply(player, 'spawn first');
+    const sub = lower.split(/\s+/)[1] ?? 'show';
+    if (sub === 'reset') { sendEvent({ type: 'setting', reset: true }).catch(() => {}); return reply(player, 'Forgot the saved settings (this world keeps its own until you change them).'); }
+    return reply(player, `This world: ${JSON.stringify(agent.memory.data.settings ?? {})}. Saved on this computer: they come back in every new world (\`!bot settings reset\` forgets them).`);
   }
   // !bot chat on|off: the bot's running commentary (what it's doing and why) in the game's chat. Off by default; the dashboard shows it either way.
   if (lower === 'chat' || lower.startsWith('chat ')) {

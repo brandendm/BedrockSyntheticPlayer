@@ -60,6 +60,18 @@ export async function fetchProfile() {
   } catch { return null; }
 }
 
+/** The settings kept on this computer by the brain (goal toggles, chat): { key: bool } or null if it isn't reachable. */
+export async function fetchSettings() {
+  if (system.currentTick < backoffUntil) return null;
+  try {
+    const req = new HttpRequest(`${CONFIG.brainUrl}/api/settings`);
+    req.method = HttpRequestMethod.Get;
+    req.timeout = 2;
+    const res = await http.request(req);
+    return res.status === 200 ? (JSON.parse(res.body).settings ?? null) : null;
+  } catch { return null; }
+}
+
 /**
  * Dashboard link: send the bot's status, get back any commands typed on the dashboard
  * (brain/dashboard.html). Local HTTP once a second; nothing leaves the machine.
