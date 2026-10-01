@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { diagnose, stepLine, stepRuns, invDiff, pathAndNet } from '../behavior_pack/scripts/core/flight.js';
+import { diagnose, stepLine, stepRuns, invDiff, pathAndNet, blockChar, LEDGER_NOISE } from '../behavior_pack/scripts/core/flight.js';
 
 // n one-second samples; f(i) gives the fields that vary.
 const run = (n, f) => Array.from({ length: n }, (_, i) => ({ t: i * 20, x: 0, y: 64, z: 0, hp: 20, food: 20, step: 'get_stone', mode: 'none', inv: 'a:1', sleeping: false, ...f(i) }));
@@ -51,4 +51,19 @@ test('a pool loop looks like spinning: the plan restarts every few seconds with 
   // swim_out <-> get_iron every 4 s for a minute, pack the same, in place
   const d = diagnose(run(60, (i) => ({ step: i % 4 < 2 ? 'get_iron' : 'swim_out', x: (i % 2) * 0.3 })));
   assert.ok(d && ['spinning', 'pacing', 'frozen'].includes(d.kind));
+});
+
+test('the surroundings picture: one character per block', () => {
+  assert.equal(blockChar('minecraft:air'), '.');
+  assert.equal(blockChar('stone'), '#');
+  assert.equal(blockChar('deepslate_iron_ore'), 'o');
+  assert.equal(blockChar('water'), '~');
+  assert.equal(blockChar('lava'), 'L');
+  assert.equal(blockChar('oak_log'), 'T');
+  assert.equal(blockChar('birch_leaves'), 'l');
+  assert.equal(blockChar('crafting_table'), 'X');
+  assert.equal(blockChar('oak_door'), 'X');
+  assert.equal(blockChar('wall_torch'), 't');
+  assert.equal(blockChar('short_grass'), ',');
+  assert.ok(LEDGER_NOISE.test('cobblestone') && !LEDGER_NOISE.test('crafting_table') && !LEDGER_NOISE.test('iron_ingot'));
 });

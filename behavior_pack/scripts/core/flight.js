@@ -72,3 +72,21 @@ export function invDiff(a = {}, b = {}) {
   }
   return out.join(', ') || 'nothing';
 }
+
+/** One character for a block in the surroundings picture: '.' air, '#' solid, 'o' ore, '~' water, 'L' lava, 'T' log, 'l' leaves, 'X' table/furnace/chest/door/bed, 't' torch. */
+export function blockChar(id) {
+  const b = String(id ?? 'air').replace(/^minecraft:/, '');
+  if (b === 'air' || b === 'cave_air' || b === '') return '.';
+  if (b === 'lava') return 'L';
+  if (b === 'water') return '~';
+  if (/_ore$/.test(b)) return 'o';
+  if (/(^|_)(log|wood|stem)$/.test(b)) return 'T';
+  if (/leaves$/.test(b)) return 'l';
+  if (/torch/.test(b)) return 't';
+  if (/^(crafting_table|furnace|lit_furnace|chest|barrel|.*_door|.*bed|bed)$/.test(b)) return 'X';
+  if (/^(short_grass|tall_grass|fern|large_fern|vine|snow_layer|dead_bush|.*flower|dandelion|poppy|leaf_litter|glow_lichen|sweet_berry_bush)$/.test(b)) return ',';
+  return '#';
+}
+
+/** Pack changes not worth a line each: building stone and dirt from mining, junk drops. */
+export const LEDGER_NOISE = /^(cobblestone|stone|dirt|grass_block|andesite|diorite|granite|gravel|sand|sandstone|deepslate|cobbled_deepslate|tuff|netherrack|rotten_flesh|leaf_litter|oak_leaves|spruce_leaves|birch_leaves|dark_oak_leaves|jungle_leaves|acacia_leaves|flint|bone|string|spider_eye|gunpowder|arrow|feather)$/;

@@ -9,9 +9,9 @@
 // so a stuck run is one paste with the evidence in it, not a guess from the chat lines.
 import { system, world } from '@minecraft/server';
 import { CONFIG } from '../config.js';
-import { diagnose, stepLine, stepRuns, invDiff, pathAndNet } from '../core/flight.js';
+import { diagnose, stepLine, stepRuns, invDiff, pathAndNet, blockChar, LEDGER_NOISE } from '../core/flight.js';
 import { invCounts } from './inventory.js';
-import { onTrace, sendEvent } from './bridge.js';
+import { onTrace, sendEvent, trace } from './bridge.js';
 
 const SAMPLE_EVERY = 20;       // ticks
 const KEEP_SAMPLES = 360;      // 6 minutes
@@ -35,8 +35,50 @@ export class Flight {
     if (this.notes.length > KEEP_NOTES) this.notes.splice(0, this.notes.length - KEEP_NOTES);
   }
 
+  /**
+   * What's round the bot, as a picture: layers from head height down to the floor under it, 11 x 11, north up:
+   * '@' us, '.' air, '#' solid, 'o' ore, '~' water, 'L' lava, 'T' log, 'l' leaves, 'X' table/furnace/chest/door/bed, 't' torch.
+   * (The geometry of a place it got stuck in, in a form to paste.)
+   */
+  surroundings(r = 5) {
+    const S = this.a.skills, f = S.feet(), out = [];
+    for (const dy of [2, 1, 0, -1]) {
+      out.push(`  y ${f.y + dy}${dy === 0 ? ' (feet)' : dy === 1 ? ' (head)' : dy === -1 ? ' (floor)' : ''}   x ${f.x - r}..${f.x + r} across, z ${f.z - r} (north) .. ${f.z + r} down`);
+      for (let dz = -r; dz <= r; dz++) {
+        let row = '  ';
+        for (let dx = -r; dx <= r; dx++) {
+          if (dx === 0 && dz === 0 && dy <= 1 && dy >= 0) { row += '@'; continue; }
+          let id = null;
+          try { id = S.blockAt({ x: f.x + dx, y: f.y + dy, z: f.z + dz }); } catch { /* */ }
+          row += id === null ? '?' : blockChar(id);
+        }
+        out.push(row);
+      }
+    }
+    return out;
+  }
+
+  /** Pack changes, a line each (the big stacks of stone and junk left out): who took the crafting table. Every 10 ticks. */
+  ledger(t) {
+    if (t % 10 !== 5) return;
+    const a = this.a;
+    let inv;
+    try { inv = invCounts(a.sim); } catch { return; }
+    const prev = this.ledgerPrev;
+    this.ledgerPrev = inv;
+    if (!prev) return;
+    const parts = [];
+    for (const id of new Set([...Object.keys(prev), ...Object.keys(inv)])) {
+      const d = (inv[id] ?? 0) - (prev[id] ?? 0);
+      if (!d || (LEDGER_NOISE.test(id) && Math.abs(d) < 24)) continue;
+      parts.push(`${id} ${d > 0 ? '+' : ''}${d}`);
+    }
+    if (parts.length) trace(`pack: ${parts.join(', ')} [step ${a.autoStep ?? '-'}, task ${a.task?.kind ?? 'idle'}]`);
+  }
+
   /** Every SAMPLE_EVERY ticks (from agent.tick). */
   tick(t) {
+    try { this.ledger(t); } catch { /* */ }
     if (t % SAMPLE_EVERY !== 0) return;
     const a = this.a;
     try {
@@ -102,6 +144,8 @@ export class Flight {
       if (def.length) lines.push(`set aside: ${def.join(', ')}`);
       lines.push(`toggles: ${JSON.stringify(a.toggles())}`);
     } catch { /* partial is fine */ }
+    // The place itself.
+    try { lines.push('surroundings:'); for (const l of this.surroundings()) lines.push(l); } catch { /* partial is fine */ }
     // The decisions and the chat, newest 30, oldest first.
     for (const n of this.notes.slice(-30)) lines.push(`${String(Math.round((t - n.t) / 20)).padStart(4)}s ago ${n.k === 'trace' ? '' : `[${n.k}] `}${n.msg}`);
     lines.push('=== END FLIGHT REPORT');

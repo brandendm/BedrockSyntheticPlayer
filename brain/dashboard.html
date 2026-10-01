@@ -141,6 +141,7 @@
     <div class="timeline" id="timeline"></div>
     <div class="legend" id="legend"></div>
     <div class="row" style="margin-top:10px">
+      <button id="looknow" title="A picture of the blocks round the bot, in the log and the decisions list">Look around</button>
       <button id="dumpnow" title="Print a flight report to the server log and keep it here">Dump flight report now</button>
       <button id="copylast">Copy last report</button>
       <span class="muted" id="hdumps"></span>
@@ -576,6 +577,7 @@ async function loadFlights() {
     document.querySelectorAll('#flights [data-copy]').forEach((b) => b.onclick = (e) => { e.preventDefault(); e.stopPropagation(); copyText(lastReports[+b.dataset.copy].report.join('\n'), 'Report copied'); });
   } catch {}
 }
+$('looknow') && ($('looknow').onclick = () => { send('look'); });
 $('dumpnow').onclick = () => { send('dump'); setTimeout(loadFlights, 1500); };
 $('copylast').onclick = () => lastReports.length ? copyText(lastReports[lastReports.length - 1].report.join('\n'), 'Last report copied') : toast('No reports yet');
 

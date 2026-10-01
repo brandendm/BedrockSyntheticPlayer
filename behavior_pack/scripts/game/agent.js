@@ -15,6 +15,7 @@ import { goalChain } from '../core/goals.js';
 import { advanceStep, advanceProgress, ironHave, IRON_GOAL } from '../core/advance.js';
 import { Farm } from './farm.js';
 import { Flight } from './flight.js';
+import { invDiff } from '../core/flight.js';
 import { Demo } from './demo.js';
 import { adopt as adoptProfile, DEFAULTS as PROFILE_DEFAULTS } from '../core/profile.js';
 import { chooseStep, needs as goalNeeds, stepKey } from '../core/focus.js';
@@ -2508,13 +2509,14 @@ export class Agent {
   profileStep(name) {
     const p = this.prof;
     if (p && p.step !== name) this.profileEnd();
-    if (!this.prof) this.prof = { step: name, ticks: 0, moving: 0, planning: 0, breaking: 0, other: 0, run: 0, worst: 0, worstAfter: '' };
+    if (!this.prof) { let at = null, inv = {}; try { const l = this.sim.location; at = { x: l.x, y: l.y, z: l.z }; inv = invCounts(this.sim); } catch { /* */ } this.prof = { step: name, ticks: 0, moving: 0, planning: 0, breaking: 0, other: 0, run: 0, worst: 0, worstAfter: '', at, inv, path: 0, last: at }; }
   }
 
   profileTick() {
     const p = this.prof;
     if (!p || this.mode !== 'none') return;
     p.ticks++;
+    if (p.ticks % 10 === 0 && p.last) { try { const l = this.sim.location; p.path += Math.hypot(l.x - p.last.x, l.y - p.last.y, l.z - p.last.z); p.last = { x: l.x, y: l.y, z: l.z }; } catch { /* */ } }
     const kind = this.motor.busy ? 'moving' : (this.planning ?? 0) > 0 ? 'planning' : this.breaking ? 'breaking' : 'other';
     p[kind]++;
     if (kind === 'other') { p.run++; if (p.run > p.worst) { p.worst = p.run; p.worstAfter = this.skills.lastLog ?? ''; } } else p.run = 0;
@@ -2524,9 +2526,20 @@ export class Agent {
   profileEnd() {
     const p = this.prof;
     this.prof = null;
-    if (!p || p.ticks < 100) return;
+    if (!p) return;
+    // Where it ended up and what the pack did over the step: a step that ran for a few seconds, went nowhere and
+    // changed nothing is the one to look at (four goto_table of 2 s in a row, at one spot).
+    let net = 0, diff = 'unchanged';
+    try {
+      const l = this.sim.location;
+      if (p.at) net = Math.hypot(l.x - p.at.x, l.y - p.at.y, l.z - p.at.z);
+      diff = invDiff(p.inv, invCounts(this.sim));
+      if (diff === 'nothing') diff = 'unchanged';
+    } catch { /* */ }
+    const wentNowhere = p.ticks >= 20 && p.ticks < 100 && net < 1.5 && diff === 'unchanged';
+    if (p.ticks < 100 && !wentNowhere) return;
     const pc = (n) => `${Math.round((100 * n) / p.ticks)}%`;
-    trace(`step profile: ${p.step} ${(p.ticks / 20).toFixed(0)} s: moving ${pc(p.moving)}, planning ${pc(p.planning)}, breaking ${pc(p.breaking)}, other ${pc(p.other)}; longest still ${(p.worst / 20).toFixed(1)} s, after "${p.worstAfter}"`);
+    trace(`step profile: ${p.step} ${(p.ticks / 20).toFixed(p.ticks < 100 ? 1 : 0)} s: moving ${pc(p.moving)}, planning ${pc(p.planning)}, breaking ${pc(p.breaking)}, other ${pc(p.other)}; longest still ${(p.worst / 20).toFixed(1)} s, after "${p.worstAfter}"; walked ${Math.round(p.path)} blocks, ${net.toFixed(1)} from where it started${wentNowhere ? ' (NO PROGRESS)' : ''}; pack ${diff.length > 160 ? `${diff.slice(0, 160)}...` : diff}`);
   }
 
   /** Blocks as tactics.js reads them: 'open' | 'solid' | 'other'. */

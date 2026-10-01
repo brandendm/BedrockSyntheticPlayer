@@ -117,6 +117,15 @@ function handle(text, player) {
     }
     return reply(player, agent.demo.status());
   }
+  // !bot look: a picture of the blocks round the bot (4 layers, 11 x 11), in the log and the dashboard: for where it's stuck.
+  if (lower === 'look') {
+    if (!agent) return reply(player, 'spawn first');
+    const lines = agent.flight.surroundings();
+    for (const l of lines) console.warn(`[look] ${l}`);
+    const txt = lines.join('\n');
+    agent.say(`Surroundings:\n${txt}`);
+    return reply(player, 'Picture of the surroundings is in the log and on the dashboard.');
+  }
   // !bot chat on|off: the bot's running commentary (what it's doing and why) in the game's chat. Off by default; the dashboard shows it either way.
   if (lower === 'chat' || lower.startsWith('chat ')) {
     if (!agent) return reply(player, 'spawn first');
