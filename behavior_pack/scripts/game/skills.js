@@ -1,7 +1,7 @@
 // Things the agent knows how to do with its hands: find blocks, mine, pick up drops, place, craft,
 // dig down to stone. Every skill is async, takes the task generation `gen`, and bails out as soon
 // as the agent switches task (a fight, a command) so nothing keeps running in the background.
-import { system, world, Direction, BlockTypes, BlockVolume, ItemTypes } from '@minecraft/server';
+import { system, world, Direction, BlockTypes, BlockVolume, ItemTypes, ItemStack } from '@minecraft/server';
 import { isNight } from '../core/settle.js';
 import { wetCones, towardWet, ExploreStall } from '../core/explore.js';
 import { tourStops, sweepOrder } from '../core/flow.js';
@@ -20,6 +20,7 @@ import { trace } from './bridge.js';
 import { inside as houseInside } from '../core/house.js';
 import { saplingFor, needs2x2, plantProblem } from '../core/saplings.js';
 import { blockValue } from '../core/wants.js';
+import { depositPlan, FULL_SLOTS } from '../core/storage.js';
 
 export class Aborted extends Error {}
 
@@ -2782,6 +2783,92 @@ export class Skills {
     return true;
   }
 
+
+  /**
+   * A chest at the mine camp, on the side of the stand opposite the table: what a player does, so a
+   * full pack is a trip to the chest, not stone thrown away (and not a crafted tool dropped on the
+   * floor). Made once there's wood for it (8 planks); tried again after 5 minutes if it can't be.
+   */
+  async ensureCampChest(gen) {
+    const q = this.homeQuarry(), c = q?.camp;
+    if (!c || c.chest || (c.chestTry && Date.now() - c.chestTry < 300000)) return false;
+    const dx = Math.sign(c.furnace.x - c.stand.x), dz = Math.sign(c.furnace.z - c.stand.z);
+    const cell = { x: c.stand.x + dz, y: c.stand.y, z: c.stand.z - dx };
+    const f = this.feet();
+    if (Math.hypot(f.x - c.stand.x, f.z - c.stand.z) > 10 || Math.abs(f.y - c.stand.y) > 2) return false;
+    const inv = invCounts(this.sim);
+    if (!inv.chest && count(inv, isPlanks) + 4 * count(inv, isLog) < 8) return false; // (no wood yet: not worth marking it tried)
+    c.chestTry = Date.now();
+    this.a.memory.save();
+    const H = this.a.homestead;
+    await this.goNear(gen, { x: c.stand.x + 0.5, y: c.stand.y, z: c.stand.z + 0.5 }, 0.6, 2);
+    if (!invCounts(this.sim).chest && !(await this.craft(gen, ['chest'], true, true))) { this.log('camp chest: not made (wood or table)'); return false; }
+    const here = this.blockAt(cell) ?? 'air';
+    if (!OPEN.test(here) && !/chest/.test(here) && !(await this.mine(gen, cell))) { this.log(`camp chest: couldn't clear ${cell.x} ${cell.y} ${cell.z}`); return false; }
+    if (!/chest/.test(this.blockAt(cell) ?? '') && !(await H.placeAt(gen, cell, 'chest')) && !(await H.setChest(gen, cell, { dir: 'north' }))) { this.log('camp chest: the chest didn\'t go down'); return false; }
+    c.chest = { x: cell.x, y: cell.y, z: cell.z };
+    this.protect(cell);
+    this.a.memory.save();
+    this.restHands();
+    this.a.say('Put a chest at the camp: spare stone and mob drops go in it when my pack fills.');
+    this.log(`camp chest: ${cell.x} ${cell.y} ${cell.z}`);
+    return true;
+  }
+
+  /** Pack nearly full: the camp chest if there is one in reach, otherwise junk stone thrown away. */
+  async packRoom(gen) {
+    let c = null;
+    try { c = container(this.sim); } catch { /* no pack to look at */ }
+    if (!c || c.emptySlotsCount > FULL_SLOTS) return 0;
+    if (await this.stashAtCamp(gen).catch((e) => { if (e instanceof Aborted) throw e; this.log(`camp stash: ${e}`); return false; })) return 1;
+    return this.dumpJunk(gen);
+  }
+
+  /**
+   * Walk to the camp chest (within 40 blocks, on this level) and put away what the pack doesn't
+   * need (core/storage.js depositPlan, but 128 cobblestone kept for building), then back to where we were.
+   * Full or unreachable: said once, not tried again for 10 minutes.
+   */
+  async stashAtCamp(gen) {
+    const q = this.homeQuarry(), c = q?.camp, ch = c?.chest;
+    if (!ch || (c.chestFullAt && Date.now() - c.chestFullAt < 600000) || this.a.toggles().storage === false) return false;
+    if (!/chest/.test(this.blockAt(ch) ?? 'chest')) { c.chest = null; this.a.memory.save(); return false; }
+    const f = this.feet();
+    if (Math.hypot(f.x - ch.x, f.z - ch.z) > 40 || Math.abs(f.y - ch.y) > 3) return false;
+    const inv = invCounts(this.sim);
+    const plan = depositPlan(inv);
+    if (plan.cobblestone) { plan.cobblestone = Math.max(0, (inv.cobblestone ?? 0) - 128); if (!plan.cobblestone) delete plan.cobblestone; }
+    if (!Object.keys(plan).length) return false;
+    const back = { x: f.x + 0.5, y: f.y, z: f.z + 0.5 };
+    if (!(await this.reach(gen, ch))) { c.chestFullAt = Date.now(); this.log('camp stash: couldn\'t reach the chest'); return false; }
+    await this.a.motor.lookAt(center(ch), 8, 30);
+    this.check(gen);
+    const chest = this.a.homestead.container(ch), pack = container(this.sim);
+    if (!chest || !pack) return false;
+    let stored = 0;
+    for (let i = 0; i < pack.size; i++) {
+      const it = pack.getItem(i);
+      if (!it) continue;
+      const id = strip(it.typeId);
+      const want = plan[id] ?? 0;
+      if (want <= 0) continue;
+      let moved;
+      if (want >= it.amount) { const left = pack.transferItem(i, chest); moved = it.amount - (left?.amount ?? 0); }
+      else { const left = chest.addItem(new ItemStack(it.typeId, want)); moved = want - (left?.amount ?? 0); if (moved > 0) take(this.sim, id, moved); }
+      stored += moved;
+      plan[id] -= moved;
+    }
+    await this.wait(gen, 6);
+    this.restHands();
+    const left = Object.values(plan).reduce((a, n) => a + Math.max(0, n), 0);
+    if (left) c.chestFullAt = Date.now(); // (what didn't fit is tossed as junk by the caller's next pass)
+    this.a.memory.save();
+    this.log(`camp stash: put ${stored} things in the camp chest${left ? ` (${left} didn't fit)` : ''}`);
+    if (stored) this.a.sayOnce('camp-stash', 'Pack was filling up: put the spare stone and drops in the camp chest.', 120000);
+    await this.goNear(gen, back, 0.8, 2);
+    return stored > 0;
+  }
+
   /**
    * Mine ore showing around us (in reach, in view), and coal or iron in view a few steps further
    * (torches, fuel, the iron gear), then step back to where we were standing.
@@ -2885,6 +2972,7 @@ export class Skills {
     if (this.feet().y < IRON_Y - 4 && !(await this.backToLevel(gen, IRON_Y))) return false;
     // 3. The camp at the foot of the stairs (once), then the branch mine.
     await this.ensureCamp(gen).catch((e) => { if (e instanceof Aborted) throw e; this.log(`camp: ${e}`); });
+    await this.ensureCampChest(gen).catch((e) => { if (e instanceof Aborted) throw e; this.log(`camp chest: ${e}`); });
     // Iron seen on an earlier trip and not mined (night fell, a fight, a full pack): that first.
     if (await this.pendingIron(gen, more)) this.a.sayOnce('iron-pending', 'Back for the iron I saw last time.', 120000);
     if (!more()) return this.rawIron() >= goal;
@@ -2961,7 +3049,7 @@ export class Skills {
     let lastGood = this.feet();
     while (more() && blocked < 4) {
       this.check(gen);
-      await this.dumpJunk(gen);
+      await this.packRoom(gen);
       if (this.feet().y !== level && !(await this.backOntoLevel(gen, lastGood))) break;
       const [dx, dz] = dirs[di];
       const f0 = this.feet();
