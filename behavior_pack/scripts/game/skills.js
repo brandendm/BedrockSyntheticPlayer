@@ -2849,6 +2849,19 @@ export class Skills {
    * split over both, so 18 iron is about 90 s of waiting, not 180. Needs 8 cobblestone (or a furnace
    * in the pack); tried again after 5 minutes if it can't be.
    */
+  /** Dig a camp cell out: as an essential job, and when the view to it is blocked by the camp's own table/furnace/chest (so the crosshair never gets on it), knock it out with a command. */
+  async clearCampCell(gen, cell) {
+    const was = this.essential;
+    this.essential = true;
+    try {
+      if (await this.mine(gen, cell, { force: true })) return true;
+      if (this.touchesLava(cell) || this.touchesLiquid(cell) || UNBREAKABLE.test(this.blockAt(cell) ?? '')) return false;
+      try { this.dim.runCommand(`setblock ${cell.x} ${cell.y} ${cell.z} air destroy`); } catch {}
+      this.a.cellChanged?.();
+      return OPEN.test(this.blockAt(cell) ?? 'air');
+    } finally { this.essential = was; }
+  }
+
   async ensureCampFurnace2(gen) {
     const q = this.homeQuarry(), c = q?.camp;
     if (!c || c.furnace2 || (c.furnace2Try && Date.now() - c.furnace2Try < 300000)) return false;
@@ -2865,7 +2878,7 @@ export class Skills {
     if (!ok) { this.log(`camp furnace 2: ${cell.x} ${cell.y} ${cell.z} is ${here}, not diggable`); return false; }
     const H = this.a.homestead;
     await this.goNear(gen, { x: c.stand.x + 0.5, y: c.stand.y, z: c.stand.z + 0.5 }, 0.6, 2);
-    if (!OPEN.test(here) && !(await this.mine(gen, cell))) { this.log(`camp furnace 2: couldn't clear ${cell.x} ${cell.y} ${cell.z}`); return false; }
+    if (!OPEN.test(here) && !(await this.clearCampCell(gen, cell))) { this.log(`camp furnace 2: couldn't clear ${cell.x} ${cell.y} ${cell.z}`); return false; }
     if (!invCounts(this.sim).furnace && !(await this.craft(gen, ['furnace'], true, true))) { this.log('camp furnace 2: not made'); return false; }
     if (!(await H.placeAt(gen, cell, 'furnace'))) { this.log('camp furnace 2: it didn\'t go down'); return false; }
     this.a.memory.remember('furnace', this.dim.id, cell);
@@ -2908,7 +2921,7 @@ export class Skills {
       if (!have.chest && count(have, isPlanks) + 4 * count(have, isLog) < 8) break; // (the second one when there's more wood)
       if (!have.chest && !(await this.craft(gen, ['chest'], true, true))) { this.log('camp chest: not made (wood or table)'); break; }
       const here = this.blockAt(cell) ?? 'air';
-      if (!OPEN.test(here) && !/chest/.test(here) && !(await this.mine(gen, cell))) { this.log(`camp chest: couldn't clear ${cell.x} ${cell.y} ${cell.z}`); break; }
+      if (!OPEN.test(here) && !/chest/.test(here) && !(await this.clearCampCell(gen, cell))) { this.log(`camp chest: couldn't clear ${cell.x} ${cell.y} ${cell.z}`); break; }
       if (!/chest/.test(this.blockAt(cell) ?? '') && !(await H.placeAt(gen, cell, 'chest')) && !(await H.setChest(gen, cell, { dir: opposite[facing] }))) { this.log('camp chest: the chest didn\'t go down'); break; }
       c[key] = { x: cell.x, y: cell.y, z: cell.z };
       this.protect(cell);
