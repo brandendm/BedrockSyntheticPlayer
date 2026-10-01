@@ -150,6 +150,10 @@ export class Skills {
       this.check(gen);
       col.sort((a, b) => b.y - a.y);
       const base = col[col.length - 1];
+      // A pillar standing in a pit (the way back out of a shelter or a hole we dug) is left as it is: going down to
+      // its foot to take it apart put us back in the pit, hemmed in, and the escape built it up again (a real run did that
+      // six times in two minutes). Only ones we can reach from about our own level.
+      if (this.sim.location.y - base.y > 1.6) { for (const b of col) this.unmarkScaffold(b); continue; }
       // Beside it, on the ground (never on it).
       if (!col.some((b) => this.inReach(b))) await this.goNear(gen, { x: base.x + 0.5, y: base.y, z: base.z + 0.5 }, 2.2, 2);
       for (const b of col) {

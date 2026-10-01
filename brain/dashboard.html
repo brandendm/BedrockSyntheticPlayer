@@ -535,7 +535,7 @@ async function fullReport() {
     `pos ${s.pos ? `${s.pos.x} ${s.pos.y} ${s.pos.z}` : '?'} (${s.dim})  biome ${s.biome ?? '?'}  underground ${s.underground}  day ${s.day} time ${s.time} ${s.night ? '(night)' : ''}`,
     `health ${s.health}  food ${s.hunger}  air ${s.air}%  held ${s.held ?? 'nothing'}  mode ${s.mode}  task ${s.task}  step ${s.step ?? '-'}  (${s.stepLabel ?? ''})`,
     `auto ${s.auto} done ${s.autoDone}  opportunity ${s.opportunity ?? '-'}  set aside: ${(s.setAside || []).join(', ') || 'none'}  deaths ${s.deaths}`,
-    `goals: ${(s.goals || []).map((g) => `${g.label ?? g.key}${g.done ? ' ✓' : ''}${g.count != null ? ` ${g.have ?? ''}/${g.count}` : ''}`).join(' | ')}`,
+    `goals: ${(s.goals || []).map((g) => `${g.goal}: ${g.status}${(g.tasks || []).length ? ` (${g.tasks.map((t) => `${t.label ?? t.name ?? ''} ${t.have ?? ''}${t.need != null ? '/' + t.need : ''}`.trim()).join(', ')})` : ''}`).join(' | ')}`,
     `toggles: ${(s.toggles || []).map((t) => `${t.key}=${t.on ? 'on' : 'off'}`).join(' ')}`,
     `players near: ${(s.players || []).join(', ') || 'none'}`,
   ].join('\n')));
