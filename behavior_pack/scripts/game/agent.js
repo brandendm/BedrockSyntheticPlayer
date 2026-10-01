@@ -1153,7 +1153,10 @@ export class Agent {
             const firm = Math.min(12, later);
             // At least a few in hand each trip: three trips for one log each in 45 s (the log of a real run)
             // cost more than the extra swings. Planks and sticks come out of them.
-            const target = Math.max(step.count + (step.opportunity ? 0 : firm), step.opportunity ? 0 : count(inv, isLog) + 4);
+            // (Before any stone pickaxe, eight: the table, the wooden pickaxe and the five stone tools are ~6 logs of planks and sticks, and
+            // a run that fetched 4 went back for 4 more 40 blocks away.)
+            const early = !Object.keys(inv).some((id) => /^(stone|iron|diamond|netherite)_pickaxe$/.test(id));
+            const target = Math.max(step.count + (step.opportunity ? 0 : firm), step.opportunity ? 0 : count(inv, isLog) + (early ? 8 : 4));
             if (!repeats && !step.opportunity) this.say(`Getting wood: ${target - count(inv, isLog)} logs for ${step.wanted.map((w) => w.replace(/_/g, ' ')).join(', ')}${firm && target > step.count ? ' and what comes after' : ''}.`);
             this.stockTarget = { step: 'gather_logs', n: target };
             try { await S.gatherLogs(gen, target, Math.min(8, Math.max(0, later - firm))); } finally { this.stockTarget = null; }

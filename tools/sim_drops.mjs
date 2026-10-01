@@ -3,7 +3,7 @@
 // next log stays in reach, and forgotten once picked up. Other items are never ours.
 import { register } from 'node:module';
 register('./mock/hooks.mjs', import.meta.url);
-const { system } = await import('@minecraft/server');
+const { system, Container } = await import('@minecraft/server');
 const { Skills } = await import('../behavior_pack/scripts/game/skills.js');
 
 const items = [];
@@ -61,6 +61,24 @@ expect('player near: fetch it', await s.grabStrayOnTheWay(0, { x: -3, y: 70, z: 
   for (const y of [68, 69]) { blocks.set(`5,${y},0`, 'dirt'); mem.scaffold.push({ d: 'overworld', x: 5, y, z: 0, id: 'dirt', tries: 0 }); }
   const m = await c.cleanupScaffold(0);
   expect('one at our own level comes down', [m, mined.length], [2, 2]);
+}
+
+// A litter block the crosshair won't settle on: tried once, then left (it was 400 goes, a minute of standing).
+{
+  let taps = 0;
+  const blk = { x: 1, y: 64, z: 1 };
+  const c = Object.assign(Object.create(Skills.prototype), {
+    check() {}, log() {}, eye: () => ({ x: 0.5, y: 65.6, z: 0.5 }), inReach: () => true,
+    blockAt: () => 'leaf_litter', restHands() {}, scan: async () => [blk], tap: async () => { taps++; return false; },
+    a: { memory: { isUnreachable: () => false }, motor: { setFocus() {}, followPath: async () => {} }, plan: async () => ({ complete: false, path: [] }), classifier: () => () => 0 },
+    wait: async () => { system.advance(1); },
+  });
+  Object.defineProperty(c, 'sim', { get: () => ({ location: { x: 0.5, y: 64, z: 0.5 }, isValid: true, getComponent: () => ({ container: new Container(36) }) }) });
+  Object.defineProperty(c, 'dim', { get: () => dim });
+  try {
+    const r = await c.swipePatch(0, (id) => id === 'leaf_litter', { radius: 6, rounds: 2, maxTicks: 600 });
+    expect('an unsettleable litter block is tried once', [taps <= 2, r.broke], [true, 0]);
+  } catch (e) { expect(`swipePatch test setup: ${String(e).slice(0, 80)}`, false, true); }
 }
 console.log(bad ? `${bad} failed` : 'all ok');
 process.exit(bad ? 1 : 0);

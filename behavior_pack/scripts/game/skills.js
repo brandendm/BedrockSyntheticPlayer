@@ -1296,10 +1296,11 @@ export class Skills {
       try {
         // On the move: the nearest one in reach ahead of us, swiped as we pass; nothing in reach
         // yet, a tick of walking. Then whatever's still in reach where we end up.
+        const bad = new Set(); // ones the crosshair wouldn't settle on: once is enough (a 64 s freeze went round the same block, 400 goes)
         for (let k = 0; k < 400 && !enough(); k++) {
           const here = this.sim.location;
-          const c = patch.filter((b) => isIt(b) && this.inReach(b)).sort((a, b) => Math.hypot(a.x + 0.5 - here.x, a.z + 0.5 - here.z) - Math.hypot(b.x + 0.5 - here.x, b.z + 0.5 - here.z))[0];
-          if (c) { if (await this.tap(gen, c, walking ? 35 : 25)) { broke++; spots.push(c); } continue; }
+          const c = patch.filter((b) => isIt(b) && this.inReach(b) && !bad.has(`${b.x},${b.y},${b.z}`)).sort((a, b) => Math.hypot(a.x + 0.5 - here.x, a.z + 0.5 - here.z) - Math.hypot(b.x + 0.5 - here.x, b.z + 0.5 - here.z))[0];
+          if (c) { if (await this.tap(gen, c, walking ? 35 : 25)) { broke++; spots.push(c); } else { bad.add(`${c.x},${c.y},${c.z}`); this.log(`swipe: crosshair wouldn't settle on ${this.blockAt(c)} at ${c.x} ${c.y} ${c.z}, leaving it`); } continue; }
           if (!walking) break;
           this.a.motor.setFocus(null);
           await this.wait(gen, 1);
