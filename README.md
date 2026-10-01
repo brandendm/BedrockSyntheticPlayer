@@ -511,7 +511,7 @@ node tools/sim_combat.mjs --weapons 150  # the same fights with each loadout: sw
 node tools/sim_combat.mjs --ambush 500   # creepers catching the bot in its quarry and mine (down the stairs behind it, dropped in, in the dark tunnel, from a side branch, on the stairs)
 node tools/sim_quarry.mjs 300    # creeper craters in the quarry stairs: can it still get down and back up?
 node tools/sim_learn.mjs           # the recorder: only the player named, nothing recorded while off
-node tools/sim_pickup.mjs         # picking up scattered items: one route through all of them, no stopping at each
+node tools/sim_pickup.mjs         # picking up scattered items: one route through all of them, no stopping at each (and mineFlow's blocks: on to the next as each goes, drops picked up in one pass at the end)
 node tools/sim_learnhouse.mjs     # learn-my-house: items put aside and back exactly, the kit, a bad house refused, a restart, rejoining
 node tools/sim_village.mjs         # village sense: constructed village, villagers, raiders, a visit taking a bed and chest loot
 node tools/sim_flight.mjs          # the flight recorder: a stuck bot trips the watchdog and the report carries the evidence

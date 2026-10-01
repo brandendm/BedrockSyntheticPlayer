@@ -1192,15 +1192,25 @@ export class Skills {
   async mineFlow(gen, cells, optsFor = null, stop = null) {
     const order = this.sweepCells(cells, 'break');
     let n = 0;
+    const spots = [];
     try {
       for (let i = 0; i < order.length; i++) {
         this.check(gen);
         if (stop?.(order[i])) break;
         if ((this.blockAt(order[i]) ?? 'air') === 'air') continue; // (already gone: snow, vines and grass still get cut)
-        if (await this.mine(gen, order[i], { ...(optsFor ? optsFor(order[i]) : {}), next: order[i + 1] ?? null })) n++;
+        const o = optsFor ? optsFor(order[i]) : {};
+        // Not a stop to pick up after each block (4 ticks standing, then a walk to what fell): on to
+        // the next as it goes, and the drops are picked up in one pass at the end, over the route.
+        const later = o.collect !== false && i < order.length - 1;
+        if (await this.mine(gen, order[i], { ...o, collect: later ? false : o.collect, next: order[i + 1] ?? null })) { n++; if (later) spots.push(order[i]); }
       }
     } finally {
       this.a.motor.setFocus(null);
+    }
+    if (spots.length) {
+      const mid = { x: spots.reduce((a, c) => a + c.x, 0) / spots.length, y: spots.reduce((a, c) => a + c.y, 0) / spots.length, z: spots.reduce((a, c) => a + c.z, 0) / spots.length };
+      const r = Math.min(9, 4 + Math.max(...spots.map((c) => Math.hypot(c.x - mid.x, c.z - mid.z))));
+      await this.collect(gen, mid, r, 3, false);
     }
     return n;
   }
