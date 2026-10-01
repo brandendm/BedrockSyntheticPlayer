@@ -480,7 +480,13 @@ export class Homestead {
     const ready = near && system.currentTick >= near.readyAt ? near : this.jobs.filter((j) => system.currentTick >= j.readyAt).sort((a, b) => dist3D(this.sim.location, a.pos) - dist3D(this.sim.location, b.pos))[0];
     const job = ready ?? near;
     if (!job) return;
-    if (!(await this.S.reach(gen, job.pos))) { this.S.log('furnace: couldn\'t get to it (in reach and in view)'); return; }
+    if (!(await this.S.reach(gen, job.pos))) {
+      // Visibly not a furnace any more (picked up, blown up): the job is dead, don't fail on it for ever.
+      const id = this.S.blockAt(job.pos);
+      if (id !== null && id !== undefined && !this.furnaceAt(job.pos)) { this.dropJob(job.pos); this.a.saveState(); this.S.log('furnace: gone, forgot the job'); return; }
+      this.S.log('furnace: couldn\'t get to it (in reach and in view)');
+      return;
+    }
     if (!this.furnaceAt(job.pos)) { this.dropJob(job.pos); this.a.saveState(); return; }
     await this.a.motor.lookAt(center(job.pos), 10, 30);
     this.S.check(gen);

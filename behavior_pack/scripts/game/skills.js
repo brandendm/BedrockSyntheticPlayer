@@ -4644,6 +4644,8 @@ export class Skills {
         return;
       }
       if (v === 'trek') {
+        // Up top first: a long leg from down the mine's stairs walked deeper into it.
+        if (await this.needsEscape(gen)) { await this.toSurface(gen); return; }
         const p = this.sim.location;
         const ang = st.trekAngle(Math.random, wetCones(this.a.wetSpots, p, system.currentTick));
         this.log(`explore: ${what}: getting nowhere here, a long leg ${Math.round(ang * 180 / Math.PI)} deg`);
