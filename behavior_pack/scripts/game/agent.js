@@ -1104,9 +1104,11 @@ export class Agent {
         // crafting tables in a minute: whatever kept asking, the pack already had them): set it aside, say what the plan saw.
         if (step.step === 'craft' && Array.isArray(step.items)) {
           const invNow = invCounts(this.sim);
-          const have = step.items.every((it) => (invNow[it] ?? 0) >= 1);
+          // (A pile of four or more: three stone pickaxes before an iron trip is the plan's own stock, and setting that aside left the
+          // bot idling three minutes, 09:42 in a real run. Eight furnaces was the loop.)
+          const have = step.items.every((it) => (invNow[it] ?? 0) >= 4);
           const crafts = (this.autoHist ?? []).filter((h) => h.key === key && system.currentTick - h.t < 1800).length;
-          if (have && crafts >= 3) {
+          if (have && crafts >= 4) {
             this.deferred.set(stepKey(step), { until: Date.now() + 180000, step: 'craft' });
             trace(`auto: craft loop: ${step.items.join(', ')} crafted ${crafts} times in 90 s and already in the pack (${step.items.map((it) => `${it} ${invNow[it]}`).join(', ')}); setting craft aside for 3 min. facts: ${JSON.stringify({ house: !!H.house, furnaceKnown: this.memory.list('furnace', this.dim.id, this.sim.location).length, campFurnace: !!S.campFurnace() })}`);
             this.flight.dump(`craft loop: ${step.items.join(', ')}`);
@@ -1749,7 +1751,7 @@ export class Agent {
       bedDeferred: (this.bedDeferredUntil ?? 0) > now,
       canMineStone: Object.keys(inv).some((id) => /_pickaxe$/.test(id)),
       early: !Object.keys(inv).some((id) => /^(stone|iron|diamond|netherite)_pickaxe$/.test(id)),
-      canHunt: SWORD_OK.test(Object.keys(inv).join(' ')),
+      canHunt: SWORD_OK.test(Object.keys(inv).join(' ')) && this.toggles().hunting !== false, // (hunting switched off: not exploring for animals either)
     };
   }
 

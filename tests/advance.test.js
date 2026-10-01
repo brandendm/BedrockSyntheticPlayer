@@ -85,6 +85,17 @@ test('spare pickaxes before an iron trip: three stone ones', () => {
   assert.equal(advanceStep({ ...f, inv: { ...inv, stone_pickaxe: 3 } }).step, 'get_iron');
 });
 
+test('no cobblestone for the spares (the furnace took the last): stone first, not an iron trip on one pickaxe', () => {
+  const f = { ...base, farm: { tiles: 24, ripe: 0 }, waterNearHouse: true };
+  const { cobblestone, ...rest } = { ...kit, stone_pickaxe: 1, stone_hoe: 1 };
+  void cobblestone;
+  const st = advanceStep({ ...f, inv: { ...rest, cobblestone: 0 } });
+  assert.deepEqual([st.step, st.need, st.why], ['get_stone', 9, 'spare pickaxes']);
+  // With the stone: the spares are crafted. Below ground (a trip under way): carry on, no stone errand.
+  assert.deepEqual(advanceStep({ ...f, inv: { ...rest, cobblestone: 9 } }).items, ['stone_pickaxe']);
+  assert.equal(advanceStep({ ...f, underground: true, inv: { ...rest, cobblestone: 0 } }).step, 'get_iron');
+});
+
 test('iron in the furnace counts: wait for it rather than mine more', () => {
   const f = { ...base, farm: null, waterNearHouse: false };
   // (Short of plenty more: mining goes on while it smelts.)

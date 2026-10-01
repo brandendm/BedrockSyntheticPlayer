@@ -150,6 +150,11 @@ function ironTrip(f, need, why) {
     // all the way out for a log.
     if (!(f.underground && c.step === 'gather_logs')) return c;
   }
+  // No cobblestone in the pack for the spares (the furnace took the last): get some first, up here. Setting off with one stone pickaxe
+  // (131 uses) meant it broke at Y 26 on the way down and the bot climbed 45 blocks out for a table to make the next.
+  if (short && !f.underground && pickaxes(inv) < 2 && count(inv, (id) => id === 'cobblestone' || id === 'cobbled_deepslate') < 3 && pickaxes(inv) >= 1) {
+    return { step: 'get_stone', need: 9, why: 'spare pickaxes' };
+  }
   // Torches for the mine before going down (made from what coal we have, no table needed): a dark
   // tunnel is where mobs spawn, and making them down there needs sticks we may not have left.
   if (!f.underground && (inv.torch ?? 0) < 8 && (inv.coal ?? 0) + (inv.charcoal ?? 0) > 0) {

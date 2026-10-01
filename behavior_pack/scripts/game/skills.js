@@ -3274,7 +3274,10 @@ export class Skills {
     const todo = [start], done = new Set(), refill = [];
     const stand = this.feet();
     let n = 0;
-    while (todo.length && n < 16) {
+    // Coal past what's wanted isn't taken: a vein of 16 and another of 4 with 7 coal in the pack was 30 s of mining for 32 coal (iron
+    // gear smelts on about 5). The vein's left; whatever's in the way of the next thing is still cut.
+    const coalHave = kind === 'coal_ore' ? (invCounts(this.sim).coal ?? 0) + (invCounts(this.sim).charcoal ?? 0) : 0;
+    while (todo.length && n < 16 && !(kind === 'coal_ore' && coalHave + n >= 24)) {
       this.check(gen);
       // Nearest first, from where we are: a vein mined in the order it was found had us walking
       // round it and back.
