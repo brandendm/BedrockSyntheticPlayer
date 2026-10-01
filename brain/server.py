@@ -34,6 +34,11 @@ _lock = threading.Lock()
 _status = {"data": None, "at": 0.0}
 _commands: collections.deque = collections.deque(maxlen=50)
 _recent: collections.deque = collections.deque(maxlen=80)
+# The bot's decision notes (the live trace panel), flight reports and test results, newest last.
+_traces: collections.deque = collections.deque(maxlen=800)
+_trace_seq = 0
+_flights: collections.deque = collections.deque(maxlen=12)
+_tests: dict = {"batch": None, "results": {}}
 
 
 def append_traces(traces: list) -> None:
@@ -44,9 +49,31 @@ def append_traces(traces: list) -> None:
     if f.exists() and f.stat().st_size > 2_000_000:
         f.replace(f.with_suffix(".old.jsonl"))
     now = time.strftime("%Y-%m-%d %H:%M:%S")
+    global _trace_seq
     with f.open("a", encoding="utf-8") as fh:
         for t in traces[:500]:
-            fh.write(json.dumps({"t": now, "tick": t.get("tick"), "msg": str(t.get("msg", ""))[:300]}) + "\n")
+            rec = {"t": now, "tick": t.get("tick"), "msg": str(t.get("msg", ""))[:300]}
+            fh.write(json.dumps(rec) + "\n")
+            with _lock:
+                _trace_seq += 1
+                _traces.append({"id": _trace_seq, **rec})
+
+
+def remember(evt: dict) -> None:
+    """Keep what the dashboard shows from a logged event: flight reports, test results, the last batch."""
+    kind = evt.get("type")
+    now = time.strftime("%Y-%m-%d %H:%M:%S")
+    with _lock:
+        if kind == "flight":
+            _flights.append({"t": now, "why": str(evt.get("why", ""))[:300], "build": evt.get("build"),
+                             "report": [str(x)[:400] for x in (evt.get("report") or [])][:80], "pos": (evt.get("state") or {}).get("pos")})
+        elif kind == "test_result":
+            _tests["results"][str(evt.get("name"))] = {"t": now, "pass": bool(evt.get("pass")), "detail": str(evt.get("detail", ""))[:400]}
+        elif kind == "test_batch":
+            _tests["batch"] = {"t": now, "build": evt.get("build"), "passed": evt.get("passed"), "total": evt.get("total"), "secs": evt.get("secs"),
+                               "results": [{"name": r.get("name"), "pass": bool(r.get("pass")), "secs": r.get("secs"), "detail": str(r.get("detail", ""))[:300]} for r in (evt.get("results") or [])][:80]}
+            for r in _tests["batch"]["results"]:
+                _tests["results"][str(r["name"])] = {"t": now, "pass": r["pass"], "detail": r["detail"], "secs": r["secs"]}
 
 
 def append_log(evt: dict) -> None:
@@ -58,7 +85,9 @@ def append_log(evt: dict) -> None:
         rec["pos"] = evt["state"].get("pos")
         rec["task"] = evt["state"].get("task")
     with _lock:
-        _recent.append(rec)
+        # (The dashboard's Recent list gets a light copy: the full flight report and batch go to
+        # their own endpoints, not into the status poll every second.)
+        _recent.append({k: v for k, v in rec.items() if k not in ("report", "results")})
     names = ["events.jsonl"] + (["tests.jsonl"] if evt.get("type") in ("test_result", "test_batch") else []) + (["flight.jsonl"] if evt.get("type") == "flight" else [])
     for name in names:
         f = LOG_DIR / name
@@ -137,6 +166,24 @@ def make_handler(engine: DecisionEngine):
                     "jev": {**j.stats, "enabled": j.available, "usd_today": round(j.budget.usd_today, 6),
                             "calls_last_hour": j.budget.calls_last_hour},
                 })
+            if self.path.startswith("/api/trace"):
+                # ?since=<id>: only the notes after that one (the live decisions panel polls this).
+                since = 0
+                if "since=" in self.path:
+                    try:
+                        since = int(self.path.split("since=", 1)[1].split("&")[0])
+                    except ValueError:
+                        since = 0
+                with _lock:
+                    lines = [t for t in _traces if t["id"] > since][-300:]
+                    nxt = _trace_seq
+                return self._send(200, {"next": nxt, "lines": lines})
+            if self.path == "/api/flight":
+                with _lock:
+                    return self._send(200, {"reports": list(_flights)})
+            if self.path == "/api/tests":
+                with _lock:
+                    return self._send(200, {"batch": _tests["batch"], "results": dict(_tests["results"])})
             if self.path == "/health":
                 return self._send(200, {"ok": True})
             self._send(404, {"error": "not found"})
@@ -172,10 +219,11 @@ def make_handler(engine: DecisionEngine):
                 evt = json.loads(self.rfile.read(n) or b"{}")
             except ValueError:
                 return self._send(400, {"error": "bad json"})
-            if evt.get("type") in ("log", "test_result"):
+            if evt.get("type") in ("log", "test_result", "test_batch", "flight"):
                 # What the bot said and test results, kept on disk so they can be read later
                 # without watching the server window. No decisions, no API calls.
                 append_log(evt)
+                remember(evt)
                 return self._send(200, {"actions": []})
             actions = engine.handle(evt)
             log.info("%s -> %s", evt.get("type"), actions)

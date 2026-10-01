@@ -82,16 +82,44 @@
   .task .mini { grid-column: 2 / 4; height: 5px; border-radius: 3px; background: var(--chip); overflow: hidden; margin-top: -2px; }
   .task .mini i { display: block; height: 100%; background: var(--accent); }
   .nowline { margin: 0 0 12px; font-size: 14px; }
+  /* health banner, timeline, trail, tests, decisions, flight reports */
+  .banner { display: none; margin: 0; padding: 10px 20px; font-weight: 600; background: var(--bad); color: #fff; position: sticky; top: 0; z-index: 3; }
+  .banner.show { display: flex; gap: 12px; align-items: center; }
+  .banner button { margin-left: auto; background: rgba(255,255,255,.2); color: #fff; border-color: rgba(255,255,255,.4); }
+  .health { display: flex; gap: 10px; align-items: center; font-size: 16px; font-weight: 600; margin-bottom: 8px; }
+  .health .dot { width: 12px; height: 12px; }
+  .timeline { display: flex; height: 22px; border-radius: 6px; overflow: hidden; background: var(--chip); margin: 6px 0 4px; }
+  .timeline i { display: block; height: 100%; min-width: 3px; border-right: 1px solid var(--panel); }
+  .legend { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 12px; color: var(--muted); }
+  .legend span::before { content: ''; display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 5px; background: var(--c); vertical-align: -1px; }
+  canvas#trail { width: 100%; aspect-ratio: 1 / 1; max-height: 320px; background: var(--chip); border-radius: 8px; display: block; }
+  table.tests { width: 100%; border-collapse: collapse; font-size: 13px; }
+  table.tests td, table.tests th { padding: 4px 8px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
+  table.tests th { color: var(--muted); font-weight: 600; font-size: 12px; }
+  table.tests .pass { color: var(--good); font-weight: 600; } table.tests .fail { color: var(--bad); font-weight: 600; } table.tests .none { color: var(--muted); }
+  table.tests td.d { color: var(--muted); font-family: var(--mono); font-size: 12px; overflow-wrap: anywhere; }
+  .trace { font-family: var(--mono); font-size: 12px; max-height: 360px; overflow: auto; background: var(--chip); border-radius: 8px; padding: 6px 10px; }
+  .trace div { padding: 1px 0; overflow-wrap: anywhere; }
+  .trace .tk { color: var(--muted); margin-right: 8px; }
+  .trace .hit { color: var(--warn); } .trace .bad { color: var(--bad); } .trace .good { color: var(--good); }
+  details.rep { border: 1px solid var(--line); border-radius: 8px; margin-bottom: 8px; }
+  details.rep summary { padding: 8px 12px; cursor: pointer; display: flex; gap: 10px; align-items: center; }
+  details.rep summary .w { flex: 1; font-weight: 600; overflow-wrap: anywhere; }
+  details.rep pre { margin: 0; padding: 8px 12px; border-top: 1px solid var(--line); font: 12px/1.45 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; max-height: 420px; overflow: auto; }
+  .row.tight { margin-bottom: 6px; }
   @media (max-width: 520px) { header, main { padding-left: 16px; padding-right: 16px; } }
 </style>
 </head>
 <body>
+<div class="banner" id="banner"><span id="bannertext"></span><button id="bannerdismiss">Dismiss</button></div>
 <header>
   <span class="dot" id="dot"></span>
   <h1 id="name">Scout</h1>
   <span class="muted" id="conn">connecting…</span>
   <span class="spacer"></span>
+  <span class="muted" id="build"></span>
   <span class="muted" id="clock"></span>
+  <button id="alerts" title="Desktop notifications when it gets stuck or dies">🔔 Alerts</button>
   <button id="theme" title="Toggle light/dark">◐</button>
 </header>
 
@@ -103,6 +131,25 @@
     <div class="goals" id="goals"></div>
     <h2 style="margin-top:14px">What it works on</h2>
     <div class="toggles" id="toggles"></div>
+  </section>
+
+  <section class="wide" id="healthsec">
+    <h2>Health check</h2>
+    <div class="health"><span class="dot" id="hdot"></span><span id="htext">—</span></div>
+    <div class="muted" id="hsub"></div>
+    <div class="timeline" id="timeline"></div>
+    <div class="legend" id="legend"></div>
+    <div class="row" style="margin-top:10px">
+      <button id="dumpnow" title="Print a flight report to the server log and keep it here">Dump flight report now</button>
+      <button id="copylast">Copy last report</button>
+      <span class="muted" id="hdumps"></span>
+    </div>
+  </section>
+
+  <section>
+    <h2>Trail (last 5 min, N is up)</h2>
+    <canvas id="trail" width="400" height="400"></canvas>
+    <p class="note" id="trailnote"></p>
   </section>
 
   <section>
@@ -145,17 +192,12 @@
       <button data-cmd="auto off">Auto off</button>
       <button data-cmd="surface">Surface</button>
       <button data-cmd="where">Say where things are</button>
+      <button data-cmd="dump" title="Flight report to the server log">Dump report</button>
+      <button data-cmd="version">Version</button>
     </div>
     <div class="row">
       <button data-cmd="spawn" id="spawnbtn">Spawn bot</button>
       <button class="danger" data-cmd="despawn">Despawn bot</button>
-      <select id="test">
-        <option value="all">all tests</option>
-        <option>roof</option><option>tower</option><option>hole</option><option>pit</option><option>trap</option>
-        <option>climb</option><option>ledge</option><option>ladder</option><option>husk</option><option>sheep</option>
-        <option>pen</option><option>smelt</option><option>shelter</option><option>house</option>
-      </select>
-      <button id="runtest">Run test</button>
     </div>
     <div class="row">
       <input id="cmd" placeholder="Tell the bot anything: goto 120 64 -40, follow Steve, dig…">
@@ -178,6 +220,36 @@
       <button id="runadmin">Run</button>
     </div>
     <p class="note">@P means the player picked above. Commands run as the server, with full permissions.</p>
+  </section>
+
+  <section class="wide">
+    <h2>Tests</h2>
+    <div class="row">
+      <button class="primary" data-cmd="test all quick">Run quick tests</button>
+      <button data-cmd="test all slow">Run slow tests</button>
+      <button data-cmd="test all">Run everything</button>
+      <select id="test2"></select>
+      <input id="testarg" placeholder="arg" style="max-width:80px;min-width:60px">
+      <button id="runtest2">Run one</button>
+      <span class="muted" id="testsum"></span>
+    </div>
+    <table class="tests"><thead><tr><th>Test</th><th>Result</th><th>Secs</th><th>Detail</th></tr></thead><tbody id="testrows"></tbody></table>
+  </section>
+
+  <section class="wide">
+    <h2>Decisions (live)</h2>
+    <div class="row tight">
+      <input id="tfilter" placeholder="filter: auto:, hurt, quarry, stuck…">
+      <label class="muted"><input type="checkbox" id="tpause" style="min-width:0;flex:none"> pause</label>
+      <button id="tclear">Clear</button>
+      <button id="tcopy">Copy shown</button>
+    </div>
+    <div class="trace" id="trace"></div>
+  </section>
+
+  <section class="wide">
+    <h2>Flight reports</h2>
+    <div id="flights"><span class="muted">none yet: a report appears when it dies, loops, gets stuck, a test fails, or you press Dump.</span></div>
   </section>
 
   <section>
@@ -230,7 +302,6 @@ $('send').onclick = () => { const v = $('cmd').value.trim(); if (v) { send(v); $
 $('cmd').onkeydown = (e) => { if (e.key === 'Enter') $('send').click(); };
 $('runadmin').onclick = () => { const v = $('admin').value.trim().replace(/^\//, ''); if (v) { send('/' + v); $('admin').value = ''; } };
 $('admin').onkeydown = (e) => { if (e.key === 'Enter') $('runadmin').click(); };
-$('runtest').onclick = () => send(`test ${$('test').value}`);
 
 function bar(el, val, max, colorOk) {
   const pct = Math.max(0, Math.min(100, (val / max) * 100));
@@ -304,6 +375,8 @@ function render(d) {
     const t = (e.t || '').slice(11);
     if (e.type === 'command') return `<div><span class="t">${t}</span><span class="cmd">› ${esc(e.text)}</span></div>`;
     if (e.type === 'test_result') return `<div><span class="t">${t}</span><span class="${e.pass ? 'pass' : 'fail'}">test ${esc(e.name)}: ${e.pass ? 'PASS' : 'FAIL'} – ${esc(e.detail)}</span></div>`;
+    if (e.type === 'flight') return `<div><span class="t">${t}</span><span class="fail">flight report: ${esc(e.why)}</span></div>`;
+    if (e.type === 'test_batch') return `<div><span class="t">${t}</span><span class="${e.passed === e.total ? 'pass' : 'fail'}">tests: ${e.passed}/${e.total} passed in ${Math.floor((e.secs || 0) / 60)}m${(e.secs || 0) % 60}s</span></div>`;
     return `<div><span class="t">${t}</span>${esc(e.text ?? e.type)}</div>`;
   }).join('');
   if (nearBottom) log.scrollTop = log.scrollHeight;
@@ -338,17 +411,170 @@ function renderGoals(s) {
 }
 const esc = (x) => String(x ?? '').replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
 
+// ---------------------------------------------------------------- command history (↑ / ↓ in the box)
+let hist = []; try { hist = JSON.parse(localStorage.getItem('hist') || '[]'); } catch {}
+let hpos = hist.length;
+const origSend = $('send').onclick;
+$('send').onclick = () => { const v = $('cmd').value.trim(); if (v) { hist = [...hist.filter((h) => h !== v), v].slice(-40); hpos = hist.length; try { localStorage.setItem('hist', JSON.stringify(hist)); } catch {} } origSend(); };
+$('cmd').addEventListener('keydown', (e) => {
+  if (e.key === 'ArrowUp' && hist.length) { hpos = Math.max(0, hpos - 1); $('cmd').value = hist[hpos]; e.preventDefault(); }
+  if (e.key === 'ArrowDown' && hist.length) { hpos = Math.min(hist.length, hpos + 1); $('cmd').value = hist[hpos] ?? ''; e.preventDefault(); }
+});
+
+// ---------------------------------------------------------------- tests
+const TESTS = ['roof', 'tower', 'hole', 'pit', 'trap', 'climb', 'ledge', 'ladder', 'husk', 'creeper', 'sheep', 'pen', 'smelt', 'smeltlogs', 'shelter', 'house', 'resume', 'ghostlog', 'quarry', 'dark', 'replant', 'litter', 'trader', 'iron', 'farm', 'equip', 'water', 'bucketfarm', 'treetop', 'corner', 'leap', 'bridge', 'fall', 'vines', 'stairgap', 'loot', 'shield', 'skel', 'rest', 'nights', 'calibrate'];
+$('test2').innerHTML = TESTS.map((t) => `<option>${t}</option>`).join('');
+$('runtest2').onclick = () => { const a = $('testarg').value.trim(); send(`test ${$('test2').value}${a ? ' ' + a : ''}`); };
+async function loadTests() {
+  try {
+    const d = await (await fetch('/api/tests', { cache: 'no-store' })).json();
+    const b = d.batch, r = d.results || {};
+    $('testsum').textContent = b ? `last batch ${b.t.slice(11)}: ${b.passed}/${b.total} passed in ${Math.floor(b.secs / 60)}m${b.secs % 60}s (build ${b.build})` : '';
+    const names = [...TESTS, ...Object.keys(r).filter((n) => !TESTS.includes(n))];
+    // Failures first, then passes (slowest first); the ones not run yet are one line, not 30 rows.
+    const ran = names.filter((n) => r[n]).sort((a, b) => (r[a].pass - r[b].pass) || ((r[b].secs ?? 0) - (r[a].secs ?? 0)));
+    const notRun = names.filter((n) => !r[n]);
+    $('testrows').innerHTML = ran.map((n) => {
+      const x = r[n];
+      return `<tr><td>${n}</td><td class="${x.pass ? 'pass' : 'fail'}">${x.pass ? 'PASS' : 'FAIL'}</td><td>${x.secs ?? ''}</td><td class="d">${esc(x.detail ?? '')}</td></tr>`;
+    }).join('') + (notRun.length ? `<tr><td colspan="4" class="none">not run yet (${notRun.length}): ${notRun.join(', ')}</td></tr>` : '');
+  } catch {}
+}
+
+// ---------------------------------------------------------------- decisions (live trace)
+let traceNext = 0, traceLines = [];
+const tclass = (m) => /hurt:|died|DIED|FAIL|stuck|couldn't|can't|circles/.test(m) ? 'bad' : /^auto:/.test(m) ? 'good' : /fight|flee|running from/.test(m) ? 'hit' : '';
+function drawTrace() {
+  const f = $('tfilter').value.toLowerCase();
+  const shown = traceLines.filter((l) => !f || l.msg.toLowerCase().includes(f)).slice(-250);
+  const el = $('trace'), near = el.scrollHeight - el.scrollTop - el.clientHeight < 30;
+  el.innerHTML = shown.map((l) => `<div class="${tclass(l.msg)}"><span class="tk">${(l.t || '').slice(11)}</span>${esc(l.msg)}</div>`).join('');
+  if (near) el.scrollTop = el.scrollHeight;
+  return shown;
+}
+async function loadTrace() {
+  if ($('tpause').checked) return;
+  try {
+    const d = await (await fetch(`/api/trace?since=${traceNext}`, { cache: 'no-store' })).json();
+    if (d.lines.length) { traceLines = [...traceLines, ...d.lines].slice(-1500); }
+    traceNext = d.next;
+    if (d.lines.length) drawTrace();
+  } catch {}
+}
+$('tfilter').oninput = drawTrace;
+$('tclear').onclick = () => { traceLines = []; drawTrace(); };
+$('tcopy').onclick = () => copyText(drawTrace().map((l) => `${l.t.slice(11)} ${l.msg}`).join('\n'), 'Decisions copied');
+
+// ---------------------------------------------------------------- flight reports
+let lastReports = [], seenReports = null;
+async function copyText(text, msg) {
+  try { await navigator.clipboard.writeText(text); toast(msg || 'Copied'); } catch { toast('Copy failed: select the text by hand'); }
+}
+async function loadFlights() {
+  try {
+    const d = await (await fetch('/api/flight', { cache: 'no-store' })).json();
+    const reps = d.reports || [];
+    if (seenReports !== null && reps.length > seenReports && reps.length) alertUser(`Flight report: ${reps[reps.length - 1].why}`);
+    seenReports = reps.length;
+    lastReports = reps;
+    const open = new Set([...document.querySelectorAll('#flights details[open]')].map((x) => x.dataset.k));
+    $('flights').innerHTML = reps.length ? [...reps].reverse().map((r) => `<details class="rep" data-k="${r.t}${r.why}" ${open.has(r.t + r.why) ? 'open' : ''}><summary><span class="muted">${r.t.slice(11)}</span><span class="w">${esc(r.why)}</span><button data-copy="${reps.indexOf(r)}">Copy</button></summary><pre>${esc((r.report || []).join('\n'))}</pre></details>`).join('')
+      : '<span class="muted">none yet: a report appears when it dies, loops, gets stuck, a test fails, or you press Dump.</span>';
+    document.querySelectorAll('#flights [data-copy]').forEach((b) => b.onclick = (e) => { e.preventDefault(); e.stopPropagation(); copyText(lastReports[+b.dataset.copy].report.join('\n'), 'Report copied'); });
+  } catch {}
+}
+$('dumpnow').onclick = () => { send('dump'); setTimeout(loadFlights, 1500); };
+$('copylast').onclick = () => lastReports.length ? copyText(lastReports[lastReports.length - 1].report.join('\n'), 'Last report copied') : toast('No reports yet');
+
+// ---------------------------------------------------------------- alerts (banner, title, desktop notification)
+let alertsOn = false; try { alertsOn = localStorage.getItem('alerts') === '1' && Notification.permission === 'granted'; } catch {}
+$('alerts').textContent = alertsOn ? '🔔 Alerts on' : '🔔 Alerts';
+$('alerts').onclick = async () => {
+  try {
+    if (!alertsOn) { const p = await Notification.requestPermission(); alertsOn = p === 'granted'; } else alertsOn = false;
+    localStorage.setItem('alerts', alertsOn ? '1' : '0');
+  } catch { toast('Notifications not available here'); }
+  $('alerts').textContent = alertsOn ? '🔔 Alerts on' : '🔔 Alerts';
+};
+$('bannerdismiss').onclick = () => { $('banner').classList.remove('show'); document.title = 'Scout Dashboard'; };
+let lastAlertAt = 0;
+function alertUser(text) {
+  $('bannertext').textContent = '⚠ ' + text;
+  $('banner').classList.add('show');
+  document.title = '⚠ Scout: ' + text.slice(0, 40);
+  if (alertsOn && Date.now() - lastAlertAt > 5000) { lastAlertAt = Date.now(); try { new Notification('Scout', { body: text }); } catch {} }
+}
+
+// ---------------------------------------------------------------- health, timeline, trail (from the status the game sends)
+const COLORS = ['#2f6fde', '#1f9d55', '#d98c14', '#8b5cf6', '#e0568a', '#0ea5a4', '#a16207', '#64748b', '#ef4444', '#84cc16'];
+const colorOf = {}; let nextColor = 0;
+const col = (k) => colorOf[k] ??= COLORS[nextColor++ % COLORS.length];
+let lastDeaths = null, lastWatch = null;
+function renderFlight(s) {
+  const f = s.flight;
+  if (!f) { $('htext').textContent = 'no flight data (older build?)'; return; }
+  $('build').textContent = s.build ? `build ${s.build}` : '';
+  const w = f.watch;
+  $('hdot').className = 'dot ' + (w ? 'off' : 'on');
+  $('htext').textContent = w ? `${w.kind}: ${w.why}` : 'moving along fine';
+  $('hsub').textContent = f.lastDump ? `last report ${f.lastDump.agoS}s ago: ${f.lastDump.why}` : 'no report this session';
+  $('hdumps').textContent = `${f.dumps} report${f.dumps === 1 ? '' : 's'} · ${f.samples} samples · ${f.notes} notes kept`;
+  if (w && (!lastWatch || lastWatch.kind !== w.kind)) alertUser(`${s.name || 'Scout'} looks ${w.kind}: ${w.why}`);
+  lastWatch = w;
+  if (lastDeaths !== null && s.deaths > lastDeaths) alertUser(`${s.name || 'Scout'} died (${s.deaths} so far)`);
+  lastDeaths = s.deaths;
+  // The plan's steps, as a bar: one block per run of the same step, as wide as it ran.
+  const steps = f.steps || [], tot = steps.reduce((a, r) => a + r.s, 0) || 1;
+  $('timeline').innerHTML = steps.map((r) => `<i title="${esc(r.k)} ${r.s}s" style="width:${(100 * r.s / tot).toFixed(1)}%;background:${col(r.k)}"></i>`).join('');
+  $('legend').innerHTML = [...new Set(steps.map((r) => r.k))].map((k) => `<span style="--c:${col(k)}">${esc(pretty(k))} ${steps.filter((r) => r.k === k).reduce((a, r) => a + r.s, 0)}s</span>`).join('');
+  drawTrail(s, f);
+}
+function drawTrail(s, f) {
+  const c = $('trail'), g = c.getContext('2d'), W = c.width, H = c.height;
+  const css = getComputedStyle(document.documentElement);
+  g.clearRect(0, 0, W, H);
+  const pts = f.trail || [];
+  const marks = [];
+  if (s.house) marks.push({ x: s.house.x, z: s.house.z, c: '#d98c14', l: 'home' });
+  if (!pts.length) { $('trailnote').textContent = 'no movement recorded yet'; return; }
+  const xs = [...pts.map((p) => p[0]), ...marks.map((m) => m.x)], zs = [...pts.map((p) => p[1]), ...marks.map((m) => m.z)];
+  let x0 = Math.min(...xs), x1 = Math.max(...xs), z0 = Math.min(...zs), z1 = Math.max(...zs);
+  const span = Math.max(16, x1 - x0, z1 - z0), cx = (x0 + x1) / 2, cz = (z0 + z1) / 2, sc = (W - 40) / span;
+  const X = (x) => W / 2 + (x - cx) * sc, Z = (z) => H / 2 + (z - cz) * sc; // z grows south: down the canvas
+  g.strokeStyle = css.getPropertyValue('--line'); g.lineWidth = 1;
+  const grid = span > 160 ? 50 : span > 60 ? 20 : 8;
+  for (let gx = Math.ceil((cx - span / 2) / grid) * grid; gx < cx + span / 2; gx += grid) { g.beginPath(); g.moveTo(X(gx), 0); g.lineTo(X(gx), H); g.stroke(); }
+  for (let gz = Math.ceil((cz - span / 2) / grid) * grid; gz < cz + span / 2; gz += grid) { g.beginPath(); g.moveTo(0, Z(gz)); g.lineTo(W, Z(gz)); g.stroke(); }
+  g.lineWidth = 2; g.lineJoin = 'round';
+  for (let i = 1; i < pts.length; i++) { // older = fainter
+    g.strokeStyle = `rgba(47,111,222,${0.15 + 0.85 * i / pts.length})`;
+    g.beginPath(); g.moveTo(X(pts[i - 1][0]), Z(pts[i - 1][1])); g.lineTo(X(pts[i][0]), Z(pts[i][1])); g.stroke();
+  }
+  g.fillStyle = css.getPropertyValue('--muted'); g.font = '11px system-ui'; g.fillText(`${grid}-block grid`, 6, H - 6);
+  for (const m of marks) { g.fillStyle = m.c; g.fillRect(X(m.x) - 5, Z(m.z) - 5, 10, 10); g.fillStyle = css.getPropertyValue('--ink'); g.fillText(m.l, X(m.x) + 8, Z(m.z) + 4); }
+  const last = pts[pts.length - 1];
+  g.fillStyle = '#d64545'; g.beginPath(); g.arc(X(last[0]), Z(last[1]), 5, 0, 7); g.fill();
+  const walked = pts.reduce((a, p, i) => i ? a + Math.hypot(p[0] - pts[i - 1][0], p[1] - pts[i - 1][1]) : a, 0);
+  const net = Math.hypot(last[0] - pts[0][0], last[1] - pts[0][1]);
+  $('trailnote').textContent = `walked ~${Math.round(walked)} blocks, ${Math.round(net)} from where this started · red dot: now, orange square: home`;
+}
+
 async function tick() {
   try {
     const r = await fetch('/api/status', { cache: 'no-store' });
-    render(await r.json());
+    const d = await r.json();
+    render(d);
+    try { if (d.status?.online) renderFlight(d.status); } catch (e) { console.warn(e); }
   } catch {
     $('dot').className = 'dot off';
     $('conn').textContent = 'brain not reachable (is Start Agent.bat running?)';
   }
 }
-tick();
+tick(); loadTests(); loadTrace(); loadFlights();
 setInterval(tick, 1000);
+setInterval(loadTrace, 2000);
+setInterval(loadTests, 5000);
+setInterval(loadFlights, 4000);
 </script>
 </body>
 </html>

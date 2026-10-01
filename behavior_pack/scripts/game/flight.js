@@ -9,7 +9,7 @@
 // so a stuck run is one paste with the evidence in it, not a guess from the chat lines.
 import { system, world } from '@minecraft/server';
 import { CONFIG } from '../config.js';
-import { diagnose, stepLine, invDiff, pathAndNet } from '../core/flight.js';
+import { diagnose, stepLine, stepRuns, invDiff, pathAndNet } from '../core/flight.js';
 import { invCounts } from './inventory.js';
 import { onTrace, sendEvent } from './bridge.js';
 
@@ -71,6 +71,7 @@ export class Flight {
     const a = this.a;
     const t = system.currentTick;
     this.lastDump = t;
+    this.lastWhy = why;
     this.dumps++;
     const lines = [];
     const S = this.samples;
@@ -107,6 +108,18 @@ export class Flight {
     if (!quiet) for (const l of lines) console.warn(`[flight] ${l}`);
     sendEvent({ type: 'flight', build: CONFIG.build, why, report: lines, state: a.snapshot() }).catch(() => {});
     return lines;
+  }
+
+  /** For the dashboard (agent.status()): what the watchdog thinks now, the last report, where it's been, the plan's steps. */
+  summary() {
+    const S = this.samples;
+    let watch = null;
+    try { watch = diagnose(S, { windowS: 30 }); } catch { /* too little yet */ }
+    const trail = [];
+    for (let i = Math.max(0, S.length - 300); i < S.length; i += 3) trail.push([Math.round(S[i].x), Math.round(S[i].z), Math.round(S[i].y)]);
+    const steps = stepRuns(S.slice(-360)).slice(-14).map((r) => ({ k: r.k, s: r.n }));
+    const t = system.currentTick;
+    return { watch, dumps: this.dumps, lastDump: this.lastWhy ? { why: this.lastWhy, agoS: Math.round((t - this.lastDump) / 20) } : null, trail, steps, notes: this.notes.length, samples: S.length };
   }
 
   timeOfDay() { try { return world.getTimeOfDay(); } catch { return -1; } }

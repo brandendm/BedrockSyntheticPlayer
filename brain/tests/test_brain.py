@@ -194,3 +194,58 @@ class ServerTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class DashboardEndpointTests(unittest.TestCase):
+    """The dashboard's data: flight reports, test batches and the live trace, over real HTTP."""
+
+    @classmethod
+    def setUpClass(cls):
+        import threading, urllib.request
+        from http.server import ThreadingHTTPServer
+        from brain import server
+        cls.server = server
+        engine = DecisionEngine(JevClient("", transport=fake_transport()), NO_LLM)
+        cls.httpd = ThreadingHTTPServer(("127.0.0.1", 0), server.make_handler(engine))
+        cls.port = cls.httpd.server_address[1]
+        threading.Thread(target=cls.httpd.serve_forever, daemon=True).start()
+        cls.tmp = __import__("tempfile").mkdtemp()
+        server.LOG_DIR = __import__("pathlib").Path(cls.tmp)
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.httpd.shutdown()
+
+    def call(self, path, body=None):
+        import json, urllib.request
+        req = urllib.request.Request(f"http://127.0.0.1:{self.port}{path}", data=None if body is None else json.dumps(body).encode(),
+                                     headers={"Content-Type": "application/json"})
+        return json.loads(urllib.request.urlopen(req).read())
+
+    def test_flight_report_is_kept_and_not_sent_to_the_decision_engine(self):
+        out = self.call("/event", {"type": "flight", "build": "u88", "why": "frozen: 60 s", "report": ["a", "b"], "state": {"pos": {"x": 1, "y": 2, "z": 3}}})
+        self.assertEqual(out, {"actions": []})
+        reps = self.call("/api/flight")["reports"]
+        self.assertEqual(reps[-1]["why"], "frozen: 60 s")
+        self.assertEqual(reps[-1]["report"], ["a", "b"])
+        recent = self.call("/api/status")["events"]
+        self.assertNotIn("report", [k for e in recent for k in e])  # the poll stays light
+
+    def test_test_batch_fills_the_results_table(self):
+        self.call("/event", {"type": "test_batch", "build": "u88", "passed": 1, "total": 2, "secs": 90,
+                             "results": [{"name": "roof", "pass": True, "secs": 20, "detail": "ok"}, {"name": "vines", "pass": False, "secs": 70, "detail": "vine"}]})
+        d = self.call("/api/tests")
+        self.assertEqual(d["batch"]["passed"], 1)
+        self.assertTrue(d["results"]["roof"]["pass"])
+        self.assertFalse(d["results"]["vines"]["pass"])
+        self.assertEqual(d["results"]["vines"]["secs"], 70)
+
+    def test_trace_since(self):
+        self.call("/poll", {"status": {"online": True}, "traces": [{"tick": 1, "msg": "auto: get_stone8"}, {"tick": 2, "msg": "hurt: zombie"}]})
+        d = self.call("/api/trace?since=0")
+        msgs = [l["msg"] for l in d["lines"]]
+        self.assertIn("hurt: zombie", msgs)
+        again = self.call(f"/api/trace?since={d['next']}")
+        self.assertEqual(again["lines"], [])
+        self.call("/poll", {"status": {"online": True}, "traces": [{"tick": 3, "msg": "new one"}]})
+        self.assertEqual([l["msg"] for l in self.call(f"/api/trace?since={d['next']}")["lines"]], ["new one"])

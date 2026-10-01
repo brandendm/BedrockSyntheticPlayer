@@ -169,6 +169,7 @@ export class Agent {
   }
 
   onDeath() {
+    this.deathCount = (this.deathCount ?? 0) + 1;
     try { this.flight.dump(`died (mode ${this.mode}, step ${this.autoStep ?? '-'})`); } catch { /* a report never stops the respawn */ }
     // Everything we carried is on the ground here for 5 minutes: go back for it after respawning.
     const p = this.body.getPos();
@@ -1390,6 +1391,9 @@ export class Agent {
       opportunity: this.task?.kind === 'auto' ? this.autoOpportunity : null,
       stepLabel: this.task?.kind === 'auto' ? this.autoLabel ?? null : null,
       setAside: [...this.deferred.values()].filter((d) => d.until > Date.now()).map((d) => d.step),
+      flight: (() => { try { return this.flight.summary(); } catch { return null; } })(),
+      deaths: this.deathCount ?? 0,
+      build: CONFIG.build,
     };
   }
 

@@ -461,6 +461,16 @@ Defaults are in `brain/config.example.json`. Copy it to `brain/config.json` to o
 
 ## Tests
 
+**The dashboard** (`brain/dashboard.html`, open `http://127.0.0.1:8765/` while the brain runs) now shows, besides goals, vitals, inventory and controls:
+- **Health check:** a red banner, a tab-title warning and (with 🔔 Alerts on) a desktop notification when the watchdog finds it stuck or it dies. The panel shows what the watchdog thinks now, the last flight report, and a bar of the plan's steps over the last 6 minutes, one block per run, so a get-stone/craft loop is visible at a glance. Buttons: dump a flight report now, copy the last one.
+- **Trail:** a top-down map of the last 5 minutes (fainter is older, red dot is now, orange square is home), with blocks walked against net distance.
+- **Tests:** run quick, slow or all tests, or one with an argument. The table lists failures first, then passes slowest first, with seconds and detail, and the ones not run yet in one line.
+- **Decisions (live):** the bot's decision notes as they happen (what it chose, hits, quarry trouble), colored, with a filter, pause, clear and copy.
+- **Flight reports:** every report, expandable, each with a Copy button.
+- **Small things:** the build number in the header, ↑/↓ in the command box for earlier commands, Dump report and Version buttons.
+- **Endpoints behind it:** `GET /api/trace?since=<id>`, `/api/flight`, `/api/tests`. `flight` and `test_batch` events used to be passed to the decision engine, which has no use for them. They are now only logged, and the poll the page makes every second stays light.
+- **Checked:** in Chromium against a running brain with sample data (no errors, 390 px wide has no sideways scroll), and `python3 -m unittest brain.tests.test_brain` (24 tests, 3 new for these endpoints).
+
 **The flight recorder** (`game/flight.js`, analysis in `core/flight.js`): a rolling record of what the bot was doing, kept even with no brain running. It samples position, health, food, the plan's step, the pack and whether it's underground every second (6 minutes kept), and keeps every decision note and chat line (8 minutes). Nothing is printed until something goes wrong. Then one report goes to the server console as `[flight]` lines (so it's in the log you paste) and to `brain/logs/flight.jsonl`:
 - **Triggers:** dying; the loop-breaker firing; a test failing; `!bot dump [why]` by hand; and a watchdog that looks once every 10 s at the last minute and, at most once per 5 minutes, reports one of four patterns. They are *frozen* (in place, same pack, same plan), *pacing* (30+ blocks walked, back where it started, nothing gained), *spinning* (the plan flips 8+ times with nothing gained) and *starving* (food 0, health falling). It stays quiet while it's fighting, fleeing, asleep or waiting on purpose (a furnace, a night, resting).
 - **A report has:** the reason; where it is, health, food, mode and step; the last 60 s walked; the plan's steps in order with seconds each (`get_stone 40s > craft 3s > get_stone 38s`); the pack and what changed in it; its route every 30 s; the quarry, house, steps set aside and toggles; and the last 30 decisions, chat lines and hits, with how long ago each was.
