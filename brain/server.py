@@ -33,9 +33,23 @@ LOG_DIR = ROOT / "logs"
 _lock = threading.Lock()
 _status = {"data": None, "at": 0.0}
 _commands: collections.deque = collections.deque(maxlen=50)
-_recent: collections.deque = collections.deque(maxlen=80)
+def _about() -> dict:
+    """What this brain is: the commit it runs from (if git is there), Python, when it started."""
+    import platform
+    import subprocess
+    out = {"started": time.strftime("%Y-%m-%d %H:%M:%S"), "python": platform.python_version(), "platform": platform.platform()}
+    try:
+        out["commit"] = subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=str(ROOT), capture_output=True, text=True, timeout=3).stdout.strip() or None
+        out["dirty"] = bool(subprocess.run(["git", "status", "--porcelain"], cwd=str(ROOT), capture_output=True, text=True, timeout=3).stdout.strip())
+    except Exception:
+        pass
+    return out
+
+
+ABOUT = _about()
+_recent: collections.deque = collections.deque(maxlen=400)
 # The bot's decision notes (the live trace panel), flight reports and test results, newest last.
-_traces: collections.deque = collections.deque(maxlen=800)
+_traces: collections.deque = collections.deque(maxlen=5000)
 _trace_seq = 0
 _flights: collections.deque = collections.deque(maxlen=12)
 _tests: dict = {"batch": None, "results": {}}
@@ -278,6 +292,11 @@ def make_handler(engine: DecisionEngine, key: str | None = None):
                     "jev": {"enabled": j.available, "usd_today": round(j.budget.usd_today, 6),
                             "calls_last_hour": j.budget.calls_last_hour},
                 })
+            if self.path == "/api/about":
+                return self._send(200, ABOUT)
+            if self.path == "/api/events":
+                with _lock:
+                    return self._send(200, {"events": list(_recent)})
             if self.path == "/stats":
                 j = engine.jev
                 return self._send(200, {
@@ -294,7 +313,9 @@ def make_handler(engine: DecisionEngine, key: str | None = None):
                     except ValueError:
                         since = 0
                 with _lock:
-                    lines = [t for t in _traces if t["id"] > since][-300:]
+                    lines = [t for t in _traces if t["id"] > since]
+                    if "all=1" not in self.path:
+                        lines = lines[-300:]
                     nxt = _trace_seq
                 return self._send(200, {"next": nxt, "lines": lines})
             if self.path == "/api/flight":

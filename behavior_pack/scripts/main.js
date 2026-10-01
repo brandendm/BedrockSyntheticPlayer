@@ -432,7 +432,9 @@ world.afterEvents.entityDie.subscribe((ev) => {
 system.runInterval(() => {
   if (!agent) return;
   try {
+    const t0 = Date.now();
     agent.tick();
+    agent.notePerf(Date.now() - t0);
     if (debugLog && system.currentTick % 20 === 0) {
       const p = agent.sim.location, r = agent.sim.getRotation();
       console.warn(`[agent] pos ${p.x.toFixed(2)} ${p.y.toFixed(2)} ${p.z.toFixed(2)} yaw ${r.y.toFixed(1)} pitch ${r.x.toFixed(1)} task ${agent.task?.kind ?? 'idle'}`);

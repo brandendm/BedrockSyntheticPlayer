@@ -132,6 +132,8 @@ export class Agent {
     this.mlg = null;             // water we put down to break a fall: { t, cell, d, done }
     this.slot = null;            // a kill slot we put up: { cells, slot, stand, dir, block }
     this.threatsNow = [];        // the last survive() pass's threats
+    /** @type {any} */
+    this.perf = null;            // tick timings (notePerf)
     this.hunting = false;        // homestead.hunt is steering the head
     this.trail = [];             // recent positions, newest last: {x, y, z, under}
     this.demo = new Demo(this); // (watching the player play, only when switched on: !bot learn on)
@@ -1387,6 +1389,48 @@ export class Agent {
   }
 
   /** Everything the dashboard shows (brain/dashboard.html), sent to the brain once a second. */
+  /** How long each agent tick takes (ms) and how fast the server is turning over, for the diagnostics. */
+  notePerf(ms) {
+    const P = this.perf ??= { n: 0, sum: 0, max: 0, slow: 0, win: [], startedAt: Date.now(), tick0: system.currentTick, lastTickAt: Date.now(), lastTick: system.currentTick, tps: 20 };
+    P.n++; P.sum += ms; P.max = Math.max(P.max, ms); if (ms > 25) P.slow++;
+    P.win.push(ms); if (P.win.length > 200) P.win.shift();
+    const now = Date.now();
+    if (now - P.lastTickAt >= 5000) { P.tps = Math.round(((system.currentTick - P.lastTick) / ((now - P.lastTickAt) / 1000)) * 10) / 10; P.lastTickAt = now; P.lastTick = system.currentTick; }
+  }
+
+  /**
+   * Everything that helps when something's gone wrong and isn't in the plain status: the exact state of
+   * the body, what it wears, the light, the motor, the plan's bookkeeping, the memory's size, how
+   * slow the server is, what's around. Each part on its own, so one failing leaves the rest.
+   */
+  diag() {
+    const out = {};
+    const part = (k, fn) => { try { out[k] = fn(); } catch (e) { out[k] = `unavailable: ${e}`; } };
+    const r1 = (v) => Math.round(v * 100) / 100;
+    part('build', () => CONFIG.build);
+    part('game', () => { const si = system.serverSystemInfo; return si ? { memoryTier: si.memoryTier } : null; });
+    part('body', () => {
+      const l = this.sim.location, rot = this.sim.getRotation(), v = this.sim.getVelocity();
+      return { x: r1(l.x), y: r1(l.y), z: r1(l.z), yaw: r1(rot.y), pitch: r1(rot.x), vel: [r1(v.x), r1(v.y), r1(v.z)], onGround: this.sim.isOnGround, inWater: this.sim.isInWater, sneaking: this.sim.isSneaking, sprinting: this.sim.isSprinting, sleeping: this.sim.isSleeping, gamemode: String(this.sim.getGameMode?.() ?? '') };
+    });
+    part('light', () => { const b = this.dim.getBlock(this.skills.feet()); return { block: b?.getLightLevel(), sky: b?.getSkyLightLevel(), standingOn: this.skills.blockAt({ ...this.skills.feet(), y: this.skills.feet().y - 1 }) }; });
+    part('worn', () => ({ ...Object.fromEntries(Object.entries(this.worn() ?? {}).map(([k, v]) => [k, v && typeof v === 'object' ? (v.id ?? v.typeId ?? String(v)) : v])), armor: this.armor ?? null, shield: !!this.shield }));
+    part('motor', () => ({ busy: !!this.motor.busy, intent: this.motor.intent?.kind ?? null, focus: !!this.motor.focus, mode: this.mode, task: this.task?.kind ?? 'idle', breaking: !!this.breaking, hunting: !!this.hunting, resting: !!this.resting, testHold: !!this.testHold }));
+    part('plan', () => ({ step: this.autoStep ?? null, label: this.autoLabel ?? null, enabled: this.autoEnabled, done: this.autoDone, opportunity: this.autoOpportunity ?? null, miningTrip: !!this.onMiningTrip?.(), deferred: [...this.deferred.entries()].filter(([, d]) => d.until > Date.now()).map(([k, d]) => `${k} (${Math.round((d.until - Date.now()) / 1000)}s)`), bedDeferredS: Math.max(0, Math.round(((this.bedDeferredUntil ?? 0) - Date.now()) / 1000)), stock: this.stockTarget ?? null }));
+    part('threats', () => (this.threatsNow ?? []).slice(0, 10).map((m) => ({ type: m.type, d: r1(m.dist ?? 0), hp: m.hp ?? null, targetingMe: !!m.targetingMe })));
+    part('players', () => world.getPlayers().filter((p) => p.id !== this.sim.id).map((p) => { const l = p.location; return { name: p.name, d: r1(Math.hypot(l.x - this.sim.location.x, l.z - this.sim.location.z)), at: [Math.round(l.x), Math.round(l.y), Math.round(l.z)] }; }));
+    part('house', () => { const h = this.homestead.house; return h ? { at: [h.x, h.y, h.z], dir: h.dir, layout: h.layout, state: this.homestead.houseState?.() ?? null } : null; });
+    part('quarry', () => { const q = this.memory.data.quarry; return q ? { steps: q.steps?.length, top: q.steps?.[0], bottom: q.steps?.[q.steps.length - 1], fails: q.fails ?? 0, started: q.started } : null; });
+    part('farm', () => this.memory.data.farm ? { ...this.memory.data.farm } : null);
+    part('smelting', () => this.homestead.jobs?.map((j) => ({ kind: j.kind, pos: j.pos, readyIn: Math.round((j.readyAt - system.currentTick) / 20) })) ?? null);
+    part('memory', () => { const raw = JSON.stringify(this.memory.data); return { bytes: raw.length, limit: 32767, byCategory: this.memory.summary(), villages: (this.memory.data.villages ?? []).length, saplings: (this.memory.data.saplings ?? []).length, chunksMapped: this.lookout?.map?.size ?? 0, settings: this.memory.data.settings ?? {} }; });
+    part('settings', () => ({ chat: this.chatOn(), beds: this.bedsOn(), useProfile: CONFIG.useProfile !== false, learnedHouse: !!this.memory.data.settings?.learnedHouse, profile: this.profile?.params ? { ...this.profile.params } : null }));
+    part('perf', () => { const P = this.perf; if (!P) return null; const w = P.win.slice().sort((a, b) => a - b); return { tps: P.tps, agentTickMsAvg: r1(P.sum / Math.max(1, P.n)), agentTickMsP95: w.length ? r1(w[Math.floor(w.length * 0.95)]) : null, agentTickMsMax: r1(P.max), slowTicks: P.slow, ticksRun: P.n, runningS: Math.round((Date.now() - P.startedAt) / 1000) }; });
+    part('counters', () => ({ deaths: this.deathCount ?? 0, flightReports: this.flight?.dumps ?? 0, tick: system.currentTick, day: Math.floor(world.getDay?.() ?? 0), timeOfDay: world.getTimeOfDay() }));
+    part('brain', () => ({ url: CONFIG.brainUrl }));
+    return out;
+  }
+
   status() {
     const p = this.sim.location;
     let hunger = 20, air = 1;
@@ -1421,6 +1465,7 @@ export class Agent {
       learn: { recording: this.demo.on ? this.demo.name : null, status: this.demo.status(), params: this.profile.params, notes: this.profile.notes, using: CONFIG.useProfile !== false },
       villages: (() => { try { return this.villages.status(); } catch { return []; } })(),
       chat: this.chatOn(),
+      diag: (() => { try { return this.diag(); } catch { return null; } })(),
       build: CONFIG.build,
     };
   }

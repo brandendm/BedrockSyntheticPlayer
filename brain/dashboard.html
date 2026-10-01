@@ -118,6 +118,7 @@
   <span class="muted" id="conn">connecting…</span>
   <span class="spacer"></span>
   <span class="muted" id="build"></span>
+  <button id="fullcopy" title="Everything useful in one paste: versions, state, settings, pack, diagnostics, every decision, chat, flight reports, tests">📋 Copy full report</button>
   <span class="muted" id="clock"></span>
   <button id="alerts" title="Desktop notifications when it gets stuck or dies">🔔 Alerts</button>
   <button id="theme" title="Toggle light/dark">◐</button>
@@ -266,6 +267,7 @@
       <label class="muted"><input type="checkbox" id="tpause" style="min-width:0;flex:none"> pause</label>
       <button id="tclear">Clear</button>
       <button id="tcopy">Copy shown</button>
+      <button id="tcopyall">Copy all decisions</button>
     </div>
     <div class="trace" id="trace"></div>
   </section>
@@ -503,7 +505,7 @@ async function loadTrace() {
   if ($('tpause').checked) return;
   try {
     const d = await (await fetch(`/api/trace?since=${traceNext}`, { cache: 'no-store' })).json();
-    if (d.lines.length) { traceLines = [...traceLines, ...d.lines].slice(-1500); }
+    if (d.lines.length) { traceLines = [...traceLines, ...d.lines].slice(-5000); }
     traceNext = d.next;
     if (d.lines.length) drawTrace();
   } catch {}
@@ -512,6 +514,49 @@ $('chatbox').onchange = () => send(`chat ${$('chatbox').checked ? 'on' : 'off'}`
 $('tfilter').oninput = drawTrace;
 $('tclear').onclick = () => { traceLines = []; drawTrace(); };
 $('tcopy').onclick = () => copyText(drawTrace().map((l) => `${l.t.slice(11)} ${l.msg}${l.p ? ` @${l.p.join(',')}` : ''}`).join('\n'), 'Decisions copied');
+
+
+// ---------------------------------------------------------------- the full report
+const section = (title, body) => `\n===== ${title} =====\n${body}`;
+const j = (o) => (JSON.stringify(o, null, 1) ?? 'null').replace(/\n\s+/g, ' ').replace(/\n/g, ' ');
+async function getJSON(u) { try { return await (await fetch(u, { cache: 'no-store' })).json(); } catch { return null; } }
+async function fullReport() {
+  const [st, about, tr, ev, fl, ts, house] = await Promise.all([getJSON('/api/status'), getJSON('/api/about'), getJSON('/api/trace?since=0&all=1'), getJSON('/api/events'), getJSON('/api/flight'), getJSON('/api/tests'), getJSON('/api/house')]);
+  const s = st?.status || {}, dg = s.diag || {};
+  const out = [];
+  out.push(`SCOUT FULL REPORT  ${new Date().toString()}`);
+  out.push(section('VERSIONS', [
+    `game script build: ${s.build ?? '?'}`,
+    `brain: commit ${about?.commit ?? '?'}${about?.dirty ? ' (+uncommitted changes)' : ''}, started ${about?.started ?? '?'}, python ${about?.python ?? '?'}, ${about?.platform ?? ''}`,
+    `dashboard: ${location.href}  ${navigator.userAgent}`,
+    `bot online: ${s.online}  status age: ${st?.age_s ?? '?'} s  game: ${j(dg.game)}`,
+  ].join('\n')));
+  out.push(section('NOW', [
+    `pos ${s.pos ? `${s.pos.x} ${s.pos.y} ${s.pos.z}` : '?'} (${s.dim})  biome ${s.biome ?? '?'}  underground ${s.underground}  day ${s.day} time ${s.time} ${s.night ? '(night)' : ''}`,
+    `health ${s.health}  food ${s.hunger}  air ${s.air}%  held ${s.held ?? 'nothing'}  mode ${s.mode}  task ${s.task}  step ${s.step ?? '-'}  (${s.stepLabel ?? ''})`,
+    `auto ${s.auto} done ${s.autoDone}  opportunity ${s.opportunity ?? '-'}  set aside: ${(s.setAside || []).join(', ') || 'none'}  deaths ${s.deaths}`,
+    `goals: ${(s.goals || []).map((g) => `${g.label ?? g.key}${g.done ? ' ✓' : ''}${g.count != null ? ` ${g.have ?? ''}/${g.count}` : ''}`).join(' | ')}`,
+    `toggles: ${(s.toggles || []).map((t) => `${t.key}=${t.on ? 'on' : 'off'}`).join(' ')}`,
+    `players near: ${(s.players || []).join(', ') || 'none'}`,
+  ].join('\n')));
+  out.push(section('PACK', (s.inventory || []).map((i) => `${i.id} ${i.n}`).join(', ') || 'empty'));
+  out.push(section('HOUSE / PROJECT / FARM / VILLAGES', [`house: ${j(s.house)}`, `project: ${j(s.project)}`, `smelting: ${j(s.smelting)}`, `villages: ${j(s.villages)}`, `known places: ${j(s.where)}`].join('\n')));
+  out.push(section('DIAGNOSTICS', Object.entries(dg).map(([k, v]) => `${k}: ${j(v)}`).join('\n')));
+  out.push(section('LEARNING', [`recording: ${s.learn?.status ?? '?'}`, `params: ${j(s.learn?.params)}  using: ${s.learn?.using}`, `notes: ${(s.learn?.notes || []).join('; ')}`, `house learned: ${house?.house ? (house.house.ok ? 'yes' : 'not usable: ' + (house.house.problems || []).join('; ')) : 'none'}`].join('\n')));
+  out.push(section('WATCHDOG / FLIGHT', `watch: ${j(s.flight?.watch)}  last dump: ${j(s.flight?.lastDump)}  steps: ${(s.flight?.steps || []).map((r) => `${r.k} ${r.s}`).join(' > ')}`));
+  out.push(section('BRAIN', `jev: ${j(st?.jev)}`));
+  const lines = (tr?.lines || []);
+  out.push(section(`DECISIONS (all ${lines.length} the brain holds, oldest first, with the bot's position)`, lines.map((l) => `${(l.t || '').slice(11)} ${l.msg}${l.p ? ` @${l.p.join(',')}` : ''}`).join('\n')));
+  out.push(section('WHAT IT SAID (chat/log events)', (ev?.events || []).map((e) => `${(e.t || '').slice(11)} ${e.text ?? e.message ?? j(e)}${e.pos ? ` @${e.pos.x},${e.pos.y},${e.pos.z}` : ''}`).join('\n')));
+  out.push(section(`FLIGHT REPORTS (${(fl?.reports || []).length})`, (fl?.reports || []).map((r) => `--- ${r.t} ${r.why}\n${(r.report || []).join('\n')}`).join('\n\n')));
+  const res = ts?.results || {};
+  out.push(section('TESTS', `${ts?.batch ? `last batch ${ts.batch.t}: ${ts.batch.passed}/${ts.batch.total} in ${ts.batch.secs}s (build ${ts.batch.build})\n` : ''}${Object.entries(res).map(([k, v]) => `${v.pass ? 'PASS' : 'FAIL'} ${k} ${v.t} ${v.detail}`).join('\n')}`));
+  return out.join('\n');
+}
+// (#report in the address: the report shown on the page, for a phone where the clipboard won't take it.)
+if (location.hash === '#report') setTimeout(async () => { const pre = document.createElement('pre'); pre.id = 'reporttext'; pre.style.cssText = 'white-space:pre-wrap;font-size:11px;padding:12px'; pre.textContent = await fullReport(); document.body.prepend(pre); }, 1500);
+$('fullcopy').onclick = async () => { toast('Gathering…'); copyText(await fullReport(), 'Full report copied'); };
+$('tcopyall').onclick = () => copyText(traceLines.map((l) => `${(l.t || '').slice(11)} ${l.msg}${l.p ? ` @${l.p.join(',')}` : ''}`).join('\n'), `All ${traceLines.length} decisions copied`);
 
 // ---------------------------------------------------------------- flight reports
 let lastReports = [], seenReports = null;
