@@ -2719,6 +2719,21 @@ export class Skills {
       if (res.complete && res.path.length >= 2) await this.a.motor.followPath(smoothPath(this.a.classifier(), res.path));
       this.check(gen);
     }
+    // A house on a mountain: the shaft's every block of height above the iron layer is ~5 s of digging and a
+    // 50 s climb each trip (a run dug 110 blocks down). Start from the lowest ground that's still within the
+    // quarry's reach of the house (QUARRY_R), walking downhill a stretch at a time.
+    if (home) {
+      for (let k = 0; k < 4 && this.feet().y > Skills.IRON_Y + 20; k++) {
+        const y0 = this.feet().y;
+        const res = await this.a.plan(this.sim.location, this.sim.location, 0, 6000, (x, y, z, w) => { const d = Math.hypot(x - home.x, z - home.z); return w.standable(x, y, z) && d >= 14 && d <= QUARRY_R - 4 && y <= y0 - 6; });
+        this.check(gen);
+        if (!res.complete || res.path.length < 2) break;
+        await this.a.motor.followPath(smoothPath(this.a.classifier(), res.path));
+        this.check(gen);
+        if (this.feet().y > y0 - 3) break;
+        this.log(`quarry: starting lower, from Y ${y0} down to ${this.feet().y} (still ${Math.round(Math.hypot(this.sim.location.x - home.x, this.sim.location.z - home.z))} from the house)`);
+      }
+    }
   }
 
   // ---------- the mine camp: a table and a furnace at the foot of the stairs ----------
