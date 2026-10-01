@@ -2777,7 +2777,7 @@ export class Skills {
     if (!pick) { this.log('camp: no solid spot beside the foot of the stairs'); return false; }
     this.a.say('Setting up a little camp at the foot of the stairs: a crafting table and a furnace, so I can craft and smelt down here.');
     for (const c of [{ ...pick.stand, y: b.y + 1 }, pick.stand, pick.furnace, pick.table]) {
-      if (!OPEN.test(this.blockAt(c) ?? 'air') && !(await this.mine(gen, c))) { this.log(`camp: couldn't dig ${c.x} ${c.y} ${c.z}`); return false; }
+      if (!OPEN.test(this.blockAt(c) ?? 'air') && !(await this.mine(gen, c))) { this.log(`camp: couldn't dig ${c.x} ${c.y} ${c.z} (${this.blockAt(c)})`); return false; }
     }
     await this.goNear(gen, { x: b.x + 0.5, y: b.y, z: b.z + 0.5 }, 0.5, 2);
     const H = this.a.homestead;
@@ -3142,7 +3142,7 @@ export class Skills {
       lastGood = this.feet();
       record();
       await this.oreAround(gen, lastGood);
-      if (this.caveHere()) await this.exploreCave(gen, lastGood, level, more);
+      if (this.caveHere() && this.a.health() >= 12) await this.exploreCave(gen, lastGood, level, more); // (a cave is where the skeletons are: not when hurt)
       // Branches every 3rd block, spaced off the branches already dug (a trip that started again
       // somewhere else, a turn, a death): two solid blocks between any two, never one beside another.
       const o = this.branchNear(lastGood, dx, dz);
@@ -3393,7 +3393,7 @@ export class Skills {
       at = this.feet();
       save(at, len - n - 1);
       await this.oreAround(gen, at);
-      if (this.caveHere()) await this.exploreCave(gen, at, start.y, more);
+      if (this.caveHere() && this.a.health() >= 12) await this.exploreCave(gen, at, start.y, more);
     }
     if (n >= len) save(at, 0);
     if (n) await this.goNear(gen, { x: start.x + 0.5, y: start.y, z: start.z + 0.5 }, 0.6, 2);

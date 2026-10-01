@@ -10,7 +10,7 @@ import { decide, fleePoint, weaponDamage, MOBS, REACH_HIT, STOP_AT } from '../co
 import { fleeJabOrder, avoidCreepers, towerWorth, TOWER_H, fightMove, creeperFight, creeperMove, Stalemate, pickRefuge, bestWeapon, barricadeCells, SPEAR_DAMAGE, weaponReach, pickCreeperSwing, creeperWeapon, isSpear, awayPath, knockbackRoom, blockOffCells, guardCell, fleeJab, killSlotCells, killSlotWorth, pinchWallCells, alcoveCells, dodgeArrow, CREEPER_LIGHT, CREEPER_CALM } from '../core/tactics.js';
 import { nextStep, STONE_TARGETS, TOOL_STONE, count, isLog, isPlanks } from '../core/recipes.js';
 import { settleStep, foodCount, FOOD_GOAL, isNight, chooseFood } from '../core/settle.js';
-import { shouldRest, REST_MAX_S } from '../core/rest.js';
+import { shouldRest, canHeal, REST_BELOW, REST_MAX_S } from '../core/rest.js';
 import { goalChain } from '../core/goals.js';
 import { advanceStep, advanceProgress, ironHave, IRON_GOAL } from '../core/advance.js';
 import { Farm } from './farm.js';
@@ -1059,7 +1059,7 @@ export class Agent {
         const tableDist = near && S.usable(near) ? 0 : known && S.usable(known.pos) ? 0 : near ? dist3D(this.sim.location, near) : known ? known.dist : Infinity;
         const tableDy = near || !known ? 0 : known.pos.y - this.sim.location.y;
         // Hurt enough to stop working first (core/rest.js): a mine at night on 2 hp was how it died.
-        const step = this.restNeeded(inv) ? { step: 'rest' } : this.planStep(inv, tableDist, tableDy);
+        const step = this.restNeeded(inv) ? { step: 'rest' } : this.hurtNoFood(inv) ?? this.planStep(inv, tableDist, tableDy);
         this.whyLog(step, inv, { tableDist, tableDy, tableNear: near ? Math.round(dist3D(this.sim.location, near)) : null, tableKnown: known ? Math.round(known.dist) : null });
         // A mining trip lasts till the plan has us doing something that isn't done down the mine.
         if (step.step === 'get_iron') this.miningTrip = true;
@@ -1226,7 +1226,9 @@ export class Agent {
             if (await this.fromChest(gen, (id) => TOOL_STONE.has(id), step.need)) break;
             if (step.why && !repeats && !step.opportunity) this.say(`Getting ${step.need} more cobblestone for the ${step.why}.`);
             // The job's share first; then, while it's cheap (same tunnel), some for later jobs too.
-            await S.getStone(gen, step.need, Math.min(32, Math.max(0, this.focusFacts(inv).need.stone - step.need)));
+            // (The first stone of the run, no stone pickaxe yet: the furnace's 8 and the spare pickaxes' 9 come in the same dig, not two more climbs up the stairs.)
+            const firstStone = !step.why && !Object.keys(inv).some((id) => /^(stone|iron|diamond|netherite)_pickaxe$/.test(id));
+            await S.getStone(gen, step.need, Math.min(32, Math.max(firstStone ? 17 : 0, this.focusFacts(inv).need.stone - step.need)));
             break;
           case 'hunt':
             if (step.what === 'sheep') {
@@ -1681,6 +1683,22 @@ export class Agent {
     // The ladder's step against everything else still needed that's cheap right now.
     if (opportunities && !night) step = chooseStep(step, this.focusFacts(inv));
     return step;
+  }
+
+  /**
+   * Hurt (under REST_BELOW) and health can't come back: the food bar is under 18 and there's nothing in
+   * the pack to eat, so resting gets nowhere (restNeeded says no) and the bot used to carry on mining at
+   * 6 hp for 7 minutes, to a skeleton and a fall. Meat first, whatever the hunting switch says: animals
+   * in sight are hunted, otherwise it looks for some. Null when that doesn't apply.
+   */
+  hurtNoFood(inv) {
+    const H = this.homestead, health = this.health();
+    if (health >= REST_BELOW || this.resting) return null;
+    const hunger = H.hunger();
+    if (canHeal({ hunger, canEat: !!chooseFood(inv, { hunger, saturation: H.saturation(), health }) })) return null;
+    if (!Object.keys(inv).some((id) => /_sword$/.test(id))) return null;
+    if (H.animalsSeen(FOOD_ANIMALS, 40).length > 0) return { step: 'hunt', what: 'food' };
+    return { step: 'explore', want: 'food' };
   }
 
   /** Hurt enough to stop and heal before any more work (core/rest.js)? */
