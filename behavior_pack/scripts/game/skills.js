@@ -1508,7 +1508,9 @@ export class Skills {
     const tol = entry.cat.startsWith('item:') ? 1 : entry.cat === 'stone' ? 2 : 5;
     // Only set off if there's a complete walking route. Following half a route toward something
     // behind a wall is how you end up rubbing against cave walls.
-    const res = await this.a.plan(this.sim.location, entry.pos, tol, 25000);
+    // (A budget that grows with the distance: 25,000 nodes to a log 35 blocks off, across water, was a 3 s freeze for the same answer: no.)
+    const cap = Math.max(6000, Math.min(25000, Math.round(dist3D(this.sim.location, entry.pos) * 400)));
+    const res = await this.a.plan(this.sim.location, entry.pos, tol, cap);
     this.check(gen);
     if (!res.complete) {
       this.log(`no route to remembered ${label} at ${entry.pos.x} ${entry.pos.y} ${entry.pos.z}; skipping it for now`);
