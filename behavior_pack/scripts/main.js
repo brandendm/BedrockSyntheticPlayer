@@ -3,7 +3,7 @@
 //   !bot despawn          remove it
 //   !bot <anything else>  sent to the brain (come, follow me, goto x y z, stop, ...)
 // Same commands without chat:  /scriptevent agent:cmd <text>
-import { system, world, GameMode } from '@minecraft/server';
+import { system, world, GameMode, EquipmentSlot } from '@minecraft/server';
 import { spawnSimulatedPlayer } from '@minecraft/server-gametest';
 import { Agent } from './game/agent.js';
 import { runTests } from './game/scenarios.js';
@@ -110,6 +110,21 @@ function handle(text, player) {
     if (sub === 'refresh') { agent.refreshProfile(true).then((g) => reply(player, g.notes.length ? g.notes.join('; ') : 'Defaults (nothing learned yet).')); return; }
     const pr = agent.profile;
     return reply(player, `${CONFIG.useProfile === false ? 'OFF. ' : ''}eat at ${pr.params.eat_at}, iron at Y ${pr.params.iron_y}. ${pr.notes.length ? pr.notes.join('; ') : 'All defaults.'}`);
+  }
+  // !bot offhand <item|shield|clear>: put an item in the bot's off hand to see whether the game draws it
+  // (a torch, a totem_of_undying, a shield). Tells shield-specific from off-hand-in-general; test only.
+  if (lower === 'offhand' || lower.startsWith('offhand ')) {
+    if (!agent) return reply(player, 'spawn first');
+    const item = (lower.split(/\s+/)[1] ?? '').replace(/[^a-z0-9_]/g, '');
+    if (!item) return reply(player, 'Usage: !bot offhand torch | totem_of_undying | shield | clear');
+    try {
+      const eq = agent.sim.getComponent('minecraft:equippable');
+      if (item === 'clear') { eq.setEquipment(EquipmentSlot.Offhand, undefined); reply(player, 'Off hand cleared (the shield comes back with !bot reshield).'); return; }
+      const r = world.getDimension('overworld').runCommand(`replaceitem entity @a[name="${agent.sim.name}"] slot.weapon.offhand 0 ${item}`);
+      console.warn(`[agent] offhand test: ${item} -> replaceitem ${r.successCount} ok; the game says it holds ${eq.getEquipment(EquipmentSlot.Offhand)?.typeId ?? 'nothing'}`);
+      reply(player, `Off hand: ${item}. Is it drawn on the bot? Then try another, or !bot offhand clear.`);
+    } catch (e) { reply(player, `offhand ${item}: ${e}`); }
+    return;
   }
   // !bot reshield: put the shield on again so it's drawn (clear, set, replaceitem); see agent.refreshShield.
   if (lower === 'reshield') {
