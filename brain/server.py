@@ -78,7 +78,7 @@ def append_traces(traces: list) -> None:
 
 
 SETTINGS_FILE = ROOT / "settings.json"
-_SETTING_KEYS = {"beds", "nights", "house", "torches", "farm", "iron", "hunting", "storage", "witches", "chat", "learnedHouse"}
+_SETTING_KEYS = {"beds", "nights", "house", "torches", "farm", "iron", "hunting", "storage", "witches", "villages", "chat", "learnedHouse"}
 
 
 def load_settings() -> dict:

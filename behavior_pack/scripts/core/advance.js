@@ -211,3 +211,32 @@ export function advanceProgress(f) {
 }
 
 export { FOOD_GOAL };
+
+/**
+ * Looking for a village on purpose (a bed's wool done, chests with iron and food, villagers): only
+ * once armed and healthy, up top, and not again for a while after a try that got nowhere.
+ * f: { goals, armed, health, underground, villageKnown (one worth going to), villageVisited,
+ *      villageReady (no recent miss) }
+ */
+export function villageStep(f) {
+  if (f.goals?.villages === false || !f.armed || f.underground || f.villageVisited || f.villageReady === false) return null;
+  if ((f.health ?? 20) < 14) return null;
+  return f.villageKnown ? { step: 'seek_village', known: true } : { step: 'seek_village' };
+}
+
+/**
+ * The goals after moving in, in the order given (core/toggles.js ORDER_KEYS): each is asked in turn
+ * with the others held off, and the first with work to do wins. A smelt's wait only counts when
+ * nothing else has work.
+ */
+export function orderedAdvance(f, order = ['village', 'farm', 'iron']) {
+  const g = f.goals ?? {};
+  let waiting = null, done = null;
+  for (const k of order) {
+    const s = k === 'village' ? villageStep(f) : advanceStep({ ...f, goals: { ...g, farm: k === 'farm' && g.farm !== false, iron: k === 'iron' && g.iron !== false } });
+    if (!s || s.step === 'done') { done ??= s; continue; }
+    if (s.step === 'wait_smelt') { waiting ??= s; continue; }
+    return s;
+  }
+  return waiting ?? { step: 'done' };
+}

@@ -9,6 +9,7 @@ import { Agent } from './game/agent.js';
 import { runTests } from './game/scenarios.js';
 import { poll, sendEvent } from './game/bridge.js';
 import { CONFIG } from './config.js';
+import { orderOf } from './core/toggles.js';
 import { getPlan, setPlan, planMaterials, describe } from './core/learnhouse.js';
 
 /** @type {Agent | null} */
@@ -140,6 +141,13 @@ function handle(text, player) {
     const sub = lower.split(/\s+/)[1] ?? 'status';
     if (sub === 'on' || sub === 'off') agent.setSetting('chat', sub === 'on');
     return reply(player, `In-game chat from the bot is ${agent.chatOn() ? 'ON' : 'OFF'} (the dashboard shows everything either way).`);
+  }
+  // !bot order [village farm iron]: which goal after moving in comes first (what's named first, the rest in the usual order).
+  if (lower === 'order' || lower.startsWith('order ')) {
+    if (!agent) return reply(player, 'spawn first');
+    const arg = lower.slice(5).trim();
+    const order = arg ? agent.setOrder(arg) : orderOf(agent.memory.data.settings);
+    return reply(player, `After moving in: ${order.join(' > ')}${arg ? '' : ' (change it with `!bot order farm iron village`)'}.`);
   }
   // !bot village [visit]: the villages it has recognised from afar (game/villages.js); `visit` goes now.
   if (lower === 'village' || lower === 'villages' || lower.startsWith('village ')) {

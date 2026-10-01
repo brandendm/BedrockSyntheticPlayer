@@ -347,10 +347,15 @@ function clock(time, day) {
 function renderToggles(s) {
   const el = $('toggles');
   const list = s.toggles || [];
-  if (el.dataset.sig === JSON.stringify(list)) return; // (don't rebuild under the pointer every second)
-  el.dataset.sig = JSON.stringify(list);
-  el.innerHTML = list.map((g) => `<label><input type="checkbox" data-goal="${g.key}" ${g.on ? 'checked' : ''}> ${esc(g.label)}</label>`).join('');
+  const order = s.order || [];
+  const sig = JSON.stringify([list, order]);
+  if (el.dataset.sig === sig) return; // (don't rebuild under the pointer every second)
+  el.dataset.sig = sig;
+  const names = { village: 'Village', farm: 'Farm', iron: 'Iron' };
+  const ord = order.length ? `<div style="grid-column:1/-1">After moving in, in this order: ${order.map((k, i) => `<span class="step">${i + 1}. ${esc(names[k] || k)}</span> <button data-up="${i}" ${i ? '' : 'disabled'} title="Do this one earlier">&#9650;</button>`).join(' ')}</div>` : '';
+  el.innerHTML = list.map((g) => `<label><input type="checkbox" data-goal="${g.key}" ${g.on ? 'checked' : ''}> ${esc(g.label)}</label>`).join('') + ord;
   el.querySelectorAll('input[data-goal]').forEach((b) => b.onchange = () => send(`goal ${b.dataset.goal} ${b.checked ? 'on' : 'off'}`));
+  el.querySelectorAll('button[data-up]').forEach((b) => b.onclick = () => { const i = +b.dataset.up, o = order.slice(); [o[i - 1], o[i]] = [o[i], o[i - 1]]; send(`order ${o.join(' ')}`); });
 }
 
 function render(d) {

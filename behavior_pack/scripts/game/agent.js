@@ -12,7 +12,7 @@ import { nextStep, STONE_TARGETS, TOOL_STONE, count, isLog, isPlanks } from '../
 import { settleStep, foodCount, FOOD_GOAL, isNight, chooseFood } from '../core/settle.js';
 import { shouldRest, canHeal, REST_BELOW, REST_MAX_S } from '../core/rest.js';
 import { goalChain } from '../core/goals.js';
-import { advanceStep, advanceProgress, ironHave, IRON_GOAL } from '../core/advance.js';
+import { advanceStep, orderedAdvance, advanceProgress, ironHave, IRON_GOAL } from '../core/advance.js';
 import { Farm } from './farm.js';
 import { Flight } from './flight.js';
 import { PathLog } from './pathlog.js';
@@ -22,7 +22,8 @@ import { adopt as adoptProfile, DEFAULTS as PROFILE_DEFAULTS } from '../core/pro
 import { chooseStep, needs as goalNeeds, stepKey } from '../core/focus.js';
 import { inside as houseInside } from '../core/house.js';
 import { mlgNow, ticksToLand } from '../core/fall.js';
-import { GOALS, goalsOf, goalKey } from '../core/toggles.js';
+import { GOALS, goalsOf, goalKey, orderOf, parseOrder } from '../core/toggles.js';
+import { biomeName } from '../core/biomes.js';
 import { FULL_SLOTS } from '../core/storage.js';
 import { itemValue, armorUpgrades, armorTotal } from '../core/wants.js';
 import { lootPlan, lootWorth, backoffMs, LOOT_WINDOW_MS } from '../core/loot.js';
@@ -581,6 +582,14 @@ export class Agent {
   setBeds(on) { this.setGoal('beds', on); }
   /** The goals switched on and off (core/toggles.js), from the world's settings. */
   toggles() { return goalsOf({ ...(this.memory.data.settings ?? {}), beds: this.bedsOn() }); }
+  /** The order of the movable goals after moving in (core/toggles.js): `!bot order farm iron village`. */
+  setOrder(text) {
+    const order = parseOrder(text);
+    this.memory.data.settings = { ...(this.memory.data.settings ?? {}), order };
+    this.memory.save();
+    this.autoDone = false; this.nextAutoTry = 0;
+    return order;
+  }
   setGoal(key, on) {
     this.memory.data.settings = { ...(this.memory.data.settings ?? {}), [key]: !!on };
     this.memory.save();
@@ -1156,7 +1165,7 @@ export class Agent {
         }
         // Steps that run in stints (iron mining is time-boxed and repeats on purpose) or handle their
         // own failure (the farm) never get set aside: exploring doesn't help them.
-        if ((repeats >= 3 || same >= 8) && !['go_home', 'shelter', 'rest', 'wait_smelt', 'explore', 'get_iron', 'make_farm', 'tend_farm', 'check_water', 'equip'].includes(step.step)) {
+        if ((repeats >= 3 || same >= 8) && !['go_home', 'shelter', 'rest', 'wait_smelt', 'explore', 'seek_village', 'get_iron', 'make_farm', 'tend_farm', 'check_water', 'equip'].includes(step.step)) {
           // It keeps failing: set it aside for a few minutes and do the cheapest other thing on the
           // list (core/focus.js); it only goes exploring when nothing else is doable.
           if (step.step === 'hunt' && step.what === 'sheep') this.bedDeferredUntil = Date.now() + 300000;
@@ -1188,6 +1197,28 @@ export class Agent {
             const moved = Math.hypot(this.sim.location.x - from.x, this.sim.location.z - from.z);
             const atHouse = new Set(H.house ? ['smelt', 'furnish'] : []);
             if (moved >= 24) for (const [k, d] of this.deferred) if (['smelt', 'place_table', 'craft', 'plan_house', 'build_house', 'furnish'].includes(d.step) && !atHouse.has(d.step)) this.deferred.delete(k);
+            break;
+          }
+          case 'seek_village': {
+            // Go to a village we know of, else toward the nearest biome villages generate in (the
+            // world seed's biome search), eyes open: the lookout recognises one from afar (game/villages.js).
+            const V = this.villages;
+            const vil = V.pick('bed') ?? V.pick('food');
+            if (vil) {
+              const r = await V.visit(gen, vil, 'bed');
+              this.say(`Village: ${r}.`, true);
+              if (/raiders|didn't get close/.test(r)) this.villageHoldUntil = Date.now() + 600000;
+              break;
+            }
+            const b = this.lookout?.seedSearch('village');
+            if (!b) { this.villageHoldUntil = Date.now() + 900000; trace('village hunt: no village biome found by the seed search; not again for 15 min'); break; }
+            this.sayOnce('village-hunt', `Looking for a village: heading for the ${biomeName(b.id)} about ${Math.round(b.dist)} blocks away.`, 300000);
+            await S.packUp(gen);
+            const from = { ...this.sim.location };
+            await S.travelToward(gen, { x: b.pos.x, y: b.pos.y, z: b.pos.z }, 6);
+            V.scanEntities();
+            this.villageMisses = (this.villageMisses ?? 0) + 1;
+            if (Math.hypot(this.sim.location.x - from.x, this.sim.location.z - from.z) < 8 || this.villageMisses >= 6) { this.villageMisses = 0; this.villageHoldUntil = Date.now() + 1800000; trace('village hunt: got nowhere / six legs without one; not again for 30 min'); }
             break;
           }
           case 'gather_logs': {
@@ -1577,6 +1608,7 @@ export class Agent {
       players: world.getPlayers().filter((pl) => pl.id !== this.sim.id).map((pl) => pl.name),
       goals: this.goals(),
       toggles: GOALS.map((g) => ({ ...g, on: this.toggles()[g.key] })),
+      order: orderOf(this.memory.data.settings),
       biome: (() => { try { return this.lookout.hereName(); } catch { return null; } })(),
       opportunity: this.task?.kind === 'auto' ? this.autoOpportunity : null,
       stepLabel: this.task?.kind === 'auto' ? this.autoLabel ?? null : null,
@@ -1659,12 +1691,12 @@ export class Agent {
     let step = nextStep({ inv, tableDist, tableDy, exposedStoneKnown: this.knownSurfaceStone, spears: Skills.itemExists('stone_spear') });
     if (step.step === 'done') step = settleStep({ ...this.settleFacts(inv, tableDist), ...(dayTime ? { time: 6000 } : {}) });
     // Moved in: a farm, iron, iron gear (core/advance.js).
-    if (step.step === 'done' && this.homestead.house) step = advanceStep(this.advanceFacts(inv, tableDist));
+    if (step.step === 'done' && this.homestead.house) step = orderedAdvance(this.advanceFacts(inv, tableDist), orderOf(this.memory.data.settings));
     // The house goal switched off (!bot goal house off): no home to farm by, but iron is still a goal.
     // Without this it said "all goals done" and stood about with iron and the farm still switched on.
     else if (step.step === 'done' && !this.homestead.house && this.toggles().house === false) {
       const f = this.advanceFacts(inv, tableDist);
-      step = advanceStep({ ...f, goals: { ...f.goals, farm: false } });
+      step = orderedAdvance({ ...f, goals: { ...f.goals, farm: false } }, orderOf(this.memory.data.settings));
     }
     // Nothing else left and still no bed (the sheep search put off, noteSearch): look now rather than
     // stand about till the wait's over.
@@ -1800,6 +1832,7 @@ export class Agent {
     const aside = step.setAside ? ` (set "${(STEP_WORDS[step.setAside] ?? step.setAside).replace(/_/g, ' ')}" aside for now: it kept failing)` : '';
     const side = step.opportunity && !step.setAside ? ' (right here, so doing it now)' : '';
     switch (step.step) {
+      case 'seek_village': return step.known ? 'heading for the village I saw' : 'looking for a village';
       case 'explore': return `looking further out for ${{ log: 'trees', sheep: 'sheep', food: 'animals' }[step.want] ?? 'supplies'}${aside}`;
       case 'gather_logs': return `getting wood: ${step.count} logs${step.wanted && step.wanted[0] !== 'later' ? ` for ${step.wanted.join(', ').replace(/_/g, ' ')}` : ''}${side}${aside}`;
       case 'get_stone': return `getting ${step.need} cobblestone${step.why && step.why !== 'later' ? ` for the ${step.why}` : ''}${side}${aside}`;
@@ -1967,6 +2000,11 @@ export class Agent {
       oreCooking: H.oreCooking(),
       canFillBucket: this.dim.id !== 'minecraft:nether' && Date.now() - (this.memory.data.bucketFailAt ?? 0) > 600000,
       goals: this.toggles(),
+      armed: SWORD_OK.test(Object.keys(inv).join(' ')),
+      health: this.health(),
+      villageKnown: !!(this.villages.pick('bed') ?? this.villages.pick('food')),
+      villageVisited: (this.memory.data.villages ?? []).some((v) => v.visited),
+      villageReady: Date.now() >= (this.villageHoldUntil ?? 0),
       // Down at the mine camp (a table and a furnace at the foot of the quarry): craft and smelt there.
       camp: (() => { try { return !!S.campFurnace() && S.isUnderground() && S.nearQuarry(this.sim.location, 48); } catch { return false; } })(),
     };

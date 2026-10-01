@@ -72,6 +72,7 @@ export const SEARCH = {
   food: ['minecraft:plains', 'minecraft:forest'],
   stone: ['minecraft:extreme_hills', 'minecraft:stone_beach'],
   land: ['minecraft:plains', 'minecraft:forest', 'minecraft:taiga'],
+  village: ['minecraft:plains', 'minecraft:desert', 'minecraft:savanna', 'minecraft:snowy_plains'], // (where villages generate; the biome is only where to look)
 };
 export const searchFor = (want) => SEARCH[TRAIT[want] === 'trees' ? 'trees' : want] ?? SEARCH.land;
 

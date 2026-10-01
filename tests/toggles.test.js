@@ -14,3 +14,22 @@ test('goal names as typed reach the night switch', () => {
   assert.equal(goalKey('sleep'), 'beds');
   assert.equal(goalKey('nonsense'), null);
 });
+
+import { parseOrder, orderOf, DEFAULT_ORDER } from '../behavior_pack/scripts/core/toggles.js';
+import { orderedAdvance, villageStep } from '../behavior_pack/scripts/core/advance.js';
+
+test('goal order: what is named goes first, the rest keep their usual order', () => {
+  assert.deepEqual(parseOrder('iron'), ['iron', 'village', 'farm']);
+  assert.deepEqual(parseOrder('farm iron village'), ['farm', 'iron', 'village']);
+  assert.deepEqual(parseOrder('nonsense'), DEFAULT_ORDER);
+  assert.deepEqual(orderOf({}), DEFAULT_ORDER);
+});
+
+test('village hunting waits for a sword, and goes first or last as ordered', () => {
+  const base = { inv: { iron_ingot: 0 }, worn: [], tableDist: 0, goals: { farm: false }, armed: true, health: 20, waterNearHouse: false };
+  assert.equal(villageStep({ ...base, armed: false }), null);
+  assert.equal(villageStep({ ...base, villageVisited: true }), null);
+  assert.equal(villageStep({ ...base, goals: { villages: false } }), null);
+  assert.equal(orderedAdvance(base, ['village', 'iron']).step, 'seek_village');
+  assert.notEqual(orderedAdvance(base, ['iron', 'village']).step, 'seek_village');
+});
