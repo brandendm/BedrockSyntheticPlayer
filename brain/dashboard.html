@@ -269,6 +269,7 @@
       <button id="tclear">Clear</button>
       <button id="tcopy">Copy shown</button>
       <button id="tcopyall">Copy all decisions</button>
+      <button id="pathcopy" title="Every search and walk with its numbers: who asked, nodes, ticks, partial or complete, stuck or arrived">Copy path log</button>
       <button id="whycopy" title="Why the plan chose each step: the step and the facts it was looking at, one line each">Copy planner log</button>
     </div>
     <div class="trace" id="trace"></div>
@@ -543,6 +544,7 @@ async function fullReport() {
   ].join('\n')));
   out.push(section('PACK', (s.inventory || []).map((i) => `${i.id} ${i.n}`).join(', ') || 'empty'));
   out.push(section('HOUSE / PROJECT / FARM / VILLAGES', [`house: ${j(s.house)}`, `project: ${j(s.project)}`, `smelting: ${j(s.smelting)}`, `villages: ${j(s.villages)}`, `known places: ${j(s.where)}`].join('\n')));
+  { const ps = (await getJSON('/api/paths'))?.summary; out.push(section('PATHFINDING (the whole log: Copy path log)', j(ps))); }
   out.push(section('DIAGNOSTICS', Object.entries(dg).map(([k, v]) => `${k}: ${j(v)}`).join('\n')));
   out.push(section('LEARNING', [`recording: ${s.learn?.status ?? '?'}`, `params: ${j(s.learn?.params)}  using: ${s.learn?.using}`, `notes: ${(s.learn?.notes || []).join('; ')}`, `house learned: ${house?.house ? (house.house.ok ? 'yes' : 'not usable: ' + (house.house.problems || []).join('; ')) : 'none'}`].join('\n')));
   out.push(section('WATCHDOG / FLIGHT', `watch: ${j(s.flight?.watch)}  last dump: ${j(s.flight?.lastDump)}  steps: ${(s.flight?.steps || []).map((r) => `${r.k} ${r.s}`).join(' > ')}`));
@@ -559,6 +561,13 @@ async function fullReport() {
 // (#report in the address: the report shown on the page, for a phone where the clipboard won't take it.)
 if (location.hash === '#report') setTimeout(async () => { const pre = document.createElement('pre'); pre.id = 'reporttext'; pre.style.cssText = 'white-space:pre-wrap;font-size:11px;padding:12px'; pre.textContent = await fullReport(); document.body.prepend(pre); }, 1500);
 $('fullcopy').onclick = async () => { toast('Gathering…'); copyText(await fullReport(), 'Full report copied'); };
+$('pathcopy').onclick = async () => {
+  const d = await getJSON('/api/paths'), rows = d?.rows || [];
+  const line = (r) => r.k === 'plan'
+    ? `${r.at} plan t${r.t} ${r.who} ${r.from.join(',')} -> ${r.to ? r.to.join(',') : 'search'} d${r.d ?? '-'} tol${r.tol} cap${r.cap} nodes ${r.nodes} ${r.ticks}t ${r.ok ? 'complete' : 'PARTIAL'} len${r.len}${r.search ? ' search' : ''}${r.actions ? ' actions' : ''}`
+    : `${r.at} walk t${r.t} ${r.from.join(',')} -> ${r.to ? r.to.join(',') : '-'} ended ${r.end.join(',')} (${r.short} off) ${r.wps} wps ${r.len} blocks ${r.leaps} leaps ${r.status.toUpperCase()} ${r.ticks}t ${r.bps} b/s`;
+  copyText(`PATH LOG ${j(d?.summary)}\n${rows.map(line).join('\n')}`, `Path log copied (${rows.length} rows)`);
+};
 $('whycopy').onclick = async () => {
   const d = await getJSON('/api/why'), rows = d?.why || [];
   const line = (r) => `${r.t} @${(r.pos || []).join(',')} ${r.key} | ${r.step} | ${JSON.stringify(r.facts)}`;

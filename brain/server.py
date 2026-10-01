@@ -52,6 +52,7 @@ _recent: collections.deque = collections.deque(maxlen=400)
 _traces: collections.deque = collections.deque(maxlen=5000)
 _trace_seq = 0
 _flights: collections.deque = collections.deque(maxlen=12)
+_paths: collections.deque = collections.deque(maxlen=6000)  # the pathfinding log (searches and walks)
 _why: collections.deque = collections.deque(maxlen=3000)  # the planner's reasons, one per step chosen (brain/logs/why.jsonl)
 _tests: dict = {"batch": None, "results": {}}
 
@@ -112,6 +113,29 @@ def store_house(evt: dict) -> None:
         pass
     with _lock:
         _house.update(at=keep["at"], data=keep)
+
+
+def path_summary(rows: list) -> dict:
+    """Totals and the worst offenders from the pathfinding log: searches by who asked, walks that got stuck."""
+    plans = [r for r in rows if r.get("k") == "plan"]
+    walks = [r for r in rows if r.get("k") == "walk"]
+    by: dict = {}
+    for r in plans:
+        d = by.setdefault(r.get("who", "?"), {"n": 0, "nodes": 0, "ticks": 0, "partial": 0})
+        d["n"] += 1
+        d["nodes"] += r.get("nodes", 0)
+        d["ticks"] += r.get("ticks", 0)
+        d["partial"] += 0 if r.get("ok") else 1
+    top = sorted(by.items(), key=lambda kv: -kv[1]["nodes"])[:8]
+    ticks = sorted(r.get("ticks", 0) for r in plans)
+    return {
+        "plans": len(plans), "walks": len(walks),
+        "p95_ticks": ticks[int(len(ticks) * 0.95)] if ticks else 0,
+        "partial_pct": round(100 * sum(1 for r in plans if not r.get("ok")) / len(plans)) if plans else 0,
+        "stuck_walks": sum(1 for r in walks if r.get("status") == "stuck"),
+        "by_caller": [{"who": k, **v} for k, v in top],
+        "slowest": sorted(plans, key=lambda r: -r.get("ticks", 0))[:5],
+    }
 
 
 def get_profile() -> dict:
@@ -293,6 +317,10 @@ def make_handler(engine: DecisionEngine, key: str | None = None):
                     "jev": {"enabled": j.available, "usd_today": round(j.budget.usd_today, 6),
                             "calls_last_hour": j.budget.calls_last_hour},
                 })
+            if self.path == "/api/paths":
+                with _lock:
+                    rows = list(_paths)
+                return self._send(200, {"rows": rows, "summary": path_summary(rows)})
             if self.path == "/api/why":
                 with _lock:
                     return self._send(200, {"why": list(_why)})
@@ -378,6 +406,23 @@ def make_handler(engine: DecisionEngine, key: str | None = None):
                 return self._send(400, {"error": "bad json"})
             if evt.get("type") == "demo":
                 store_demo(evt)
+                return self._send(200, {"actions": []})
+            if evt.get("type") == "paths":
+                rows = [r for r in (evt.get("rows") or [])[:500] if isinstance(r, dict)]
+                stamp = time.strftime("%H:%M:%S")
+                with _lock:
+                    for r in rows:
+                        _paths.append({"at": stamp, **r})
+                try:
+                    LOG_DIR.mkdir(exist_ok=True)
+                    f = LOG_DIR / "paths.jsonl"
+                    if f.exists() and f.stat().st_size > 6_000_000:
+                        f.replace(f.with_suffix(".old.jsonl"))
+                    with f.open("a", encoding="utf-8") as fh:
+                        for r in rows:
+                            fh.write(json.dumps({"at": stamp, **r}) + "\n")
+                except OSError:
+                    pass
                 return self._send(200, {"actions": []})
             if evt.get("type") == "why":
                 rec = {"t": time.strftime("%H:%M:%S"), **{k: v for k, v in evt.items() if k != "type"}}

@@ -409,3 +409,29 @@ class LearnTests(unittest.TestCase):
         finally:
             server.LOG_DIR = old
             server._why.clear()
+
+    def test_the_path_log_is_kept_and_summed(self):
+        import threading, tempfile, pathlib, json, urllib.request
+        from http.server import ThreadingHTTPServer
+        from brain import server
+        old = server.LOG_DIR
+        server.LOG_DIR = pathlib.Path(tempfile.mkdtemp())
+        try:
+            engine = DecisionEngine(JevClient("", transport=fake_transport()), NO_LLM)
+            httpd = ThreadingHTTPServer(("127.0.0.1", 0), server.make_handler(engine))
+            threading.Thread(target=httpd.serve_forever, daemon=True).start()
+            base = f"http://127.0.0.1:{httpd.server_address[1]}"
+            rows = [{"k": "plan", "who": "S.goNear", "nodes": 100, "ticks": 2, "ok": True}, {"k": "plan", "who": "S.sweep", "nodes": 25000, "ticks": 63, "ok": False}, {"k": "walk", "status": "stuck"}]
+            body = json.dumps({"type": "paths", "rows": rows}).encode()
+            urllib.request.urlopen(urllib.request.Request(base + "/event", data=body, headers={"Content-Type": "application/json"})).read()
+            got = json.loads(urllib.request.urlopen(base + "/api/paths").read())
+            self.assertEqual(len(got["rows"]), 3)
+            self.assertEqual(got["summary"]["plans"], 2)
+            self.assertEqual(got["summary"]["partial_pct"], 50)
+            self.assertEqual(got["summary"]["stuck_walks"], 1)
+            self.assertEqual(got["summary"]["by_caller"][0]["who"], "S.sweep")   # the worst by nodes first
+            self.assertTrue((server.LOG_DIR / "paths.jsonl").exists())
+            httpd.shutdown()
+        finally:
+            server.LOG_DIR = old
+            server._paths.clear()

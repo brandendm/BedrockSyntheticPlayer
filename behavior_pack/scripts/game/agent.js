@@ -15,6 +15,7 @@ import { goalChain } from '../core/goals.js';
 import { advanceStep, advanceProgress, ironHave, IRON_GOAL } from '../core/advance.js';
 import { Farm } from './farm.js';
 import { Flight } from './flight.js';
+import { PathLog } from './pathlog.js';
 import { invDiff } from '../core/flight.js';
 import { Demo } from './demo.js';
 import { adopt as adoptProfile, DEFAULTS as PROFILE_DEFAULTS } from '../core/profile.js';
@@ -70,6 +71,16 @@ export class Agent {
     this.rng = makeRng();
     this.body = new SimBodyAdapter(sim);
     this.motor = new MotorController(this.body, {}, this.rng);
+    this.pathLog = new PathLog(); // (every search and every walk, numbers: game/pathlog.js)
+    { // each walk the motor is given, and how it ended
+      const fp = this.motor.followPath.bind(this.motor);
+      this.motor.followPath = (wps, opts) => {
+        const t0 = system.currentTick, from = this.sim.location;
+        const p = fp(wps, opts);
+        try { p.then((result) => { try { this.pathLog.walk({ wps, result, ticks: system.currentTick - t0, from, end: this.sim.location }); } catch { /* */ } }); } catch { /* */ }
+        return p;
+      };
+    }
     this.task = null;        // {kind, ...} - what the agent is doing right now
     this.taskGen = 0;        // bumps on every new task so stale async loops exit
     this.followTick = 0;
@@ -250,6 +261,7 @@ export class Agent {
     if (!this.sim.isValid) return;
     const t = system.currentTick;
     this.flight.tick(t);
+    this.pathLog.flush(t);
     this.demo.tick(t);
     if (t % 6000 === 100) this.refreshProfile();
     if (t % SURVIVE_EVERY === 0) this.survive(t);
@@ -1487,6 +1499,7 @@ export class Agent {
     part('memory', () => { const raw = JSON.stringify(this.memory.data); return { bytes: raw.length, limit: 32767, byCategory: this.memory.summary(), villages: (this.memory.data.villages ?? []).length, saplings: (this.memory.data.saplings ?? []).length, chunksMapped: this.lookout?.map?.size ?? 0, settings: this.memory.data.settings ?? {} }; });
     part('settings', () => ({ chat: this.chatOn(), beds: this.bedsOn(), useProfile: CONFIG.useProfile !== false, learnedHouse: !!this.memory.data.settings?.learnedHouse, profile: this.profile?.params ? { ...this.profile.params } : null }));
     part('perf', () => { const P = this.perf; if (!P) return null; const w = P.win.slice().sort((a, b) => a - b); return { tps: P.tps, agentTickMsAvg: r1(P.sum / Math.max(1, P.n)), agentTickMsP95: w.length ? r1(w[Math.floor(w.length * 0.95)]) : null, agentTickMsMax: r1(P.max), slowTicks: P.slow, ticksRun: P.n, runningS: Math.round((Date.now() - P.startedAt) / 1000) }; });
+    part('pathfinding', () => this.pathLog.summary());
     part('counters', () => ({ deaths: this.deathCount ?? 0, flightReports: this.flight?.dumps ?? 0, tick: system.currentTick, day: Math.floor(world.getDay?.() ?? 0), timeOfDay: world.getTimeOfDay() }));
     part('brain', () => ({ url: CONFIG.brainUrl }));
     return out;
@@ -2935,9 +2948,12 @@ export class Agent {
       // A water bucket on us (not in the Nether, not badly hurt): long drops are fine (the fall's
       // broken with the water, fallTick), so a route can go off a pillar or a cliff edge.
       const costs = extra.costs ?? this.moveCosts();
+      const stack = new Error().stack;
+      const log = this.pathLog;
       const job = function* () {
         const r = yield* searchJob(classify, from, to, { tolerance, maxNodes, goalTest, costs, ...extra });
         const ticks = system.currentTick - t0;
+        try { log.plan({ from, to, tolerance, maxNodes, goalTest, actions: !!extra.actions, r, ticks, stack }); } catch { /* a log never stops a search */ }
         if (ticks > 40) trace(`slow plan: ${ticks} ticks, ${r.expanded} nodes, ${r.complete ? 'complete' : 'partial'}${goalTest ? ' (search)' : ''}${extra.actions ? ' (actions)' : ''}`);
         resolve(r);
       };
