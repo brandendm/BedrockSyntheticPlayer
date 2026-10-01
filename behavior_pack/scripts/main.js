@@ -62,6 +62,7 @@ async function spawnAgent(player) {
   // Simulated players respawn at world spawn, which can be mid-air. Pin a safe one.
   try { sim.setSpawnPoint({ dimension: where.dimension, x: Math.floor(where.x), y: Math.floor(where.y), z: Math.floor(where.z) }); } catch (e) { console.warn(`[agent] setSpawnPoint: ${e}`); }
   agent = new Agent(sim);
+  try { world.getDimension('overworld').runCommand('gamerule showcoordinates true'); } catch {} // (see where we are: reports and path logs quote coordinates)
   agent.say(`Ready (build ${CONFIG.build}).`);
 }
 

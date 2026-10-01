@@ -1273,15 +1273,15 @@ export class Agent {
           case 'get_iron':
             if (!repeats) this.say(step.why === 'bucket' ? `Getting ${step.need} iron for a bucket, for the farm's water.` : `Mining for iron: ${step.need} more for the iron gear.`);
             // Wood for the trip first, up here: iron gear needs sticks, a spare pickaxe, torches, and each climb out of the
-            // mine for one log was ~90 s (three of them in one real run). About fourteen logs' worth in the pack before going down (a run still climbed out at 12:09 for more, 2.5 min a trip).
+            // mine for one log was ~90 s (three of them in one real run). About ten logs' worth in the pack before going down (a run still climbed out at 12:09 for more, 2.5 min a trip).
             try {
               const inv0 = invCounts(this.sim), woodHave = count(inv0, isLog) + Math.floor(count(inv0, isPlanks) / 4) + Math.floor((inv0.stick ?? 0) / 8);
               const tree = this.memory.list('log', this.dim.id, this.sim.location)[0];
-              if (!S.isUnderground() && woodHave < 14 && tree && tree.dist <= 64 && step.why !== 'bucket') {
-                this.sayOnce('wood-first', `Getting wood before I go down: ${14 - woodHave} logs for sticks, spares and a camp table, so I don't have to climb out for them.`, 300000);
-                trace(`get_iron: only ${woodHave} logs' worth in the pack, fetching ${14 - woodHave} before going down (tree ${Math.round(tree.dist)} away)`);
-                this.stockTarget = { step: 'gather_logs', n: count(inv0, isLog) + 14 - woodHave };
-                try { await S.gatherLogs(gen, count(inv0, isLog) + 14 - woodHave, 0); } finally { this.stockTarget = null; }
+              if (!S.isUnderground() && woodHave < 10 && tree && tree.dist <= 48 && step.why !== 'bucket') {
+                this.sayOnce('wood-first', `Getting wood before I go down: ${10 - woodHave} logs for sticks, spares and a camp table, so I don't have to climb out for them.`, 300000);
+                trace(`get_iron: only ${woodHave} logs' worth in the pack, fetching ${10 - woodHave} before going down (tree ${Math.round(tree.dist)} away)`);
+                this.stockTarget = { step: 'gather_logs', n: count(inv0, isLog) + 10 - woodHave };
+                try { await S.gatherLogs(gen, count(inv0, isLog) + 10 - woodHave, 0); } finally { this.stockTarget = null; }
               }
             } catch (e) { if (gen !== this.taskGen) throw e; trace(`get_iron: wood first failed: ${e}`); }
             if (!(await S.getIron(gen, step.need))) await S.wait(gen, 20);

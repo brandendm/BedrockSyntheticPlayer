@@ -1644,7 +1644,7 @@ export class Skills {
     if (column[0] && column[0].y - this.feet().y > 2) {
       await this.goNear(gen, { x: column[0].x + 0.5, y: column[0].y, z: column[0].z + 0.5 }, 2.5, 2);
       if (column[0].y - this.feet().y > 4) {
-        this.a.memory.markUnreachable(trunk, 300000); // can't get to it: other trees first
+        for (const c of column) this.a.memory.markUnreachable(c, 300000); // can't get to it: other trees first
         return { chopped: 0, unreachable: true };
       }
     }
@@ -1662,7 +1662,8 @@ export class Skills {
       // stayed the nearest, so the next pass picked it again: three rounds of failed searches,
       // two walks and a dig-and-build each, before it gave up: tools/sim_think.mjs.)
       if (!chopped && !this.inReach(b) && !(await this.goNear(gen, b, 3, 2)) && !this.inReach(b)) {
-        this.a.memory.markUnreachable(trunk, 300000);
+        // (the whole trunk: each log of it was picked as a "tree" in turn, ~15 s of failed searches apiece, in a real run)
+        for (const c of column) this.a.memory.markUnreachable(c, 300000);
         return { chopped: 0, unreachable: true };
       }
       // A log of ours that landed out of pickup range: stepped onto on the way to this one, if this
@@ -2722,16 +2723,19 @@ export class Skills {
     // A house on a mountain: the shaft's every block of height above the iron layer is ~5 s of digging and a
     // 50 s climb each trip (a run dug 110 blocks down). Start from the lowest ground that's still within the
     // quarry's reach of the house (QUARRY_R), walking downhill a stretch at a time.
-    if (home) {
+    {
+      // (No house yet, as at the start of a run: from where we stand now.)
+      const anchor = home ?? { x: this.feet().x, z: this.feet().z };
+      const dMin = home ? 14 : 0;
       for (let k = 0; k < 4 && this.feet().y > Skills.IRON_Y + 20; k++) {
         const y0 = this.feet().y;
-        const res = await this.a.plan(this.sim.location, this.sim.location, 0, 6000, (x, y, z, w) => { const d = Math.hypot(x - home.x, z - home.z); return w.standable(x, y, z) && d >= 14 && d <= QUARRY_R - 4 && y <= y0 - 6; });
+        const res = await this.a.plan(this.sim.location, this.sim.location, 0, 6000, (x, y, z, w) => { const d = Math.hypot(x - anchor.x, z - anchor.z); return w.standable(x, y, z) && d >= dMin && d <= QUARRY_R - 4 && y <= y0 - 6; });
         this.check(gen);
         if (!res.complete || res.path.length < 2) break;
         await this.a.motor.followPath(smoothPath(this.a.classifier(), res.path));
         this.check(gen);
         if (this.feet().y > y0 - 3) break;
-        this.log(`quarry: starting lower, from Y ${y0} down to ${this.feet().y} (still ${Math.round(Math.hypot(this.sim.location.x - home.x, this.sim.location.z - home.z))} from the house)`);
+        this.log(`quarry: starting lower, from Y ${y0} down to ${this.feet().y} (${Math.round(Math.hypot(this.sim.location.x - anchor.x, this.sim.location.z - anchor.z))} from ${home ? 'the house' : 'where I started'})`);
       }
     }
   }
