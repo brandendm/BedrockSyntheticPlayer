@@ -2849,17 +2849,14 @@ export class Skills {
    * split over both, so 18 iron is about 90 s of waiting, not 180. Needs 8 cobblestone (or a furnace
    * in the pack); tried again after 5 minutes if it can't be.
    */
-  /** Dig a camp cell out: as an essential job, and when the view to it is blocked by the camp's own table/furnace/chest (so the crosshair never gets on it), knock it out with a command. */
+  /** Dig a camp cell out, and when the view to it is blocked by the camp's own table/furnace/chest (so the crosshair never gets on it), knock it out with a command. */
   async clearCampCell(gen, cell) {
-    const was = this.essential;
-    this.essential = true;
-    try {
-      if (await this.mine(gen, cell, { force: true })) return true;
-      if (this.touchesLava(cell) || this.touchesLiquid(cell) || UNBREAKABLE.test(this.blockAt(cell) ?? '')) return false;
-      try { this.dim.runCommand(`setblock ${cell.x} ${cell.y} ${cell.z} air destroy`); } catch {}
-      this.a.cellChanged?.();
-      return OPEN.test(this.blockAt(cell) ?? 'air');
-    } finally { this.essential = was; }
+    // (Not an essential dig: that clears whatever blocks the view, and here that's the camp's own table, which it picked up: 15:17 run.)
+    if (await this.mine(gen, cell, { force: true })) return true;
+    if (this.touchesLava(cell) || this.touchesLiquid(cell) || UNBREAKABLE.test(this.blockAt(cell) ?? '')) return false;
+    try { this.dim.runCommand(`setblock ${cell.x} ${cell.y} ${cell.z} air destroy`); } catch {}
+    this.a.cellChanged?.();
+    return OPEN.test(this.blockAt(cell) ?? 'air');
   }
 
   async ensureCampFurnace2(gen) {

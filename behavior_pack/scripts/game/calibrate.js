@@ -130,6 +130,7 @@ export class Calibration {
     let slot = -1;
     for (let i = 0; i < inv.size; i++) { const it = inv.getItem(i); if (it && it.amount >= 4 && PLAIN.test(it.typeId)) { slot = i; break; } }
     if (slot < 0 || !sim.isOnGround) return 'later';
+    if (slot >= 9) { try { inv.swapItems(slot, 8, inv); slot = 8; } catch { return 'later'; } } // (the hotbar is slots 0-8: slot 9 threw every loop, 15:20 run)
     const stack = inv.getItem(slot), typeId = stack.typeId, count0 = stack.amount;
     const spot = this.findSpot();
     if (!spot) return 'later';
