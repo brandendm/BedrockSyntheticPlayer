@@ -561,6 +561,12 @@ npm install; npm run typecheck # checks pack code against the real Script API ty
 - **Dusk interrupts mining.** The "carry on down the mine till morning" rules are gone: when night falls it stops, whatever it was doing, and the night plan takes over (home, or the camp's furnace if it has no house).
 - **Wood trips fetch at least four logs** when it's going for any, and the creeper-fight log is one line when the move changes, on a swing and every 5 ticks (`CONFIG.combatLog = true` for every tick), instead of 190 lines in 7 s crowding out the rest.
 
+## From the logs (u102)
+
+- **Mined and not picked up:** the last block of a job (a packed-up crafting table or furnace, a lone block) now waits for its drop and picks it up; before, only blocks with another coming after skipped the wait, and the pack-up walked off leaving the table and furnace lying there (then made new ones). The closing pickup after a run of blocks does the same.
+- **Wood before the mine:** setting out for iron from the surface with under about six logs' worth of wood (logs, planks/4, sticks/8) and a tree known within 48 blocks, it fetches the difference first. Three 90-second climbs out of the mine for one log each, in one run, were the cost.
+- **Craft loop guard:** the same craft chosen three times in 90 s with what it makes already in the pack is set aside for 3 minutes, with a flight report and the facts the plan saw; every craft step now logs the pack and the known tables after it (`craft: ... -> pack now ...`), so the 8 furnaces and 6 crafting tables of one run can be explained next time.
+
 ## Village sense
 
 A player looks at a skyline and knows it's a village. The bot doesn't need a picture for that: every part of a village is a block id or an entity it can already read. `game/lookout.js` glances every 3 s at ~10 surface columns out to 64 blocks; what it sees there (dirt paths, hay bales, farmland and crops, workstations, beds, a bell) and, every 9 s, the villagers (and raiders) in the loaded chunks within 64 blocks, go to `core/village.js`. That clusters the evidence within 48 blocks, scores each cluster (a bell 8, a villager 4 up to three, hay 3, a workstation 3, paths 2, beds 1.5, farmland 1), and calls it a village at 9 or more **on at least two kinds of evidence** (a lone farm, or a pile of paths, never is). Rules, no learning, nothing it can get dangerously wrong: the worst case is a walk to a farm someone built.

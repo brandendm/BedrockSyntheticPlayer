@@ -950,7 +950,9 @@ export class Skills {
     if (this.blockAt(p) === id) return false;
     // A quick one: what landed within a couple of blocks we pick up by standing here; what bounced
     // further we walk over. (It used to settle 8 ticks and wait out every drop at our feet.)
-    if (collect) await this.collect(gen, p, 5, 4, false);
+    // (With a next block to go on to, we're staying put and what fell comes in on its own; with none, the job's over and
+    // may walk straight off: wait the fresh drop out and pick it up, or it lies there. A packed-up table and furnace did.)
+    if (collect) await this.collect(gen, p, 5, 4, !next);
     return true;
   }
 
@@ -1214,7 +1216,7 @@ export class Skills {
     if (spots.length) {
       const mid = { x: spots.reduce((a, c) => a + c.x, 0) / spots.length, y: spots.reduce((a, c) => a + c.y, 0) / spots.length, z: spots.reduce((a, c) => a + c.z, 0) / spots.length };
       const r = Math.min(9, 4 + Math.max(...spots.map((c) => Math.hypot(c.x - mid.x, c.z - mid.z))));
-      await this.collect(gen, mid, r, 3, false);
+      await this.collect(gen, mid, r, 3, true);
     }
     return n;
   }

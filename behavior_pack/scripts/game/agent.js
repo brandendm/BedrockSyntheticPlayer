@@ -8,7 +8,7 @@ import { searchJob, smoothPath, findPath, Cell, DEFAULT_COSTS } from '../core/pa
 import { dist3D, makeRng } from '../core/mathutil.js';
 import { decide, fleePoint, weaponDamage, MOBS, REACH_HIT, STOP_AT } from '../core/threat.js';
 import { fleeJabOrder, avoidCreepers, towerWorth, TOWER_H, fightMove, creeperFight, creeperMove, Stalemate, pickRefuge, bestWeapon, barricadeCells, SPEAR_DAMAGE, weaponReach, pickCreeperSwing, creeperWeapon, isSpear, awayPath, knockbackRoom, blockOffCells, guardCell, fleeJab, killSlotCells, killSlotWorth, pinchWallCells, alcoveCells, dodgeArrow, CREEPER_LIGHT, CREEPER_CALM } from '../core/tactics.js';
-import { nextStep, STONE_TARGETS, TOOL_STONE, count, isLog } from '../core/recipes.js';
+import { nextStep, STONE_TARGETS, TOOL_STONE, count, isLog, isPlanks } from '../core/recipes.js';
 import { settleStep, foodCount, FOOD_GOAL, isNight, chooseFood } from '../core/settle.js';
 import { shouldRest, REST_MAX_S } from '../core/rest.js';
 import { goalChain } from '../core/goals.js';
@@ -1060,6 +1060,20 @@ export class Agent {
             continue;
           }
         }
+        // The same craft again and again with what it makes already in the pack (a real run made 8 furnaces and 6
+        // crafting tables in a minute: whatever kept asking, the pack already had them): set it aside, say what the plan saw.
+        if (step.step === 'craft' && Array.isArray(step.items)) {
+          const invNow = invCounts(this.sim);
+          const have = step.items.every((it) => (invNow[it] ?? 0) >= 1);
+          const crafts = (this.autoHist ?? []).filter((h) => h.key === key && system.currentTick - h.t < 1800).length;
+          if (have && crafts >= 3) {
+            this.deferred.set(stepKey(step), { until: Date.now() + 180000, step: 'craft' });
+            trace(`auto: craft loop: ${step.items.join(', ')} crafted ${crafts} times in 90 s and already in the pack (${step.items.map((it) => `${it} ${invNow[it]}`).join(', ')}); setting craft aside for 3 min. facts: ${JSON.stringify({ house: !!H.house, furnaceKnown: this.memory.list('furnace', this.dim.id, this.sim.location).length, campFurnace: !!S.campFurnace() })}`);
+            this.flight.dump(`craft loop: ${step.items.join(', ')}`);
+            this.autoHist = []; last = ''; repeats = 0; same = 0;
+            continue;
+          }
+        }
         // The same step straight back after failing in no time (a placement that didn't take, a
         // craft with no table): give it a moment instead of burning through the retries in a second.
         if (repeats > 0 && system.currentTick - (this.lastStepAt ?? 0) < 20) await S.wait(gen, 40);
@@ -1148,6 +1162,7 @@ export class Agent {
               this.say(known ? `Making a new crafting table; mine is ${Math.round(known.dist)} blocks away.` : 'Making a crafting table.');
             }
             await S.craft(gen, step.items, step.needsTable);
+            { const after = invCounts(this.sim); trace(`craft: ${step.items.join(', ')} -> pack now ${step.items.map((it) => `${it} ${after[it] ?? 0}`).join(', ')}; tables known ${this.memory.list('crafting_table', this.dim.id, this.sim.location).map((t) => `${Math.round(t.dist)}`).join(',') || 'none'}`); }
             break;
           case 'place_table': await S.place(gen, 'crafting_table'); break;
           case 'goto_table': {
@@ -1206,6 +1221,18 @@ export class Agent {
           case 'tend_farm': await this.farm.tend(gen); break;
           case 'get_iron':
             if (!repeats) this.say(step.why === 'bucket' ? `Getting ${step.need} iron for a bucket, for the farm's water.` : `Mining for iron: ${step.need} more for the iron gear.`);
+            // Wood for the trip first, up here: iron gear needs sticks, a spare pickaxe, torches, and each climb out of the
+            // mine for one log was ~90 s (three of them in one real run). About six logs' worth in the pack before going down.
+            try {
+              const inv0 = invCounts(this.sim), woodHave = count(inv0, isLog) + Math.floor(count(inv0, isPlanks) / 4) + Math.floor((inv0.stick ?? 0) / 8);
+              const tree = this.memory.list('log', this.dim.id, this.sim.location)[0];
+              if (!S.isUnderground() && !this.minedUnderground() && woodHave < 6 && tree && tree.dist <= 48 && step.why !== 'bucket') {
+                this.sayOnce('wood-first', `Getting wood before I go down: ${6 - woodHave} logs for sticks and spares, so I don't have to climb out for them.`, 300000);
+                trace(`get_iron: only ${woodHave} logs' worth in the pack, fetching ${6 - woodHave} before going down (tree ${Math.round(tree.dist)} away)`);
+                this.stockTarget = { step: 'gather_logs', n: count(inv0, isLog) + 6 - woodHave };
+                try { await S.gatherLogs(gen, count(inv0, isLog) + 6 - woodHave, 0); } finally { this.stockTarget = null; }
+              }
+            } catch (e) { if (gen !== this.taskGen) throw e; trace(`get_iron: wood first failed: ${e}`); }
             if (!(await S.getIron(gen, step.need))) await S.wait(gen, 20);
             break;
           case 'equip': this.equipArmor(); break;
