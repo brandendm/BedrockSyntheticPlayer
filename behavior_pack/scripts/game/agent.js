@@ -2751,6 +2751,31 @@ export class Agent {
     if (!res) this.apply(parseLocal(text, senderName)); // brain offline
   }
 
+  /**
+   * A Minecraft command the brain made from the player's words ("make it day": time set day). Checked
+   * again here against the same allowlist as the brain's (no op, ban, whitelist, permission...), run as
+   * the server in the bot's dimension, then the others if that failed. The result is told in chat.
+   */
+  runMinecraft(command) {
+    const cmd = String(command ?? '').trim().replace(/^\//, '');
+    const root = cmd.split(/\s+/)[0]?.toLowerCase();
+    const ok = new Set(['time', 'weather', 'gamemode', 'give', 'tp', 'teleport', 'effect', 'difficulty', 'gamerule', 'kill', 'summon', 'setblock', 'fill', 'clear', 'enchant', 'xp', 'title', 'playsound', 'particle', 'spawnpoint', 'setworldspawn', 'execute', 'say', 'tellraw', 'tag', 'replaceitem', 'clone', 'fog', 'camerashake', 'music']);
+    if (!cmd || cmd.length > 240 || cmd.includes('\n') || !ok.has(root) || (root === 'execute' && !ok.has((cmd.match(/\brun\s+(\S+)/)?.[1] ?? '').toLowerCase()))) {
+      this.say(`Won't run that: ${cmd.slice(0, 60)}`, true);
+      trace(`mc: refused ${cmd.slice(0, 120)}`);
+      return;
+    }
+    let err = null, done = false;
+    for (const d of [this.dim, ...['overworld', 'nether', 'the_end'].map((n) => world.getDimension(n)).filter((d) => d.id !== this.dim.id)]) {
+      try {
+        const r = d.runCommand(cmd);
+        if (r.successCount > 0 || root === 'say') { done = true; break; }
+      } catch (e) { err = err ?? e; }
+    }
+    trace(`mc: ${cmd} -> ${done ? 'ok' : `failed: ${err ?? 'nothing matched'}`}`);
+    this.say(done ? `Done: ${cmd}` : `That didn't work (${cmd}): ${String(err ?? 'nothing matched').replace(/^.*?: /, '').slice(0, 80)}`, true);
+  }
+
   apply(actions) {
     for (const a of actions) {
       // While fighting or fleeing, new orders wait until it's safe.
@@ -2761,6 +2786,7 @@ export class Agent {
       }
       switch (a.type) {
         case 'say': this.say(a.text); break;
+        case 'mc': this.runMinecraft(a.command); break;
         case 'stop':
           this.newTask(null); this.suspended = null; this.motor.stop();
           if (this.autoEnabled) { this.autoEnabled = false; this.say('Stopped. Say "!bot auto" to let me carry on by myself.'); }

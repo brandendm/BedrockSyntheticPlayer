@@ -11,6 +11,7 @@
   "jev_cache_ttl_s": 30,
   "jev_timeout_s": 2.0,
   "min_confidence": 0.7,
+  "mc_commands": true,
 
   "ollama_url": "http://127.0.0.1:11434",
   "ollama_model": "llama3.2:3b"

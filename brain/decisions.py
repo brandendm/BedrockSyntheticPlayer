@@ -10,7 +10,7 @@ import logging
 import re
 from collections import Counter
 
-from . import command_parser
+from . import command_parser, mc_commands
 from .jev_client import Choice, JevClient, Noul
 from .llm_client import LocalLLM
 
@@ -39,7 +39,8 @@ INTENT_ACTIONS = {
 
 
 class DecisionEngine:
-    def __init__(self, jev: JevClient, llm: LocalLLM, min_confidence: float = 0.7):
+    def __init__(self, jev: JevClient, llm: LocalLLM, min_confidence: float = 0.7, mc_enabled: bool = True):
+        self.mc_enabled = mc_enabled
         self.jev = jev
         self.llm = llm
         self.min_conf = min_confidence
@@ -60,6 +61,10 @@ class DecisionEngine:
         if p:
             self.sources["grammar"] += 1
             return [self._status(state) if a["type"] == "status" else a for a in p.actions]
+
+        chain = self.minecraft(text, sender, state)
+        if chain:
+            return chain
 
         ans = self.jev.decide(
             {"request": text},
@@ -94,7 +99,7 @@ class DecisionEngine:
             if p:
                 self.sources["chat_grammar"] += 1
                 return [self._status(state) if a["type"] == "status" else a for a in p.actions]
-            return []
+            return (self.minecraft(stripped, sender, state) or []) if named else []
 
         ans = self.jev.decide(
             {"message": text, "speaker": sender, "bot_name": bot, "bot_is_doing": state.get("task", "idle")},
@@ -114,6 +119,9 @@ class DecisionEngine:
         if p:
             self.sources["chat_grammar"] += 1
             return p.actions
+        chain = self.minecraft(stripped, sender, state)
+        if chain:
+            return chain
         if intent.value != "unsupported" and intent.confidence >= self.min_conf:
             self.sources["chat_jev"] += 1
             ack = {"come": "Coming.", "follow_me": "Right behind you.", "stop": "Okay, stopping.", "auto": "Back to work.",
@@ -121,6 +129,82 @@ class DecisionEngine:
             return ([{"type": "say", "text": ack}] if ack else []) + [INTENT_ACTIONS[intent.value](sender)]
         self.sources["chat_unsure"] += 1
         return [{"type": "say", "text": f"Not sure what you want me to do, {sender}."}]
+
+    # ---------- any Minecraft command, chains included ----------
+
+    MC_KINDS = {
+        "time": "change the time of day (make it day, night, noon...)",
+        "weather": "change the weather (clear, rain, thunderstorm)",
+        "gamemode": "change game mode (creative, survival, adventure, spectator)",
+        "difficulty": "change the difficulty (peaceful, easy, normal, hard)",
+        "heal": "restore the player's health",
+        "feed": "restore the player's hunger",
+        "none": "something else, or not a game command at all",
+    }
+
+    def minecraft(self, text: str, sender: str, state: dict) -> list[dict] | None:
+        """"Make it day and clear weather" -> [mc time set day, mc weather clear]. Each clause goes
+        through the bot's grammar, then the Minecraft grammar, then Jev (for the finite ones) and the
+        local LLM (raw commands, checked). None if nothing in the line was understood."""
+        if not self.mc_enabled:
+            return None
+        bot = state.get("bot") or "Scout"
+
+        def bot_clause(clause):
+            p = command_parser.parse(clause, sender)
+            return [self._status(state) if a["type"] == "status" else a for a in p.actions] if p else None
+
+        items, unknown = mc_commands.translate(text, sender, bot, other=bot_clause)
+        out: list[dict] = []
+        for it in items:
+            out.extend(it if isinstance(it, list) else [{"type": "mc", "command": it}])
+        failed = []
+        if not items and unknown:
+            unknown = [text]  # nothing read at all: a paraphrase, taken whole rather than cut at its commas
+        for clause in unknown:
+            cmds = self._mc_fallback(clause, sender, bot)
+            if cmds:
+                out.extend({"type": "mc", "command": c} for c in cmds)
+            else:
+                failed.append(clause)
+        if not out:
+            return None
+        self.sources["minecraft"] += 1
+        if failed:
+            out.append({"type": "say", "text": "I didn't understand: " + "; ".join(failed)})
+        return out
+
+    def _mc_fallback(self, clause: str, sender: str, bot: str) -> list[str]:
+        """A clause the grammar missed: Jev picks the kind and the finite value, else the local LLM writes the command."""
+        if self.jev.available:
+            ans = self.jev.decide(
+                {"request": clause},
+                [
+                    Choice("kind", "Which Minecraft game command does the player's request ask for?", self.MC_KINDS),
+                    Choice("time_value", "If it is about time of day, what time?", ["day", "night", "noon", "midnight", "sunrise", "sunset"]),
+                    Choice("weather_value", "If it is about weather, what weather?", ["clear", "rain", "thunder"]),
+                    Choice("gamemode_value", "If it is about game mode, which mode?", ["survival", "creative", "adventure", "spectator"]),
+                    Choice("difficulty_value", "If it is about difficulty, which?", ["peaceful", "easy", "normal", "hard"]),
+                ],
+            )
+            if ans and ans["kind"].confidence >= self.min_conf and ans["kind"].value != "none":
+                kind = ans["kind"].value
+                who = f'"{sender}"'
+                made = {
+                    "time": lambda: [f"time set {ans['time_value'].value}"],
+                    "weather": lambda: [f"weather {ans['weather_value'].value}"],
+                    "gamemode": lambda: [f"gamemode {ans['gamemode_value'].value} {who}"],
+                    "difficulty": lambda: [f"difficulty {ans['difficulty_value'].value}"],
+                    "heal": lambda: [f"effect {who} instant_health 1 255 true"],
+                    "feed": lambda: [f"effect {who} saturation 5 255 true"],
+                }[kind]()
+                self.sources["minecraft_jev"] += 1
+                return made
+        raw = self.llm.to_minecraft(clause, sender) if hasattr(self.llm, "to_minecraft") else []
+        ok = [c for c in (mc_commands.validate(r) for r in raw) if c]
+        if ok:
+            self.sources["minecraft_llm"] += 1
+        return ok
 
     def _status(self, state: dict) -> dict:
         p = state.get("pos", {})

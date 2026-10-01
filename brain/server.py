@@ -242,7 +242,7 @@ def build_engine(cfg: dict) -> DecisionEngine:
         timeout_s=cfg["jev_timeout_s"],
     )
     llm = LocalLLM(cfg.get("ollama_url"), cfg.get("ollama_model", "llama3.2:3b"))
-    return DecisionEngine(jev, llm, cfg["min_confidence"])
+    return DecisionEngine(jev, llm, cfg["min_confidence"], bool(cfg.get("mc_commands", True)))
 
 
 def lan_ip() -> str:

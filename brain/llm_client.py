@@ -47,3 +47,30 @@ class LocalLLM:
             return None
         cmd = out[0].strip().strip("`\"'") if out else ""
         return None if not cmd or cmd.upper() == "UNKNOWN" else cmd
+
+
+MC_PROMPT = """You turn a Minecraft Bedrock player's request into slash commands, one per line, no explanations.
+Use only: time, weather, gamemode, give, tp, effect, difficulty, gamerule, kill, summon, setblock, fill, clear, enchant, xp, title, playsound, particle, spawnpoint, execute.
+Item ids look like diamond_pickaxe (no minecraft: prefix needed). Name the player in double quotes: "{sender}". Use `execute as "{sender}" at @s run <command>` for anything relative to them (~ ~ ~).
+If the request is not something a command can do, reply UNKNOWN.
+Request: {text}
+Commands:"""
+
+
+def _to_minecraft(self, text: str, sender: str) -> list[str]:
+    if not self.available:
+        return []
+    body = {"model": self.model, "prompt": MC_PROMPT.format(sender=sender, text=text), "stream": False, "options": {"temperature": 0}}
+    try:
+        req = urllib.request.Request(f"{self.url}/api/generate", data=json.dumps(body).encode(),
+                                     headers={"Content-Type": "application/json"}, method="POST")
+        with urllib.request.urlopen(req, timeout=self.timeout) as r:
+            out = json.loads(r.read()).get("response", "")
+    except Exception as e:  # noqa: BLE001
+        log.info("local LLM unavailable: %s", e)
+        return []
+    lines = [ln.strip().strip("`") for ln in out.splitlines() if ln.strip().strip("`").startswith("/")]
+    return lines[:6]
+
+
+LocalLLM.to_minecraft = _to_minecraft

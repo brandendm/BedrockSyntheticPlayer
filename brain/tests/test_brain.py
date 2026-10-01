@@ -5,7 +5,7 @@ import unittest
 import urllib.request
 from pathlib import Path
 
-from brain import command_parser
+from brain import command_parser, mc_commands
 from brain.decisions import DecisionEngine
 from brain.jev_client import Answer, Budget, Choice, JevClient, Noul
 from brain.llm_client import LocalLLM
@@ -143,6 +143,60 @@ class DecisionTests(unittest.TestCase):
         ev = {"type": "hostile_near", "state": self.STATE, "hostiles": [{"type": "zombie", "dist": 8, "pos": {"x": 8, "y": 64, "z": 0}}]}
         self.assertEqual(self.engine(fake_transport(value="ignore")).handle(ev), [])
         self.assertEqual(self.engine(key=None).handle(ev), [], "no key: rule fallback, lone zombie at 8 -> ignore")
+
+
+class MinecraftCommandTests(unittest.TestCase):
+    STATE = {"pos": {"x": 0, "y": 64, "z": 0}, "health": 20, "task": "idle", "bot": "Scout"}
+
+    def cmds(self, text, engine=None):
+        e = engine or DecisionEngine(JevClient(None), NO_LLM)
+        acts = e.handle({"type": "command", "text": text, "sender": "Bran", "state": self.STATE})
+        return [a.get("command", a["type"]) for a in acts]
+
+    def test_chain_of_two(self):
+        self.assertEqual(self.cmds("Make it day and clear weather"), ["time set day", "weather clear"])
+
+    def test_three_things_incl_give_list(self):
+        self.assertEqual(self.cmds("make it night, make it rain and give me 2 steaks and a bow"),
+                         ["time set night", "weather rain", 'give "Bran" cooked_beef 2', 'give "Bran" bow 1'])
+
+    def test_bot_commands_mix_with_game_commands_in_order(self):
+        self.assertEqual(self.cmds("come here and make it day"), ["come", "time set day"])
+
+    def test_kill_list_carries_the_verb(self):
+        self.assertEqual(self.cmds("kill all zombies and creepers"), ["kill @e[type=zombie]", "kill @e[type=creeper]"])
+
+    def test_misc_kinds(self):
+        for text, want in [("set gamemode creative", 'gamemode creative "Bran"'), ("turn on keep inventory", "gamerule keepInventory true"),
+                           ("set difficulty to peaceful", "difficulty peaceful"), ("stop the rain", "weather clear"),
+                           ("tp me to 10 64 -20", 'tp "Bran" 10 64 -20'), ("give me speed 2 for 5 minutes", 'effect "Bran" speed 300 1 true'),
+                           ("give me 10 levels", 'xp 10L "Bran"'), ("heal me", 'effect "Bran" instant_health 1 255 true')]:
+            self.assertEqual(self.cmds(text)[0], want, text)
+
+    def test_unsafe_commands_never_pass(self):
+        self.assertIsNone(mc_commands.validate("op Steve"))
+        self.assertIsNone(mc_commands.validate("whitelist add x"))
+        self.assertIsNone(mc_commands.validate("execute as @a run op x"))
+        self.assertEqual(mc_commands.validate("/time set day"), "time set day")
+        self.assertEqual(self.cmds("/op steve"), ["say"])  # refused: "I didn't understand"... nothing ran
+        self.assertNotIn("op steve", self.cmds("/op steve"))
+
+    def test_jev_fills_finite_slots_for_a_paraphrase(self):
+        def t(url, headers, payload, timeout):
+            ans = {"kind": {"type": "choice", "choice": "time", "confidence": 0.95},
+                   "time_value": {"type": "choice", "choice": "day", "confidence": 0.95}}
+            for k, v in {"weather_value": "clear", "gamemode_value": "creative", "difficulty_value": "easy"}.items():
+                ans[k] = {"type": "choice", "choice": v, "confidence": 0.9}
+            return {"answers": ans, "usage": {"input_tokens": 50}}
+        e = DecisionEngine(JevClient("k", transport=t), NO_LLM)
+        self.assertEqual(self.cmds("it's too dark out here, fix that", e), ["time set day"])
+
+    def test_nothing_understood_falls_through(self):
+        self.assertEqual(self.cmds("what is the meaning of life"), ["say"])
+
+    def test_can_be_turned_off(self):
+        e = DecisionEngine(JevClient(None), NO_LLM, mc_enabled=False)
+        self.assertEqual(self.cmds("make it day", e), ["say"])
 
 
 class ChatTests(unittest.TestCase):
