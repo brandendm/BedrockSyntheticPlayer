@@ -88,6 +88,12 @@ function handle(text, player) {
     return;
   }
   if (lower === 'version') return reply(player, `Bedrock Agent build ${CONFIG.build}`);
+  // !bot reshield: put the shield on again so it's drawn (clear, set, replaceitem); see agent.refreshShield.
+  if (lower === 'reshield') {
+    if (!agent) return reply(player, 'spawn first');
+    agent.refreshShield().then((ok) => reply(player, ok ? 'Shield put on again: is it showing?' : 'No shield in the off hand.')).catch(() => {});
+    return;
+  }
   // !bot dump [why]: the flight report now, printed to the server console ([flight] lines) and sent to the brain.
   if (lower === 'dump' || lower.startsWith('dump ')) {
     if (!agent) return reply(player, 'spawn first');

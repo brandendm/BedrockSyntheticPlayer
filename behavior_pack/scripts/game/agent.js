@@ -1718,10 +1718,40 @@ export class Agent {
       }
     };
     for (const u of armorUpgrades(invCounts(this.sim), this.worn())) put(u.id, SLOT[u.slot]);
-    try { if (invCounts(this.sim).shield && !eq.getEquipment(EquipmentSlot.Offhand)) put('shield', EquipmentSlot.Offhand); } catch {}
+    let shielded = false;
+    try { if (invCounts(this.sim).shield && !eq.getEquipment(EquipmentSlot.Offhand)) { put('shield', EquipmentSlot.Offhand); shielded = true; } } catch {}
+    if (shielded) system.runTimeout(() => this.refreshShield(), 10); // (a script's equipment change may not be drawn by the clients)
     this.armor = armorTotal(this.worn());
     if (n) this.say(`Put on ${n} piece${n > 1 ? 's' : ''} of gear (armor ${this.armor.points}).`);
     return n;
+  }
+
+  /**
+   * The shield is in the off hand (it blocks, you hear it) but players saw none: setting equipment from
+   * a script on a simulated player doesn't always send the change to the clients. The game's own
+   * `replaceitem` does, so after equipping (and on `!bot reshield`): clear the slot, set it again,
+   * then, if it's a fresh shield (no damage: nothing repaired for free), the command too.
+   * What happened goes to the trace ("shield refresh: ...") so the next log says which step worked.
+   */
+  async refreshShield() {
+    try {
+      const eq = this.sim.getComponent('minecraft:equippable');
+      const it = eq?.getEquipment(EquipmentSlot.Offhand);
+      if (!it || !/shield$/.test(it.typeId)) { trace('shield refresh: no shield in the off hand'); return false; }
+      let damage = 0;
+      try { damage = it.getComponent('minecraft:durability')?.damage ?? 0; } catch {}
+      const copy = it.clone();
+      eq.setEquipment(EquipmentSlot.Offhand, undefined);
+      await system.waitTicks(3);
+      eq.setEquipment(EquipmentSlot.Offhand, copy);
+      let cmd = 'skipped (damaged: not repaired for free)';
+      if (damage === 0) {
+        try { const r = this.dim.runCommand(`replaceitem entity @a[name="${this.sim.name}"] slot.weapon.offhand 0 shield`); cmd = `ran (${r.successCount} ok)`; } catch (e) { cmd = `failed: ${e}`; }
+      }
+      trace(`shield refresh: cleared and set again, replaceitem ${cmd}`);
+      this.shield = this.worn().includes('shield');
+      return true;
+    } catch (e) { trace(`shield refresh: ${e}`); return false; }
   }
 
   /** What core/advance.js decides from. */
