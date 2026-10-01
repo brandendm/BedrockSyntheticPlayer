@@ -2766,18 +2766,22 @@ export class Skills {
     const safe = (c) => this.isDiggable([c]) && !this.touchesLiquid(c) && !this.isProtected(c) && !FALLING.test(this.blockAt({ ...c, y: c.y + 1 }) ?? '');
     let pick = null;
     for (let d = 0; d < 4 && !pick; d++) {
-      if (d === back || d === mineDi || (mineDi != null && d === (mineDi + 2) % 4)) continue;
+      if ((q.campBad ?? []).includes(d) || d === back || d === mineDi || (mineDi != null && d === (mineDi + 2) % 4)) continue;
       const [dx, dz] = dirs[d];
       const stand = { x: b.x + dx, y: b.y, z: b.z + dz };
       const furnace = { x: stand.x + dx, y: b.y, z: stand.z + dz };
       const table = { x: stand.x - dz, y: b.y, z: stand.z + dx };
       const cells = [stand, { ...stand, y: b.y + 1 }, furnace, table];
-      if (cells.every(safe) && !OPEN.test(this.blockAt({ ...stand, y: b.y - 1 }) ?? 'air')) pick = { stand, furnace, table };
+      if (cells.every(safe) && !OPEN.test(this.blockAt({ ...stand, y: b.y - 1 }) ?? 'air')) pick = { stand, furnace, table, d };
     }
     if (!pick) { this.log('camp: no solid spot beside the foot of the stairs'); return false; }
     this.a.say('Setting up a little camp at the foot of the stairs: a crafting table and a furnace, so I can craft and smelt down here.');
     for (const c of [{ ...pick.stand, y: b.y + 1 }, pick.stand, pick.furnace, pick.table]) {
-      if (!OPEN.test(this.blockAt(c) ?? 'air') && !(await this.mine(gen, c))) { this.log(`camp: couldn't dig ${c.x} ${c.y} ${c.z} (${this.blockAt(c)})`); return false; }
+      if (!OPEN.test(this.blockAt(c) ?? 'air') && !(await this.mine(gen, c))) {
+        this.log(`camp: couldn't dig ${c.x} ${c.y} ${c.z} (${this.blockAt(c)}${this.isProtected(c) ? ', protected' : ''}${this.touchesLava(c) ? ', lava beside' : ''}); trying another side next time`);
+        (q.campBad ??= []).push(pick.d); // (not the same alcove again: the next try takes another side)
+        return false;
+      }
     }
     await this.goNear(gen, { x: b.x + 0.5, y: b.y, z: b.z + 0.5 }, 0.5, 2);
     const H = this.a.homestead;
