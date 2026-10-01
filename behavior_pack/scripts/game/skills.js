@@ -1715,7 +1715,14 @@ export class Skills {
     if (needsTable) {
       table = await this.findTable(5);
       if (!table) { this.log('craft: no crafting table within 5'); return false; }
-      if (!(await this.reach(gen, table))) {
+      let usable = await this.reach(gen, table);
+      // The mine camp's table, seen from the tunnel through rock (3 blocks off, no line): the camp's standing spot is where it's used from.
+      const camp = this.homeQuarry()?.camp;
+      if (!usable && camp && camp.table.x === table.x && camp.table.y === table.y && camp.table.z === table.z) {
+        await this.goNear(gen, { x: camp.stand.x + 0.5, y: camp.stand.y, z: camp.stand.z + 0.5 }, 0.6, 2);
+        usable = await this.reach(gen, table);
+      }
+      if (!usable) {
         // It's right here but we can't get a clear view of it (set down in a corner, behind a
         // block): pick it up and put it down somewhere sensible, instead of failing over and over.
         this.log(`craft: can't use the table at ${table.x} ${table.y} ${table.z} (reach and view): moving it`);

@@ -54,7 +54,9 @@ function worth(id, inv, keepSticks) {
   if (id === 'stick') return (inv.stick ?? 0) > keepSticks ? 0.2 : Infinity;
   if (id === 'bowl') return 0.3;
   if (/_planks$/.test(id) || /_slab$/.test(id)) return 1;
-  if (id === 'coal' || id === 'charcoal') return 5; // 4 torches each
+  // 4 torches each while coal is short; a quarry turns up far more than the torches use (24 coal in the pack, and
+  // three spruce logs planked for a batch of 18 iron, logs it then had to climb for).
+  if (id === 'coal' || id === 'charcoal') return (inv.coal ?? 0) + (inv.charcoal ?? 0) >= 16 ? 1.5 : 5;
   if (id === 'dried_kelp_block') return 3;
   return Infinity; // logs (plank them), crafting table, ladders, wool, blaze rods, coal blocks
 }
