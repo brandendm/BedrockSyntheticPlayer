@@ -2929,7 +2929,7 @@ export class Skills {
       if (!(await this.goNear(gen, { x: at.x + 0.5, y: at.y, z: at.z + 0.5 }, 0.8, 2))) { this.log(`mine: couldn't get back to the end of the main tunnel at ${at.x} ${at.y} ${at.z}; carrying on from here`); prev = null; }
     }
     let di = prev?.di ?? mem.mineDir ?? this.stoniestDir();
-    let steps = prev?.n ?? 0, blocked = 0, since = 0;
+    let steps = prev?.n ?? 0, blocked = 0, since = 0, fresh_n = 0;
     let tried = new Set();
     // A branch left half dug last trip: finish it first.
     const half = q?.branch;
@@ -2954,7 +2954,10 @@ export class Skills {
       await this.dumpJunk(gen);
       if (this.feet().y !== level && !(await this.backOntoLevel(gen, lastGood))) break;
       const [dx, dz] = dirs[di];
+      const f0 = this.feet();
+      const fresh = !this.isTunnelFloor({ x: f0.x + dx, y: f0.y - 1, z: f0.z + dz }); // (a step into a tunnel we already dug isn't progress)
       if (!(await this.tunnelStep(gen, dx, dz))) {
+        if (blocked === 0) this.log(`mine: tunnel blocked going ${dx},${dz} at ${f0.x} ${f0.y} ${f0.z}: feet ${this.blockAt({ x: f0.x + dx, y: f0.y, z: f0.z + dz })}, head ${this.blockAt({ x: f0.x + dx, y: f0.y + 1, z: f0.z + dz })}, floor ${this.blockAt({ x: f0.x + dx, y: f0.y - 1, z: f0.z + dz })}`);
         // Something in the way (water, lava, a drop, the house): turn, the way with less of our
         // own tunnels in it (right on a tie), then the other way, then back.
         tried.add(di);
@@ -2967,8 +2970,9 @@ export class Skills {
         blocked++;
         continue;
       }
-      tried = new Set();
-      blocked = 0;
+      // Only a new block dug resets the dead-end count: walking back and forth along old tunnel
+      // between two dead ends looped forever (4 minutes of it in one real run).
+      if (fresh) { tried = new Set(); blocked = 0; fresh_n++; }
       steps++;
       lastGood = this.feet();
       record();
@@ -2988,6 +2992,17 @@ export class Skills {
       }
     }
     record();
+    // Boxed in at the end of the mine, nothing new dug: after two such calls in a row the quarry's
+    // abandoned and a new one started, rather than walking the same dead ends every trip.
+    if (q) {
+      if (blocked >= 4 && fresh_n === 0) {
+        q.deadMine = (q.deadMine ?? 0) + 1;
+        this.log(`mine: boxed in, nothing new dug (${q.deadMine} in a row)`);
+        if (q.deadMine >= 2) this.abandonQuarry('the mine is boxed in');
+        else { q.mine = null; q.branch = null; this.a.memory.data.mineDir = undefined; }
+        this.a.memory.save();
+      } else if (fresh_n) q.deadMine = 0;
+    }
   }
 
   /**
