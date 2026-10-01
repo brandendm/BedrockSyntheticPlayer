@@ -621,3 +621,4 @@ Debug from the server console: `scriptevent agent:cmd spawn`, `scriptevent agent
 - Wood before the trip: up to 8 logs' worth fetched whenever starting a trip from the surface (even if the quarry was visited earlier).
 - Leaf-litter swiping only while fuel is under 8; quarry torches only at light 3 or less.
 - Mine dead-end loop (u112): walking back and forth along old tunnel between two dead ends reset the blocked count forever (4+ min in one run). Only a newly dug block resets it now; boxed in twice with nothing new dug abandons the quarry. The blocked block ids are logged.
+- Pathfinding trims (u113): refuge search reused for 3 s when barely moved (was 25 full 2500-node searches in one run); a mob that cannot reach us is not re-checked for 6 s; item pickup tries a 1200-node walk before the break-through plan (was 2500).

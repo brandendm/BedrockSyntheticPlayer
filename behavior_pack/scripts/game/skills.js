@@ -1035,7 +1035,7 @@ export class Skills {
         if (!gone()) local.add(itId); // still here: something odd about it, move on for now
         continue;
       }
-      const res = await this.a.plan(here, loc, 0.9, 2500);
+      const res = await this.a.plan(here, loc, 0.9, 1200); // (an item up out of reach ran the whole cap, then the breaking-through plan did the work)
       this.check(gen);
       if (gone()) continue;
       if (!res.complete) {

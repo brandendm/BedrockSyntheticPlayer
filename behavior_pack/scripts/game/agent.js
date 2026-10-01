@@ -431,7 +431,7 @@ export class Agent {
    */
   canReachMe(e, pos, t) {
     const c = this.reachCache.get(e.id);
-    if (c && (c.pending || t - c.t < 40)) return c.ok;
+    if (c && (c.pending || t - c.t < (c.ok ? 40 : 120))) return c.ok; // (one that can't reach us stays that way a while: 25 partial searches in one run)
     const entry = { ok: c ? c.ok : dist3D(pos, e.location) <= 6, t, pending: true };
     this.reachCache.set(e.id, entry);
     if (this.reachCache.size > 64) for (const [id, v] of this.reachCache) if (t - v.t > 400) this.reachCache.delete(id);
@@ -2205,7 +2205,12 @@ export class Agent {
     // Never past a creeper's nose on the way (core/tactics.js avoidCreepers), and up a ledge with a
     // block if that's the way out (the step-ups: a trench, a terrace, rough ground).
     const wrap = (c) => avoidCreepers(c, threats.filter((m) => m.type === 'creeper').map((m) => m.pos), 3.5, me);
-    this.plan(me, me, 0, 2500, probe, { wrap, actions: this.fleeActions() }).then(() => {
+    // The refuge candidates from the last search, if we've barely moved: the search to its cap was
+    // 7 ticks a time, 25 times in one run, all for the same ground.
+    const rc = this.refugeCache;
+    const reuse = rc && t - rc.t < 60 && Math.hypot(rc.x - me.x, rc.z - me.z) < 3 && Math.abs(rc.y - me.y) < 1.5;
+    (reuse ? Promise.resolve(cands.push(...rc.cands)) : this.plan(me, me, 0, 2500, probe, { wrap, actions: this.fleeActions() })).then(() => {
+      if (!reuse) this.refugeCache = { t, x: me.x, y: me.y, z: me.z, cands: cands.slice() };
       this.findingRefuge = false;
       if (gen !== this.taskGen || this.mode !== 'flee') return;
       // Out of sight: the ray from the shooter's eye to our chest there.
