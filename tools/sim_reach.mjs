@@ -123,14 +123,17 @@ function report(name, ok, detail, g) {
   await g.S.mine(0, { x: 3, y: 64, z: 0 });
   report('a flower behind grass', g.cheats() === 0 && g.get({ x: 3, y: 64, z: 0 }) === 'air', `through something ${g.cheats()}, ${g.events.join('; ')}`, g);
 }
-// 4. Stone behind a wall (not an essential job): not through the wall; round to where it shows.
+// 4. Iron ore behind a wall of stone: the stone in front is dug first (a miner's way), the ore never
+// broken through it. (Not essential, not the house's: ordinary rock.)
 {
   const g = game((set) => {
     for (let dz = -3; dz <= 3; dz++) for (let y = 64; y <= 66; y++) set({ x: 2, y, z: dz }, 'stone'); // a wall
     set({ x: 3, y: 64, z: 0 }, 'iron_ore');
   });
   const ok = await g.S.mine(0, { x: 3, y: 64, z: 0 });
-  report('ore behind a wall', g.cheats() === 0 && (!ok || g.events.some((e) => /walk/.test(e))), `mined ${ok}, through something ${g.cheats()}, ${g.events.join('; ')}`, g);
+  const dugFirst = g.events.findIndex((e) => /break stone/.test(e)) >= 0 && g.events.findIndex((e) => /break stone/.test(e)) < g.events.findIndex((e) => /break iron_ore/.test(e));
+  const walkedRound = g.events.some((e) => /walk/.test(e));
+  report('ore behind a wall', g.cheats() === 0 && ok && (dugFirst || walkedRound), `mined ${ok}, through something ${g.cheats()}, ${g.events.join('; ')}`, g);
 }
 // 5. A block to go in on the far side of a wall, the only face to put it against over there: from
 // this side it can't be done; the bot goes round (the wall's end is open).

@@ -855,7 +855,9 @@ export class Skills {
           const hid = this.blockAt(hit) ?? '';
           const f0 = this.feet();
           const ownFloor = hit.x === f0.x && hit.z === f0.z && hit.y < f0.y;
-          const soft = ONE_TAP.test(hid) || /leaves|vine|grass|fern|flower|bush|snow_layer|lichen|roots|web|fire|litter|petals/.test(hid) || SHOVEL_BLOCKS.has(hid);
+          // (Ore we're after, seen through a cave's wall: the stone in front of it is dug, as a miner does.)
+        const soft = ONE_TAP.test(hid) || /leaves|vine|grass|fern|flower|bush|snow_layer|lichen|roots|web|fire|litter|petals/.test(hid) || SHOVEL_BLOCKS.has(hid) ||
+          (Skills.isOre(id) && STONEISH.test(hid) && !this.touchesLiquid(hit));
           // On an essential job, whatever's in front of it goes too (not our house, not liquid).
           const clearIt = !ownFloor && depth < 3 && !this.isProtected(hit) && (soft || (this.essential && !UNBREAKABLE.test(hid) && !/water|lava/.test(hid) && !this.a.homestead?.isHouseBlock?.(hit)));
           if (clearIt) {

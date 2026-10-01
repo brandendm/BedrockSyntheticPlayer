@@ -852,6 +852,10 @@ export class Agent {
       this.waterIdle = 0;
       return this.task?.kind === 'swim_out';
     }
+    // Standing on the bottom with our head in the air (a shallow pool in a cave, a puddle): not
+    // swimming, nothing to swim out of. A player mines on from there. It was cutting the mining off
+    // every 4 s for a swim to shore that ended where it started (swim_out <-> get_iron, 5 minutes).
+    if (this.body.isOnGround() && !this.body.headUnderwater()) { this.waterIdle = 0; return false; }
     if ((this.waterIdle += SURVIVE_EVERY) < 10) return false;
     this.waterIdle = 0;
     // Remember where we got wet so exploring stops heading this way.

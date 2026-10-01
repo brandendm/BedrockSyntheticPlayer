@@ -46,3 +46,9 @@ test('the steps in order, runs folded; the pack diff', () => {
   assert.equal(invDiff({ a: 1 }, { a: 1 }), 'nothing');
   assert.deepEqual(pathAndNet(run(3, (i) => ({ x: i * 3 }))), { path: 6, net: 6 });
 });
+
+test('a pool loop looks like spinning: the plan restarts every few seconds with nothing gained', () => {
+  // swim_out <-> get_iron every 4 s for a minute, pack the same, in place
+  const d = diagnose(run(60, (i) => ({ step: i % 4 < 2 ? 'get_iron' : 'swim_out', x: (i % 2) * 0.3 })));
+  assert.ok(d && ['spinning', 'pacing', 'frozen'].includes(d.kind));
+});
