@@ -1229,8 +1229,9 @@ export class Agent {
             await S.travelToward(gen, { x: b.pos.x, y: b.pos.y, z: b.pos.z }, 6);
             V.scanEntities();
             this.villageMisses = (this.villageMisses ?? 0) + 1;
-            // One short leg (a partial path that ended in the quarry's crater) isn't "nowhere": three in a row, or six legs without a village, is.
-            if (Math.hypot(this.sim.location.x - from.x, this.sim.location.z - from.z) < 8) this.villageStuck = (this.villageStuck ?? 0) + 1; else this.villageStuck = 0;
+            // Progress is distance gained toward the village biome, not blocks walked (a partial path into a dead-end ravine and back walked 26 blocks each way and gained none): three legs in a row that gain under 8 blocks, or six legs without a village, is nowhere.
+            const gained = Math.hypot(from.x - b.pos.x, from.z - b.pos.z) - Math.hypot(this.sim.location.x - b.pos.x, this.sim.location.z - b.pos.z);
+            if (gained < 8) this.villageStuck = (this.villageStuck ?? 0) + 1; else this.villageStuck = 0;
             if (this.villageStuck > 0 && this.villageStuck < 3) await S.explore(gen, 'a village', null); // (the straight way ended in a dead end: fresh ground by the usual search)
             if (this.villageStuck >= 3 || this.villageMisses >= 6) { this.villageMisses = 0; this.villageStuck = 0; this.villageHoldUntil = Date.now() + 1800000; trace('village hunt: got nowhere / six legs without one; not again for 30 min'); }
             break;

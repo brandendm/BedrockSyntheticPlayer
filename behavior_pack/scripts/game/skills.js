@@ -3931,19 +3931,18 @@ export class Skills {
    */
   async ravineOut(gen) {
     if (this.a.homestead?.isHome() || this.rimClimb() < 4) return false;
-    if (this.ravineFailAt && Date.now() - this.ravineFailAt < 120000) return false;
-    this.log(`ravine: walls ${this.rimClimb()} high at ${this.feet().x} ${this.feet().y} ${this.feet().z}, climbing out`);
-    this.a.sayOnce('ravine', "I'm down in a ravine: climbing out to look for trees up top.", 60000);
-    this.inRavine = true;
-    let ok = false;
-    try { ok = await this.toSurface(gen); } finally { this.inRavine = false; }
-    if (!ok) this.ravineFailAt = Date.now();
-    return ok;
+    if (this.ravineAt && Date.now() - this.ravineAt < 180000) return false; // (once in 3 min, whatever came of it)
+    this.ravineAt = Date.now();
+    this.log(`ravine: walls ${this.rimClimb()} high at ${this.feet().x} ${this.feet().y} ${this.feet().z}, walking out`);
+    this.a.sayOnce('ravine', "I'm down in a ravine: walking out to look for trees up top.", 60000);
+    // Walking only (never pillaring or digging up the open middle of a ravine: that left it on a pillar it couldn't get off).
+    const ok = await this.walkOut(gen).catch((e) => { if (e instanceof Aborted) throw e; return false; });
+    if (this.perched() || this.dropsAround().some((e) => e.drop > 3 && this.coverAbove() === 0 && !this.nextToWall())) await this.getDown(gen);
+    return !!ok;
   }
 
   async needsEscape(gen) {
     if (this.a.homestead?.isHome()) return false; // our own house: the door is the way out
-    if (this.inRavine && this.rimClimb() >= 3) return true;
     if (this.isUnderground()) { this.log(`escape: underground at ${this.feet().x} ${this.feet().y} ${this.feet().z}`); return true; }
     if (await this.isTrapped(gen)) { this.log(`escape: hemmed in at ${this.feet().x} ${this.feet().y} ${this.feet().z}`); return true; }
     return false;
@@ -4023,6 +4022,8 @@ export class Skills {
         looseTried = true;
         if ((await this.gatherLoose(gen, Math.min(40, this.climbNeeded() + 4))) >= 4) continue;
       }
+      // On a pillar of our own in the open (a ravine's middle, no wall beside it): the way out is down, not up.
+      if (why === 'open' && !this.nextToWall() && this.dropsAround().some((e) => e.drop > 3) && (await this.getDown(gen))) continue;
       if ((why === 'open' || why === 'exposed') && (await this.walkToWall(gen))) continue;
       if (why !== 'climbed' && !(await this.stairStep(gen, byHand)) && !(await this.tunnelSideways(gen, byHand))) {
         // Nothing works from this spot (water, lava, sand everywhere): try again from somewhere else.
@@ -4707,7 +4708,7 @@ export class Skills {
     const st = this.exploreStall ?? (this.exploreStall = new ExploreStall());
     st.start(this.sim.location, want ?? what);
     try {
-      if (await this.ravineOut(gen)) return;
+      if (want === 'log' && (await this.ravineOut(gen))) return;
       const v = st.verdict();
       if (v === 'giveup') {
         this.exploreGaveUp[want ?? what] = Date.now() + 600000;
