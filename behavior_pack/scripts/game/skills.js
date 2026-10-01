@@ -1735,12 +1735,22 @@ export class Skills {
       }
       const plan = planCrafts(invCounts(this.sim), [item]);
       if (plan.logsShort || plan.missing) return false;
+      // A full pack: the crafted item lands on the floor and the pack still reads 0 of it, so it was
+      // crafted again (three iron shovels in one real run, 372 cobblestone in the pack). Room first.
+      const cont = container(this.sim);
+      let crowded = false;
+      if (cont && cont.emptySlotsCount < 3) {
+        crowded = true;
+        await this.dumpJunk(gen, true, 3);
+        if (cont.emptySlotsCount < 2) { this.log(`craft: pack full (${cont.emptySlotsCount} free), not crafting ${item}`); return false; }
+      }
       for (const step of plan.steps) {
         const r = applyCraft(invCounts(this.sim), step);
         for (const [id, n] of Object.entries(r.used)) take(this.sim, id, n);
         for (const [id, n] of Object.entries(r.made)) give(this.sim, id, n);
         await this.wait(gen, 6); // a click or two per step
       }
+      if (crowded) await this.collect(gen, this.sim.location, 4, 2, false); // (whatever still landed on the floor)
       if (!quiet) this.a.say(`Crafted ${item.replace(/_/g, ' ')}.`);
     }
     this.restHands();
@@ -3414,9 +3424,9 @@ export class Skills {
    * Keep room in the pack: toss the stone we'll never use when the pack's nearly full (a strip mine
    * turns up stacks of it). Keeps 2 stacks of cobblestone and 1 of deepslate cobble for building.
    */
-  async dumpJunk(gen, hard = false) {
+  async dumpJunk(gen, hard = false, below = 4) {
     const c = container(this.sim);
-    if (!c || c.emptySlotsCount > 3) return 0;
+    if (!c || c.emptySlotsCount >= below) return 0;
     // hard: night in the mine with a full pack. Keep a stack of cobblestone, toss the rest, rather
     // than walk home in the dark to the chest.
     const keep = hard ? { cobblestone: 64 } : { cobblestone: 128, cobbled_deepslate: 64 };
