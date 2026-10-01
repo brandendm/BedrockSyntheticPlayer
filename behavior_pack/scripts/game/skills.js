@@ -3809,6 +3809,7 @@ export class Skills {
       const id = this.blockAt(c);
       if (!id || id === 'air') return true;
       if (/leaves|^short_grass$|^tall_grass$|fern|flower|bush|snow_layer|^(muddy_)?mangrove_roots$|moss_carpet|propagule/.test(id)) return true;
+      if (/^(wall_|soul_|redstone_)?torch$/.test(id)) return true; // (our own lights in the way of a tunnel: break in a hit)
       if (!NATURAL.has(id) && !this.placedByMe(c)) return false;
       if (SHOVEL_BLOCKS.has(id) || id === 'snow') return true;
       // Escaping: stone can be punched through (slow, drops nothing) when there's no pickaxe.
