@@ -72,7 +72,7 @@ const PLAYER_ONLY = new Set(['duel']);
 const QUICK_S = 60;
 // The ones that need monsters about (and the world's own difficulty); the rest run peaceful with monsters cleared.
 /** Tests that stay on the real ground (trees, water, ores, the night, long walks); everything else is built in the sky. */
-const GROUND = new Set(['water', 'bucketfarm', 'treetop', 'vines', 'ghostlog', 'nights', 'calibrate', 'quarry', 'dark', 'iron', 'trader', 'farm', 'replant', 'litter', 'loot', 'rest', 'house', 'resume', 'shelter']);
+const GROUND = new Set(['water', 'bucketfarm', 'treetop', 'vines', 'ghostlog', 'nights', 'calibrate', 'quarry', 'dark', 'iron', 'loot', 'rest', 'house', 'resume', 'shelter']);
 /** Tests that need the day and night going round (the rest are kept at day while the tests run). */
 const NIGHT = new Set(['shelter', 'house', 'resume', 'nights', 'rest', 'dark', 'loot']);
 /** Tests that need the natural terrain or water as it is: no floor is laid for them. */
@@ -203,7 +203,7 @@ export async function runTests(agent, player, args) {
       try { r = await runOne(agent, player, n, argN, human); } finally { try { system.clearRun(cap); } catch {} }
       agent.testProgress.done++;
       r.secs = Math.round((system.currentTick - t0) / 20);
-      if (agent.testSkipped) { const sl = agent.memory.data.testRuns?.[n]?.[human ? 'human' : 'bot']; if (sl) { sl.skipped = true; agent.memory.save(); } r.pass = false; r.skipped = true; r.detail = `skipped by you; ${r.detail}`; agent.testSkipped = false; }
+      if (agent.testSkipped) { const sl = agent.memory.data.testRuns?.[n]?.[human ? 'human' : 'bot']; if (sl) { sl.skipped = true; agent.memory.save(); } r.pass = false; r.skipped = true; r.detail = `skipped; ${r.detail}`; agent.testSkipped = false; }
       else if (capped) { r.pass = false; r.detail = `cut off after ${capS} s; ${r.detail}`; }
       results.push(r);
     }
@@ -238,7 +238,9 @@ async function runOne(agent, player, name, arg, human = false) {
   // need the real world (trees, water, ores, the night) stay on the ground.
   const sky = !GROUND.has(name);
   const gy = sky ? Math.min(Math.max(gy0 + 60, 120), 280) : gy0;
-  const box = sky ? { x1: x - 14, y1: gy - 10, z1: z - 12, x2: x + 18, y2: gy + 20, z2: z + 12 } : { x1: x - 8, y1: gy - 8, z1: z - 8, x2: x + 14, y2: gy + 18, z2: z + 8 };
+  // (the farm test lays 55 x 41 of its own: its slab and backup are that big)
+  const ext = name === 'farm' ? { w: 22, e: 36, r: 22 } : { w: 14, e: 18, r: 12 };
+  const box = sky ? { x1: x - ext.w, y1: gy - 10, z1: z - ext.r, x2: x + ext.e, y2: gy + 20, z2: z + ext.r } : { x1: x - 8, y1: gy - 8, z1: z - 8, x2: x + 14, y2: gy + 18, z2: z + 8 };
   const pHome = player ? { x: player.location.x, y: player.location.y, z: player.location.z } : null;
   const cmd = (c) => { try { dim.runCommand(c); return true; } catch (e) { console.warn(`[test] ${c}: ${e}`); return false; } };
   if (!cmd(`structure save agent_test_backup ${box.x1} ${box.y1} ${box.z1} ${box.x2} ${box.y2} ${box.z2} false memory true`)) {
@@ -246,9 +248,9 @@ async function runOne(agent, player, name, arg, human = false) {
   }
   const home = { x: sim.location.x, y: sim.location.y, z: sim.location.z };
   if (sky) {
-    cmd(`fill ${x - 14} ${gy - 10} ${z - 12} ${x + 18} ${gy - 4} ${z + 12} stone`);
-    cmd(`fill ${x - 14} ${gy - 3} ${z - 12} ${x + 18} ${gy - 1} ${z + 12} dirt`);
-    cmd(`fill ${x - 14} ${gy} ${z - 12} ${x + 18} ${gy} ${z + 12} grass_block`);
+    cmd(`fill ${x - ext.w} ${gy - 10} ${z - ext.r} ${x + ext.e} ${gy - 4} ${z + ext.r} stone`);
+    cmd(`fill ${x - ext.w} ${gy - 3} ${z - ext.r} ${x + ext.e} ${gy - 1} ${z + ext.r} dirt`);
+    cmd(`fill ${x - ext.w} ${gy} ${z - ext.r} ${x + ext.e} ${gy} ${z + ext.r} grass_block`);
     // Whoever is not doing the test waits on the slab too (the bot by the edge while you do it).
     try { if (human) sim.teleport({ x: x - 4.5, y: gy + 1, z: z + 6.5 }); else sim.teleport({ x: x + 0.5, y: gy + 1, z: z + 0.5 }); } catch { /* */ }
     if (human && player) { try { player.teleport({ x: x + 0.5, y: gy + 1, z: z + 0.5 }); } catch { /* */ } }
@@ -309,7 +311,7 @@ async function runOne(agent, player, name, arg, human = false) {
     // Spectators' seat: a small glass platform behind the site, you looking at where the bot starts.
     if (!human && player && name !== 'duel') {
       // The seat: a 3x3 stone-brick platform raised over the slab's west edge with a clear view of the site; slow falling in case of a slip.
-      const sx = sky ? x - 12 : x - 8;
+      const sx = sky ? x - ext.w + 2 : x - 8;
       cmd(`fill ${sx} ${gy + 3} ${z - 1} ${sx + 2} ${gy + 3} ${z + 1} stone_bricks`);
       try { player.teleport({ x: sx + 1.5, y: gy + 4, z: z + 0.5 }, { facingLocation: { x, y: gy + 2, z: z + 0.5 } }); } catch { /* */ }
       try { player.addEffect('slow_falling', 2400, { showParticles: false }); } catch { /* */ }
@@ -690,6 +692,7 @@ async function runOne(agent, player, name, arg, human = false) {
       }
       case 'bucketfarm': {
         // The real thing, at the real house: fill the bucket wherever the water is, farm by the house.
+        if (!agent.memory.data.house) { detail = 'needs a house to farm by (build one first); not counted'; agent.testSkipped = true; break; }
         const inv = sim.getComponent('minecraft:inventory').container;
         if (!invCountsOf(sim).bucket && !invCountsOf(sim).water_bucket) inv.addItem(new ItemStack('minecraft:bucket', 1));
         if (!invCountsOf(sim).stone_hoe) inv.addItem(new ItemStack('minecraft:stone_hoe', 1));
@@ -1760,11 +1763,13 @@ async function runOne(agent, player, name, arg, human = false) {
     agent.newTask(null);
     agent.motor.stop();
     // Everyone down from the sky before the slab goes.
-    if (sky) { try { sim.teleport(home); } catch { /* */ } try { if (player && pHome) player.teleport(pHome); } catch { /* */ } await system.waitTicks(5); }
+    // (The player goes back to where they stood at the start of this test, so the next site is in the same place, not wherever the seat was.)
+    if (sky) { try { sim.teleport(home); } catch { /* */ } }
+    try { if (player && pHome) player.teleport(pHome); } catch { /* */ }
+    await system.waitTicks(5);
     // Put the ground back, then make sure the bot isn't left inside a restored block.
     cmd(`structure load agent_test_backup ${box.x1} ${box.y1} ${box.z1}`);
     cmd('structure delete agent_test_backup');
-    if (!sky && !human && player && name !== 'duel') { try { const tg = S.groundTop(x - 7, z); if (Number.isFinite(tg)) player.teleport({ x: x - 6.5, y: tg + 1, z: z + 0.5 }); } catch { /* */ } }
     try {
       const top = S.groundTop(Math.floor(sim.location.x), Math.floor(sim.location.z));
       if (Number.isFinite(top) && top >= Math.floor(sim.location.y)) sim.teleport({ x: sim.location.x, y: top + 1, z: sim.location.z });
