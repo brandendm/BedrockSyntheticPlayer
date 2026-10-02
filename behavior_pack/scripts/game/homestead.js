@@ -303,8 +303,10 @@ export class Homestead {
         const now = system.currentTick;
         if ((now - start) % 100 < 2) S.log(`hunt: ${pick.type} ${d.toFixed(1)} away (${(last.y - p.y).toFixed(1)} up), ${swings} swings, ${landed} hits`);
         if (d > 2.8 && now >= nextRoute) {
-          nextRoute = now + 8;
-          this.a.routeTo(standOff(p, last, 2.2), 0.5, d > 6, 1200);
+          // (Closer and quicker than before: the test runs had a player chase a fleeing sheep at a sprint and hit it on the run, 15 clicks
+          // for 3 sheep in 4.8 s, where the bot stood off at 2.2, re-routed every 8 ticks and sprinted only past 6 blocks: 2.5 s between hits.)
+          nextRoute = now + 5;
+          this.a.routeTo(standOff(p, last, 1.8), 0.5, d > 3.5, 1200);
         } else if (d <= 2.8 && this.a.motor.busy) this.a.motor.stop();
         if (d <= 3.2 && now >= nextSwing) {
           // In reach but not facing it for a second and a half: turn to it directly (the gradual

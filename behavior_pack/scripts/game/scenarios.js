@@ -57,20 +57,21 @@ import { blueprint, furnishings } from '../core/house.js';
 import { invCounts as invCountsOf, hold, take, container as packOf } from './inventory.js';
 import { TestRecorder } from './testrun.js';
 import { runDuel } from './duel.js';
+import { isTamed, saddledOf } from './horse.js';
 import { solvePitch } from '../core/ballistics.js';
 import { getPlan } from '../core/learnhouse.js';
 import { passRates, addStat } from '../core/testrun.js';
 import { compare } from '../core/testrun.js';
 
-const NAMES = ['roof', 'tower', 'hole', 'pit', 'trap', 'climb', 'ledge', 'ladder', 'husk', 'creeper', 'sheep', 'pen', 'smelt', 'smeltlogs', 'shelter', 'house', 'resume', 'ghostlog', 'quarry', 'dark', 'replant', 'litter', 'trader', 'iron', 'farm', 'equip', 'water', 'bucketfarm', 'treetop', 'corner', 'leap', 'bridge', 'fall', 'vines', 'stairgap', 'loot', 'shield', 'skel', 'rest', 'nights', 'calibrate', 'portal', 'horse', 'leadboat', 'leadsling', 'bow', 'duel'];
+const NAMES = ['roof', 'tower', 'hole', 'pit', 'trap', 'climb', 'ledge', 'ladder', 'husk', 'creeper', 'sheep', 'pen', 'smelt', 'smeltlogs', 'shelter', 'house', 'resume', 'ghostlog', 'quarry', 'dark', 'replant', 'litter', 'trader', 'iron', 'farm', 'equip', 'water', 'bucketfarm', 'treetop', 'corner', 'leap', 'bridge', 'fall', 'vines', 'stairgap', 'loot', 'shield', 'skel', 'rest', 'nights', 'calibrate', 'portal', 'horse', 'leadboat', 'leadsling', 'bow', 'duel', 'horserace', 'pillarrace', 'woodrace'];
 let running = false;
 
 // Tests that wait out real time (a 5 minute despawn, a night, a furnace, a long walk): left out of
 // `!bot test all quick`. Their real durations are in the batch report (`secs`), so this list can be
 // corrected from data: anything over QUICK_S in the last report belongs here.
-const SLOW = new Set(['loot', 'nights', 'rest', 'shelter', 'house', 'resume', 'quarry', 'farm', 'bucketfarm', 'iron', 'sheep', 'pen', 'smelt', 'smeltlogs', 'trader', 'ghostlog', 'stairgap', 'portal', 'horse', 'leadboat', 'leadsling', 'duel']);
+const SLOW = new Set(['loot', 'nights', 'rest', 'shelter', 'house', 'resume', 'quarry', 'farm', 'bucketfarm', 'iron', 'sheep', 'pen', 'smelt', 'smeltlogs', 'trader', 'ghostlog', 'stairgap', 'portal', 'horse', 'leadboat', 'leadsling', 'duel', 'horserace']);
 /** Tests that need you there (you are the opponent). */
-const PLAYER_ONLY = new Set(['duel']);
+const PLAYER_ONLY = new Set(['duel', 'horserace', 'pillarrace', 'woodrace']);
 const QUICK_S = 60;
 // The ones that need monsters about (and the world's own difficulty); the rest run peaceful with monsters cleared.
 /** Tests that stay on the real ground (trees, water, ores, the night, long walks); everything else is built in the sky. */
@@ -228,7 +229,7 @@ export async function runTests(agent, player, args) {
       setDiff(COMBAT.has(n) ? diff0 : 'peaceful');
       setCycle(keepCycle || NIGHT.has(n));
       // Creative while you watch (you can fly about), survival while you do a test or fight in one.
-      setGm(isYou || n === 'duel' ? 'survival' : 'creative');
+      setGm(isYou || PLAYER_ONLY.has(n) ? 'survival' : 'creative');
       try { player?.removeEffect('slow_falling'); } catch { /* */ }
       // The cap: at the deadline the task ends, so waits on it return and the test reports.
       let capped = false;
@@ -277,7 +278,7 @@ async function runOne(agent, player, name, arg, human = false) {
   const sky = !GROUND.has(name);
   const gy = sky ? Math.min(Math.max(gy0 + 60, 120), 280) : gy0;
   // (the farm test lays 55 x 41 of its own: its slab and backup are that big)
-  const ext = name === 'farm' ? { w: 22, e: 36, r: 22 } : { w: 14, e: 18, r: 12 };
+  const ext = name === 'farm' ? { w: 22, e: 36, r: 22 } : name === 'horserace' ? { w: 8, e: 54, r: 10 } : { w: 14, e: 18, r: 12 };
   const box = sky ? { x1: x - ext.w, y1: gy - 10, z1: z - ext.r, x2: x + ext.e, y2: gy + 20, z2: z + ext.r } : { x1: x - 8, y1: gy - 8, z1: z - 8, x2: x + 14, y2: gy + 18, z2: z + 8 };
   const pHome = player ? { x: player.location.x, y: player.location.y, z: player.location.z } : null;
   const cmd = (c) => { try { dim.runCommand(c); return true; } catch (e) { console.warn(`[test] ${c}: ${e}`); return false; } };
@@ -372,7 +373,7 @@ async function runOne(agent, player, name, arg, human = false) {
     // carve their own terrain, or need the water, build over it).
     if (!sky && !NATURAL.has(name)) for (const rep of ['air', 'water', 'flowing_water', 'lava', 'flowing_lava']) { cmd(`fill ${x - 8} ${gy - 1} ${z - 8} ${x + 14} ${gy} ${z + 8} grass_block replace ${rep}`); }
     // Spectators' seat: a small glass platform behind the site, you looking at where the bot starts.
-    if (!human && player && name !== 'duel') {
+    if (!human && player && !PLAYER_ONLY.has(name)) {
       if (sky) {
         // The seat: a 3x3 stone-brick platform raised over the slab's west edge with a clear view of the site; slow falling in case of a slip.
         const sx = x - ext.w + 2;
@@ -1340,6 +1341,148 @@ async function runOne(agent, player, name, arg, human = false) {
         for (const e of dim.getEntities({ type: 'minecraft:item', location: { x: px, y: gy + 1, z: pz }, maxDistance: 10 })) try { e.remove(); } catch {}
         break;
       }
+      case 'horserace':
+      case 'pillarrace':
+      case 'woodrace': {
+        // You and the bot, side by side, at the same job; whoever finishes first wins. Both are recorded (you as `human`).
+        if (!player) { detail = 'a race needs you: say it in chat'; break; }
+        const pk = packOf(player);
+        const givePlayer = (id, n) => { try { pk?.addItem(new ItemStack(`minecraft:${id}`, n)); handed.push([id, n]); } catch { /* */ } };
+        const recH = new TestRecorder(player);
+        const east = { x: x + 40, y: gy + 2, z };
+        const faceEast = (e, dz) => { try { e.teleport({ x: x - 5.5, y: gy + 1, z: z + dz }, { facingLocation: { x: x + 40, y: gy + 1.6, z: z + dz } }); } catch { /* */ } };
+        const result = { bot: null, you: null };
+        let objective = '';
+        const gen = agent.newTask({ kind: 'test' });
+        agent.testHold = true;
+        /** The countdown: on your screen and in chat, then GO. */
+        const countdown = async () => {
+          for (const n of ['3', '2', '1']) { try { player.onScreenDisplay.setTitle(n, { stayDuration: 14, fadeInDuration: 0, fadeOutDuration: 2 }); } catch { /* */ } await system.waitTicks(20); }
+          try { player.onScreenDisplay.setTitle('GO!', { stayDuration: 20, fadeInDuration: 0, fadeOutDuration: 5 }); } catch { /* */ }
+        };
+        /** Wait for you to say go (or move); then count down. */
+        const ready = async (text, short) => {
+          agent.say(`RACE, ${name}: ${text} Say \`!bot test go\` when you are ready (or just start moving), \`!bot test skip\` to give up.`);
+          try { player.onScreenDisplay.setTitle(`Race: ${name}`, { subtitle: short, stayDuration: 160, fadeInDuration: 5, fadeOutDuration: 10 }); } catch { /* */ }
+          agent.testGo = false;
+          if (agent.testProgress) { agent.testProgress.reading = true; agent.testProgress.deadline = null; }
+          const p0 = { ...player.location };
+          for (let i = 0; i < 60 * 10 && !agent.testSkipped && !agent.testGo; i++) {
+            await system.waitTicks(2);
+            if (Math.hypot(player.location.x - p0.x, player.location.z - p0.z) > 1.5) break;
+          }
+          if (agent.testProgress) agent.testProgress.reading = false;
+          await countdown();
+        };
+        const running = (secsMax) => { if (agent.testProgress) { agent.testProgress.deadline = Date.now() + secsMax * 1000; agent.testProgress.limitS = secsMax; } };
+        try {
+          if (name === 'horserace') {
+            // ---- 1. Two adult horses, a saddle each. Both of us tame ours (ride it until it accepts), saddle it, and get on it.
+            objective = 'tame, saddle and mount your horse, then ride it to the gold line.';
+            cmd(`fill ${x + 46} ${gy} ${z - 6} ${x + 46} ${gy} ${z + 6} gold_block`);
+            cmd(`fill ${x} ${gy} ${z - 6} ${x} ${gy} ${z + 6} quartz_block`);
+            const hb = await spawnAdult(dim, 'minecraft:horse', { x: x - 3.5, y: gy + 1, z: z + 2.5 });
+            const hh = await spawnAdult(dim, 'minecraft:horse', { x: x - 3.5, y: gy + 1, z: z - 2.5 });
+            if (!hb || !hh) { detail = "couldn't get two adult horses (babies can't be ridden)"; break; }
+            cleanup.push(() => { for (const h of [hb, hh]) try { h.remove(); } catch { /* */ } });
+            // The same speed for both (a horse's is random, and a race should be about the rider).
+            for (const h of [hb, hh]) { try { h.getComponent('minecraft:movement')?.setCurrentValue(0.25); } catch { /* */ } }
+            giveItem('saddle', 1); givePlayer('saddle', 1);
+            faceEast(sim, 2.5); faceEast(player, -2.5);
+            agent.say(`HORSE RACE: two adult horses, a saddle each. Tame yours (get on until it stops throwing you), saddle it (right-click with the saddle) and mount it; the bot does the same with its own. When we are both on, there is a countdown and a race to the gold line 46 blocks east.`);
+            try { player.onScreenDisplay.setTitle('Horse race', { subtitle: 'Tame, saddle, mount, race', stayDuration: 160, fadeInDuration: 5, fadeOutDuration: 10 }); } catch { /* */ }
+            running(300);
+            const tPrep = system.currentTick;
+            const botPrep = (async () => {
+              const r = await horseReady(agent, gen, hb, secs);
+              if (!r.ok) return { ok: false, detail: r.detail };
+              const m = await agent.horses.getOn(gen, hb);
+              return { ok: m, detail: m ? r.detail : `${r.detail}; would not take a rider` };
+            })().catch((e) => ({ ok: false, detail: `${e}` }));
+            const youReady = () => { try { return isTamed(hh) && saddledOf(hh) && player.getComponent('minecraft:riding')?.entityRidingOn?.id === hh.id; } catch { return false; } };
+            for (let i = 0; i < 300 * 4 && !agent.testSkipped && !youReady(); i++) await system.waitTicks(5);
+            const bp = await botPrep;
+            const prepS = Math.round((system.currentTick - tPrep) / 20);
+            if (!youReady()) { detail = `you were not on a tamed, saddled horse (${agent.testSkipped ? 'skipped' : 'time'}); bot: ${bp.detail}`; break; }
+            if (!bp.ok) { detail = `the bot's horse: ${bp.detail}`; break; }
+            agent.say(`Both mounted after ${prepS} s. Line up on the white line.`);
+            // ---- 2. The race.
+            await ready('You are both on your horses.', 'Ride to the gold line');
+            running(90);
+            rec.reset(); t0 = system.currentTick; recH.start();
+            const goalX = x + 45.5;
+            const tStart = system.currentTick;
+            for (let i = 0; i < 90 * 20 && !agent.testSkipped && (result.bot === null || result.you === null); i++) {
+              if (result.bot === null) {
+                try { sim.moveToLocation({ x: goalX + 4, y: hb.location.y, z: z + 2.5 }, { speed: 1 }); } catch { /* */ }
+                if (hb.location.x >= goalX) result.bot = (system.currentTick - tStart) / 20;
+              }
+              if (result.you === null && hh.location.x >= goalX) result.you = (system.currentTick - tStart) / 20;
+              await system.waitTicks(1);
+            }
+          } else if (name === 'pillarrace') {
+            // ---- Pillar up 15 blocks (a jump and a block under your feet, again and again): the first to the top.
+            objective = 'pillar straight up 15 blocks; the first on top wins.';
+            const topY = gy + 16;
+            giveItem('cobblestone', 24); givePlayer('cobblestone', 24);
+            faceEast(sim, 3.5); faceEast(player, -3.5);
+            await system.waitTicks(10);
+            await ready('Each of you has 24 cobblestone. Pillar straight up where you stand (jump and place a block under your feet, again and again): 15 blocks, the first on top wins.', 'Pillar up 15 blocks');
+            running(90);
+            rec.reset(); t0 = system.currentTick; recH.start();
+            const tStart = system.currentTick;
+            const botP = (async () => {
+              while (!agent.testSkipped && S.feet().y < topY - 0.5 && system.currentTick - tStart < 90 * 20) {
+                if (!(await S.stepUp(gen))) await system.waitTicks(5);
+              }
+              if (S.feet().y >= topY - 0.5) result.bot = (system.currentTick - tStart) / 20;
+            })().catch(() => {});
+            for (let i = 0; i < 90 * 20 && !agent.testSkipped && (result.bot === null || result.you === null); i++) {
+              if (result.you === null && player.location.y >= topY - 0.5) result.you = (system.currentTick - tStart) / 20;
+              await system.waitTicks(1);
+            }
+            await botP;
+          } else {
+            // ---- Chop a tree: 5 logs first.
+            objective = 'cut your tree down: 5 logs; the first to 5 wins.';
+            const tree = (tz) => { cmd(`fill ${x + 6 - 2} ${gy + 4} ${tz - 2} ${x + 6 + 2} ${gy + 5} ${tz + 2} oak_leaves`); cmd(`fill ${x + 6} ${gy + 1} ${tz} ${x + 6} ${gy + 5} ${tz} oak_log`); };
+            tree(z - 6); tree(z + 6);
+            giveItem('stone_axe', 1); givePlayer('stone_axe', 1);
+            faceEast(sim, -3.5); faceEast(player, 3.5);
+            const logsOf = (e) => Object.entries(invCountsOf(e)).filter(([id]) => /_log$/.test(id)).reduce((a, [, n]) => a + n, 0);
+            const l0 = logsOf(sim), p0 = logsOf(player);
+            await system.waitTicks(10);
+            await ready('Each of you has a stone axe and a tree (yours is on your side, 6 blocks east). Cut it down: the first to 5 logs wins.', 'First to 5 logs');
+            running(120);
+            rec.reset(); t0 = system.currentTick; recH.start();
+            const tStart = system.currentTick;
+            const botP = (async () => {
+              await S.gatherLogs(gen, l0 + 5);
+              if (logsOf(sim) - l0 >= 5) result.bot = (system.currentTick - tStart) / 20;
+            })().catch(() => {});
+            for (let i = 0; i < 120 * 20 && !agent.testSkipped && (result.bot === null || result.you === null); i++) {
+              if (result.you === null && logsOf(player) - p0 >= 5) result.you = (system.currentTick - tStart) / 20;
+              await system.waitTicks(1);
+            }
+            for (const [id, n] of Object.entries(invCountsOf(player))) if (/_log$/.test(id)) { try { take(player, id, n); } catch { /* */ } }
+            await Promise.race([botP, system.waitTicks(40)]);
+          }
+          const f1 = (v) => (v === null ? 'did not finish' : `${v.toFixed(1)} s`);
+          const winner = result.bot !== null && (result.you === null || result.bot < result.you) ? 'the bot wins' : result.you !== null ? 'you win' : 'nobody finished';
+          pass = result.bot !== null;
+          detail = `${objective} bot ${f1(result.bot)}, you ${f1(result.you)}: ${winner}`;
+          agent.say(`Race over: ${detail}.`);
+        } finally {
+          try {
+            const sh = recH.stop();
+            extraRuns.push({ who: 'human', summary: sh, trace: recH.trace(), pass: result.you !== null });
+          } catch { /* the recorder never started */ }
+          try { await agent.horses.getOff(null); } catch { /* */ }
+          try { if (player.getComponent('minecraft:riding')?.entityRidingOn) player.runCommand('ride @s stop_riding'); } catch { /* */ }
+          agent.motor.setFocus(null);
+        }
+        break;
+      }
       case 'duel': {
         if (!player) { detail = 'the duel needs you in the world: say it in chat'; break; }
         const r = await runDuel(agent, player, { cmd, x, gy, z, extraRuns, secs });
@@ -1393,14 +1536,19 @@ async function runOne(agent, player, name, arg, human = false) {
             const eye = sim.getHeadLocation();
             const dx = aim.x - eye.x, dz = aim.z - eye.z, d = Math.hypot(dx, dz) || 1;
             const th = solvePitch(d, aim.y - eye.y);
-            /** @type {any} */ (sim).lookAtLocation({ x: eye.x + (dx / d) * 30 * Math.cos(th), y: eye.y + 30 * Math.sin(th), z: eye.z + (dz / d) * 30 * Math.cos(th) });
+            const pt = { x: eye.x + (dx / d) * 30 * Math.cos(th), y: eye.y + 30 * Math.sin(th), z: eye.z + (dz / d) * 30 * Math.cos(th) };
+            /** @type {any} */ (sim).lookAtLocation(pt);
+            // ...and HELD there: the u168 report showed the view drifting 20 to 30 degrees of yaw during the 1.2 s draw (the motor's idle head
+            // drift ran over the one-off look), so the motor is told to keep its gaze on the point until the arrow has gone.
+            agent.motor.setFocus(pt);
           } catch { await agent.motor.lookAt(aim, 6, 30).catch(() => {}); }
-          await system.waitTicks(3);
+          await system.waitTicks(8);
           const item = packOf(sim)?.getItem(sim.selectedSlotIndex);
           try { notes.push(`useItem ${/** @type {any} */ (sim).useItem(item)}`); } catch (e) { notes.push(`useItem threw ${e}`); }
           await system.waitTicks(25);                       // a full draw is 20 ticks
           for (const m of ['stopUsingItem', 'releaseUsingItem', 'completeUsingItem', 'releaseItem']) if (typeof (/** @type {any} */ (sim))[m] === 'function') { try { (/** @type {any} */ (sim))[m](); notes.push(m); } catch { /* */ } }
           await system.waitTicks(18);
+          agent.motor.setFocus(null);
           const best = [...flying.values()].sort((a, b) => a.d - b.d)[0];
           if (best) {
             if (best.d < 0.9) hits++;                        // through the stand
