@@ -180,6 +180,9 @@ export class Skills {
   }
 
   async wait(gen, ticks) {
+    // `!bot test fast`: the bot's own pauses (settling, looking, waiting on drops) shrink to a quarter. The game cannot be run faster from a
+    // script; this is the part of a test that is the bot's own dawdling.
+    if (/** @type {any} */ (this.a).testFast) ticks = Math.max(1, Math.ceil(ticks / 4));
     await system.waitTicks(ticks);
     this.check(gen);
   }

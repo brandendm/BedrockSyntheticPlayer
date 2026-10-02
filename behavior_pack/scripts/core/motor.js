@@ -49,7 +49,7 @@ export const DEFAULTS = Object.freeze({
   reactionTicks: [3, 7], // 150-350 ms
   stuckWindow: 40,      // ticks between progress checks
   stuckMinProgress: 0.4,
-  sprintMinRemaining: 5,
+  sprintMinRemaining: 4,
 });
 
 export class MotorController {
@@ -363,7 +363,7 @@ export class MotorController {
     else if (leap || it.walk) this._setSprint(false); // a walking jump clears one block and can't overshoot the landing
     else if (it.urgent) this._setSprint(remaining > 2 && moveErr < 45);
     else if (!this.sprinting && remaining > o.sprintMinRemaining && absErr < 12 && levelAhead) this._setSprint(true);
-    else if (this.sprinting && (remaining < 4 || absErr > 25 || !levelAhead)) this._setSprint(false);
+    else if (this.sprinting && (remaining < 3 || absErr > 25 || !levelAhead)) this._setSprint(false);
 
     // Jump for step-ups, only when lined up with the step block: a body half over the block
     // beside it (a 2-high wall next to the 1-high step) would jump into the seam forever.

@@ -140,7 +140,7 @@ export async function runTests(agent, player, args) {
     if (!running) return agent.say('No test is running.');
     agent.testFast = true;
     try { const t = world.getTimeOfDay(); if (t >= 12500 && t < 23000) world.setTimeOfDay(23500); } catch { /* */ }
-    return agent.say('Skipping the waiting in this test.');
+    return agent.say('Fast mode for this test: the night is set to morning, a furnace is filled, and the bot\'s own pauses are a quarter as long (the game itself cannot be sped up from a script).');
   }
   if (args[0] === 'done') { agent.testDone = true; return; }
   if (args[0] === 'skip') {
@@ -1405,9 +1405,22 @@ async function runOne(agent, player, name, arg, human = false) {
             const prepS = Math.round((system.currentTick - tPrep) / 20);
             if (!youReady()) { detail = `you were not on a tamed, saddled horse (${agent.testSkipped ? 'skipped' : 'time'}); bot: ${bp.detail}`; break; }
             if (!bp.ok) { detail = `the bot's horse: ${bp.detail}`; break; }
-            agent.say(`Both mounted after ${prepS} s. Line up on the white line.`);
+            agent.say(`Both mounted after ${prepS} s. Taking you to the start, behind the barrier.`);
+            // Back behind the line and a barrier (taming and riding about had carried us past it): both horses, riders on, side by side.
+            cmd(`fill ${x - 1} ${gy + 1} ${z - 9} ${x - 1} ${gy + 3} ${z + 9} iron_bars`);
+            hb.addTag('race_bot'); hh.addTag('race_you');
+            for (const [h, who2, tag, dz] of /** @type {Array<[any, any, string, number]>} */ ([[hb, sim, 'race_bot', 2.5], [hh, player, 'race_you', -2.5]])) {
+              try { h.teleport({ x: x - 4.5, y: gy + 1, z: z + dz }, { facingLocation: { x: x + 40, y: gy + 1.6, z: z + dz } }); } catch { /* */ }
+              await system.waitTicks(6);
+              const on = () => { try { return who2.getComponent('minecraft:riding')?.entityRidingOn?.id === h.id; } catch { return false; } };
+              // (A teleported horse may leave its rider behind: put them back on.)
+              if (!on()) { cmd(`ride @a[name="${who2.name}"] start_riding @e[tag=${tag},c=1]`); await system.waitTicks(6); }
+              try { h.teleport({ x: x - 4.5, y: gy + 1, z: z + dz }, { facingLocation: { x: x + 40, y: gy + 1.6, z: z + dz } }); } catch { /* */ }
+            }
+            await system.waitTicks(10);
             // ---- 2. The race.
             await ready('You are both on your horses.', 'Ride to the gold line');
+            cmd(`fill ${x - 1} ${gy + 1} ${z - 9} ${x - 1} ${gy + 3} ${z + 9} air`); // the barrier goes up... and down at GO
             running(90);
             rec.reset(); t0 = system.currentTick; recH.start();
             const goalX = x + 45.5;
