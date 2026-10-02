@@ -108,6 +108,8 @@ export class Agent {
     this.lookout = new Lookout(this);
     this.villages = new Villages(this);
     this.horses = new Horses(this);
+    /** @type {Set<string>} Far places already looked at for a village (game/villages.js scout). */
+    this.villageScouted = new Set();
     tracePosition(() => this.sim.location); // (villages seen from afar: game/villages.js)
     system.runTimeout(() => { this.restoreSettings().catch(() => {}); }, 30);
     system.runTimeout(() => { try { this.restoreKit(); } catch (e) { this.kitChecked = true; console.warn(`[agent] kit: ${e}`); } try { this.restoreState(); } catch {} }, 40);
@@ -1263,6 +1265,19 @@ export class Agent {
             const ring = this.villageRing ?? 0;
             const R = 48 * (1 + Math.floor(ring / 6)), ang = (ring % 6) * Math.PI / 3 + (Math.floor(ring / 6) % 2 ? Math.PI / 6 : 0);
             const tgt = ring === 0 ? { x: b.pos.x, y: b.pos.y, z: b.pos.z } : { x: this.villageBase.x + Math.cos(ang) * R, y: b.pos.y, z: this.villageBase.z + Math.sin(ang) * R };
+            // From where we are: look at this point and the next three on the ring (a loaded circle at each, in turn) before walking to any.
+            const ringAt = (k) => { const Rk = 48 * (1 + Math.floor(k / 6)), ak = (k % 6) * Math.PI / 3 + (Math.floor(k / 6) % 2 ? Math.PI / 6 : 0); return k === 0 ? { x: b.pos.x, z: b.pos.z } : { x: this.villageBase.x + Math.cos(ak) * Rk, z: this.villageBase.z + Math.sin(ak) * Rk }; };
+            const scouted = this.villageScouted;
+            for (let k = ring; k < ring + 4 && k < 18; k++) {
+              const pt = ringAt(k), key = `${Math.round(pt.x / 40)},${Math.round(pt.z / 40)}`;
+              if (scouted.has(key)) continue;
+              scouted.add(key);
+              if (scouted.size > 200) scouted.clear();
+              const sc = await V.scout(gen, pt.x, pt.z);
+              if (!sc.loaded) { trace(`village scout at ${Math.round(pt.x)} ${Math.round(pt.z)}: ${sc.why}`); break; }
+              if (sc.found) { this.sayOnce('village-scouted', 'There\'s a village over there: going to it.', 60000); this.villageRing = 0; this.villageStuck = 0; break; }
+            }
+            if (V.nearestKnown()) break; // a village is known now: the next pass visits it
             this.sayOnce('village-hunt', ring === 0 ? `Looking for a village: heading for the ${biomeName(b.id)} about ${Math.round(b.dist)} blocks away.` : `No village yet: searching round the ${biomeName(b.id)} (ring ${ring}).`, 120000);
             await S.packUp(gen);
             const from = { ...this.sim.location };

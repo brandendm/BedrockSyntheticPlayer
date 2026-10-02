@@ -107,6 +107,50 @@ export class Villages {
     return this.nearestKnown();
   }
 
+  /**
+   * Look at a place we are nowhere near. The script can only read chunks the server has loaded, and that's the area
+   * round us; the game's own `tickingarea` command loads a circle (up to 4 chunks across the radius) wherever we say, so:
+   * add one at (cx, cz), wait for it to load, take the same columns the sweep does round it (a village's paths, farmland,
+   * hay, bell) and its villagers, then take the area off again (there are only 10 and each is generated and ticked).
+   * Returns { found, loaded, why }: found is a village we'd go to, as a position.
+   */
+  async scout(gen, cx, cz, r = 56) {
+    const S = this.a.skills, dim = this.a.dim, x0 = Math.floor(cx), z0 = Math.floor(cz);
+    const drop = () => { try { dim.runCommand('tickingarea remove agent_far'); } catch { /* none there */ } };
+    drop();
+    try { dim.runCommand(`tickingarea add circle ${x0} 64 ${z0} 4 agent_far true`); } catch (e) { return { found: null, loaded: false, why: `tickingarea refused: ${e}` }; }
+    try {
+      let loaded = false;
+      for (let i = 0; i < 120 && !loaded; i++) {
+        S.check(gen);
+        await S.wait(gen, 2);
+        try { loaded = !!dim.getTopmostBlock({ x: x0, z: z0 }); } catch { /* not yet */ }
+      }
+      if (!loaded) return { found: null, loaded: false, why: 'the area did not load in 12 s' };
+      const items = [];
+      for (let rr = 8; rr <= r; rr += 8) {
+        const n = Math.max(8, Math.round(2 * Math.PI * rr / 8));
+        for (let i = 0; i < n; i++) {
+          const ang = (i / n) * Math.PI * 2;
+          let top;
+          try { top = dim.getTopmostBlock({ x: Math.floor(x0 + Math.cos(ang) * rr), z: Math.floor(z0 + Math.sin(ang) * rr) }); } catch { continue; }
+          if (!top) continue;
+          const e = this.seeBlock(strip(top.typeId), top.location.x, top.location.y, top.location.z);
+          if (e) items.push(e);
+        }
+      }
+      try {
+        for (const e of dim.getEntities({ location: { x: x0, y: 64, z: z0 }, maxDistance: r + 8 })) {
+          let t; try { t = strip(e.typeId); } catch { continue; }
+          if (isVillager(t)) items.push({ kind: 'villager', x: Math.floor(e.location.x), y: Math.floor(e.location.y), z: Math.floor(e.location.z) });
+        }
+      } catch { /* entities not ticking here */ }
+      if (items.length) this.feed(items);
+      trace(`village scout at ${x0} ${z0}: ${items.length} village-looking blocks and villagers${this.nearestKnown() ? ', a village is known now' : ''}`);
+      return { found: this.nearestKnown(), loaded: true, why: '' };
+    } finally { drop(); }
+  }
+
   /** A known village we'd go to (not raided, not visited lately), as a position. */
   nearestKnown() {
     const v = this.pick('bed') ?? this.pick('food');
