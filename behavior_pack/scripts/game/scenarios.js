@@ -57,13 +57,14 @@ import { blueprint, furnishings } from '../core/house.js';
 import { invCounts as invCountsOf, hold, take, container as packOf } from './inventory.js';
 import { TestRecorder } from './testrun.js';
 import { runDuel } from './duel.js';
+import { shootAt } from './aim.js';
 import { isTamed, saddledOf } from './horse.js';
 import { solvePitch } from '../core/ballistics.js';
 import { getPlan } from '../core/learnhouse.js';
 import { passRates, addStat } from '../core/testrun.js';
 import { compare } from '../core/testrun.js';
 
-const NAMES = ['roof', 'tower', 'hole', 'pit', 'trap', 'climb', 'ledge', 'ladder', 'husk', 'creeper', 'sheep', 'pen', 'smelt', 'smeltlogs', 'shelter', 'house', 'resume', 'ghostlog', 'quarry', 'dark', 'replant', 'litter', 'trader', 'iron', 'farm', 'equip', 'water', 'bucketfarm', 'treetop', 'corner', 'leap', 'bridge', 'fall', 'vines', 'stairgap', 'loot', 'shield', 'skel', 'rest', 'nights', 'calibrate', 'portal', 'horse', 'leadboat', 'leadsling', 'bow', 'duel', 'horserace', 'pillarrace', 'woodrace'];
+const NAMES = ['roof', 'tower', 'hole', 'pit', 'trap', 'climb', 'ledge', 'ladder', 'husk', 'creeper', 'sheep', 'pen', 'smelt', 'smeltlogs', 'shelter', 'house', 'resume', 'ghostlog', 'quarry', 'dark', 'replant', 'litter', 'trader', 'iron', 'farm', 'equip', 'water', 'bucketfarm', 'treetop', 'corner', 'leap', 'bridge', 'fall', 'vines', 'stairgap', 'loot', 'shield', 'skel', 'rest', 'nights', 'calibrate', 'portal', 'horse', 'leadboat', 'leadsling', 'bow', 'duel', 'horserace', 'pillarrace', 'woodrace', 'lavacross', 'obsidian', 'mineore', 'enderman', 'blaze', 'ghast', 'witherskeleton'];
 let running = false;
 
 // Tests that wait out real time (a 5 minute despawn, a night, a furnace, a long walk): left out of
@@ -80,9 +81,9 @@ const GROUND = new Set(['water', 'bucketfarm', 'treetop', 'vines', 'ghostlog', '
 const NIGHT = new Set(['shelter', 'house', 'resume', 'nights', 'rest', 'dark', 'loot']);
 /** Tests that need the natural terrain or water as it is: no floor is laid for them. */
 const NATURAL = new Set(['water', 'bucketfarm', 'treetop', 'vines', 'ghostlog', 'nights', 'calibrate']);
-const COMBAT = new Set(['husk', 'creeper', 'skel', 'shield', 'dark', 'duel']);
+const COMBAT = new Set(['husk', 'creeper', 'skel', 'shield', 'dark', 'duel', 'enderman', 'blaze', 'ghast', 'witherskeleton']);
 // The ones a player can do too (`!bot test <name> me`): a goal the player can reach and the test can see.
-const HUMAN_OK = new Set(['tower', 'hole', 'pit', 'climb', 'ladder', 'corner', 'leap', 'bridge', 'ledge', 'bow', 'husk', 'sheep', 'pen', 'replant', 'litter', 'house']);
+const HUMAN_OK = new Set(['tower', 'hole', 'pit', 'climb', 'ladder', 'corner', 'leap', 'bridge', 'ledge', 'bow', 'husk', 'sheep', 'pen', 'replant', 'litter', 'house', 'lavacross', 'obsidian', 'mineore', 'enderman', 'blaze', 'ghast', 'witherskeleton']);
 // No single test runs longer than this (the task is ended and the test left to report what it has).
 const CAP_S = 240;
 
@@ -104,8 +105,16 @@ HUMAN_HELP.pen = { kit: [], text: 'Two cows in a fenced pen with a gate, 4 block
 HUMAN_HELP.replant = { kit: [['oak_sapling', 2]], text: 'A tree stands 5 blocks east. Cut the whole tree down, then plant a sapling where the trunk stood.' };
 HUMAN_HELP.litter = { kit: [], text: 'A tree stands 5 blocks east with leaf litter on the ground round it. Break the litter and pick up at least 4 pieces.' };
 HUMAN_HELP.house = { kit: [], noKit: true, text: 'Build a house the way you like, with a door, a bed, a crafting table, a furnace, chests and signs. Your own things are put aside and you are given everything a house takes (they come back when you finish). Say `!bot test done` when you are finished: the bot learns from how you built it.' };
+const MOB_KIT = [['diamond_sword', 1], ['bow', 1], ['arrow', 64], ['shield', 1]];
+HUMAN_HELP.lavacross = { kit: [['water_bucket', 1]], text: 'A lake of lava 11 blocks wide, wall to wall, between two netherrack platforms (the Nether: lava lakes you must cross). Get to the gold block on the far side without burning: bridge it with your cobblestone, or cool it with the water bucket.' };
+HUMAN_HELP.obsidian = { kit: [['water_bucket', 1], ['diamond_pickaxe', 1]], text: 'A pool of lava three wide. Turn it into obsidian with the water bucket and mine at least one obsidian with the diamond pickaxe, without being burned (this is how a nether portal is made when you have none).' };
+HUMAN_HELP.mineore = { kit: [['iron_pickaxe', 1]], text: 'The ground under you has ore in it: coal, iron, copper, gold, redstone, lapis and diamond (two or three of each). Dig down and bring up one of each (raw iron, copper and gold, coal, redstone, lapis lazuli and a diamond), with the iron pickaxe.' };
+HUMAN_HELP.enderman = { kit: [...MOB_KIT, ['carved_pumpkin', 1]], text: 'An enderman, 10 blocks east: kill it. Do not look at its head (it attacks), or wear the carved pumpkin on your head (then it cannot be angered by your eyes). You have a diamond sword, a bow and arrows and a shield; iron armour is put on.' };
+HUMAN_HELP.blaze = { kit: MOB_KIT, text: 'A blaze, 10 blocks east and 4 up: kill it (it hovers and shoots fireballs). You have a diamond sword, a bow and arrows and a shield; iron armour is put on.' };
+HUMAN_HELP.ghast = { kit: MOB_KIT, text: 'A ghast, 14 blocks east and 9 up: kill it (it shoots exploding fireballs; a hit on the fireball sends it back, or shoot the ghast). You have a bow and arrows, a diamond sword and a shield; iron armour is put on.' };
+HUMAN_HELP.witherskeleton = { kit: MOB_KIT, text: 'A wither skeleton, 10 blocks east: kill it (its hits wither you). You have a diamond sword, a bow and arrows and a shield; iron armour is put on.' };
 HUMAN_HELP.bow = { kit: [['bow', 1], ['arrow', 16]], text: 'A target (armor stand) stands 12 blocks east of you. Hit it with an arrow (hold right-click to draw, release to shoot).' };
-const SHORT = { tower: 'Get down, no fall damage', hole: 'Get out, reach the gold block', pit: 'Get out, reach the gold block', climb: 'Get out of the pit', ladder: 'Reach the gold block', corner: 'Reach the gold block', leap: 'Cross the gap, gold block', bridge: 'Bridge to the gold block', ledge: 'Get near the table', bow: 'Hit the target', husk: 'Kill the husk', sheep: 'Collect 3 wool', pen: 'Collect 2 raw beef', replant: 'Cut tree, replant sapling', litter: 'Collect 4 leaf litter', house: 'Build a house, then test done' };
+const SHORT = { lavacross: 'Cross the lava', obsidian: 'Make and mine obsidian', mineore: 'One of each ore', enderman: 'Kill the enderman', blaze: 'Kill the blaze', ghast: 'Kill the ghast', witherskeleton: 'Kill the wither skeleton', tower: 'Get down, no fall damage', hole: 'Get out, reach the gold block', pit: 'Get out, reach the gold block', climb: 'Get out of the pit', ladder: 'Reach the gold block', corner: 'Reach the gold block', leap: 'Cross the gap, gold block', bridge: 'Bridge to the gold block', ledge: 'Get near the table', bow: 'Hit the target', husk: 'Kill the husk', sheep: 'Collect 3 wool', pen: 'Collect 2 raw beef', replant: 'Cut tree, replant sapling', litter: 'Collect 4 leaf litter', house: 'Build a house, then test done' };
 const humanHelp = (name) => HUMAN_HELP[name] ?? null;
 /** What you are handed in every test you do: tools, blocks and food; the test's own extras on top. `climb` has no tools, like the bot's run. */
 const STD_KIT = [['stone_pickaxe', 1], ['stone_axe', 1], ['stone_shovel', 1], ['stone_sword', 1], ['cobblestone', 32], ['dirt', 16], ['bread', 8]];
@@ -1494,6 +1503,159 @@ async function runOne(agent, player, name, arg, human = false) {
           try { if (player.getComponent('minecraft:riding')?.entityRidingOn) player.runCommand('ride @s stop_riding'); } catch { /* */ }
           agent.motor.setFocus(null);
         }
+        break;
+      }
+      case 'lavacross': {
+        // The Nether's lava lakes: an 11-wide lake of lava, wall to wall (no way round), between two netherrack platforms.
+        cmd(`fill ${x - 8} ${gy} ${z - 12} ${x - 2} ${gy} ${z + 12} netherrack`);
+        cmd(`fill ${x + 10} ${gy} ${z - 12} ${x + 16} ${gy} ${z + 12} netherrack`);
+        cmd(`fill ${x - 1} ${gy - 2} ${z - 12} ${x + 9} ${gy} ${z + 12} air`);
+        cmd(`fill ${x - 1} ${gy - 2} ${z - 12} ${x + 9} ${gy - 1} ${z + 12} lava`);
+        const goal = { x: x + 12.5, y: gy + 1, z: z + 0.5 };
+        cmd(`setblock ${x + 12} ${gy} ${z} gold_block`);
+        tp(x - 6, gy + 1, z);
+        await system.waitTicks(10);
+        const hpStart = (() => { try { return who.getComponent('minecraft:health').currentValue; } catch { return 20; } })();
+        const hpNow = () => { try { return who.getComponent('minecraft:health').currentValue; } catch { return 0; } };
+        let burned = 0;
+        const watch = system.runInterval(() => { try { if (/lava/.test(dim.getBlock({ x: Math.floor(who.location.x), y: Math.floor(who.location.y), z: Math.floor(who.location.z) })?.typeId ?? '')) burned++; } catch { /* */ } }, 2);
+        cleanup.push(() => { try { system.clearRun(watch); } catch { /* */ } });
+        if (human) { pass = await humanTry(() => dist3D(who.location, goal) <= 2.5, 120, goal); pass = pass && burned === 0; detail = `you ${pass ? 'crossed' : 'did not cross unburned'} in ${secs()}s, lost ${Math.max(0, hpStart - hpNow())} hp, in lava ${burned * 0.1} s`; break; }
+        const gen = agent.newTask({ kind: 'test' });
+        const ok = await S.goNear(gen, goal, 1.5, 3, { actionRange: 30 }).catch(() => false);
+        pass = dist3D(sim.location, goal) <= 2.5 && burned === 0;
+        detail = `${pass ? 'across' : ok ? 'said it arrived but is not at the far side' : "did not get across"}, lost ${Math.max(0, hpStart - hpNow())} hp, in lava ${burned * 0.1} s, ${secs()}s (${invCountsOf(sim).cobblestone ?? 0} cobblestone left)`;
+        break;
+      }
+      case 'obsidian': {
+        // A 3 x 3 pool of lava in the rock, a water bucket and a diamond pickaxe: water on the lava makes obsidian, which only a diamond
+        // pickaxe breaks.
+        cmd(`fill ${x - 3} ${gy - 3} ${z - 4} ${x + 9} ${gy - 1} ${z + 4} stone`);
+        cmd(`fill ${x + 3} ${gy - 2} ${z - 1} ${x + 5} ${gy} ${z + 1} air`);
+        cmd(`fill ${x + 3} ${gy - 2} ${z - 1} ${x + 5} ${gy} ${z + 1} lava`);
+        tp(x, gy + 1, z);
+        await system.waitTicks(10);
+        const obs = () => (invCountsOf(who).obsidian ?? 0);
+        const hpOf2 = () => { try { return who.getComponent('minecraft:health').currentValue; } catch { return 0; } };
+        const hp1 = hpOf2();
+        if (human) { pass = await humanTry(() => obs() >= 1, 120); detail = `you ${pass ? 'got' : 'did not get'} obsidian in ${secs()}s, lost ${Math.max(0, hp1 - hpOf2())} hp`; break; }
+        const gen = agent.newTask({ kind: 'test' });
+        const notes = [];
+        try {
+          await S.goNear(gen, { x: x + 2.5, y: gy + 1, z: z + 0.5 }, 1, 2);
+          for (const dz of [0, -1, 1]) {
+            const cell = { x: x + 3, y: gy, z: z + dz };
+            if (!/lava/.test(S.blockAt(cell) ?? '')) continue;
+            const slot = hold(sim, 'water_bucket');
+            if (slot < 0) { notes.push('no water bucket'); break; }
+            try { sim.lookAtBlock(cell); } catch { /* */ }
+            await system.waitTicks(4);
+            try { sim.useItemInSlotOnBlock(slot, cell, Direction.Up); } catch (e) { notes.push(`bucket: ${e}`); }
+            await system.waitTicks(25);
+            notes.push(`${cell.z - z}: ${S.blockAt(cell)}`);
+            if (S.blockAt(cell) === 'obsidian') break;
+          }
+          const target = [0, -1, 1].map((dz) => ({ x: x + 3, y: gy, z: z + dz })).find((c) => S.blockAt(c) === 'obsidian');
+          if (target) {
+            hold(sim, 'diamond_pickaxe');
+            const mined = await S.mine(gen, target, { collect: true, force: true }).catch((e) => { notes.push(`mine: ${e}`); return false; });
+            notes.push(mined ? 'mined it' : 'would not mine it (lava beside it?)');
+          }
+        } catch (e) { notes.push(`${e}`); }
+        pass = obs() >= 1;
+        detail = `${pass ? 'got obsidian' : 'no obsidian'} in ${secs()}s, lost ${Math.max(0, hp1 - hpOf2())} hp; ${notes.join('; ')}`;
+        break;
+      }
+      case 'mineore': {
+        // Ore buried in the dirt and stone under the site, a few of each kind. One of each, with the iron pickaxe.
+        /** @type {Array<[string, number, string]>} */
+        const KINDS = [['coal_ore', 3, 'coal'], ['iron_ore', 3, 'raw_iron'], ['copper_ore', 3, 'raw_copper'], ['gold_ore', 2, 'raw_gold'], ['redstone_ore', 2, 'redstone'], ['lapis_ore', 2, 'lapis_lazuli'], ['diamond_ore', 2, 'diamond']];
+        const ores = [];
+        const taken = new Set();
+        KINDS.forEach(([ore, count], i) => {
+          for (let k = 0; k < count; k++) {
+            let px = x + 2 + ((i * 3 + k * 5) % 9), pz = z - 4 + ((i * 5 + k * 3) % 9), py = gy - 2 - ((i + k * 2) % 6);
+            while (taken.has(`${px},${py},${pz}`)) py--;
+            taken.add(`${px},${py},${pz}`);
+            cmd(`setblock ${px} ${py} ${pz} ${ore}`);
+            ores.push({ ore, pos: { x: px, y: py, z: pz } });
+          }
+        });
+        tp(x, gy + 1, z);
+        await system.waitTicks(10);
+        const have = (e) => KINDS.filter(([, , item]) => (invCountsOf(e)[item] ?? 0) > 0).length;
+        const missing = (e) => KINDS.filter(([, , item]) => !(invCountsOf(e)[item] ?? 0)).map(([, , item]) => item);
+        if (human) { pass = await humanTry(() => have(who) >= KINDS.length, 240); detail = `you brought up ${have(who)}/${KINDS.length} kinds in ${secs()}s${pass ? '' : ` (missing ${missing(who).join(', ')})`}`; break; }
+        const gen = agent.newTask({ kind: 'test' });
+        hold(sim, 'iron_pickaxe');
+        const t1 = system.currentTick;
+        const notes = [];
+        while (have(sim) < KINDS.length && system.currentTick - t1 < 240 * 20 && !agent.testSkipped) {
+          const need = new Set(KINDS.filter(([, , item]) => !(invCountsOf(sim)[item] ?? 0)).map(([ore]) => ore));
+          const f = S.feet();
+          const next = ores.filter((o) => need.has(o.ore) && S.blockAt(o.pos) === o.ore).sort((a, b) => dist3D(f, a.pos) - dist3D(f, b.pos))[0];
+          if (!next) break;
+          const near = await S.goNear(gen, next.pos, 2, 2, { actionRange: 30 }).catch(() => false);
+          const mined = await S.mine(gen, next.pos, { collect: true, force: true }).catch(() => false);
+          notes.push(`${next.ore.replace('_ore', '')} ${near ? 'reached' : 'not reached'}, ${mined ? 'mined' : 'not mined'}`);
+          if (!mined) ores.splice(ores.indexOf(next), 1);
+          hold(sim, 'iron_pickaxe');
+        }
+        pass = have(sim) >= KINDS.length;
+        detail = `${have(sim)}/${KINDS.length} kinds in ${secs()}s${pass ? '' : `, missing ${missing(sim).join(', ')}`}; ${notes.slice(0, 12).join('; ')}`;
+        break;
+      }
+      case 'enderman':
+      case 'blaze':
+      case 'ghast':
+      case 'witherskeleton': {
+        // A nether/end mob to kill with a diamond sword and a bow, in iron armour with a shield.
+        const MOB = { enderman: ['enderman', 1, 10], blaze: ['blaze', 4, 10], ghast: ['ghast', 9, 14], witherskeleton: ['wither_skeleton', 1, 10] }[name];
+        const wear = (/** @type {any} */ ent, head) => {
+          const eq = ent.getComponent('minecraft:equippable');
+          /** @type {Record<string, any>} */ const old = {};
+          for (const [slot, id] of [[EquipmentSlot.Head, head ?? 'iron_helmet'], [EquipmentSlot.Chest, 'iron_chestplate'], [EquipmentSlot.Legs, 'iron_leggings'], [EquipmentSlot.Feet, 'iron_boots'], [EquipmentSlot.Offhand, 'shield']]) {
+            try { old[slot] = eq.getEquipment(slot); eq.setEquipment(slot, new ItemStack(`minecraft:${id}`, 1)); } catch { /* */ }
+          }
+          cleanup.push(() => { for (const k of Object.keys(old)) { try { eq.setEquipment(k, old[k]); } catch { /* */ } } });
+        };
+        wear(who, name === 'enderman' ? 'carved_pumpkin' : null);
+        agent.shield = true;
+        tp(x, gy + 1, z);
+        await system.waitTicks(10);
+        let mob;
+        try { mob = dim.spawnEntity(`minecraft:${MOB[0]}`, { x: x + MOB[2] + 0.5, y: gy + MOB[1], z: z + 0.5 }); } catch (e) { detail = `couldn't spawn a ${MOB[0]}: ${e}`; break; }
+        cleanup.push(() => { try { mob.remove(); } catch { /* */ } });
+        const alive = () => { try { return mob.isValid && (mob.getComponent('minecraft:health')?.currentValue ?? 0) > 0; } catch { return false; } };
+        const hpMine = () => { try { return who.getComponent('minecraft:health').currentValue; } catch { return 0; } };
+        const hp1 = hpMine();
+        if (human) { pass = await humanTry(() => !alive(), 90); detail = `you ${pass ? 'killed' : 'did not kill'} the ${MOB[0].replace('_', ' ')} in ${secs()}s, lost ${Math.max(0, hp1 - hpMine())} hp`; break; }
+        const gen = agent.newTask({ kind: 'test' });
+        agent.testHold = true;
+        let shots = 0, swings = 0;
+        const t1 = system.currentTick;
+        hold(sim, 'diamond_sword');
+        while (alive() && !agent.testSkipped && system.currentTick - t1 < 90 * 20 && hpMine() > 2) {
+          const d = dist3D(sim.location, mob.location);
+          const away = { x: sim.location.x - mob.location.x, z: sim.location.z - mob.location.z };
+          const al = Math.hypot(away.x, away.z) || 1;
+          const side = { x: -away.z / al, z: away.x / al };
+          if (name === 'ghast' || (name === 'blaze' && d > 5) || d > 12) {
+            // Out of reach or in the air: the bow, sidestepping while it draws.
+            if (await shootAt(agent, mob, { strafe: side, stop: () => !alive() })) shots++;
+            await system.waitTicks(6);
+          } else {
+            hold(sim, 'diamond_sword');
+            try { sim.lookAtEntity(mob); } catch { /* */ }
+            if (d > 2.8) { agent.body.move(-away.x / al, -away.z / al, 1); }
+            else agent.body.move(side.x, side.z, 0.6);
+            if (d <= 3.0 && agent.facing(mob.location, 25)) { try { sim.attackEntity(mob); swings++; } catch { /* */ } await system.waitTicks(8); }
+            await system.waitTicks(2);
+          }
+        }
+        agent.body.stop?.();
+        pass = !alive();
+        detail = `${pass ? 'killed' : 'did not kill'} the ${MOB[0].replace('_', ' ')} in ${secs()}s (${swings} swings, ${shots} arrows), lost ${Math.max(0, hp1 - hpMine())} hp`;
         break;
       }
       case 'duel': {
