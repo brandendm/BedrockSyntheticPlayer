@@ -39,6 +39,9 @@
 //                 blocks, light it, walk in and arrive in the Nether (then back; the Nether side's portal stays)
 //   horse         a wild horse and a saddle (given): tame it the way a player does (get on, get thrown,
 //                 again), saddle it, ride it a few blocks
+//   leadsling     calibrates the sling: a boat jammed at the foot of a 1, 2 and 3 high step with the bot on top, the lead
+//                 stretched to 5, 7, 9 and 11 blocks and a jump: the least stretch that brings the boat up each height, and
+//                 where the lead snaps (kept in the world as leadCal.sling)
 //   leadboat      a boat on a lead, walked away from at three speeds, then again riding a saddled horse:
 //                 the distance it starts to follow at, the furthest apart they got, whether the lead
 //                 snapped. What it measures is kept in the world (leadCal) for the lead code to use.
@@ -53,13 +56,13 @@ import { system, world, ItemStack, EquipmentSlot, Direction } from '@minecraft/s
 import { blueprint, furnishings } from '../core/house.js';
 import { invCounts as invCountsOf, hold, take, container as packOf } from './inventory.js';
 
-const NAMES = ['roof', 'tower', 'hole', 'pit', 'trap', 'climb', 'ledge', 'ladder', 'husk', 'creeper', 'sheep', 'pen', 'smelt', 'smeltlogs', 'shelter', 'house', 'resume', 'ghostlog', 'quarry', 'dark', 'replant', 'litter', 'trader', 'iron', 'farm', 'equip', 'water', 'bucketfarm', 'treetop', 'corner', 'leap', 'bridge', 'fall', 'vines', 'stairgap', 'loot', 'shield', 'skel', 'rest', 'nights', 'calibrate', 'portal', 'horse', 'leadboat'];
+const NAMES = ['roof', 'tower', 'hole', 'pit', 'trap', 'climb', 'ledge', 'ladder', 'husk', 'creeper', 'sheep', 'pen', 'smelt', 'smeltlogs', 'shelter', 'house', 'resume', 'ghostlog', 'quarry', 'dark', 'replant', 'litter', 'trader', 'iron', 'farm', 'equip', 'water', 'bucketfarm', 'treetop', 'corner', 'leap', 'bridge', 'fall', 'vines', 'stairgap', 'loot', 'shield', 'skel', 'rest', 'nights', 'calibrate', 'portal', 'horse', 'leadboat', 'leadsling'];
 let running = false;
 
 // Tests that wait out real time (a 5 minute despawn, a night, a furnace, a long walk): left out of
 // `!bot test all quick`. Their real durations are in the batch report (`secs`), so this list can be
 // corrected from data: anything over QUICK_S in the last report belongs here.
-const SLOW = new Set(['loot', 'nights', 'rest', 'shelter', 'house', 'resume', 'quarry', 'farm', 'bucketfarm', 'iron', 'sheep', 'pen', 'smelt', 'smeltlogs', 'trader', 'ghostlog', 'stairgap', 'portal', 'horse', 'leadboat']);
+const SLOW = new Set(['loot', 'nights', 'rest', 'shelter', 'house', 'resume', 'quarry', 'farm', 'bucketfarm', 'iron', 'sheep', 'pen', 'smelt', 'smeltlogs', 'trader', 'ghostlog', 'stairgap', 'portal', 'horse', 'leadboat', 'leadsling']);
 const QUICK_S = 60;
 // No single test runs longer than this (the task is ended and the test left to report what it has).
 const CAP_S = 240;
@@ -93,7 +96,7 @@ export async function runTests(agent, player, args) {
       const t0 = system.currentTick;
       // The cap: at the deadline the task ends, so waits on it return and the test reports.
       let capped = false;
-      const capS = n === 'leadboat' ? 480 : CAP_S;
+      const capS = n === 'leadboat' || n === 'leadsling' ? 480 : CAP_S;
       const cap = system.runTimeout(() => { capped = true; agent.newTask(null); agent.motor.stop(); }, capS * 20);
       let r;
       try { r = await runOne(agent, player, n, argN); } finally { try { system.clearRun(cap); } catch {} }
@@ -1315,8 +1318,8 @@ async function runOne(agent, player, name, arg) {
       }
       case 'portal': {
         // A clear, flat patch; the frame stands in the x/y plane at z, 4 wide and 5 tall (12 obsidian: the
-        // two bottom corners give the columns something to stand on, the top corners aren't needed), its bottom row set
-        // into the ground so the way in is level.
+        // two bottom corners give the columns something to stand on, the top corners aren't needed). Its bottom row is on
+        // the ground, so getting in is a step up: the bot finds the frame and paths into it, whatever it stands on.
         cmd(`fill ${x - 6} ${gy} ${z - 4} ${x + 9} ${gy} ${z + 6} grass_block`);
         cmd(`fill ${x - 6} ${gy + 1} ${z - 4} ${x + 9} ${gy + 8} ${z + 6} air`);
         giveItem('obsidian', 12); giveItem('flint_and_steel', 1); giveItem('cobblestone', 6);
@@ -1332,53 +1335,43 @@ async function runOne(agent, player, name, arg) {
           if (cmd(`setblock ${cell.x} ${cell.y} ${cell.z} ${item}`)) { if (item === 'obsidian') byCmd++; return true; }
           return false;
         };
-        // 1. The bottom row sits in the ground (the grass dug out first, as a player does): the way in is then a walk, not a step up.
-        const bottom = [x, x + 1, x + 2, x + 3].map((fx) => ({ x: fx, y: gy, z }));
-        for (const cell of bottom) { try { await S.mine(gen, cell); } catch (e) { if (e?.constructor?.name === 'Aborted') throw e; } await put(cell, 'obsidian'); }
-        // 2. The way a player reaches the top: one block of cobblestone in front to stand on (eye height for the upper frame),
-        //    then it's taken down again.
-        const step = { x: x + 1, y: gy + 1, z: z + 2 };
-        await put(step, 'cobblestone');
-        await S.goNear(gen, { x: x + 1.5, y: gy + 2, z: z + 2.5 }, 0.7, 3);
+        // 1. The bottom row, from the front, on the ground.
+        const bottom = [x, x + 1, x + 2, x + 3].map((fx) => ({ x: fx, y: gy + 1, z }));
+        for (const cell of bottom) await put(cell, 'obsidian');
+        // 2. The way a player reaches the top: a little cobblestone stair in front (three blocks), up it to eye height with the
+        //    upper frame, then it's taken down again.
+        const steps = [{ x: x + 1, y: gy + 1, z: z + 3 }, { x: x + 1, y: gy + 1, z: z + 2 }, { x: x + 1, y: gy + 2, z: z + 2 }];
+        for (const cell of steps) await put(cell, 'cobblestone');
+        await S.goNear(gen, { x: x + 1.5, y: gy + 3, z: z + 2.5 }, 0.7, 3);
         // 3. The two columns, low to high, then the top row against their sides.
-        for (const fy of [gy + 1, gy + 2, gy + 3]) { await put({ x, y: fy, z }, 'obsidian'); await put({ x: x + 3, y: fy, z }, 'obsidian'); }
-        for (const fx of [x + 1, x + 2]) await put({ x: fx, y: gy + 4, z }, 'obsidian');
-        try { await S.mine(gen, step); } catch (e) { if (e?.constructor?.name === 'Aborted') throw e; }
-        const frame = [...bottom, ...[gy + 1, gy + 2, gy + 3].flatMap((fy) => [{ x, y: fy, z }, { x: x + 3, y: fy, z }]), ...[x + 1, x + 2].map((fx) => ({ x: fx, y: gy + 4, z }))];
+        for (const fy of [gy + 2, gy + 3, gy + 4]) { await put({ x, y: fy, z }, 'obsidian'); await put({ x: x + 3, y: fy, z }, 'obsidian'); }
+        for (const fx of [x + 1, x + 2]) await put({ x: fx, y: gy + 5, z }, 'obsidian');
+        for (const cell of [steps[2], steps[1], steps[0]]) { try { await S.mine(gen, cell); } catch (e) { if (e?.constructor?.name === 'Aborted') throw e; } }
+        const frame = [...bottom, ...[gy + 2, gy + 3, gy + 4].flatMap((fy) => [{ x, y: fy, z }, { x: x + 3, y: fy, z }]), ...[x + 1, x + 2].map((fx) => ({ x: fx, y: gy + 5, z }))];
         const built = frame.filter((cell) => S.blockAt(cell) === 'obsidian').length;
         if (built < frame.length) { detail = `frame incomplete (${built}/${frame.length} obsidian; the bot placed ${byBot})`; break; }
         // 4. Light it: flint and steel on the top of a bottom block, from in front, one use every 10 ticks.
         await S.goNear(gen, { x: x + 1.5, y: gy + 1, z: z + 3.5 }, 0.8, 3);
-        const inner = [{ x: x + 1, y: gy + 1, z }, { x: x + 2, y: gy + 1, z }];
+        const inner = [{ x: x + 1, y: gy + 2, z }, { x: x + 2, y: gy + 2, z }];
         const slot = hold(sim, 'flint_and_steel');
         let lit = false, tries = 0, used = '';
         for (; tries < 5 && !lit; tries++) {
-          await agent.motor.lookAt({ x: x + 1.5, y: gy + 1.2, z: z + 0.5 }, 8, 30);
+          await agent.motor.lookAt({ x: x + 1.5, y: gy + 2.2, z: z + 0.5 }, 8, 30);
           await S.useGap(gen);
-          try { used = String(sim.useItemInSlotOnBlock(slot, { x: x + 1, y: gy, z }, Direction.Up, { x: 0.5, y: 1, z: 0.5 })); } catch (e) { used = `threw ${e}`; }
+          try { used = String(sim.useItemInSlotOnBlock(slot, { x: x + 1, y: gy + 1, z }, Direction.Up, { x: 0.5, y: 1, z: 0.5 })); } catch (e) { used = `threw ${e}`; }
           S.lastUseTick = system.currentTick;
           await system.waitTicks(12);
           lit = inner.some((cell) => /(^|_)portal$/.test(S.blockAt(cell) ?? '')); // (the block is `portal`)
         }
         if (!lit) { detail = `built the frame (${byBot} placed by the bot, ${byCmd} by command) but it didn't light after ${tries} tries (use returned ${used}, slot ${slot}, inner block ${S.blockAt(inner[0])}, held ${sim.getComponent('minecraft:inventory').container.getItem(sim.selectedSlotIndex)?.typeId ?? 'nothing'})`; break; }
-        // 5. Walk in (the frame's bottom is level with the ground: no step) and wait for the game to move us (about 4 s inside).
-        const there = { x: x + 1.5, y: gy + 1, z: z + 0.5 };
-        let dimNow = sim.dimension.id, closest = Infinity, jumps = 0, lastDd = Infinity, stalled = 0;
-        for (let i = 0; i < 20 * 20 && dimNow === dim.id; i++) {
-          if (i % 10 === 0) {
-            const dd = Math.hypot(sim.location.x - there.x, sim.location.z - there.z);
-            closest = Math.min(closest, dd);
-            try { sim.moveToLocation(there, { speed: 0.6 }); } catch { /* */ }
-            // Held up short of it (something low in the way): a hop.
-            stalled = dd > 0.5 && lastDd - dd < 0.05 ? stalled + 1 : 0;
-            if (stalled >= 2) { try { sim.jump(); jumps++; } catch { /* */ } stalled = 0; }
-            lastDd = dd;
-          }
-          await system.waitTicks(1);
-          dimNow = sim.dimension.id;
-        }
-        const standingIn = /(^|_)portal$/.test(S.blockAt({ x: Math.floor(sim.location.x), y: Math.floor(sim.location.y), z: Math.floor(sim.location.z) }) ?? '');
-        const finalAt = `${sim.location.x.toFixed(1)} ${sim.location.y.toFixed(1)} ${sim.location.z.toFixed(1)}`;
+        // 5. Find the frame the way it would any (ours, a ruined one, someone's), path to the floor of its inside and stand there until moved.
+        const frames = agent.portal.find(12);
+        if (!frames.length) { detail = `lit, but the frame finder saw none within 12 blocks`; break; }
+        const fr = frames[0];
+        const through = await agent.portal.enter(gen, fr, 20);
+        const dimNow = through.dimension;
+        const standingIn = through.ok, finalAt = `${sim.location.x.toFixed(1)} ${sim.location.y.toFixed(1)} ${sim.location.z.toFixed(1)}`, closest = 0, jumps = 0;
+        void standingIn; void closest; void jumps;
         const arrived = dimNow !== dim.id;
         const where = { x: Math.round(sim.location.x), y: Math.round(sim.location.y), z: Math.round(sim.location.z) };
         if (arrived) {
@@ -1386,7 +1379,7 @@ async function runOne(agent, player, name, arg) {
           try { sim.teleport(home, { dimension: dim }); } catch (e) { console.warn(`[test] portal back: ${e}`); }
         }
         pass = arrived;
-        detail = `${arrived ? `lit it and arrived in ${dimNow} at ${where.x} ${where.y} ${where.z}` : `lit but didn't leave the overworld in 20 s (ended at ${finalAt}, ${standingIn ? 'inside' : 'not inside'} the portal, closest ${closest.toFixed(1)} from its middle, ${jumps} jumps)`}; frame ${byBot} placed by the bot, ${byCmd} by command; lighting took ${tries} click(s), ${secs()}s`;
+        detail = `${arrived ? `lit it and arrived in ${dimNow} at ${where.x} ${where.y} ${where.z}` : `lit but didn't get through: ${through.why} (frame ${fr.w}x${fr.h} on the ${fr.axis} axis, ${through.tries} tries, ended at ${finalAt})`}; frame ${byBot} placed by the bot, ${byCmd} by command; lighting took ${tries} click(s), ${secs()}s`;
         break;
       }
       case 'horse': {
@@ -1403,6 +1396,45 @@ async function runOne(agent, player, name, arg) {
         const ride = await rideAcross(agent, gen, horse, 8);
         pass = ride.mounted && ride.moved >= 4;
         detail = `${r.detail}; ${ride.detail}`;
+        break;
+      }
+      case 'leadsling': {
+        // Calibrating the sling (game/leadtow.js sling). A long stone platform x..x+13 of each height in turn (1, 2, 3 blocks) with
+        // a boat jammed at its foot and the bot on top. The lead is stretched to 5, 7, 9, 11 blocks, a jump, and 2 s watched: did the
+        // boat come up, how fast did it fly, did the lead break. The least stretch that works per height, and where it snaps.
+        flatPatch(cmd, x, gy, z);
+        giveItem('lead', 12);
+        const gen = agent.newTask({ kind: 'test' });
+        const byRise = {}, peaks = {}, rows = [];
+        let snapAt = null;
+        for (const rise of [1, 2, 3]) {
+          cmd(`fill ${x} ${gy + 1} ${z - 2} ${x + 13} ${gy + rise} ${z + 2} stone`);
+          const topY = gy + rise + 1;
+          for (const target of [5, 7, 9, 11]) {
+            if (snapAt !== null && target >= snapAt) { rows.push(`h${rise}@${target}: skipped (broke at ${snapAt})`); continue; }
+            tp(x - 2, gy + 1, z);
+            await system.waitTicks(8);
+            const boat = dim.spawnEntity('minecraft:boat', { x: x - 0.9, y: gy + 1, z: z + 0.5 });
+            cleanup.push(() => { try { boat.remove(); } catch {} });
+            await system.waitTicks(8);
+            if (!leashTo(sim, boat)) { rows.push(`h${rise}@${target}: no lead`); try { boat.remove(); } catch {} continue; }
+            tp(x + 1, topY, z);
+            await system.waitTicks(10);
+            const r = await agent.tow.sling(gen, boat, { target, guard: 11.5 });
+            rows.push(`h${rise}@${target}: ${r.snapped ? `BROKE at ${r.stretch}` : r.ok ? `up (stretch ${r.stretch}, flew ${r.peak} b/s)` : `stayed down (stretch ${r.stretch}, climbed ${r.climbed})`}`);
+            try { boat.remove(); } catch {}
+            if (r.snapped) { snapAt = snapAt === null ? r.stretch : Math.min(snapAt, r.stretch); continue; }
+            if (r.ok) { byRise[rise] = r.stretch; peaks[rise] = r.peak; break; }
+          }
+        }
+        const found = Object.keys(byRise).length;
+        if (found) {
+          const cal = agent.memory.data.leadCal ?? {};
+          agent.memory.data.leadCal = { ...cal, sling: { byRise, peaks, snapAt, guard: snapAt ? Math.max(5, snapAt - 0.8) : 11, at: Date.now(), build: CONFIG.build } };
+          agent.memory.save();
+        }
+        pass = found === 3;
+        detail = `${found}/3 heights brought up${snapAt ? `, the lead breaks at ${snapAt}` : ', no snap seen up to 11'}; least stretch by height ${JSON.stringify(byRise)}; ${rows.join('; ')}`;
         break;
       }
       case 'leadboat': {
@@ -1547,7 +1579,7 @@ function leashTo(sim, e) {
 function towLine(m, goal) {
   const f = (v) => (v == null ? '?' : Number(v).toFixed(1));
   const off = m.boatEnd ? Math.hypot(m.boatEnd.x - goal.x, m.boatEnd.z - goal.z) : null;
-  return `${m.arrived ? 'got there' : `DID NOT get there (${m.why || 'out of time'})`} in ${m.secs}s (efficiency ${m.efficiency}, 1 = walking the straight line), boat ${off == null ? 'gone' : `${f(off)} from the goal`}; boat first moved at ${f(m.pullAt)} apart, furthest ${f(m.maxSep)}, ${m.snapped ? 'lead SNAPPED' : 'lead held'}, held up ${m.holds}x, unstuck ${m.tugs}x, rerouted ${m.reroutes}x, jumped ${m.steps}x (limits soft ${m.soft}, hard ${m.hard}, max ${m.max}; held at ${f(m.holdAt)})`;
+  return `${m.arrived ? 'got there' : `DID NOT get there (${m.why || 'out of time'})`} in ${m.secs}s (efficiency ${m.efficiency}, 1 = walking the straight line), boat ${off == null ? 'gone' : `${f(off)} from the goal`}; boat first moved at ${f(m.pullAt)} apart, furthest ${f(m.maxSep)}, ${m.snapped ? 'lead SNAPPED' : 'lead held'}, slung ${m.slingOk}/${m.slings}, unstuck ${m.tugs}x, rerouted ${m.reroutes}x, jumped ${m.steps}x (limits soft ${m.soft}, hard ${m.hard}, max ${m.max}; guard ${f(m.holdAt)})`;
 }
 
 /** A grown horse: babies can't be ridden. One that spawns young is grown up by its own event, else replaced (up to 8 tries). */

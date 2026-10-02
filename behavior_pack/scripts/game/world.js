@@ -61,6 +61,12 @@ export function isFlowing(b) {
   }
 }
 
+/**
+ * Walking through a nether portal on purpose (game/portal.js enter): off, a portal block is a wall of danger (nothing should
+ * route through one by accident and be sent to another dimension); on, it is open air.
+ */
+export const portalWalk = { on: false };
+
 export function makeClassifier(dimension) {
   return (x, y, z) => {
     let b;
@@ -72,6 +78,7 @@ export function makeClassifier(dimension) {
     if (!b) return Cell.UNKNOWN; // chunk not loaded
     if (b.isAir) return Cell.AIR;
     const id = b.typeId;
+    if (id === 'minecraft:portal') return portalWalk.on ? Cell.AIR : Cell.DANGER;
     if (DANGER.has(id)) return Cell.DANGER;
     // Mangrove roots are solid (you stand on them, they block you), even waterlogged in a swamp.
     if (MANGROVE_ROOTS.test(id)) return Cell.SOLID;

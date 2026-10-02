@@ -58,6 +58,17 @@ export function analyseTow(samples) {
     }
     i = j + 1;
   }
+  // Slings: a jump (up 0.35+ within half a second) with the lead taut and the boat still, and what the boat did in the next 2 s.
+  const slings = [];
+  for (let i = 2; i + 8 < S.length; i++) {
+    if (!Number.isFinite(S[i].py) || !Number.isFinite(S[i - 2].py)) continue;
+    if (S[i].py - S[i - 2].py < 0.35 || S[i - 2].py - (S[i - 3]?.py ?? S[i - 2].py) > 0.2) continue; // (a rise that starts here)
+    if (sep[i] < 4.5 || !bv.slice(Math.max(1, i - 4), i).every((v) => v < 0.5)) continue;
+    const peak = Math.max(...bv.slice(i, i + 8));
+    slings.push({ stretch: sep[i], peak });
+    i += 8;
+  }
+  const sling = slings.length ? { n: slings.length, stretch: Math.round(median(slings.map((x) => x.stretch)) * 10) / 10, boatPeak: Math.round(median(slings.map((x) => x.peak)) * 10) / 10 } : null;
   const flank = events.length ? { dist: median(events.map((e) => e.dist)), angle: median(events.map((e) => e.round)) } : null;
   const rises = events.map((e) => e.rise).filter(Number.isFinite);
   const last = S[S.length - 1];
@@ -69,6 +80,7 @@ export function analyseTow(samples) {
     patience: events.length ? Math.round(median(events.map((e) => e.patience))) : null,
     flank: flank && { dist: Math.round(flank.dist * 10) / 10, angle: Math.round(flank.angle) },
     blockedRise: rises.length ? Math.round(median(rises) * 10) / 10 : null,
+    sling,
     maxSep: Math.round(Math.max(...sep) * 10) / 10,
     snapped: last.leashed === false && S.slice(0, -1).some((s) => s.leashed !== false),
   };
@@ -93,6 +105,7 @@ export function mergeLearned(old, fresh) {
     blockedRise: mix(old.blockedRise, fresh.blockedRise),
     flank: old.flank && fresh.flank ? { dist: mix(old.flank.dist, fresh.flank.dist), angle: mix(old.flank.angle, fresh.flank.angle) } : fresh.flank ?? old.flank,
     curve: fresh.curve?.length >= (old.curve?.length ?? 0) ? fresh.curve : old.curve,
+    sling: fresh.sling ?? old.sling,
     maxSep: Math.max(old.maxSep ?? 0, fresh.maxSep ?? 0),
   };
 }

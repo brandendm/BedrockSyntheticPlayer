@@ -56,3 +56,17 @@ test('standing still with the boat close does not teach a standstill', () => {
   assert.ok(r.curve.every((row) => row.frac > 0.5), JSON.stringify(r.curve));
   assert.ok(speedFrac(r.curve, 1) >= 0.35);
 });
+
+test('a sling is read from a jump with the lead stretched and the boat still', () => {
+  const S = [];
+  for (let i = 0; i < 60; i++) {
+    // The player walks off, the boat is stuck at 0; at sample 40 they are 9 apart and jump; the boat then flies to them.
+    const px = Math.min(9, i * 0.5), py = i >= 40 && i <= 42 ? 64 + (i - 39) * 0.5 : 64;
+    const bx = i > 42 ? Math.min(px - 1, (i - 42) * 1.2) : 0;
+    S.push({ t: i * 5, px, py, pz: 0, bx, bz: 0, by: 64, rise: 1, leashed: true, ride: false });
+  }
+  const r = analyseTow(S);
+  assert.ok(r.sling, JSON.stringify(r));
+  assert.ok(r.sling.stretch >= 8 && r.sling.stretch <= 9.1, `stretch ${r.sling.stretch}`);
+  assert.ok(r.sling.boatPeak > 3, `peak ${r.sling.boatPeak}`);
+});

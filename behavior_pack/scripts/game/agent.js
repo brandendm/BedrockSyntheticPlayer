@@ -28,6 +28,7 @@ import { chainStep, chainItem, chainOutline, held } from '../core/chain.js';
 import { Horses } from './horse.js';
 import { LeadTow } from './leadtow.js';
 import { TowLearn } from './towlearn.js';
+import { Portals } from './portal.js';
 import { FULL_SLOTS } from '../core/storage.js';
 import { itemValue, armorUpgrades, armorTotal } from '../core/wants.js';
 import { lootPlan, lootWorth, backoffMs, LOOT_WINDOW_MS } from '../core/loot.js';
@@ -112,6 +113,7 @@ export class Agent {
     this.horses = new Horses(this);
     this.tow = new LeadTow(this);
     this.towlearn = new TowLearn(this);
+    this.portal = new Portals(this);
     /** @type {Set<string>} Far places already looked at for a village (game/villages.js scout). */
     this.villageScouted = new Set();
     tracePosition(() => this.sim.location); // (villages seen from afar: game/villages.js)

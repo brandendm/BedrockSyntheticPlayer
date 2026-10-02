@@ -56,7 +56,7 @@ export class TowLearn {
     } catch { /* unloaded */ }
     let leashed = true;
     try { leashed = !!boat.getComponent('minecraft:leashable')?.isLeashed; } catch { /* */ }
-    this.samples.push({ t, px: p.x, pz: p.z, bx: b.x, bz: b.z, by: b.y, rise, leashed, ride });
+    this.samples.push({ t, px: p.x, py: p.y, pz: p.z, bx: b.x, bz: b.z, by: b.y, rise, leashed, ride });
     if (this.samples.length > MAX_SAMPLES) this.samples.shift();
   }
 
@@ -71,10 +71,11 @@ export class TowLearn {
     const cal = this.a.memory.data.leadCal ?? {};
     const learned = { ...(cal.learned ?? {}) };
     learned[key] = mergeLearned(learned[key], res);
+    // What the player's slings looked like (the jump with the lead stretched, and how fast the boat flew): the tow's own stretch.
     this.a.memory.data.leadCal = { ...cal, learned };
     this.a.memory.save();
     trace(`tow learned (${key}) from ${who}: ${JSON.stringify(res)}`);
     sendEvent({ type: 'tow_learned', who, key, result: res }).catch(() => {});
-    return `Learned from ${who}'s tow (${key}, ${res.secs} s): the boat follows from ${res.pullAt ?? '?'} apart, you wait at ${res.holdAt ?? '?'}, ${res.stuckEvents} stuck moment${res.stuckEvents === 1 ? '' : 's'}${res.flank ? `, freed by going ${res.flank.angle} deg round at ${res.flank.dist} blocks` : ''}${res.snapped ? ', and the lead snapped' : ''}.`;
+    return `Learned from ${who}'s tow (${key}, ${res.secs} s): the boat follows from ${res.pullAt ?? '?'} apart, you wait at ${res.holdAt ?? '?'}, ${res.stuckEvents} stuck moment${res.stuckEvents === 1 ? '' : 's'}${res.flank ? `, freed by going ${res.flank.angle} deg round at ${res.flank.dist} blocks` : ''}${res.sling ? `, ${res.sling.n} sling${res.sling.n === 1 ? '' : 's'} (jumped at ${res.sling.stretch} apart, the boat flew ${res.sling.boatPeak} blocks/s)` : ''}${res.snapped ? ', and the lead snapped' : ''}.`;
   }
 }
