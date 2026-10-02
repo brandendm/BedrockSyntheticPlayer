@@ -64,7 +64,7 @@ import { getPlan } from '../core/learnhouse.js';
 import { passRates, addStat } from '../core/testrun.js';
 import { compare } from '../core/testrun.js';
 
-const NAMES = ['roof', 'tower', 'hole', 'pit', 'trap', 'climb', 'ledge', 'ladder', 'husk', 'creeper', 'sheep', 'pen', 'smelt', 'smeltlogs', 'shelter', 'house', 'resume', 'ghostlog', 'quarry', 'dark', 'replant', 'litter', 'trader', 'iron', 'farm', 'equip', 'water', 'bucketfarm', 'treetop', 'corner', 'leap', 'bridge', 'fall', 'vines', 'stairgap', 'loot', 'shield', 'skel', 'rest', 'nights', 'calibrate', 'portal', 'horse', 'leadboat', 'leadsling', 'bow', 'duel', 'horserace', 'pillarrace', 'woodrace', 'lavacross', 'obsidian', 'mineore', 'enderman', 'blaze', 'ghast', 'witherskeleton', 'placerate'];
+const NAMES = ['roof', 'tower', 'hole', 'pit', 'trap', 'climb', 'ledge', 'ladder', 'husk', 'creeper', 'sheep', 'pen', 'smelt', 'smeltlogs', 'shelter', 'house', 'resume', 'ghostlog', 'quarry', 'dark', 'replant', 'litter', 'trader', 'iron', 'farm', 'equip', 'water', 'bucketfarm', 'treetop', 'corner', 'leap', 'bridge', 'fall', 'vines', 'stairgap', 'loot', 'shield', 'skel', 'rest', 'nights', 'calibrate', 'portal', 'horse', 'leadboat', 'leadsling', 'bow', 'duel', 'horserace', 'pillarrace', 'woodrace', 'lavacross', 'obsidian', 'mineore', 'enderman', 'blaze', 'ghast', 'witherskeleton', 'placerate', 'farmrace', 'creepers', 'ravine'];
 let running = false;
 /** How many sky sites have been used this session (each test gets a new one, 120 blocks further). */
 let siteCounter = 0;
@@ -74,7 +74,7 @@ let siteCounter = 0;
 // corrected from data: anything over QUICK_S in the last report belongs here.
 const SLOW = new Set(['loot', 'nights', 'rest', 'shelter', 'house', 'resume', 'quarry', 'farm', 'bucketfarm', 'iron', 'sheep', 'pen', 'smelt', 'smeltlogs', 'trader', 'ghostlog', 'stairgap', 'portal', 'horse', 'leadboat', 'leadsling', 'duel', 'horserace']);
 /** Tests that need you there (you are the opponent). */
-const PLAYER_ONLY = new Set(['duel', 'horserace', 'pillarrace', 'woodrace']);
+const PLAYER_ONLY = new Set(['duel', 'horserace', 'pillarrace', 'woodrace', 'farmrace']);
 const QUICK_S = 60;
 // The ones that need monsters about (and the world's own difficulty); the rest run peaceful with monsters cleared.
 /** Tests that stay on the real ground (trees, water, ores, the night, long walks); everything else is built in the sky. */
@@ -83,9 +83,9 @@ const GROUND = new Set(['water', 'bucketfarm', 'treetop', 'vines', 'ghostlog', '
 const NIGHT = new Set(['shelter', 'house', 'resume', 'nights', 'rest', 'dark', 'loot']);
 /** Tests that need the natural terrain or water as it is: no floor is laid for them. */
 const NATURAL = new Set(['water', 'bucketfarm', 'treetop', 'vines', 'ghostlog', 'nights', 'calibrate']);
-const COMBAT = new Set(['husk', 'creeper', 'skel', 'shield', 'dark', 'duel', 'enderman', 'blaze', 'ghast', 'witherskeleton']);
+const COMBAT = new Set(['husk', 'creeper', 'skel', 'shield', 'dark', 'duel', 'enderman', 'blaze', 'ghast', 'witherskeleton', 'creepers']);
 // The ones a player can do too (`!bot test <name> me`): a goal the player can reach and the test can see.
-const HUMAN_OK = new Set(['tower', 'hole', 'pit', 'climb', 'ladder', 'corner', 'leap', 'bridge', 'ledge', 'bow', 'husk', 'sheep', 'pen', 'replant', 'litter', 'house', 'lavacross', 'obsidian', 'mineore', 'enderman', 'blaze', 'ghast', 'witherskeleton']);
+const HUMAN_OK = new Set(['tower', 'hole', 'pit', 'climb', 'ladder', 'corner', 'leap', 'bridge', 'ledge', 'bow', 'husk', 'sheep', 'pen', 'replant', 'litter', 'house', 'lavacross', 'obsidian', 'mineore', 'enderman', 'blaze', 'ghast', 'witherskeleton', 'creepers', 'ravine']);
 // No single test runs longer than this (the task is ended and the test left to report what it has).
 const CAP_S = 240;
 
@@ -115,8 +115,10 @@ HUMAN_HELP.enderman = { kit: [...MOB_KIT, ['carved_pumpkin', 1]], text: 'An ende
 HUMAN_HELP.blaze = { kit: MOB_KIT, text: 'A blaze, 10 blocks east and 4 up: kill it (it hovers and shoots fireballs). You have a diamond sword, a bow and arrows and a shield; iron armour is put on.' };
 HUMAN_HELP.ghast = { kit: MOB_KIT, text: 'A ghast, 14 blocks east and 9 up: kill it (it shoots exploding fireballs; a hit on the fireball sends it back, or shoot the ghast). You have a bow and arrows, a diamond sword and a shield; iron armour is put on.' };
 HUMAN_HELP.witherskeleton = { kit: MOB_KIT, text: 'A wither skeleton, 10 blocks east: kill it (its hits wither you). You have a diamond sword, a bow and arrows and a shield; iron armour is put on.' };
+HUMAN_HELP.creepers = { kit: [['stone_sword', 1], ['shield', 1], ['bow', 1], ['arrow', 32]], text: 'Four creepers come at you across the open ground. You have a shield (off hand: hold right-click to raise it, it takes most of a blast), a sword and a bow. Get rid of all four (killed or blown up) and lose as few hearts as you can: 7 hearts or less passes.' };
+HUMAN_HELP.ravine = { kit: [], text: 'You are at the bottom of a ravine, 9 deep and 3 wide, sheer walls. Get out onto the surface: your 32 cobblestone and 16 dirt are for building yourself out, the pickaxe for digging.' };
 HUMAN_HELP.bow = { kit: [['bow', 1], ['arrow', 48]], text: 'Six targets (armor stands) in different spots in front of you: near and far, left and right, one on a pillar and one on a step. Hit as many as you can, 5 of 6 passes (hold right-click to draw, release to shoot).' };
-const SHORT = { lavacross: 'Cross the lava', obsidian: 'Make and mine obsidian', mineore: 'One of each ore', enderman: 'Kill the enderman', blaze: 'Kill the blaze', ghast: 'Kill the ghast', witherskeleton: 'Kill the wither skeleton', tower: 'Get down, no fall damage', hole: 'Get out, reach the gold block', pit: 'Get out, reach the gold block', climb: 'Get out of the pit', ladder: 'Reach the gold block', corner: 'Reach the gold block', leap: 'Cross the gap, gold block', bridge: 'Bridge to the gold block', ledge: 'Get near the table', bow: 'Hit the 6 targets', husk: 'Kill the husk', sheep: 'Collect 3 wool', pen: 'Collect 2 raw beef', replant: 'Cut tree, replant sapling', litter: 'Collect 4 leaf litter', house: 'Build a house, then test done' };
+const SHORT = { creepers: 'Beat 4 creepers, shield up', ravine: 'Get out of the ravine', lavacross: 'Cross the lava', obsidian: 'Make and mine obsidian', mineore: 'One of each ore', enderman: 'Kill the enderman', blaze: 'Kill the blaze', ghast: 'Kill the ghast', witherskeleton: 'Kill the wither skeleton', tower: 'Get down, no fall damage', hole: 'Get out, reach the gold block', pit: 'Get out, reach the gold block', climb: 'Get out of the pit', ladder: 'Reach the gold block', corner: 'Reach the gold block', leap: 'Cross the gap, gold block', bridge: 'Bridge to the gold block', ledge: 'Get near the table', bow: 'Hit the 6 targets', husk: 'Kill the husk', sheep: 'Collect 3 wool', pen: 'Collect 2 raw beef', replant: 'Cut tree, replant sapling', litter: 'Collect 4 leaf litter', house: 'Build a house, then test done' };
 const humanHelp = (name) => HUMAN_HELP[name] ?? null;
 /** What you are handed in every test you do: tools, blocks and food; the test's own extras on top. `climb` has no tools, like the bot's run. */
 const STD_KIT = [['stone_pickaxe', 1], ['stone_axe', 1], ['stone_shovel', 1], ['stone_sword', 1], ['cobblestone', 32], ['dirt', 16], ['bread', 8]];
@@ -174,6 +176,11 @@ export async function runTests(agent, player, args) {
   // Retired: the bot passes these, about as fast as a player (the sweeps to u172); `include all` or `include <name>` brings them back.
   const RETIRED = ['leap', 'corner', 'ladder', 'ledge', 'pit', 'hole', 'bridge', 'husk', 'woodrace', 'roof', 'trap', 'smelt', 'smeltlogs', 'shelter', 'equip', 'fall', 'vines', 'stairgap', 'treetop', 'ghostlog', 'creeper', 'calibrate', 'nights', 'leadsling', 'portal', 'horse'];
   if (agent.memory.data.testOmit === undefined) { agent.memory.data.testOmit = [...RETIRED]; agent.memory.save(); }
+  // The second round (the u177 run): the bot passes these at or beyond a player's pace, or beats them outright.
+  if (!agent.memory.data.retiredV2) {
+    agent.memory.data.testOmit = [...new Set([...agent.memory.data.testOmit, 'sheep', 'enderman', 'blaze', 'ghast', 'witherskeleton', 'horserace', 'bow', 'duel', 'litter', 'replant'])];
+    agent.memory.data.retiredV2 = true; agent.memory.save();
+  }
   const omitList = () => (agent.memory.data.testOmit ??= []);
   if (args[0] === 'omit' || args[0] === 'include') {
     const names = String(args[1] ?? '').split(',').map((n) => n.trim()).filter(Boolean);
@@ -320,7 +327,7 @@ async function runOne(agent, player, name, arg, human = false) {
     gy = gy0;
   }
   // (the farm test lays 55 x 41 of its own: its slab and backup are that big)
-  const ext = name === 'farm' ? { w: 22, e: 36, r: 22 } : name === 'horserace' ? { w: 8, e: 54, r: 10 } : name === 'bow' ? { w: 14, e: 34, r: 14 } : { w: 14, e: 18, r: 12 };
+  const ext = name === 'farm' || name === 'farmrace' ? { w: 22, e: 36, r: 24 } : name === 'horserace' ? { w: 8, e: 54, r: 10 } : name === 'bow' ? { w: 14, e: 34, r: 14 } : { w: 14, e: 18, r: 12 };
   // The rim wall is only low (to keep walkers on the slab) where things fly: a ghast or blaze hovering out over the edge, the arrows at it.
   const wallH = ['ghast', 'blaze', 'bow'].includes(name) ? 2 : 8;
   const box = sky ? { x1: x - ext.w, y1: gy - 10, z1: z - ext.r, x2: x + ext.e, y2: gy + 20, z2: z + ext.r } : { x1: x - 8, y1: gy - 8, z1: z - 8, x2: x + 14, y2: gy + 18, z2: z + 8 };
@@ -1818,6 +1825,99 @@ async function runOne(agent, player, name, arg, human = false) {
         else if (agent.memory.data.placeCal) { agent.memory.data.placeCal = null; agent.memory.save(); }
         pass = !!best;
         detail = `${best ? `fastest that never failed: ${best.method} every ${best.gap} ticks${best.gap <= 6 ? ' (now used for building)' : ' (not faster than the usual, not used)'}` : 'none placed six in a row'}; ${table.join(', ')}`;
+        break;
+      }
+      case 'ravine': {
+        // A ravine 3 wide and 9 deep cut into the slab with sheer walls; you start on its floor with blocks and a pickaxe, and have to get out.
+        cmd(`fill ${x + 2} ${gy - 9} ${z - 8} ${x + 4} ${gy} ${z + 8} air`);
+        tp(x + 3, gy - 9, z);
+        await system.waitTicks(15);
+        const out = () => who.location.y >= gy + 0.9;
+        if (human) { pass = await humanTry(out, 180); detail = `you ${pass ? 'got out' : 'did not get out'} in ${secs()}s`; break; }
+        agent.newTask({ kind: 'test' });
+        agent.apply([{ type: 'surface' }]);
+        await idle(150);
+        pass = out();
+        detail = `${pass ? 'out of the ravine' : `still ${Math.round(gy + 1 - sim.location.y)} below the rim`} in ${secs()}s (ledges/digs: ${S.getDownStats?.staged ?? 0}/${S.getDownStats?.digs ?? 0}; ${invCountsOf(sim).cobblestone ?? 0} cobblestone left)`;
+        break;
+      }
+      case 'creepers': {
+        // Four creepers across open ground; a shield, a sword, a bow. Everything gone (killed or gone off) and 7 hearts lost at most.
+        const eq = who.getComponent('minecraft:equippable');
+        const oldOff = (() => { try { return eq?.getEquipment(EquipmentSlot.Offhand); } catch { return undefined; } })();
+        try { eq?.setEquipment(EquipmentSlot.Offhand, new ItemStack('minecraft:shield', 1)); } catch { /* */ }
+        cleanup.push(() => { try { eq?.setEquipment(EquipmentSlot.Offhand, oldOff); } catch { /* */ } });
+        agent.shield = true;
+        tp(x, gy + 1, z);
+        await system.waitTicks(10);
+        const spots = [[10, -4], [12, 3], [14, -1], [9, 6]];
+        for (const [dx, dz] of spots) cmd(`summon creeper ${x + dx + 0.5} ${gy + 1} ${z + dz + 0.5}`);
+        const left = () => { try { return dim.getEntities({ type: 'minecraft:creeper', location: { x: x + 8, y: gy, z }, maxDistance: 40 }).length; } catch { return 0; } };
+        const hpNow = () => { try { return who.getComponent('minecraft:health').currentValue; } catch { return 0; } };
+        const hp1 = hpNow();
+        cleanup.push(() => { try { for (const e of dim.getEntities({ type: 'minecraft:creeper', location: { x: x + 8, y: gy, z }, maxDistance: 60 })) e.remove(); } catch { /* */ } });
+        if (human) { pass = await humanTry(() => left() === 0, 90); pass = pass && hp1 - hpNow() <= 14; detail = `you ${left() === 0 ? 'got rid of all four' : `left ${left()}`} in ${secs()}s, lost ${Math.max(0, hp1 - hpNow())} hp`; break; }
+        // The bot just stands in it: its own fighting reflexes (shield, sword, and now the bow) have to deal with them.
+        agent.newTask(null);
+        agent.equipBestWeapon();
+        const t1 = system.currentTick;
+        while (left() > 0 && !agent.testSkipped && system.currentTick - t1 < 90 * 20 && hpNow() > 0) await system.waitTicks(10);
+        pass = left() === 0 && hp1 - hpNow() <= 14;
+        detail = `${left() === 0 ? 'all four gone' : `${left()} left`} in ${secs()}s, lost ${Math.max(0, hp1 - hpNow())} hp (mode ${agent.mode})`;
+        break;
+      }
+      case 'farmrace': {
+        // Two plots 28 blocks apart, each with a pond; a hoe and 24 seeds each. First to plant 12 wins (the seeds used up, which is what planting is).
+        if (!player) { detail = 'a race needs you: say it in chat'; break; }
+        const pk = packOf(player);
+        const givePlayer = (id, n) => { try { pk?.addItem(new ItemStack(`minecraft:${id}`, n)); handed.push([id, n]); } catch { /* */ } };
+        const recH = new TestRecorder(player);
+        const result = { bot: null, you: null };
+        for (const pz of [z + 14, z - 14]) {
+          cmd(`fill ${x - 6} ${gy + 1} ${pz - 10} ${x + 14} ${gy + 4} ${pz + 10} air`);
+          cmd(`fill ${x + 5} ${gy} ${pz - 1} ${x + 7} ${gy} ${pz + 1} water`);
+        }
+        giveItem('stone_hoe', 1); giveItem('wheat_seeds', 24); givePlayer('stone_hoe', 1); givePlayer('wheat_seeds', 24);
+        try { player.teleport({ x: x + 1.5, y: gy + 1, z: z - 13.5 }, { facingLocation: { x: x + 6, y: gy + 1, z: z - 14 } }); } catch { /* */ }
+        tp(x + 1, gy + 1, z + 14);
+        const H = agent.homestead, mem = agent.memory.data;
+        const saved = { house: mem.house, farm: mem.farm, water: mem.waterNearHouse, fw: mem.farmWater };
+        cleanup.push(() => { mem.house = saved.house; mem.farm = saved.farm; mem.waterNearHouse = saved.water; mem.farmWater = saved.fw; agent.memory.save(); });
+        H.setHouse({ x: x + 1, y: gy + 1, z: z + 14, dir: 'south', bed: true, table: true, furnace: true, level: 1 });
+        mem.farm = null; mem.waterNearHouse = undefined;
+        const gen = agent.newTask({ kind: 'test' });
+        agent.testHold = false;
+        const near = await agent.farm.checkWater(gen).catch(() => false);
+        const seeds = (e) => invCountsOf(e).wheat_seeds ?? 0;
+        const s0 = { bot: seeds(sim), you: seeds(player) };
+        agent.say('FARM RACE: each of you has a hoe, 24 seeds and a pond. Till the ground beside the water with the hoe (right-click on grass) and plant seeds on it (right-click on the tilled ground): first to plant 12 wins. Say `!bot test go` (or start moving), `!bot test skip` to give up.');
+        try { player.onScreenDisplay.setTitle('Farm race', { subtitle: 'Till and plant 12 seeds', stayDuration: 160, fadeInDuration: 5, fadeOutDuration: 10 }); } catch { /* */ }
+        agent.testGo = false;
+        if (agent.testProgress) { agent.testProgress.reading = true; agent.testProgress.deadline = null; }
+        const p0 = { ...player.location };
+        for (let i = 0; i < 60 * 10 && !agent.testSkipped && !agent.testGo; i++) { await system.waitTicks(2); if (Math.hypot(player.location.x - p0.x, player.location.z - p0.z) > 1.5) break; }
+        if (agent.testProgress) agent.testProgress.reading = false;
+        for (const n of ['3', '2', '1']) { try { player.onScreenDisplay.setTitle(n, { stayDuration: 14, fadeInDuration: 0, fadeOutDuration: 2 }); } catch { /* */ } await system.waitTicks(20); }
+        try { player.onScreenDisplay.setTitle('GO!', { stayDuration: 20, fadeInDuration: 0, fadeOutDuration: 5 }); } catch { /* */ }
+        if (agent.testProgress) { agent.testProgress.deadline = Date.now() + 180 * 1000; agent.testProgress.limitS = 180; }
+        rec.reset(); t0 = system.currentTick; recH.start();
+        const tStart = system.currentTick;
+        const farmP = agent.farm.make(gen, near ? 'near' : 'bucket', 24).catch(() => false);
+        try {
+          for (let i = 0; i < 180 * 20 && !agent.testSkipped && (result.bot === null || result.you === null); i++) {
+            if (result.bot === null && s0.bot - seeds(sim) >= 12) result.bot = (system.currentTick - tStart) / 20;
+            if (result.you === null && s0.you - seeds(player) >= 12) result.you = (system.currentTick - tStart) / 20;
+            await system.waitTicks(2);
+          }
+        } finally {
+          agent.newTask(null); agent.motor.stop();
+          await Promise.race([farmP, system.waitTicks(20)]);
+          try { const sh = recH.stop(); extraRuns.push({ who: 'human', summary: sh, trace: recH.trace(), pass: result.you !== null }); } catch { /* */ }
+        }
+        const f1 = (v) => (v === null ? 'did not finish' : `${v.toFixed(1)} s`);
+        pass = result.bot !== null;
+        detail = `plant 12 seeds: bot ${f1(result.bot)}, you ${f1(result.you)}: ${result.bot !== null && (result.you === null || result.bot < result.you) ? 'the bot wins' : result.you !== null ? 'you win' : 'nobody finished'}`;
+        agent.say(`Race over: ${detail}.`);
         break;
       }
       case 'duel': {

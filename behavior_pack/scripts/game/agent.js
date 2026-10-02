@@ -37,6 +37,7 @@ import { Homestead, FOOD_ANIMALS } from './homestead.js';
 import { Villages } from './villages.js';
 import { Lookout } from './lookout.js';
 import { Skills, Aborted, markVisited } from './skills.js';
+import { shootAt } from './aim.js';
 import { invCounts, hold, container, usesLeft, kitOf, emptyHanded, restoreKit } from './inventory.js';
 import { WorldMemory } from './memory.js';
 import { SimBodyAdapter } from './body.js';
@@ -2190,9 +2191,44 @@ export class Agent {
    * steps to it, not at a point in the rock), swing when in reach, shield up between swings when
    * something's about to hit us, and write the fight off if it goes nowhere.
    */
+  /**
+   * Is the bow the right thing against this one, from here? With a bow and arrows in the pack: a creeper still 5 or more blocks off (it
+   * never gets to hiss), a skeleton, witch or pillager beyond 6.5 (closing under its arrows costs more than the shot), anything we cannot
+   * walk up to (in the air, across a gap), and, when hurt, a melee mob still 8 or more away. Needs a clear line.
+   */
+  bowWorthy(target, d) {
+    const inv = invCounts(this.sim);
+    if (!inv.bow || (inv.arrow ?? 0) < 3) return false;
+    if (this.shooting || this.walling || this.jabbing || (this.nextBow ?? 0) > system.currentTick) return false;
+    const type = target.type;
+    let worth = false;
+    if (type === 'creeper') worth = d >= 5 && d <= 22;
+    else if (['skeleton', 'stray', 'bogged', 'witch', 'pillager', 'blaze', 'ghast', 'phantom'].includes(type)) worth = d >= 6.5 && d <= 28;
+    else if (target.canReach === false) worth = d >= 5 && d <= 28;
+    else if (this.health() < 10 && MOBS[type]?.kind === 'melee' && d >= 8 && d <= 20) worth = true;
+    if (!worth) return false;
+    try { return canSee(this.dim, this.sim.getHeadLocation(), target.entity.getHeadLocation()); } catch { return false; }
+  }
+
+  /** One arrow at it (game/aim.js: aimed again through the whole draw, ahead of it, the drop allowed for). */
+  async rangedShot(e) {
+    this.shooting = true;
+    try {
+      this.setBlocking(false);
+      await shootAt(this, e, { stop: () => !e.isValid || this.mode !== 'fight' });
+    } catch { /* the target went, or we were stopped */ } finally {
+      this.shooting = false;
+      this.nextBow = system.currentTick + 6;
+      this.heldWeapon = null;          // the sword back in hand by the usual rule
+      try { if (this.weaponId) hold(this.sim, this.weaponId); } catch { /* */ }
+    }
+  }
+
   fight(target, t) {
     if (!target?.entity?.isValid) return;
     if (this.walling) return; // putting a wall up: the placing has the hands and the eyes
+    if (this.shooting) return; // a shot is being drawn
+    if (this.bowWorthy(target, dist3D(this.body.getPos(), target.pos))) { this.fightTarget = target.entity; this.rangedShot(target.entity); return; }
     const e = target.entity;
     this.fightTarget = e;
     this.fightLast = { x: e.location.x, y: e.location.y, z: e.location.z };
