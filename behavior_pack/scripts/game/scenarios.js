@@ -56,22 +56,26 @@ import { system, world, ItemStack, EquipmentSlot, Direction } from '@minecraft/s
 import { blueprint, furnishings } from '../core/house.js';
 import { invCounts as invCountsOf, hold, take, container as packOf } from './inventory.js';
 import { TestRecorder } from './testrun.js';
+import { runDuel } from './duel.js';
+import { passRates } from '../core/testrun.js';
 import { compare } from '../core/testrun.js';
 
-const NAMES = ['roof', 'tower', 'hole', 'pit', 'trap', 'climb', 'ledge', 'ladder', 'husk', 'creeper', 'sheep', 'pen', 'smelt', 'smeltlogs', 'shelter', 'house', 'resume', 'ghostlog', 'quarry', 'dark', 'replant', 'litter', 'trader', 'iron', 'farm', 'equip', 'water', 'bucketfarm', 'treetop', 'corner', 'leap', 'bridge', 'fall', 'vines', 'stairgap', 'loot', 'shield', 'skel', 'rest', 'nights', 'calibrate', 'portal', 'horse', 'leadboat', 'leadsling'];
+const NAMES = ['roof', 'tower', 'hole', 'pit', 'trap', 'climb', 'ledge', 'ladder', 'husk', 'creeper', 'sheep', 'pen', 'smelt', 'smeltlogs', 'shelter', 'house', 'resume', 'ghostlog', 'quarry', 'dark', 'replant', 'litter', 'trader', 'iron', 'farm', 'equip', 'water', 'bucketfarm', 'treetop', 'corner', 'leap', 'bridge', 'fall', 'vines', 'stairgap', 'loot', 'shield', 'skel', 'rest', 'nights', 'calibrate', 'portal', 'horse', 'leadboat', 'leadsling', 'bow', 'duel'];
 let running = false;
 
 // Tests that wait out real time (a 5 minute despawn, a night, a furnace, a long walk): left out of
 // `!bot test all quick`. Their real durations are in the batch report (`secs`), so this list can be
 // corrected from data: anything over QUICK_S in the last report belongs here.
-const SLOW = new Set(['loot', 'nights', 'rest', 'shelter', 'house', 'resume', 'quarry', 'farm', 'bucketfarm', 'iron', 'sheep', 'pen', 'smelt', 'smeltlogs', 'trader', 'ghostlog', 'stairgap', 'portal', 'horse', 'leadboat', 'leadsling']);
+const SLOW = new Set(['loot', 'nights', 'rest', 'shelter', 'house', 'resume', 'quarry', 'farm', 'bucketfarm', 'iron', 'sheep', 'pen', 'smelt', 'smeltlogs', 'trader', 'ghostlog', 'stairgap', 'portal', 'horse', 'leadboat', 'leadsling', 'duel']);
+/** Tests that need you there (you are the opponent). */
+const PLAYER_ONLY = new Set(['duel']);
 const QUICK_S = 60;
 // The ones that need monsters about (and the world's own difficulty); the rest run peaceful with monsters cleared.
 /** Tests that need the natural terrain or water as it is: no floor is laid for them. */
 const NATURAL = new Set(['water', 'bucketfarm', 'treetop', 'vines', 'ghostlog', 'nights', 'calibrate']);
-const COMBAT = new Set(['husk', 'creeper', 'skel', 'shield', 'dark']);
+const COMBAT = new Set(['husk', 'creeper', 'skel', 'shield', 'dark', 'duel']);
 // The ones a player can do too (`!bot test <name> me`): a goal the player can reach and the test can see.
-const HUMAN_OK = new Set(['tower', 'hole', 'pit', 'climb', 'ladder', 'corner', 'leap', 'bridge', 'ledge']);
+const HUMAN_OK = new Set(['tower', 'hole', 'pit', 'climb', 'ladder', 'corner', 'leap', 'bridge', 'ledge', 'bow']);
 // No single test runs longer than this (the task is ended and the test left to report what it has).
 const CAP_S = 240;
 
@@ -87,6 +91,7 @@ const HUMAN_HELP = {
   bridge: { kit: [['dirt', 16]], text: 'A closed corridor with a 3-wide, 7-deep gap. You have 16 dirt. Get across without falling and reach the gold block at the far end.' },
   ledge: { kit: [['dirt', 16]], text: 'A crafting table sits on top of a 2-high cliff. Get close enough to open it (within about 4 blocks of it).' },
 };
+HUMAN_HELP.bow = { kit: [['bow', 1], ['arrow', 16]], text: 'A target (armor stand) stands 12 blocks east of you. Hit it with an arrow (hold right-click to draw, release to shoot).' };
 const humanHelp = (name) => HUMAN_HELP[name] ?? null;
 
 /**
@@ -105,16 +110,40 @@ export async function runTests(agent, player, args) {
     try { agent.newTask(null); agent.motor.stop(); } catch { /* */ }
     return agent.say('Skipping this test.');
   }
+  const omitList = () => (agent.memory.data.testOmit ??= []);
+  if (args[0] === 'omit' || args[0] === 'include') {
+    const names = String(args[1] ?? '').split(',').map((n) => n.trim()).filter(Boolean);
+    if (args[0] === 'omit' && names.includes('none')) agent.memory.data.testOmit = [];
+    else if (args[0] === 'include' && names.includes('all')) agent.memory.data.testOmit = [];
+    else {
+      const bad = names.filter((n) => !NAMES.includes(n));
+      if (bad.length) return agent.say(`Not tests: ${bad.join(', ')}.`);
+      const cur = new Set(omitList());
+      for (const n of names) args[0] === 'omit' ? cur.add(n) : cur.delete(n);
+      agent.memory.data.testOmit = [...cur];
+    }
+    agent.memory.save();
+    return agent.say(`Left out of "test all": ${agent.memory.data.testOmit.join(', ') || 'nothing'}.`);
+  }
+  if (args[0] === 'rate' || args[0] === 'rates') {
+    const r = passRates(agent.memory.data.testRuns, omitList());
+    return agent.say(`Pass rate, last run of each test: you ${r.human.pct === null ? 'no runs' : `${r.human.pct}% (${r.human.pass}/${r.human.total})`}, bot ${r.bot.pct === null ? 'no runs' : `${r.bot.pct}% (${r.bot.pass}/${r.bot.total})`}.`);
+  }
   if (running) return agent.say('A test is already running.');
+  // `test all except a,b`: this batch only.
+  const exIdx = args.indexOf('except');
+  const except = new Set(exIdx >= 0 ? String(args[exIdx + 1] ?? '').split(',').map((n) => n.trim()) : []);
+  if (exIdx >= 0) args = args.slice(0, exIdx);
   // `!bot test <name> me`: you do it (same setup, you at the start, the bot stands by); both runs are measured and compared.
   const human = args.includes('me') || args.includes('human');
   const [name = 'all', arg] = args.filter((a) => a !== 'me' && a !== 'human');
   const mode = name === 'all' && ['quick', 'slow'].includes(String(arg)) ? String(arg) : null;
   const named = String(name).includes(',') ? String(name).split(',').map((n) => n.trim()) : null;
   const list = named && named.every((n) => NAMES.includes(n)) ? named
-    : name === 'all' ? NAMES.filter((n) => (mode === 'quick' ? !SLOW.has(n) : mode === 'slow' ? SLOW.has(n) : true))
+    : name === 'all' ? NAMES.filter((n) => !omitList().includes(n) && !except.has(n) && (player || !PLAYER_ONLY.has(n))).filter((n) => (mode === 'quick' ? !SLOW.has(n) : mode === 'slow' ? SLOW.has(n) : true))
     : NAMES.includes(name) ? [name] : null;
   if (!list) return agent.say(`Tests: ${NAMES.join(', ')}, all [quick|slow], or a,b,c.`);
+  if (!list.length) return agent.say('Every test is omitted.');
   if (human && !player) return agent.say('Say it in chat yourself: `!bot test <name> me`.');
   running = true;
   const autoWas = agent.autoEnabled;
@@ -143,7 +172,7 @@ export async function runTests(agent, player, args) {
       try { r = await runOne(agent, player, n, argN, human); } finally { try { system.clearRun(cap); } catch {} }
       agent.testProgress.done++;
       r.secs = Math.round((system.currentTick - t0) / 20);
-      if (agent.testSkipped) { r.pass = false; r.skipped = true; r.detail = `skipped by you; ${r.detail}`; agent.testSkipped = false; }
+      if (agent.testSkipped) { const sl = agent.memory.data.testRuns?.[n]?.[human ? 'human' : 'bot']; if (sl) { sl.skipped = true; agent.memory.save(); } r.pass = false; r.skipped = true; r.detail = `skipped by you; ${r.detail}`; agent.testSkipped = false; }
       else if (capped) { r.pass = false; r.detail = `cut off after ${capS} s; ${r.detail}`; }
       results.push(r);
     }
@@ -222,7 +251,9 @@ async function runOne(agent, player, name, arg, human = false) {
   }
   const tp = (px, py, pz) => who.teleport({ x: px + 0.5, y: py, z: pz + 0.5 });
   let pass = false, detail = '';
-  /** @type {any} */ let runSummary = null;
+  /** @type {any} */ let runSummary = null, runTrace = null;
+  /** More runs a test recorded (the duel records both of you): { who, summary, trace, pass }. @type {Array<any>} */
+  const extraRuns = [];
   try {
     const tpg = agent.testProgress;
     agent.say(`Test ${name}${tpg ? ` (${tpg.done + 1}/${tpg.total})` : ''}${human ? ' [you]' : ''}: starting (build ${CONFIG.build}).`);
@@ -230,7 +261,7 @@ async function runOne(agent, player, name, arg, human = false) {
     // carve their own terrain, or need the water, build over it).
     if (!NATURAL.has(name)) for (const rep of ['air', 'water', 'flowing_water', 'lava', 'flowing_lava']) { cmd(`fill ${x - 8} ${gy - 1} ${z - 8} ${x + 14} ${gy} ${z + 8} grass_block replace ${rep}`); }
     // Spectators' seat: a small glass platform behind the site, you looking at where the bot starts.
-    if (!human && player) {
+    if (!human && player && name !== 'duel') {
       cmd(`fill ${x - 8} ${gy + 4} ${z - 1} ${x - 6} ${gy + 4} ${z + 1} stone_bricks`);
       try { player.teleport({ x: x - 6.5, y: gy + 5, z: z + 0.5 }, { facingLocation: { x, y: gy + 2, z: z + 0.5 } }); } catch { /* */ }
     }
@@ -1107,6 +1138,43 @@ async function runOne(agent, player, name, arg, human = false) {
         for (const e of dim.getEntities({ type: 'minecraft:item', location: { x: px, y: gy + 1, z: pz }, maxDistance: 10 })) try { e.remove(); } catch {}
         break;
       }
+      case 'duel': {
+        if (!player) { detail = 'the duel needs you in the world: say it in chat'; break; }
+        const r = await runDuel(agent, player, { cmd, x, gy, z, extraRuns, secs });
+        pass = r.pass; detail = r.detail;
+        break;
+      }
+      case 'bow': {
+        const tpos = { x: x + 12.5, y: gy + 1, z: z + 0.5 };
+        cmd(`summon armor_stand ${tpos.x} ${tpos.y} ${tpos.z}`);
+        who.teleport({ x: x + 0.5, y: gy + 1, z: z + 0.5 }, { facingLocation: { x: tpos.x, y: gy + 1.6, z: tpos.z } });
+        await system.waitTicks(10);
+        let shots = 0, hits = 0;
+        const wa = /** @type {any} */ (world.afterEvents);
+        const sp = wa.entitySpawn.subscribe((ev) => { try { if (ev.entity.typeId === 'minecraft:arrow' && Math.hypot(ev.entity.location.x - who.location.x, ev.entity.location.z - who.location.z) < 4) shots++; } catch { /* */ } });
+        const hp = wa.projectileHitEntity.subscribe((ev) => { try { if (ev.source?.id === who.id && ev.getEntityHit()?.entity?.typeId === 'minecraft:armor_stand') hits++; } catch { /* */ } });
+        cleanup.push(() => { try { wa.entitySpawn.unsubscribe(sp); wa.projectileHitEntity.unsubscribe(hp); } catch { /* */ } for (const e of dim.getEntities({ type: 'minecraft:armor_stand', location: tpos, maxDistance: 6 })) try { e.remove(); } catch { /* */ } for (const e of dim.getEntities({ type: 'minecraft:arrow', location: tpos, maxDistance: 30 })) try { e.remove(); } catch { /* */ } });
+        if (human) { pass = await humanTry(() => hits >= 1, 60); detail = `you loosed ${shots} arrows, ${hits} hit the target, ${secs()}s`; break; }
+        giveItem('bow', 1); giveItem('arrow', 16);
+        hold(sim, 'bow');
+        agent.testHold = true;
+        // What the Script API offers a simulated player for using an item over time (a bow is drawn, then released).
+        const api = new Set();
+        for (let o = Object.getPrototypeOf(sim); o && o !== Object.prototype; o = Object.getPrototypeOf(o)) for (const k of Object.getOwnPropertyNames(o)) if (/use|release|charge|draw|shoot|startUsing/i.test(k) && !/^(get|is|set)/.test(k)) api.add(k);
+        const notes = [];
+        const aim = { x: tpos.x, y: gy + 1.9, z: tpos.z };
+        for (let i = 0; i < 6 && hits < 1 && !agent.testSkipped; i++) {
+          await agent.motor.lookAt(aim, 6, 30).catch(() => {});
+          const item = packOf(sim)?.getItem(sim.selectedSlotIndex);
+          try { notes.push(`useItem ${/** @type {any} */ (sim).useItem(item)}`); } catch (e) { notes.push(`useItem threw ${e}`); }
+          await system.waitTicks(25);
+          for (const m of ['stopUsingItem', 'releaseUsingItem', 'completeUsingItem', 'releaseItem']) if (typeof (/** @type {any} */ (sim))[m] === 'function') { try { (/** @type {any} */ (sim))[m](); notes.push(m); } catch { /* */ } }
+          await system.waitTicks(15);
+        }
+        pass = hits >= 1;
+        detail = `${shots} arrows loosed, ${hits} hit the target in ${secs()}s${pass ? '' : `; tried ${[...new Set(notes)].join(', ')}; the API offers ${[...api].join(', ') || 'nothing for holding an item'}`}`;
+        break;
+      }
       case 'shield':
       case 'skel': {
         // A skeleton down a sealed lane (a stone roof: it doesn't burn). 'shield': the bot stands
@@ -1590,7 +1658,7 @@ async function runOne(agent, player, name, arg, human = false) {
     const at = String(e?.stack ?? '').split('\n').slice(1, 4).map((l) => l.trim()).join(' < ');
     detail = e?.constructor?.name === 'Aborted' ? `${detail ? `${detail}; ` : ''}interrupted: the task was replaced (mode ${agent.mode}${agent.lastTaskSwap ? `; ${agent.lastTaskSwap.from} -> ${agent.lastTaskSwap.to} ${Math.round((system.currentTick - agent.lastTaskSwap.tick) / 20)} s ago by ${agent.lastTaskSwap.where}` : ''})` : `${detail ? `${detail}; ` : ''}error: ${e}${at ? ` (${at})` : ''}`;
   } finally {
-    runSummary = rec.stop();
+    runSummary = rec.stop(); runTrace = rec.trace();
     for (const [id, n] of handed) { try { take(player, id, Math.min(n, invCountsOf(player)[id] ?? 0)); } catch { /* */ } }
     agent.testHold = false;
     for (const f of cleanup) f();
@@ -1601,27 +1669,31 @@ async function runOne(agent, player, name, arg, human = false) {
     // Put the ground back, then make sure the bot isn't left inside a restored block.
     cmd(`structure load agent_test_backup ${box.x1} ${box.y1} ${box.z1}`);
     cmd('structure delete agent_test_backup');
-    if (!human && player) { try { const tg = S.groundTop(x - 7, z); if (Number.isFinite(tg)) player.teleport({ x: x - 6.5, y: tg + 1, z: z + 0.5 }); } catch { /* */ } }
+    if (!human && player && name !== 'duel') { try { const tg = S.groundTop(x - 7, z); if (Number.isFinite(tg)) player.teleport({ x: x - 6.5, y: tg + 1, z: z + 0.5 }); } catch { /* */ } }
     try {
       const top = S.groundTop(Math.floor(sim.location.x), Math.floor(sim.location.z));
       if (Number.isFinite(top) && top >= Math.floor(sim.location.y)) sim.teleport({ x: sim.location.x, y: top + 1, z: sim.location.z });
     } catch {} // (the bot died in the test: it respawns on its own)
   }
-  if (runSummary) {
+  const keep = (who, summary, trace, ok) => {
+    if (!summary) return;
     const runs = (agent.memory.data.testRuns ??= {});
     const slot = (runs[name] ??= {});
-    slot[human ? 'human' : 'bot'] = { ...runSummary, pass, build: CONFIG.build, at: Date.now() };
+    slot[who] = { ...summary, pass: ok, build: CONFIG.build, at: Date.now() };
     agent.memory.save();
-    if (slot.human && slot.bot) { try { agent.say(`You vs me, ${name}: ${compare(name, slot.human, slot.bot)}`); } catch { /* */ } }
-    sendEvent({ type: 'test_run', name, who: human ? 'human' : 'bot', pass, summary: runSummary }).catch(() => {});
-  }
-  return report(agent, name, pass, detail);
+    sendEvent({ type: 'test_run', name, who, pass: ok, summary, trace }).catch(() => {});
+  };
+  keep(human ? 'human' : 'bot', runSummary, runTrace, pass);
+  for (const e of extraRuns) keep(e.who, e.summary, e.trace, e.pass);
+  const both = agent.memory.data.testRuns?.[name];
+  if (both?.human && both?.bot && (human || extraRuns.length)) { try { agent.say(`You vs me, ${compare(name, both.human, both.bot)}`); } catch { /* */ } }
+  return report(agent, name, pass, detail, human);
 }
 
-function report(agent, name, pass, detail) {
+function report(agent, name, pass, detail, human = false) {
   agent.say(`Test ${name}: ${pass ? 'PASS' : 'FAIL'} - ${detail}.`);
   if (!pass) { try { agent.flight.dump(`test ${name} failed: ${String(detail).slice(0, 120)}`); } catch { /* */ } }
-  sendEvent({ type: 'test_result', name, pass, detail, state: agent.snapshot() }).catch(() => {});
+  sendEvent({ type: 'test_result', name, pass, detail, who: human ? 'human' : 'bot', state: agent.snapshot() }).catch(() => {});
   return { name, pass, detail };
 }
 

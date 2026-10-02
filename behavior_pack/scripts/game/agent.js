@@ -1,6 +1,7 @@
 // One agent = one SimulatedPlayer + motor + task state.
 // Everything time-critical (movement, survival reflexes) runs locally every few ticks for free;
 // the brain is only consulted on events (commands, stuck, task done, combat reports).
+import { passRates } from '../core/testrun.js';
 import { system, world, EntityComponentTypes, Direction, EquipmentSlot, ItemStack } from '@minecraft/server';
 import { MotorController, EYE_HEIGHT } from '../core/motor.js';
 import { Calibration } from './calibrate.js';
@@ -1708,6 +1709,8 @@ export class Agent {
     return {
       name: this.sim.name, online: this.sim.isValid,
       tests: /** @type {any} */ (this).testProgress ?? null,
+      testOmit: this.memory.data.testOmit ?? [],
+      testRates: passRates(this.memory.data.testRuns, this.memory.data.testOmit ?? []),
       pos: { x: Math.floor(p.x), y: Math.floor(p.y), z: Math.floor(p.z) }, dim: this.dim.id.replace('minecraft:', ''),
       health: Math.round(this.health()), hunger: Math.round(hunger), air: Math.round(air * 100),
       mode: this.mode, task: this.task?.kind ?? 'idle', step: this.task?.kind === 'auto' ? this.autoStep ?? null : null,

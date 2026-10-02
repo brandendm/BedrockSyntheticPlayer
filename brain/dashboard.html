@@ -241,6 +241,12 @@
       <span class="muted" id="testsum"></span>
     </div>
     <div id="testbar" style="display:none;margin:6px 0"><div style="background:var(--line,#333);border-radius:4px;height:14px;overflow:hidden"><div id="testfill" style="height:100%;width:0;background:#4a9"></div></div><div class="muted" id="testbartxt"></div></div>
+    <div class="muted" id="testrates" style="margin:6px 0"></div>
+    <div class="muted" style="margin:4px 0">Left out of "test all" (click to toggle): <span id="testomit"></span></div>
+    <details style="margin:6px 0"><summary>Paths: you vs the bot</summary>
+      <div class="row"><select id="tracesel"></select><span class="muted"><span style="color:#4af">■</span> you <span style="color:#fa4">■</span> bot · dots: placed (filled) / broken (ring) · left: from above (x,z), right: side (distance east, height)</span></div>
+      <div class="row"><canvas id="trtop" width="360" height="300" style="background:#0003;border-radius:4px"></canvas><canvas id="trside" width="360" height="300" style="background:#0003;border-radius:4px"></canvas></div>
+    </details>
     <table class="tests"><thead><tr><th>Test</th><th>Result</th><th>Secs</th><th>Detail</th></tr></thead><tbody id="testrows"></tbody></table>
   </section>
 
@@ -373,6 +379,17 @@ function render(d) {
   $('conn').textContent = !s.online ? 'bot not spawned' : stale ? `no update for ${Math.round(age)}s` : 'live';
   try { renderToggles(s); } catch {}
   try {
+    const r = s.testRates, om = new Set(s.testOmit || []);
+    const f = (x) => (x && x.pct !== null ? `${x.pct}% (${x.pass}/${x.total})` : 'no runs');
+    if (r) $('testrates').textContent = `Pass rate (last run of each test): you ${f(r.human)} · bot ${f(r.bot)}`;
+    const key = [...om].join(',');
+    if ($('testomit').dataset.k !== key) {
+      $('testomit').dataset.k = key;
+      $('testomit').innerHTML = TESTS.map((t) => `<a href="#" data-omit="${t}" style="margin-right:6px;${om.has(t) ? 'text-decoration:line-through;opacity:.5' : ''}">${t}</a>`).join('');
+      $('testomit').querySelectorAll('a').forEach((a) => { a.onclick = (e) => { e.preventDefault(); const t = a.dataset.omit; send(`test ${om.has(t) ? 'include' : 'omit'} ${t}`); }; });
+    }
+  } catch {}
+  try {
     const tp = s.tests, bar = $('testbar');
     bar.style.display = tp && tp.running ? '' : 'none';
     if (tp && tp.running) { $('testfill').style.width = `${Math.round((tp.done / Math.max(1, tp.total)) * 100)}%`; const left = tp.deadline ? Math.max(0, Math.round((tp.deadline - Date.now()) / 1000)) : null; $('testbartxt').textContent = `${tp.done}/${tp.total} tests done${tp.current ? `, now ${tp.current}` : ''}${tp.human ? ' (you)' : ''}${left !== null ? ` · ${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')} left of ${tp.limitS}s` : ''}`; }
@@ -490,9 +507,40 @@ $('cmd').addEventListener('keydown', (e) => {
 });
 
 // ---------------------------------------------------------------- tests
-const TESTS = ['roof', 'tower', 'hole', 'pit', 'trap', 'climb', 'ledge', 'ladder', 'husk', 'creeper', 'sheep', 'pen', 'smelt', 'smeltlogs', 'shelter', 'house', 'resume', 'ghostlog', 'quarry', 'dark', 'replant', 'litter', 'trader', 'iron', 'farm', 'equip', 'water', 'bucketfarm', 'treetop', 'corner', 'leap', 'bridge', 'fall', 'vines', 'stairgap', 'loot', 'shield', 'skel', 'rest', 'nights', 'calibrate', 'portal', 'horse', 'leadboat', 'leadsling'];
+const TESTS = ['roof', 'tower', 'hole', 'pit', 'trap', 'climb', 'ledge', 'ladder', 'husk', 'creeper', 'sheep', 'pen', 'smelt', 'smeltlogs', 'shelter', 'house', 'resume', 'ghostlog', 'quarry', 'dark', 'replant', 'litter', 'trader', 'iron', 'farm', 'equip', 'water', 'bucketfarm', 'treetop', 'corner', 'leap', 'bridge', 'fall', 'vines', 'stairgap', 'loot', 'shield', 'skel', 'rest', 'nights', 'calibrate', 'portal', 'horse', 'leadboat', 'leadsling', 'bow', 'duel'];
 $('test2').innerHTML = TESTS.map((t) => `<option>${t}</option>`).join('');
 $('runtest2').onclick = () => { const a = $('testarg').value.trim(); send(`test ${$('test2').value}${a ? ' ' + a : ''}${$('testme').checked ? ' me' : ''}`); };
+let RUNS = {};
+function setRuns(r) {
+  RUNS = r;
+  const sel = $('tracesel'), cur = sel.value, names = Object.keys(r).filter((n) => r[n] && (r[n].human || r[n].bot));
+  const key = names.map((n) => n + (r[n].human ? 'h' : '') + (r[n].bot ? 'b' : '')).join();
+  if (sel.dataset.k !== key) { sel.dataset.k = key; sel.innerHTML = names.map((n) => `<option>${n}</option>`).join(''); if (names.includes(cur)) sel.value = cur; }
+  drawRuns();
+}
+function drawRuns() {
+  const n = $('tracesel').value, r = RUNS[n] || {};
+  const runs = [['human', '#4af'], ['bot', '#fa4']].map(([w, c]) => ({ w, c, t: r[w] && r[w].trace })).filter((x) => x.t && x.t.path && x.t.path.length);
+  const top = $('trtop').getContext('2d'), side = $('trside').getContext('2d');
+  for (const g of [top, side]) g.clearRect(0, 0, 360, 300);
+  if (!runs.length) return;
+  const pts = runs.flatMap((x) => x.t.path), x0 = pts[0][1], z0 = pts[0][3], y0 = pts[0][2];
+  const ex = pts.map((p) => p[1] - x0), ez = pts.map((p) => p[3] - z0), ey = pts.map((p) => p[2] - y0);
+  const rng = (a) => [Math.min(...a, 0), Math.max(...a, 1)];
+  const [xa, xb] = rng(ex), [za, zb] = rng(ez), [ya, yb] = rng(ey);
+  const sc = Math.min(330 / Math.max(xb - xa, zb - za, 4), 330 / Math.max(xb - xa, yb - ya, 4));
+  const T = (p) => [15 + (p[1] - x0 - xa) * sc, 15 + (p[3] - z0 - za) * sc], S = (p) => [15 + (p[1] - x0 - xa) * sc, 285 - (p[2] - y0 - ya) * sc];
+  for (const x of runs) {
+    for (const [g, f] of [[top, T], [side, S]]) {
+      g.strokeStyle = x.c; g.lineWidth = 2; g.beginPath();
+      x.t.path.forEach((p, i) => { const [a, b] = f(p); i ? g.lineTo(a, b) : g.moveTo(a, b); });
+      g.stroke();
+      const e = f(x.t.path[x.t.path.length - 1]); g.fillStyle = x.c; g.fillRect(e[0] - 4, e[1] - 4, 8, 8);
+      for (const b of x.t.blocks || []) { const q = f([0, b[2], b[3], b[4]]); g.strokeStyle = g.fillStyle = x.c; g.beginPath(); g.arc(q[0], q[1], 2.5, 0, 7); b[1] === 'p' ? g.fill() : g.stroke(); }
+    }
+  }
+}
+$('tracesel').onchange = drawRuns;
 async function loadTests() {
   try {
     const d = await (await fetch('/api/tests', { cache: 'no-store' })).json();
@@ -502,6 +550,7 @@ async function loadTests() {
     // Failures first, then passes (slowest first); the ones not run yet are one line, not 30 rows.
     const ran = names.filter((n) => r[n]).sort((a, b) => (r[a].pass - r[b].pass) || ((r[b].secs ?? 0) - (r[a].secs ?? 0)));
     const notRun = names.filter((n) => !r[n]);
+    try { setRuns(d.runs || {}); } catch {}
     $('testrows').innerHTML = ran.map((n) => {
       const x = r[n];
       return `<tr><td>${n}</td><td class="${x.pass ? 'pass' : 'fail'}">${x.pass ? 'PASS' : 'FAIL'}</td><td>${x.secs ?? ''}</td><td class="d">${esc(x.detail ?? '')}</td></tr>`;

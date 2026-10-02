@@ -223,6 +223,11 @@ def remember(evt: dict) -> None:
         if kind == "flight":
             _flights.append({"t": now, "why": str(evt.get("why", ""))[:300], "build": evt.get("build"),
                              "report": [str(x)[:400] for x in (evt.get("report") or [])][:80], "pos": (evt.get("state") or {}).get("pos")})
+        elif kind == "test_run":
+            _tests.setdefault("runs", {}).setdefault(str(evt.get("name")), {})[str(evt.get("who"))] = {
+                "t": now, "pass": bool(evt.get("pass")), "summary": evt.get("summary"), "trace": evt.get("trace")}
+        elif kind == "test_result" and evt.get("who") == "human":
+            pass  # the player's own run: kept with the runs, not as the bot's result
         elif kind == "test_result":
             _tests["results"][str(evt.get("name"))] = {"t": now, "pass": bool(evt.get("pass")), "detail": str(evt.get("detail", ""))[:400]}
         elif kind == "test_batch":
@@ -243,8 +248,8 @@ def append_log(evt: dict) -> None:
     with _lock:
         # (The dashboard's Recent list gets a light copy: the full flight report and batch go to
         # their own endpoints, not into the status poll every second.)
-        _recent.append({k: v for k, v in rec.items() if k not in ("report", "results")})
-    names = ["events.jsonl"] + (["tests.jsonl"] if evt.get("type") in ("test_result", "test_batch") else []) + (["flight.jsonl"] if evt.get("type") == "flight" else [])
+        _recent.append({k: v for k, v in rec.items() if k not in ("report", "results", "trace")})
+    names = ["events.jsonl"] + (["tests.jsonl"] if evt.get("type") in ("test_result", "test_batch", "test_run") else []) + (["flight.jsonl"] if evt.get("type") == "flight" else [])
     for name in names:
         f = LOG_DIR / name
         if f.exists() and f.stat().st_size > 2_000_000:
@@ -418,7 +423,7 @@ def make_handler(engine: DecisionEngine, key: str | None = None):
                     return self._send(200, {"reports": list(_flights)})
             if self.path == "/api/tests":
                 with _lock:
-                    return self._send(200, {"batch": _tests["batch"], "results": dict(_tests["results"])})
+                    return self._send(200, {"batch": _tests["batch"], "results": dict(_tests["results"]), "runs": dict(_tests.get("runs", {}))})
             if self.path == "/profile":
                 from . import learn
                 return self._send(200, learn.for_game(get_profile()))
@@ -522,7 +527,7 @@ def make_handler(engine: DecisionEngine, key: str | None = None):
             if evt.get("type") == "learned_house":
                 store_house(evt)
                 return self._send(200, {"actions": []})
-            if evt.get("type") in ("log", "test_result", "test_batch", "flight"):
+            if evt.get("type") in ("log", "test_result", "test_batch", "test_run", "flight"):
                 # What the bot said and test results, kept on disk so they can be read later
                 # without watching the server window. No decisions, no API calls.
                 append_log(evt)

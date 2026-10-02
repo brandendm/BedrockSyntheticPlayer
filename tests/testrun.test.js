@@ -30,3 +30,17 @@ test('two runs side by side say what differs', () => {
   assert.match(c, /broke 6 more blocks/);
   assert.equal(compare('x', null, bot), null);
 });
+
+import { downsample, passRates } from '../behavior_pack/scripts/core/testrun.js';
+test('a trace is downsampled and keeps the end', () => {
+  const t = downsample(walk(1000, 1), 100);
+  assert.ok(t.length <= 102);
+  assert.deepEqual(t[t.length - 1].slice(1, 2), [999]);
+  assert.deepEqual(downsample([]), []);
+});
+test('pass rates per side, omitted and skipped tests left out', () => {
+  const r = passRates({ a: { human: { pass: true }, bot: { pass: false } }, b: { bot: { pass: true } }, c: { bot: { pass: true } }, d: { human: { pass: false, skipped: true } } }, ['c']);
+  assert.deepEqual(r.bot, { pass: 1, total: 2, pct: 50 });
+  assert.deepEqual(r.human, { pass: 1, total: 1, pct: 100 });
+  assert.equal(passRates({}).bot.pct, null);
+});

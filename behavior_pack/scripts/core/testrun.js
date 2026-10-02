@@ -45,3 +45,33 @@ export function compare(name, human, bot) {
   if (human.secs > bot.secs * 1.3) notes.push('you were slower');
   return `${name}: ${line('you', human)} | ${line('bot', bot)}${notes.length ? ` | ${notes.join('; ')}` : ''}`;
 }
+
+/** A path kept for drawing: at most `max` points [seconds since the start, x, y, z], always including the last. */
+export function downsample(samples, max = 240) {
+  if (!samples?.length) return [];
+  const t0 = samples[0].t, step = Math.max(1, Math.ceil(samples.length / max));
+  const out = [];
+  for (let i = 0; i < samples.length; i += step) { const s = samples[i]; out.push([r1((s.t - t0) / 20), r1(s.x), r1(s.y), r1(s.z)]); }
+  const l = samples[samples.length - 1];
+  if (out[out.length - 1][0] !== r1((l.t - t0) / 20)) out.push([r1((l.t - t0) / 20), r1(l.x), r1(l.y), r1(l.z)]);
+  return out;
+}
+
+/**
+ * Pass rate of each side over the last run of each test: { human: {pass, total, pct}, bot: {...} }.
+ * runs: { <test>: { human?: {pass}, bot?: {pass} } }; `omit` tests are left out.
+ */
+export function passRates(runs, omit = []) {
+  const skip = new Set(omit);
+  const out = { human: { pass: 0, total: 0, pct: null }, bot: { pass: 0, total: 0, pct: null } };
+  for (const [name, r] of Object.entries(runs ?? {})) {
+    if (skip.has(name)) continue;
+    for (const who of /** @type {const} */ (['human', 'bot'])) {
+      if (!r?.[who] || r[who].skipped) continue;
+      out[who].total++;
+      if (r[who].pass) out[who].pass++;
+    }
+  }
+  for (const who of /** @type {const} */ (['human', 'bot'])) out[who].pct = out[who].total ? Math.round((out[who].pass / out[who].total) * 100) : null;
+  return out;
+}
