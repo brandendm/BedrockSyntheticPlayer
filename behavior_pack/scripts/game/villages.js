@@ -183,10 +183,10 @@ export class Villages {
   }
 
   /** The village to go to for `want`, or null. */
-  pick(want) {
+  pick(want, maxDist = 220) {
     let night = false;
     try { const t = world.getTimeOfDay(); night = t >= 12542 && t <= 23460; } catch {}
-    return pickVillage(this.known, this.a.sim.location, want, { dim: this.dimId, night });
+    return pickVillage(this.known, this.a.sim.location, want, { dim: this.dimId, night, maxDist });
   }
 
   /**
@@ -201,13 +201,16 @@ export class Villages {
       trace(`village: going to ${v.x} ${v.y} ${v.z} (${v.dist ?? '?'} away) for ${want}`);
       this.a.sayOnce('village-go', 'Heading for the village I saw.', 60000);
       await S.packUp?.(gen);
-      await S.travelToward(gen, { x: v.x, y: v.y, z: v.z }, 6);
+      // (Legs enough for the distance: 6 fixed ones, about 40 blocks each, ended a 430-block walk 200 blocks short, "didn't get close", and the village
+      // was written off as visited for 15 minutes.)
+      const far0 = Math.hypot(this.a.sim.location.x - v.x, this.a.sim.location.z - v.z);
+      await S.travelToward(gen, { x: v.x, y: v.y, z: v.z }, Math.max(6, Math.ceil(far0 / 40) + 3));
       S.check(gen);
       const near = Math.hypot(this.a.sim.location.x - v.x, this.a.sim.location.z - v.z);
       const seen = this.scanEntities();
       if (seen?.raiders) { this.mark(v, { dangerAt: Date.now() }); trace(`village: ${seen.raiders} raider(s) in sight, leaving it alone`); this.a.say('Raiders at the village: staying away.'); return 'raiders'; }
-      this.mark(v, { visited: Date.now() });
       if (near > 60) return `didn't get close (${Math.round(near)} away)`;
+      this.mark(v, { visited: Date.now() });
       // A look round: what's here (beds, chests, workstations) feeds back as evidence too.
       const blocks = await S.scan((id) => kindOfBlock(id) !== null, { radius: 28, below: 6, above: 8, limit: 300, background: true });
       this.feed(blocks.map((b) => ({ kind: kindOfBlock(b.id), x: b.x, y: b.y, z: b.z })));

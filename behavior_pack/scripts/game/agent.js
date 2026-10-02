@@ -1101,11 +1101,13 @@ export class Agent {
     // Go to a village we know of, else toward the nearest biome villages generate in (the
     // world seed's biome search), eyes open: the lookout recognises one from afar (game/villages.js).
     const V = this.villages;
-    const vil = V.pick('bed') ?? V.pick('food');
+    // (Any village known, not only one within 220 blocks: the u197 run scouted one 432 away, did not count it as worth going to, and walked the long way
+    // round through ring after ring of searching for five minutes.)
+    const vil = V.pick('bed', 900) ?? V.pick('food', 900);
     if (vil) {
       const r = await V.visit(gen, vil, 'bed');
       this.say(`Village: ${r}.`, true);
-      if (/raiders|didn't get close/.test(r)) this.villageHoldUntil = Date.now() + 600000;
+      if (/raiders/.test(r)) this.villageHoldUntil = Date.now() + 600000;
       return;
     }
     // The game's own answer first (the brain types /locate into the server's console: exact, a village's real place), the in-game seed search if not.
@@ -1127,7 +1129,8 @@ export class Agent {
     // From where we are: look at this point and the next three on the ring (a loaded circle at each, in turn) before walking to any.
     const ringAt = (k) => { const Rk = 48 * (1 + Math.floor(k / 6)), ak = (k % 6) * Math.PI / 3 + (Math.floor(k / 6) % 2 ? Math.PI / 6 : 0); return k === 0 ? { x: b.pos.x, z: b.pos.z } : { x: this.villageBase.x + Math.cos(ak) * Rk, z: this.villageBase.z + Math.sin(ak) * Rk }; };
     const scouted = this.villageScouted;
-    for (let k = ring; k < ring + 4 && k < 18; k++) {
+    // (The game's own answer is the place itself: only the one point is looked at, not rings of far scouting areas that would not load for 12 s each.)
+    for (let k = ring; k < ring + (b.id === 'village' ? 1 : 4) && k < 18; k++) {
       const pt = ringAt(k), key = `${Math.round(pt.x / 40)},${Math.round(pt.z / 40)}`;
       if (scouted.has(key)) continue;
       scouted.add(key);
@@ -2151,7 +2154,7 @@ export class Agent {
       goals: this.toggles(),
       armed: SWORD_OK.test(Object.keys(inv).join(' ')),
       health: this.health(),
-      villageKnown: !!(this.villages.pick('bed') ?? this.villages.pick('food')),
+      villageKnown: !!(this.villages.pick('bed', 900) ?? this.villages.pick('food', 900)),
       villageVisited: (this.memory.data.villages ?? []).some((v) => v.visited),
       villageReady: Date.now() >= (this.villageHoldUntil ?? 0),
       villageHunting: !!this.villageBase,
