@@ -237,11 +237,13 @@
       <input id="testarg" placeholder="arg" style="max-width:80px;min-width:60px">
       <button id="runtest2">Run one</button>
       <button data-cmd="test skip">Skip current test</button>
+      <button data-cmd="test stop" title="Ends the whole batch now; what was collected is kept">Stop tests</button>
       <label class="muted"><input type="checkbox" id="testme"> I do it (bot stands by, then we compare)</label>
       <span class="muted" id="testsum"></span>
     </div>
     <div id="testbar" style="display:none;margin:6px 0"><div style="background:var(--line,#333);border-radius:4px;height:14px;overflow:hidden"><div id="testfill" style="height:100%;width:0;background:#4a9"></div></div><div class="muted" id="testbartxt"></div></div>
     <div class="muted" id="testrates" style="margin:6px 0"></div>
+    <details open style="margin:6px 0"><summary>Pass rates: you vs the bot (every run, saved with the world)</summary><table class="tests" id="tchart" style="max-width:560px"></table></details>
     <div class="muted" style="margin:4px 0">Left out of "test all" (click to toggle): <span id="testomit"></span></div>
     <details style="margin:6px 0"><summary>Paths: you vs the bot</summary>
       <div class="row"><select id="tracesel"></select><span class="muted"><span style="color:#4af">■</span> you <span style="color:#fa4">■</span> bot · dots: placed (filled) / broken (ring) · left: from above (x,z), right: side (distance east, height)</span></div>
@@ -378,6 +380,16 @@ function render(d) {
   dot.className = 'dot ' + (!s.online ? 'off' : stale ? 'stale' : 'on');
   $('conn').textContent = !s.online ? 'bot not spawned' : stale ? `no update for ${Math.round(age)}s` : 'live';
   try { renderToggles(s); } catch {}
+  try {
+    const st = s.testStats || {}, av = s.testRates && s.testRates.avg;
+    const col = (p) => (p === null || p === undefined ? '#888' : p >= 80 ? '#4c4' : p >= 50 ? '#ec4' : '#e55');
+    const cell = (x) => { if (!x || !x.n) return '<td style="color:#888">–</td>'; const p = Math.round((x.p / x.n) * 100); return `<td style="color:${col(p)}">${x.p}/${x.n} · ${p}%${x.last ? (x.last.pass ? ' <span style="color:#4c4">✓</span>' : ' <span style="color:#e55">✗</span>') : ''}</td>`; };
+    const tot = (x) => (x && x.pct !== null ? `<td style="color:${col(x.pct)}"><b>${x.pass}/${x.total} · ${x.pct}%</b></td>` : '<td style="color:#888">–</td>');
+    const names = Object.keys(st).sort();
+    $('tchart').innerHTML = '<thead><tr><th>Test</th><th>You (passes/runs)</th><th>Bot (passes/runs)</th></tr></thead><tbody>'
+      + names.map((n) => `<tr><td>${n}</td>${cell(st[n].human)}${cell(st[n].bot)}</tr>`).join('')
+      + `<tr><td><b>Average pass rate</b></td>${tot(av && av.human)}${tot(av && av.bot)}</tr></tbody>`;
+  } catch {}
   try {
     const r = s.testRates, om = new Set(s.testOmit || []);
     const f = (x) => (x && x.pct !== null ? `${x.pct}% (${x.pass}/${x.total})` : 'no runs');

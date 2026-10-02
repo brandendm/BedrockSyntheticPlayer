@@ -44,3 +44,14 @@ test('pass rates per side, omitted and skipped tests left out', () => {
   assert.deepEqual(r.human, { pass: 1, total: 1, pct: 100 });
   assert.equal(passRates({}).bot.pct, null);
 });
+
+import { addStat, avgRates } from '../behavior_pack/scripts/core/testrun.js';
+test('lifetime stats and the average pass rate', () => {
+  const st = {};
+  addStat(st, 'tower', 'bot', true); addStat(st, 'tower', 'bot', false); addStat(st, 'tower', 'human', true); addStat(st, 'hole', 'bot', true);
+  assert.deepEqual(st.tower.bot, { p: 1, n: 2, last: { pass: false, at: 0, build: '' } });
+  const a = avgRates(st);
+  assert.deepEqual(a.bot, { pass: 2, total: 3, pct: 67 });
+  assert.equal(a.human.pct, 100);
+  assert.equal(avgRates(st, ['tower']).human.pct, null);
+});

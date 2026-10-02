@@ -57,7 +57,7 @@ import { blueprint, furnishings } from '../core/house.js';
 import { invCounts as invCountsOf, hold, take, container as packOf } from './inventory.js';
 import { TestRecorder } from './testrun.js';
 import { runDuel } from './duel.js';
-import { passRates } from '../core/testrun.js';
+import { passRates, addStat } from '../core/testrun.js';
 import { compare } from '../core/testrun.js';
 
 const NAMES = ['roof', 'tower', 'hole', 'pit', 'trap', 'climb', 'ledge', 'ladder', 'husk', 'creeper', 'sheep', 'pen', 'smelt', 'smeltlogs', 'shelter', 'house', 'resume', 'ghostlog', 'quarry', 'dark', 'replant', 'litter', 'trader', 'iron', 'farm', 'equip', 'water', 'bucketfarm', 'treetop', 'corner', 'leap', 'bridge', 'fall', 'vines', 'stairgap', 'loot', 'shield', 'skel', 'rest', 'nights', 'calibrate', 'portal', 'horse', 'leadboat', 'leadsling', 'bow', 'duel'];
@@ -104,6 +104,12 @@ const humanHelp = (name) => HUMAN_HELP[name] ?? null;
  * long each took (slowest first) and what each failed on. A test over CAP_S is cut off.
  */
 export async function runTests(agent, player, args) {
+  if (args[0] === 'stop') {
+    if (!running) return agent.say('No test is running.');
+    agent.testAbort = true; agent.testSkipped = true;
+    try { agent.newTask(null); agent.motor.stop(); } catch { /* */ }
+    return agent.say('Stopping the tests; what was collected so far is kept.');
+  }
   if (args[0] === 'skip') {
     if (!running) return agent.say('No test is running.');
     agent.testSkipped = true;
@@ -153,11 +159,13 @@ export async function runTests(agent, player, args) {
   const tAll = system.currentTick;
   const home0 = player ? { x: player.location.x, y: player.location.y, z: player.location.z } : null;
   // Progress (the dashboard's bar), and the world kept calm: peaceful for everything but the fights, which get back what it was.
+  agent.testAbort = false;
   agent.testProgress = { running: true, done: 0, total: list.length, current: null, human, startedAt: Date.now() };
   const diff0 = (() => { try { return String(world.getDifficulty()).toLowerCase(); } catch { return 'normal'; } })();
   const setDiff = (d) => { try { world.getDimension('overworld').runCommand(`difficulty ${d}`); } catch { /* */ } };
   try {
     for (const n of list) {
+      if (agent.testAbort) break;
       const t0 = system.currentTick;
       agent.testProgress.current = n;
       agent.testSkipped = false;
@@ -179,7 +187,7 @@ export async function runTests(agent, player, args) {
   } finally {
     setDiff(diff0);
     agent.testProgress = { ...agent.testProgress, running: false, current: null, deadline: null };
-    agent.testSkipped = false;
+    agent.testSkipped = false; agent.testAbort = false;
     try { if (player && home0) player.teleport(home0); } catch { /* */ }
     agent.autoEnabled = autoWas;
     running = false;
@@ -1559,6 +1567,12 @@ async function runOne(agent, player, name, arg, human = false) {
         const gen = agent.newTask({ kind: 'test' });
         const byRise = {}, peaks = {}, rows = [];
         let snapAt = null;
+        // Saved even if the test is stopped half way: what was found so far.
+        cleanup.push(() => {
+          if (!Object.keys(byRise).length) return;
+          agent.memory.data.leadCal = { ...(agent.memory.data.leadCal ?? {}), sling: { byRise, peaks, snapAt, guard: snapAt ? Math.max(5, snapAt - 0.8) : 11, at: Date.now(), build: CONFIG.build, partial: Object.keys(byRise).length < 3 } };
+          agent.memory.save();
+        });
         for (const rise of [1, 2, 3]) {
           cmd(`fill ${x} ${gy + 1} ${z - 2} ${x + 13} ${gy + rise} ${z + 2} stone`);
           const topY = gy + rise + 1;
@@ -1599,17 +1613,21 @@ async function runOne(agent, player, name, arg, human = false) {
         cmd(`fill ${x + 2} ${gy + 2} ${z - 3} ${x + 8} ${gy + 2} ${z + 3} stone`);         // up another at x+2
         for (const [bx, bz] of [[3, 1], [5, -1], [6, 2], [4, -2], [7, 0]]) cmd(`setblock ${x + bx} ${gy + 3} ${z + bz} stone`); // rubble on it
         cmd(`fill ${x + 11} ${gy} ${z - 3} ${x + 11} ${gy + 1} ${z + 3} air`);             // a trench at x+11
+        // The boats start at the west end, inside the backed-up box: solid grass under them and air round (it spawned in terrain before).
+        cmd(`fill ${x - 8} ${gy} ${z - 3} ${x - 6} ${gy} ${z + 4} grass_block`);
+        cmd(`fill ${x - 8} ${gy + 1} ${z - 3} ${x - 6} ${gy + 4} ${z + 4} air`);
         const goal = { x: x + 12.5, y: gy + 2, z: z + 0.5 };
         giveItem('lead', 3); giveItem('saddle', 1);
         const gen = agent.newTask({ kind: 'test' });
         const cal = { legs: {} };
+        cleanup.push(() => { if (Object.keys(cal.legs).length) { agent.memory.data.leadCal = { ...(agent.memory.data.leadCal ?? {}), ...cal, at: Date.now(), build: CONFIG.build, partial: true }; agent.memory.save(); } });
         const lines = [];
         let walkOk = false;
         // On foot.
-        tp(x - 7, gy + 1, z);
+        tp(x - 6, gy + 1, z);
         await system.waitTicks(10);
         {
-          const boat = dim.spawnEntity('minecraft:boat', { x: x - 9.5, y: gy + 1, z: z + 0.5 });
+          const boat = dim.spawnEntity('minecraft:boat', { x: x - 7.5, y: gy + 1, z: z + 0.5 });
           cleanup.push(() => { try { boat.remove(); } catch {} });
           await system.waitTicks(10);
           const via = leashTo(sim, boat);
@@ -1621,7 +1639,7 @@ async function runOne(agent, player, name, arg, human = false) {
           try { boat.remove(); } catch {}
         }
         // On a horse.
-        tp(x - 7, gy + 1, z);
+        tp(x - 6, gy + 1, z);
         const horse = await spawnAdultHorse(dim, { x: x - 5.5, y: gy + 1, z: z - 2.5 });
         let horseOk = false;
         if (!horse) lines.push("horse leg: couldn't get an adult horse (babies can't be ridden)");
@@ -1631,7 +1649,7 @@ async function runOne(agent, player, name, arg, human = false) {
           const r = await horseReady(agent, gen, horse, secs);
           if (!r.ok) lines.push(`horse leg: ${r.detail}`);
           else {
-            const boat = dim.spawnEntity('minecraft:boat', { x: x - 9.5, y: gy + 1, z: z + 0.5 });
+            const boat = dim.spawnEntity('minecraft:boat', { x: x - 7.5, y: gy + 1, z: z + 0.5 });
             cleanup.push(() => { try { boat.remove(); } catch {} });
             await system.waitTicks(10);
             const ride = await rideAcross(agent, gen, horse, 0);
@@ -1679,9 +1697,12 @@ async function runOne(agent, player, name, arg, human = false) {
     if (!summary) return;
     const runs = (agent.memory.data.testRuns ??= {});
     const slot = (runs[name] ??= {});
-    slot[who] = { ...summary, pass: ok, build: CONFIG.build, at: Date.now() };
+    const stopped = !!agent.testSkipped;
+    slot[who] = { ...summary, pass: ok, build: CONFIG.build, at: Date.now(), ...(stopped ? { skipped: true } : {}) };
+    // The lifetime pass/fail count, saved with the world right away; a skipped or stopped run is not counted.
+    if (!stopped) addStat((agent.memory.data.testStats ??= {}), name, who, ok, Date.now(), CONFIG.build);
     agent.memory.save();
-    sendEvent({ type: 'test_run', name, who, pass: ok, summary, trace }).catch(() => {});
+    sendEvent({ type: 'test_run', name, who, pass: ok, stopped, summary, trace }).catch(() => {});
   };
   keep(human ? 'human' : 'bot', runSummary, runTrace, pass);
   for (const e of extraRuns) keep(e.who, e.summary, e.trace, e.pass);

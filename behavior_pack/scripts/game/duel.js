@@ -1,12 +1,13 @@
-// `!bot test duel`: you and the bot fight with the same weapon and a shield, a few rounds (stone sword, iron axe, iron sword).
+// `!bot test duel`: you and the bot fight with the same weapon and a shield, a few rounds (stone sword, iron axe, iron sword, iron spear).
 // A round ends at 11 hp left or after 45 s; both are healed between rounds. Hits and damage are counted per side, and both of you
 // are recorded (the bot as `bot`, you as `human`) so how you moved and swung can be set against how the bot did.
 import { system, world, ItemStack, EquipmentSlot } from '@minecraft/server';
 import { TestRecorder } from './testrun.js';
 import { container } from './inventory.js';
+import { weaponReach } from '../core/tactics.js';
 
 /** @type {Array<[string, number]>} */
-const ROUNDS = [['stone_sword', 12], ['iron_axe', 20], ['iron_sword', 12]];
+const ROUNDS = [['stone_sword', 12], ['iron_axe', 20], ['iron_sword', 12], ['iron_spear', 0]];
 const ROUND_S = 45, END_HP = 11;
 
 const hpOf = (e) => { try { return e.getComponent('minecraft:health')?.currentValue ?? 0; } catch { return 0; } };
@@ -44,7 +45,9 @@ export async function runDuel(agent, player, { cmd, x, gy, z, extraRuns, secs })
     cmd(`fill ${x - 6} ${gy + 1} ${z - 7} ${x + 12} ${gy + 6} ${z + 7} air`);
     agent.say('Duel: you and the bot, same weapon and shield each round. A round ends at 5 hearts left or 45 s. `!bot test skip` to stop. Raise your shield with right-click held.');
     recBot.start(); recHuman.start();
-    for (const [weapon, every] of ROUNDS) {
+    for (const [weapon, every0] of ROUNDS) {
+      const wr = weaponReach(weapon), every = every0 || wr.cooldown;
+      const far = Math.max(2.6, wr.reach - 0.25), near = Math.max(1.8, wr.minReach + 0.25);
       if (agent.testSkipped) break;
       const give = (pack, ent) => { try { pack?.addItem(new ItemStack(`minecraft:${weapon}`, 1)); } catch { /* */ } };
       give(pk, player); give(simPk, sim);
@@ -77,12 +80,12 @@ export async function runDuel(agent, player, { cmd, x, gy, z, extraRuns, secs })
         if (t >= nextStrafe) { strafe = -strafe; nextStrafe = t + 20 + Math.floor(Math.random() * 20); }
         // Close in, hold at sword range and circle; shield up between swings, down just before the next.
         const dx = (you.x - me.x) / (d || 1), dz = (you.z - me.z) / (d || 1);
-        if (d > 3.2) agent.body.move(dx, dz, 1);
-        else if (d < 1.8) agent.body.move(-dx, -dz, 1);
+        if (d > far) agent.body.move(dx, dz, 1);
+        else if (d < near) agent.body.move(-dx, -dz, 1);
         else agent.body.move(-dz * strafe, dx * strafe, 0.8);
         const ready = t - lastHit >= every;
         agent.setBlocking(!ready && d < 5);
-        if (ready && d <= 3.1) { try { sim.attackEntity(player); } catch { /* */ } lastHit = t; }
+        if (ready && d <= wr.reach - 0.1 && d >= wr.minReach) { try { sim.attackEntity(player); } catch { /* */ } lastHit = t; }
       }
       agent.setBlocking(false);
       agent.body.stop?.();

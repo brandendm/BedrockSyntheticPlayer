@@ -75,3 +75,23 @@ export function passRates(runs, omit = []) {
   for (const who of /** @type {const} */ (['human', 'bot'])) out[who].pct = out[who].total ? Math.round((out[who].pass / out[who].total) * 100) : null;
   return out;
 }
+
+/** Count one finished run into the lifetime stats: { <test>: { human?: {p, n, last}, bot?: {...} } }. Returns the stats. */
+export function addStat(stats, name, who, pass, at = 0, build = '') {
+  const s = ((stats[name] ??= {})[who] ??= { p: 0, n: 0, last: null });
+  s.n++; if (pass) s.p++;
+  s.last = { pass: !!pass, at, build };
+  return stats;
+}
+
+/** Average pass rate over every counted run each side ever did: { human: {pass, total, pct}, bot: {...} }; omitted tests left out. */
+export function avgRates(stats, omit = []) {
+  const skip = new Set(omit);
+  const out = { human: { pass: 0, total: 0, pct: null }, bot: { pass: 0, total: 0, pct: null } };
+  for (const [name, r] of Object.entries(stats ?? {})) {
+    if (skip.has(name)) continue;
+    for (const who of /** @type {const} */ (['human', 'bot'])) if (r?.[who]) { out[who].pass += r[who].p; out[who].total += r[who].n; }
+  }
+  for (const who of /** @type {const} */ (['human', 'bot'])) out[who].pct = out[who].total ? Math.round((out[who].pass / out[who].total) * 100) : null;
+  return out;
+}
