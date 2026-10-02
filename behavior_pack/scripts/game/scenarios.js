@@ -57,6 +57,7 @@ import { blueprint, furnishings } from '../core/house.js';
 import { invCounts as invCountsOf, hold, take, container as packOf } from './inventory.js';
 import { TestRecorder } from './testrun.js';
 import { runDuel } from './duel.js';
+import { getPlan } from '../core/learnhouse.js';
 import { passRates, addStat } from '../core/testrun.js';
 import { compare } from '../core/testrun.js';
 
@@ -79,7 +80,7 @@ const NIGHT = new Set(['shelter', 'house', 'resume', 'nights', 'rest', 'dark', '
 const NATURAL = new Set(['water', 'bucketfarm', 'treetop', 'vines', 'ghostlog', 'nights', 'calibrate']);
 const COMBAT = new Set(['husk', 'creeper', 'skel', 'shield', 'dark', 'duel']);
 // The ones a player can do too (`!bot test <name> me`): a goal the player can reach and the test can see.
-const HUMAN_OK = new Set(['tower', 'hole', 'pit', 'climb', 'ladder', 'corner', 'leap', 'bridge', 'ledge', 'bow', 'husk', 'sheep', 'pen']);
+const HUMAN_OK = new Set(['tower', 'hole', 'pit', 'climb', 'ladder', 'corner', 'leap', 'bridge', 'ledge', 'bow', 'husk', 'sheep', 'pen', 'replant', 'litter', 'house']);
 // No single test runs longer than this (the task is ended and the test left to report what it has).
 const CAP_S = 240;
 
@@ -98,12 +99,17 @@ const HUMAN_HELP = {
 HUMAN_HELP.husk = { kit: [], text: 'A husk (a desert zombie) is 8 blocks east of you. Kill it. Use your sword.' };
 HUMAN_HELP.sheep = { kit: [], text: 'Three sheep stand 6 blocks east. Kill them and pick up 3 wool.' };
 HUMAN_HELP.pen = { kit: [], text: 'Two cows in a fenced pen with a gate, 4 blocks east. Go in through the gate, kill them and pick up 2 raw beef.' };
+HUMAN_HELP.replant = { kit: [['oak_sapling', 2]], text: 'A tree stands 5 blocks east. Cut the whole tree down, then plant a sapling where the trunk stood.' };
+HUMAN_HELP.litter = { kit: [], text: 'A tree stands 5 blocks east with leaf litter on the ground round it. Break the litter and pick up at least 4 pieces.' };
+HUMAN_HELP.house = { kit: [], noKit: true, text: 'Build a house the way you like, with a door, a bed, a crafting table, a furnace, chests and signs. Your own things are put aside and you are given everything a house takes (they come back when you finish). Say `!bot test done` when you are finished: the bot learns from how you built it.' };
 HUMAN_HELP.bow = { kit: [['bow', 1], ['arrow', 16]], text: 'A target (armor stand) stands 12 blocks east of you. Hit it with an arrow (hold right-click to draw, release to shoot).' };
+const SHORT = { tower: 'Get down, no fall damage', hole: 'Get out, reach the gold block', pit: 'Get out, reach the gold block', climb: 'Get out of the pit', ladder: 'Reach the gold block', corner: 'Reach the gold block', leap: 'Cross the gap, gold block', bridge: 'Bridge to the gold block', ledge: 'Get near the table', bow: 'Hit the target', husk: 'Kill the husk', sheep: 'Collect 3 wool', pen: 'Collect 2 raw beef', replant: 'Cut tree, replant sapling', litter: 'Collect 4 leaf litter', house: 'Build a house, then test done' };
 const humanHelp = (name) => HUMAN_HELP[name] ?? null;
 /** What you are handed in every test you do: tools, blocks and food; the test's own extras on top. `climb` has no tools, like the bot's run. */
 const STD_KIT = [['stone_pickaxe', 1], ['stone_axe', 1], ['stone_shovel', 1], ['stone_sword', 1], ['cobblestone', 32], ['dirt', 16], ['bread', 8]];
 /** @returns {Array<[string, number]>} */
 const kitFor = (name) => {
+  if (humanHelp(name)?.noKit) return [];
   const extra = humanHelp(name)?.kit ?? [];
   const base = name === 'climb' ? [] : STD_KIT.filter(([id]) => !extra.some(([e]) => e === id));
   return /** @type {Array<[string, number]>} */ ([...base, ...extra]);
@@ -126,6 +132,7 @@ export async function runTests(agent, player, args) {
     return agent.say('Stopping the tests; what was collected so far is kept.');
   }
   if (args[0] === 'go') { agent.testGo = true; return; }
+  if (args[0] === 'done') { agent.testDone = true; return; }
   if (args[0] === 'skip') {
     if (!running) return agent.say('No test is running.');
     agent.testSkipped = true;
@@ -158,7 +165,7 @@ export async function runTests(agent, player, args) {
   if (exIdx >= 0) args = args.slice(0, exIdx);
   // `!bot test <name> me`: you do it (same setup, you at the start, the bot stands by); both runs are measured and compared.
   // Who does it: the bot (default), `me` (you only), `both` (the bot, then you, each test), `youfirst` (you, then the bot).
-  const MODE_WORDS = ['me', 'human', 'both', 'botfirst', 'youfirst', 'mefirst', 'daycycle'];
+  const MODE_WORDS = ['me', 'human', 'both', 'botfirst', 'youfirst', 'mefirst', 'daycycle', 'alsobot'];
   const who = args.includes('youfirst') || args.includes('mefirst') ? 'youfirst' : args.includes('both') || args.includes('botfirst') ? 'botfirst' : args.includes('me') || args.includes('human') ? 'you' : 'bot';
   const keepCycle = args.includes('daycycle');
   const human = who !== 'bot';
@@ -168,6 +175,8 @@ export async function runTests(agent, player, args) {
   const list = named && named.every((n) => NAMES.includes(n)) ? named
     : name === 'all' ? NAMES.filter((n) => !omitList().includes(n) && !except.has(n) && (player || !PLAYER_ONLY.has(n))).filter((n) => (mode === 'quick' ? !SLOW.has(n) : mode === 'slow' ? SLOW.has(n) : true))
     : NAMES.includes(name) ? [name] : null;
+  // When you take part, `test all` leaves out the tests that have no turn for you (`alsobot` brings them back).
+  if (who !== 'bot' && name === 'all' && !args.includes('alsobot') && list) { const keep = list.filter((n) => HUMAN_OK.has(n)); list.length = 0; list.push(...keep); }
   if (!list) return agent.say(`Tests: ${NAMES.join(', ')}, all [quick|slow], or a,b,c.`);
   if (!list.length) return agent.say('Every test is omitted.');
   if (human && !player) return agent.say('Say it in chat yourself: `!bot test <name> me` (or both / youfirst).');
@@ -211,6 +220,7 @@ export async function runTests(agent, player, args) {
       setCycle(keepCycle || NIGHT.has(n));
       // Creative while you watch (you can fly about), survival while you do a test or fight in one.
       setGm(isYou || n === 'duel' ? 'survival' : 'creative');
+      try { player?.removeEffect('slow_falling'); } catch { /* */ }
       // The cap: at the deadline the task ends, so waits on it return and the test reports.
       let capped = false;
       const capS = n === 'leadboat' || n === 'leadsling' ? 480 : CAP_S;
@@ -306,7 +316,7 @@ async function runOne(agent, player, name, arg, human = false) {
     const h = humanHelp(name);
     const kit = kitFor(name);
     agent.say(`YOUR TURN, ${name}: ${h ? h.text : 'do what the test describes.'}${kit.length ? ` You were given: ${kit.map(([id, n]) => `${n} ${id}`).join(', ')}.` : ' You were given nothing (like the bot).'} Take your time: the clock starts when you move (or say \`!bot test go\`). \`!bot test skip\` gives up.`);
-    try { player.onScreenDisplay.setTitle(`Your turn: ${name}`, { subtitle: (h?.text ?? '').slice(0, 100), stayDuration: 160, fadeInDuration: 5, fadeOutDuration: 10 }); } catch { /* */ }
+    try { player.onScreenDisplay.setTitle(`Your turn: ${name}`, { subtitle: SHORT[name] ?? '', stayDuration: 160, fadeInDuration: 5, fadeOutDuration: 10 }); } catch { /* */ }
     // Reading time is not on the clock: it starts when you move or jump (or say go), after 60 s at most.
     agent.testGo = false;
     if (agent.testProgress) { agent.testProgress.reading = true; agent.testProgress.deadline = null; }
@@ -347,23 +357,34 @@ async function runOne(agent, player, name, arg, human = false) {
         const sx = x - ext.w + 2;
         cmd(`fill ${sx} ${gy + 3} ${z - 1} ${sx + 2} ${gy + 3} ${z + 1} stone_bricks`);
         try { player.teleport({ x: sx + 1.5, y: gy + 4, z: z + 0.5 }, { facingLocation: { x, y: gy + 2, z: z + 0.5 } }); } catch { /* */ }
-        try { player.addEffect('slow_falling', 2400, { showParticles: false }); } catch { /* */ }
       } else {
         // On the real ground the bot goes where the test takes it (trees, caves, a long walk): a floating camera in spectator mode,
         // through the rock if need be, that keeps within 12 blocks of it. The game mode is put back afterwards.
-        let under = false;
+        // The camera never puts you inside rock while you can still take damage from it: down in the rock you are in spectator
+        // mode (set first, moved a moment later); back in the open you are moved to air above the ground first, then creative again.
+        let gm = 'creative', pending = null;
+        const setMode = (m) => { gm = m; try { /** @type {any} */ (player).setGameMode(m); } catch { /* */ } };
+        const airAbove = (px, py, pz) => { const top = S.groundTop(Math.floor(px), Math.floor(pz)); return { x: px, y: Math.max(py, Number.isFinite(top) ? top + 3 : py), z: pz }; };
         const cam = () => {
           try {
             const b = sim.location, p = player.location;
-            // Creative (flying) in the open; spectator, through the rock, when the bot is down in it.
+            if (pending) { const f = pending; pending = null; f(); return; }
             const nowUnder = b.y < S.groundTop(Math.floor(b.x), Math.floor(b.z)) - 3;
-            if (nowUnder !== under) { under = nowUnder; /** @type {any} */ (player).setGameMode(under ? 'spectator' : 'creative'); }
-            if (Math.hypot(b.x - p.x, b.y - p.y, b.z - p.z) > 12) player.teleport({ x: b.x - 4, y: b.y + 4, z: b.z - 4 }, { facingLocation: { x: b.x, y: b.y + 1, z: b.z } });
+            if (nowUnder && gm !== 'spectator') { setMode('spectator'); return; }       // moved on the next beat, once the mode is on
+            if (!nowUnder && gm === 'spectator') {
+              player.teleport(airAbove(b.x - 4, b.y + 4, b.z - 4), { facingLocation: { x: b.x, y: b.y + 1, z: b.z } });
+              pending = () => setMode('creative');
+              return;
+            }
+            if (Math.hypot(b.x - p.x, b.y - p.y, b.z - p.z) > 12) {
+              const to = gm === 'spectator' ? { x: b.x - 4, y: b.y + 4, z: b.z - 4 } : airAbove(b.x - 4, b.y + 4, b.z - 4);
+              player.teleport(to, { facingLocation: { x: b.x, y: b.y + 1, z: b.z } });
+            }
           } catch { /* */ }
         };
-        try { player.teleport({ x: x - 7, y: gy + 6, z: z - 4 }, { facingLocation: { x, y: gy + 1, z } }); } catch { /* */ }
-        const camRun = system.runInterval(cam, 30);
-        cleanup.push(() => { try { system.clearRun(camRun); } catch { /* */ } try { /** @type {any} */ (player).setGameMode('creative'); } catch { /* */ } });
+        try { const top = S.groundTop(x - 7, z - 4); player.teleport({ x: x - 7, y: Math.max(gy + 6, Number.isFinite(top) ? top + 3 : 0), z: z - 4 }, { facingLocation: { x, y: gy + 1, z } }); } catch { /* */ }
+        const camRun = system.runInterval(cam, 10);
+        cleanup.push(() => { try { system.clearRun(camRun); } catch { /* */ } try { if (pHome) player.teleport(pHome); } catch { /* */ } try { /** @type {any} */ (player).setGameMode('creative'); } catch { /* */ } });
       }
     }
     switch (name) {
@@ -434,6 +455,19 @@ async function runOne(agent, player, name, arg, human = false) {
         cmd(`fill ${x - 8} ${gy} ${z - 8} ${x + 14} ${gy} ${z + 8} grass_block`);
         cmd(`fill ${x - 8} ${gy + 1} ${z - 8} ${x + 14} ${gy + 8} ${z + 8} air`);
         tp(x + 3, gy + 1, z);
+        if (human) {
+          // Your build is the lesson: the recording (game/demo.js) is the learning, and your things come back when it ends.
+          const before = getPlan();
+          const started = agent.demo.startHouse(player);
+          if (!agent.demo.on) { detail = String(started); break; }
+          agent.testDone = false;
+          const done = await humanTry(() => !!agent.testDone, 900);
+          agent.demo.stop();
+          for (let i = 0; i < 80 && agent.memory.data.learnKit; i++) await system.waitTicks(5);   // learning, then your things back
+          pass = done && !!getPlan() && getPlan() !== before;
+          detail = `${done ? 'you said you were done' : 'time ran out'} after ${secs()}s; ${getPlan() && getPlan() !== before ? 'the bot learned your house' : 'nothing was learned (too little built?)'}`;
+          break;
+        }
         const H = agent.homestead, oldHouse = agent.memory.data.house;
         agent.memory.data.house = null;
         const inv = sim.getComponent('minecraft:inventory').container;
@@ -472,7 +506,7 @@ async function runOne(agent, player, name, arg, human = false) {
       case 'sheep': {
         flatPatch(cmd, x, gy, z);
         tp(x, gy + 1, z);
-        for (let i = 0; i < 3; i++) cmd(`summon sheep ${x + 6} ${gy + 1} ${z + i - 1}`);
+        for (let i = 0; i < 3; i++) await spawnAdult(dim, 'minecraft:sheep', { x: x + 6.5, y: gy + 1, z: z + i - 0.5 });
         if (!invCountsOf(sim).stone_sword) sim.getComponent('minecraft:inventory').container.addItem(new ItemStack('minecraft:stone_sword', 1));
         agent.equipBestWeapon();
         await system.waitTicks(10);
@@ -501,7 +535,7 @@ async function runOne(agent, player, name, arg, human = false) {
         cmd(`fill ${x + 5} ${gy + 1} ${z - 2} ${x + 9} ${gy + 1} ${z + 2} air`);
         const gate = { x: x + 4, y: gy + 1, z };
         cmd(`setblock ${gate.x} ${gate.y} ${gate.z} fence_gate ["minecraft:cardinal_direction"="east"]`);
-        cmd(`summon cow ${x + 7} ${gy + 1} ${z - 1}`); cmd(`summon cow ${x + 8} ${gy + 1} ${z + 1}`);
+        await spawnAdult(dim, 'minecraft:cow', { x: x + 7.5, y: gy + 1, z: z - 0.5 }); await spawnAdult(dim, 'minecraft:cow', { x: x + 8.5, y: gy + 1, z: z + 1.5 });
         tp(x, gy + 1, z);
         await system.waitTicks(10);
         if (human) {
@@ -910,6 +944,19 @@ async function runOne(agent, player, name, arg, human = false) {
         if (name === 'litter') cmd(`fill ${tx - 3} ${gy + 1} ${z - 3} ${tx + 3} ${gy + 1} ${z + 3} leaf_litter ["growth"=3] replace air`);
         tp(x, gy + 1, z);
         await system.waitTicks(10);
+        if (human) {
+          if (name === 'litter') {
+            const l0 = invCountsOf(player).leaf_litter ?? 0;
+            pass = await humanTry(() => (invCountsOf(player).leaf_litter ?? 0) - l0 >= 4, 120);
+            detail = `you picked up ${(invCountsOf(player).leaf_litter ?? 0) - l0} leaf litter in ${secs()}s`;
+            const got = (invCountsOf(player).leaf_litter ?? 0) - l0;
+            if (got > 0) { try { take(player, 'leaf_litter', got); } catch { /* */ } }
+          } else {
+            pass = await humanTry(() => /sapling/.test(S.blockAt({ x: tx, y: gy + 1, z }) ?? ''), 150);
+            detail = `you ${pass ? 'replanted where the trunk stood' : 'did not replant the spot'} in ${secs()}s (spot is ${S.blockAt({ x: tx, y: gy + 1, z })})`;
+          }
+          break;
+        }
         const inv = sim.getComponent('minecraft:inventory').container;
         inv.addItem(new ItemStack('minecraft:oak_sapling', 2));
         const logs0 = Object.entries(invCountsOf(sim)).filter(([id]) => /_log$/.test(id)).reduce((a, [, n]) => a + n, 0);
@@ -1922,11 +1969,14 @@ function towLine(m, goal) {
 }
 
 /** A grown horse: babies can't be ridden. One that spawns young is grown up by its own event, else replaced (up to 8 tries). */
-async function spawnAdultHorse(dim, loc) {
+async function spawnAdultHorse(dim, loc) { return spawnAdult(dim, 'minecraft:horse', loc); }
+
+/** An adult of this animal (a baby drops nothing and cannot be ridden): grown up by its own event, else replaced. */
+async function spawnAdult(dim, type, loc) {
   const baby = (e) => { try { return e.hasComponent('minecraft:is_baby'); } catch { return false; } };
   for (let i = 0; i < 8; i++) {
     let h;
-    try { h = dim.spawnEntity('minecraft:horse', loc); } catch { return null; }
+    try { h = dim.spawnEntity(type, loc); } catch { return null; }
     await system.waitTicks(4);
     if (baby(h)) { try { h.triggerEvent('minecraft:ageable_grow_up'); } catch { /* no such event */ } await system.waitTicks(4); }
     if (!baby(h)) return h;

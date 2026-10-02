@@ -87,7 +87,7 @@ _trace_seq = 0
 _flights: collections.deque = collections.deque(maxlen=12)
 _paths: collections.deque = collections.deque(maxlen=6000)  # the pathfinding log (searches and walks)
 _why: collections.deque = collections.deque(maxlen=3000)  # the planner's reasons, one per step chosen (brain/logs/why.jsonl)
-_tests: dict = {"batch": None, "results": {}}
+_tests: dict = {"batch": None, "results": {}, "stats": {}}
 
 
 def append_traces(traces: list) -> None:
@@ -215,6 +215,24 @@ def get_profile() -> dict:
     return data
 
 
+def _save_test_stats() -> None:
+    """Pass/fail counts per test and side live on this computer, not in any one world (brain/logs/test_stats.json)."""
+    try:
+        LOG_DIR.mkdir(exist_ok=True)
+        (LOG_DIR / "test_stats.json").write_text(json.dumps(_tests["stats"]), encoding="utf-8")
+    except OSError:
+        pass
+
+
+def _load_test_stats() -> None:
+    try:
+        data = json.loads((LOG_DIR / "test_stats.json").read_text(encoding="utf-8"))
+        if isinstance(data, dict):
+            _tests["stats"] = data
+    except (OSError, ValueError):
+        pass
+
+
 def remember(evt: dict) -> None:
     """Keep what the dashboard shows from a logged event: flight reports, test results, the last batch."""
     kind = evt.get("type")
@@ -224,6 +242,12 @@ def remember(evt: dict) -> None:
             _flights.append({"t": now, "why": str(evt.get("why", ""))[:300], "build": evt.get("build"),
                              "report": [str(x)[:400] for x in (evt.get("report") or [])][:80], "pos": (evt.get("state") or {}).get("pos")})
         elif kind == "test_run":
+            if not evt.get("stopped"):
+                st = _tests["stats"].setdefault(str(evt.get("name")), {}).setdefault(str(evt.get("who")), {"p": 0, "n": 0, "last": None})
+                st["n"] += 1
+                st["p"] += 1 if evt.get("pass") else 0
+                st["last"] = {"pass": bool(evt.get("pass")), "at": now, "build": evt.get("build")}
+                _save_test_stats()
             _tests.setdefault("runs", {}).setdefault(str(evt.get("name")), {})[str(evt.get("who"))] = {
                 "t": now, "pass": bool(evt.get("pass")), "summary": evt.get("summary"), "trace": evt.get("trace")}
         elif kind == "test_result" and evt.get("who") == "human":
@@ -423,7 +447,7 @@ def make_handler(engine: DecisionEngine, key: str | None = None):
                     return self._send(200, {"reports": list(_flights)})
             if self.path == "/api/tests":
                 with _lock:
-                    return self._send(200, {"batch": _tests["batch"], "results": dict(_tests["results"]), "runs": dict(_tests.get("runs", {}))})
+                    return self._send(200, {"batch": _tests["batch"], "results": dict(_tests["results"]), "runs": dict(_tests.get("runs", {})), "stats": dict(_tests["stats"])})
             if self.path == "/profile":
                 from . import learn
                 return self._send(200, learn.for_game(get_profile()))
@@ -544,6 +568,7 @@ def make_handler(engine: DecisionEngine, key: str | None = None):
 
 
 def main():
+    _load_test_stats()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s: %(message)s")
     cfg = load_config()
     engine = build_engine(cfg)

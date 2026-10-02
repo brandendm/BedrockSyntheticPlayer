@@ -113,13 +113,7 @@ function handle(text, player) {
     if (sub === 'off' && agent.towlearn.on) return reply(player, agent.towlearn.stop());
     if (sub === 'off') { const was = agent.demo.mode === 'house'; agent.demo.stop(); return reply(player, was ? 'Reading the house you built...' : 'Stopped watching you.'); }
     // `learn house [name]`: your things put aside, a house kit given, the build recorded; `learn off` learns it and gives your things back.
-    if (sub === 'house') {
-      if (agent.demo.on) return reply(player, `Already recording: ${agent.demo.status()}`);
-      const pl = world.getPlayers().find((p) => p.name.toLowerCase() === String(who ?? player?.name ?? '').toLowerCase())
-        ?? world.getPlayers().find((p) => p.id !== agent.sim.id);
-      if (!pl) return reply(player, 'Who? `!bot learn house <name>`.');
-      return reply(player, agent.demo.startHouse(pl));
-    }
+    if (sub === 'house') return reply(player, 'Learning from your house is part of the house test now: `!bot test house me` (or pick Me only on the dashboard). Say `!bot test done` when it is built.');
     if (sub === 'restore') {
       const pl = world.getPlayers().find((p) => p.name.toLowerCase() === String(who ?? player?.name ?? '').toLowerCase()) ?? world.getPlayers().find((p) => p.id !== agent.sim.id);
       if (!pl) return reply(player, 'Who? `!bot learn restore <name>`.');
