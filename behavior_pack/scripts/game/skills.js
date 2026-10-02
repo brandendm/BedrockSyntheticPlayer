@@ -428,7 +428,19 @@ export class Skills {
     const res = await this.a.plan(this.sim.location, p, 0, maxNodes, goal);
     this.check(gen);
     if (res.complete) {
-      if (res.path.length >= 2) await this.a.motor.followPath(smoothPath(this.a.classifier(), res.path));
+      if (res.path.length >= 2) {
+        // A short level step along the wall we are building: sidestepped with the head left where it is (the strafe), the way a player
+        // slides along a wall with the view on it, not turned to face where it walks and back to the wall again for every block (the house
+        // test: 14000 degrees of view turning against a player's 3300 for the same 135 blocks).
+        const first = this.sim.location, last = res.path[res.path.length - 1];
+        const dx = last.x + 0.5 - first.x, dz = last.z + 0.5 - first.z, dd = Math.hypot(dx, dz);
+        const straight = res.path.every((q) => q.y === last.y && Math.abs((q.x + 0.5 - first.x) * dz - (q.z + 0.5 - first.z) * dx) / (dd || 1) < 0.45);
+        if (straight && dd > 0.3 && dd <= 3.2 && res.path.length <= 5 && Math.abs(first.y - last.y) < 0.6 && this.a.motor.focus) {
+          await this.a.motor.strafe({ x: dx / dd, z: dz / dd }, Math.ceil(dd / 0.2155) + 1, { reaction: 1 });
+          this.check(gen);
+          if (Math.hypot(this.sim.location.x - (last.x + 0.5), this.sim.location.z - (last.z + 0.5)) > 0.7) await this.a.motor.followPath([{ x: this.sim.location.x, y: this.sim.location.y, z: this.sim.location.z }, { x: last.x + 0.5, y: last.y, z: last.z + 0.5 }]); // (what the sidestep left short)
+        } else await this.a.motor.followPath(smoothPath(this.a.classifier(), res.path));
+      }
       this.check(gen);
       if (ok(this.eye())) return true;
     }
@@ -460,13 +472,20 @@ export class Skills {
    * a placement the player is looking at, so finish the (already smooth) turn with an exact aim.
    */
   async placeOn(gen, slot, neighbor, face, faceLoc, cell) {
+    // `!bot test placerate` measures other ways to put a block down and how soon after the last each is taken: the fastest that never
+    // failed is used (memory.data.placeCal { method, gap }); without it, the plain way with the game's measured gap.
+    const cal = this.a.memory?.data?.placeCal;
     for (let attempt = 0; attempt < 3; attempt++) {
       // First go: from where the crosshair already is (the aim before this got it near), no snap.
       // Didn't take: look straight at the face and try once more, the plain way.
       if (attempt) { try { this.sim.lookAtBlock(neighbor); } catch {} await this.wait(gen, 1); }
-      await this.useGap(gen);
+      await this.useGap(gen, cal && attempt === 0 ? cal.gap : undefined);
       let ok = false;
-      try { ok = attempt === 1 ? this.sim.useItemInSlotOnBlock(slot, neighbor, face) : this.sim.useItemInSlotOnBlock(slot, neighbor, face, faceLoc); } catch {}
+      try {
+        if (cal?.method === 'interact' && attempt === 0) { this.sim.selectedSlotIndex = slot; ok = /** @type {any} */ (this.sim).interactWithBlock(neighbor, face); }
+        else if (cal?.method === 'useOnBlock' && attempt === 0) { this.sim.selectedSlotIndex = slot; ok = /** @type {any} */ (this.sim).useItemOnBlock(container(this.sim)?.getItem(slot), neighbor, face, faceLoc); }
+        else ok = attempt === 1 ? this.sim.useItemInSlotOnBlock(slot, neighbor, face) : this.sim.useItemInSlotOnBlock(slot, neighbor, face, faceLoc);
+      } catch {}
       this.lastUseTick = system.currentTick;
       for (let k = 0; k < 2; k++) {
         await this.wait(gen, 1);
@@ -483,8 +502,8 @@ export class Skills {
    * and does nothing. Blocks laid one after another, or a seed right after a hoe, went nowhere
    * for that. So leave the gap since the last use.
    */
-  async useGap(gen) {
-    const gap = TUNING.useGap - (system.currentTick - (this.lastUseTick ?? -100));
+  async useGap(gen, override = undefined) {
+    const gap = (override ?? TUNING.useGap) - (system.currentTick - (this.lastUseTick ?? -100));
     if (gap > 0) await this.wait(gen, gap);
     this.check(gen);
   }
@@ -4583,8 +4602,76 @@ export class Skills {
    * ride the pillar down a level at a time (fast with a pickaxe, slow by hand) until the fall is
    * harmless. Never lands on lava, magma or cactus; water breaks any fall.
    */
+  /**
+   * Down a tall pillar the way a player does it (the test runs: 6 s against the bot's 10, no damage): sneak out to the lip, look down the
+   * side of the pillar and put a block against it 4 below your feet, step off onto it (a 3 block drop, which is free), then do the same from
+   * that ledge round the next side of the pillar, a ledge every 3 blocks spiralling down. Needs blocks. `ctx` carries the pillar and the
+   * way round between calls; ctx.failed once a step did not work (the caller digs instead).
+   * @param {{ pillar: {x:number,z:number}|null, d: number[]|null, failed: boolean }} ctx
+   */
+  async stagedStep(gen, ctx) {
+    const slot = this.placeableSlot();
+    if (slot < 0) return false;
+    const f = this.feet();
+    const fx = Math.floor(f.x), fy = Math.floor(f.y), fz = Math.floor(f.z);
+    const open = (x, y, z) => OPEN.test(this.blockAt({ x, y, z }) ?? 'air') && !/water|lava/.test(this.blockAt({ x, y, z }) ?? '');
+    const solid = (x, y, z) => !OPEN.test(this.blockAt({ x, y, z }) ?? 'air') && !/water|lava/.test(this.blockAt({ x, y, z }) ?? '');
+    const AX = [[1, 0], [0, 1], [-1, 0], [0, -1]];
+    /** @type {number[]} */ let faceDir, edgeV;
+    let N, S;
+    if (!ctx.pillar) {
+      const pick = AX.find(([dx, dz]) => solid(fx, fy - 4, fz) && open(fx + dx, fy - 4, fz + dz) && open(fx + dx, fy - 1, fz + dz) && open(fx + dx, fy - 2, fz + dz) && open(fx + dx, fy - 3, fz + dz) && solid(fx, fy - 1, fz));
+      if (!pick) return false;
+      ctx.pillar = { x: fx, z: fz };
+      faceDir = pick; edgeV = pick;
+      S = { x: fx, y: fy - 4, z: fz }; N = { x: fx + pick[0], y: fy - 4, z: fz + pick[1] };
+    } else {
+      const [dx, dz] = /** @type {number[]} */ (ctx.d);
+      if (fx !== ctx.pillar.x + dx || fz !== ctx.pillar.z + dz) return false;     // not on the ledge we expect
+      faceDir = [-dz, dx];                                                       // round to the next side
+      edgeV = [faceDir[0] - dx, faceDir[1] - dz];                                // from this ledge toward the new one (a diagonal)
+      S = { x: ctx.pillar.x, y: fy - 4, z: ctx.pillar.z };
+      N = { x: ctx.pillar.x + faceDir[0], y: fy - 4, z: ctx.pillar.z + faceDir[1] };
+      if (!solid(S.x, S.y, S.z) || !open(N.x, N.y, N.z)) return false;
+    }
+    const face = faceDir[0] > 0 ? Direction.East : faceDir[0] < 0 ? Direction.West : faceDir[1] > 0 ? Direction.South : Direction.North;
+    const faceLoc = { x: faceDir[0] > 0 ? 1 : faceDir[0] < 0 ? 0 : 0.5, y: 0.5, z: faceDir[1] > 0 ? 1 : faceDir[1] < 0 ? 0 : 0.5 };
+    const len = Math.hypot(edgeV[0], edgeV[1]) || 1;
+    try {
+      // 1. Sneak out to the lip (sneaking stops us at it, hanging a little over, which is what lets the side of the pillar be seen).
+      this.sim.isSneaking = true;
+      for (let i = 0; i < 9; i++) { this.a.body.move(edgeV[0] / len, edgeV[1] / len, 0.45); await this.wait(gen, 2); }
+      this.a.body.stop();
+      await this.wait(gen, 2);
+      // 2. Look down the side and put the block against it.
+      try { this.sim.lookAtBlock(S); } catch { /* */ }
+      await this.wait(gen, 4);
+      const ok = await this.placeOn(gen, slot, S, face, faceLoc, N);
+      this.sim.isSneaking = false;
+      if (!ok) { this.log(`staged descent: the block would not go against the pillar at ${S.x} ${S.y} ${S.z}`); ctx.failed = true; return false; }
+      this.markPlaced(N);
+      // 3. Step off onto it: a drop of 3.
+      for (let i = 0; i < 14 && this.feet().y > fy - 1.5; i++) {
+        const dx = N.x + 0.5 - this.sim.location.x, dz = N.z + 0.5 - this.sim.location.z, l = Math.hypot(dx, dz) || 1;
+        this.a.body.move(dx / l, dz / l, 0.5);
+        await this.wait(gen, 2);
+      }
+      this.a.body.stop();
+      for (let i = 0; i < 10 && !this.a.body.isOnGround(); i++) await this.wait(gen, 2);
+      const nf = this.feet();
+      const landed = Math.abs(nf.y - (N.y + 1)) < 0.6 && Math.hypot(this.sim.location.x - (N.x + 0.5), this.sim.location.z - (N.z + 0.5)) < 1.3;
+      if (!landed) { this.log(`staged descent: landed at ${nf.x} ${nf.y} ${nf.z}, not on the ledge at ${N.x} ${N.y + 1} ${N.z}`); ctx.failed = true; return false; }
+      ctx.d = faceDir;
+      return true;
+    } finally {
+      try { this.sim.isSneaking = false; } catch { /* */ }
+      this.a.body.stop();
+    }
+  }
+
   async getDown(gen) {
     this.a.sayOnce('getdown', 'Stuck up here, climbing down.', 30000);
+    const staged = { pillar: null, d: null, failed: false };
     const HP_S = 6;      // one half-heart of health is worth about 6 s (healing time, plus risk)
     const MAX_FALL = 6;  // never take more than 3 hearts from one fall, never drop below 5 hearts
     for (let i = 0; i < 128; i++) {
@@ -4626,6 +4713,11 @@ export class Skills {
         this.check(gen);
         await this.wait(gen, 10);
         if (r.status !== 'arrived' && this.feet().y === f.y) return false;
+        continue;
+      }
+      // With blocks, and a long way down: ledges against the pillar's side (stagedStep) before cutting the pillar out from under us.
+      if (!hopOk && !staged.failed && this.blockCount() > 1 && best.drop >= 5 && (await this.stagedStep(gen, staged))) {
+        this.getDownStats.staged = (this.getDownStats.staged ?? 0) + 1;
         continue;
       }
       if (!canDig) {

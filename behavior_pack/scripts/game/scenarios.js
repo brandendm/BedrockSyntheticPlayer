@@ -64,7 +64,7 @@ import { getPlan } from '../core/learnhouse.js';
 import { passRates, addStat } from '../core/testrun.js';
 import { compare } from '../core/testrun.js';
 
-const NAMES = ['roof', 'tower', 'hole', 'pit', 'trap', 'climb', 'ledge', 'ladder', 'husk', 'creeper', 'sheep', 'pen', 'smelt', 'smeltlogs', 'shelter', 'house', 'resume', 'ghostlog', 'quarry', 'dark', 'replant', 'litter', 'trader', 'iron', 'farm', 'equip', 'water', 'bucketfarm', 'treetop', 'corner', 'leap', 'bridge', 'fall', 'vines', 'stairgap', 'loot', 'shield', 'skel', 'rest', 'nights', 'calibrate', 'portal', 'horse', 'leadboat', 'leadsling', 'bow', 'duel', 'horserace', 'pillarrace', 'woodrace', 'lavacross', 'obsidian', 'mineore', 'enderman', 'blaze', 'ghast', 'witherskeleton'];
+const NAMES = ['roof', 'tower', 'hole', 'pit', 'trap', 'climb', 'ledge', 'ladder', 'husk', 'creeper', 'sheep', 'pen', 'smelt', 'smeltlogs', 'shelter', 'house', 'resume', 'ghostlog', 'quarry', 'dark', 'replant', 'litter', 'trader', 'iron', 'farm', 'equip', 'water', 'bucketfarm', 'treetop', 'corner', 'leap', 'bridge', 'fall', 'vines', 'stairgap', 'loot', 'shield', 'skel', 'rest', 'nights', 'calibrate', 'portal', 'horse', 'leadboat', 'leadsling', 'bow', 'duel', 'horserace', 'pillarrace', 'woodrace', 'lavacross', 'obsidian', 'mineore', 'enderman', 'blaze', 'ghast', 'witherskeleton', 'placerate'];
 let running = false;
 
 // Tests that wait out real time (a 5 minute despawn, a night, a furnace, a long walk): left out of
@@ -458,7 +458,7 @@ async function runOne(agent, player, name, arg, human = false) {
         await idle(150);
         const f = S.feet();
         pass = f.y <= gy + 2 && !(await S.isTrapped(agent.newTask(null)));
-        detail = `${pass ? 'down' : `still at y${f.y - gy - 1} above ground`} in ${secs()}s, dug ${S.getDownStats.digs}, hopped ${S.getDownStats.hops}, lost ${Math.max(0, hp0 - agent.health())} hp`;
+        detail = `${pass ? 'down' : `still at y${f.y - gy - 1} above ground`} in ${secs()}s, dug ${S.getDownStats.digs}, ledges ${S.getDownStats.staged ?? 0}, hopped ${S.getDownStats.hops}, lost ${Math.max(0, hp0 - agent.health())} hp`;
         break;
       }
       case 'hole':
@@ -1403,19 +1403,23 @@ async function runOne(agent, player, name, arg, human = false) {
         try {
           if (name === 'horserace') {
             // ---- 1. Two adult horses, a saddle each. Both of us tame ours (ride it until it accepts), saddle it, and get on it.
-            objective = 'tame, saddle and mount your horse, then ride it over the rough ground to the gold line and back.';
+            objective = 'tame, saddle and mount your horse, then ride it over the rough ground, two laps of out to the gold line and back.';
             // A rough course, the same in both lanes: ground that steps up and down a block at a time, ditches, mounds; out to the gold line
             // at x + 48 and back to the start. A divider of bars between the lanes.
             let seed = 20260502;
             const rnd = () => ((seed = (seed * 1664525 + 1013904223) >>> 0) / 4294967296);
             let hgt = 0;
             for (let cx = x + 5; cx < x + 46;) {
-              const len = 2 + Math.floor(rnd() * 4), r = rnd();
-              hgt = r < 0.3 ? Math.max(-1, hgt - 1) : r < 0.7 ? Math.min(2, hgt + 1) : hgt;
+              const len = 1 + Math.floor(rnd() * 3), r = rnd();
+              // Rougher than before: a step up or down nearly every segment (-1 to 3 high), short segments, and a one-block hurdle across the lane
+              // now and then that has to be jumped.
+              hgt = r < 0.4 ? Math.max(-1, hgt - 1) : r < 0.85 ? Math.min(3, hgt + 1) : hgt;
               if (cx + len > x + 45) hgt = 0;
+              const hurdle = hgt >= 0 && rnd() < 0.3 && cx > x + 8 && cx + len < x + 44;
               for (const [zl, zh] of [[z - 9, z - 1], [z + 1, z + 9]]) {
                 if (hgt > 0) cmd(`fill ${cx} ${gy + 1} ${zl} ${cx + len - 1} ${gy + hgt} ${zh} stone`);
                 else if (hgt < 0) cmd(`fill ${cx} ${gy} ${zl} ${cx + len - 1} ${gy} ${zh} air`);
+                if (hurdle) cmd(`fill ${cx} ${gy + hgt + 1} ${zl} ${cx} ${gy + hgt + 1} ${zh} stone`);
               }
               cx += len;
             }
@@ -1432,7 +1436,7 @@ async function runOne(agent, player, name, arg, human = false) {
             for (const h of [hb, hh]) { try { h.getComponent('minecraft:movement')?.setCurrentValue(0.25); } catch { /* */ } }
             giveItem('saddle', 1); givePlayer('saddle', 1);
             faceEast(sim, 2.5); faceEast(player, -2.5);
-            agent.say(`HORSE RACE: two adult horses, a saddle each. Tame yours (get on until it stops throwing you), saddle it (right-click with the saddle) and mount it; the bot does the same with its own. When we are both on, there is a countdown and a race over rough ground (steps, ditches, mounds) to the gold line 48 blocks east and back to the start.`);
+            agent.say(`HORSE RACE: two adult horses, a saddle each. Tame yours (get on until it stops throwing you), saddle it (right-click with the saddle) and mount it; the bot does the same with its own. When we are both on, there is a countdown and a race over rough ground (steps, ditches, mounds, hurdles to jump) to the gold line 48 blocks east, back to the start, and out and back once more: about 190 blocks.`);
             try { player.onScreenDisplay.setTitle('Horse race', { subtitle: 'Tame, saddle, mount, race', stayDuration: 160, fadeInDuration: 5, fadeOutDuration: 10 }); } catch { /* */ }
             running(300);
             const tPrep = system.currentTick;
@@ -1464,24 +1468,25 @@ async function runOne(agent, player, name, arg, human = false) {
             // ---- 2. The race.
             await ready('You are both on your horses.', 'Ride to the gold line');
             cmd(`fill ${x - 1} ${gy + 1} ${z - 9} ${x - 1} ${gy + 3} ${z + 9} air`); // the barrier goes up... and down at GO
-            running(150);
+            running(300);
             rec.reset(); t0 = system.currentTick; recH.start();
             const turnX = x + 48.5, homeX = x + 1.5;
             const stage = { bot: 0, you: 0 };
             const tStart = system.currentTick;
             let lastX = hb.location.x, lastChk = tStart;
-            for (let i = 0; i < 150 * 20 && !agent.testSkipped && (result.bot === null || result.you === null); i++) {
+            for (let i = 0; i < 300 * 20 && !agent.testSkipped && (result.bot === null || result.you === null); i++) {
               if (result.bot === null) {
-                const goal = stage.bot === 0 ? { x: turnX + 4, y: hb.location.y, z: z + 5 } : { x: homeX - 5, y: hb.location.y, z: z + 5 };
+                // two laps: out, back, out, back (stages 0 to 3)
+                const goal = stage.bot % 2 === 0 ? { x: turnX + 4, y: hb.location.y, z: z + 5 } : { x: homeX - 5, y: hb.location.y, z: z + 5 };
                 try { sim.moveToLocation(goal, { speed: 1 }); } catch { /* */ }
                 // Stuck against a step: jump (what a rider does).
                 if (system.currentTick - lastChk >= 10) { if (Math.abs(hb.location.x - lastX) < 0.15) { try { sim.jump(); } catch { /* */ } } lastX = hb.location.x; lastChk = system.currentTick; }
-                if (stage.bot === 0 && hb.location.x >= turnX) stage.bot = 1;
-                else if (stage.bot === 1 && hb.location.x <= homeX) result.bot = (system.currentTick - tStart) / 20;
+                if (stage.bot % 2 === 0 && hb.location.x >= turnX) stage.bot++;
+                else if (stage.bot % 2 === 1 && hb.location.x <= homeX) { if (stage.bot === 3) result.bot = (system.currentTick - tStart) / 20; else stage.bot++; }
               }
               if (result.you === null) {
-                if (stage.you === 0 && hh.location.x >= turnX) { stage.you = 1; agent.say('You are at the far line: back to the start!'); }
-                else if (stage.you === 1 && hh.location.x <= homeX) result.you = (system.currentTick - tStart) / 20;
+                if (stage.you % 2 === 0 && hh.location.x >= turnX) { stage.you++; agent.say(`You are at the far line (leg ${stage.you}/4): back!`); }
+                else if (stage.you % 2 === 1 && hh.location.x <= homeX) { if (stage.you === 3) result.you = (system.currentTick - tStart) / 20; else { stage.you++; agent.say(`Start line (leg ${stage.you}/4): out again!`); } }
               }
               await system.waitTicks(1);
             }
@@ -1707,6 +1712,51 @@ async function runOne(agent, player, name, arg, human = false) {
         agent.body.stop?.();
         pass = !alive();
         detail = `${pass ? 'killed' : 'did not kill'} the ${MOB[0].replace('_', ' ')} in ${secs()}s (${swings} swings, ${shots} arrows), lost ${Math.max(0, hp1 - hpMine())} hp`;
+        break;
+      }
+      case 'placerate': {
+        // How fast can a simulated player put blocks down? The game refuses an item use sooner than 10 ticks after the last through
+        // useItemInSlotOnBlock (a player clicks every 3 or 4). Each way there is, at each gap, six blocks along a row: how many went down.
+        // The fastest way that never failed is kept (memory.data.placeCal) and used by placeOn from then on.
+        giveItem('cobblestone', 64);
+        tp(x + 5, gy + 1, z);
+        await system.waitTicks(10);
+        const gen = agent.newTask({ kind: 'test' });
+        agent.testHold = true;
+        const slot = hold(sim, 'cobblestone');
+        const METHODS = ['use', 'interact', 'useOnBlock'];
+        const GAPS = [2, 3, 4, 6, 8, 10];
+        const table = [];
+        let best = null;
+        for (const method of METHODS) {
+          for (const gap of GAPS) {
+            cmd(`fill ${x + 2} ${gy + 1} ${z + 2} ${x + 9} ${gy + 1} ${z + 2} air`);
+            await system.waitTicks(4);
+            let put = 0;
+            for (let i = 0; i < 6; i++) {
+              const nb = { x: x + 3 + i, y: gy, z: z + 2 }, cell = { x: nb.x, y: gy + 1, z: nb.z };
+              try { sim.lookAtBlock(nb); } catch { /* */ }
+              let ok = false;
+              try {
+                if (method === 'use') ok = sim.useItemInSlotOnBlock(slot, nb, Direction.Up);
+                else if (method === 'interact') ok = /** @type {any} */ (sim).interactWithBlock(nb, Direction.Up);
+                else ok = /** @type {any} */ (sim).useItemOnBlock(packOf(sim)?.getItem(slot), nb, Direction.Up);
+              } catch { /* */ }
+              await system.waitTicks(1);
+              if (S.blockAt(cell) === 'cobblestone') put++;
+              await system.waitTicks(Math.max(0, gap - 1));
+              void ok;
+            }
+            table.push(`${method}@${gap}: ${put}/6`);
+            if (put === 6 && (!best || gap < best.gap)) best = { method, gap };
+          }
+        }
+        cmd(`fill ${x + 2} ${gy + 1} ${z + 2} ${x + 9} ${gy + 1} ${z + 2} air`);
+        // A way faster than the plain one's 10 ticks, taken only if it is clearly so.
+        if (best && best.gap <= 6) { agent.memory.data.placeCal = { ...best, at: Date.now(), build: CONFIG.build }; agent.memory.save(); }
+        else if (agent.memory.data.placeCal) { agent.memory.data.placeCal = null; agent.memory.save(); }
+        pass = !!best;
+        detail = `${best ? `fastest that never failed: ${best.method} every ${best.gap} ticks${best.gap <= 6 ? ' (now used for building)' : ' (not faster than the usual, not used)'}` : 'none placed six in a row'}; ${table.join(', ')}`;
         break;
       }
       case 'duel': {
