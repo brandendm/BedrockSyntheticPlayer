@@ -15,11 +15,37 @@ export function onTrace(fn) { traceListeners.push(fn); }
 let posFn = null;
 /** Every trace line carries where the bot was when it was written (fn() -> {x, y, z}). */
 export function tracePosition(fn) { posFn = fn; }
+// A loop in the notes themselves: the same few lines over and over (an escape that plans, fails, relocates and plans again).
+// Said once a minute with the cycle named, so "what is it doing" is one line instead of ninety.
+const recentKeys = [];
+let lastLoopSaid = -1e9;
+function noteLoop(msg) {
+  if (String(msg).startsWith('loop:')) return;
+  recentKeys.push(String(msg).replace(/-?\d+(\.\d+)?/g, '#').slice(0, 70));
+  if (recentKeys.length > 80) recentKeys.shift();
+  const n = recentKeys.length;
+  if (n < 20 || system.currentTick - lastLoopSaid < 1200) return;
+  for (let p = 2; p <= 8; p++) {
+    const reps = Math.floor(n / p);
+    if (reps < 5) break;
+    let ok = true;
+    for (let i = n - 1; i >= n - p * 5; i--) if (recentKeys[i] !== recentKeys[i - p]) { ok = false; break; }
+    if (!ok) continue;
+    lastLoopSaid = system.currentTick;
+    let times = 0;
+    for (let i = n - 1; i - p >= 0 && recentKeys[i] === recentKeys[i - p]; i--) times++;
+    const cycle = recentKeys.slice(n - p).join('  ->  ');
+    trace(`loop: repeating ${p} notes about ${Math.round(times / p)}+ times: ${cycle}`);
+    return;
+  }
+}
+
 export function trace(msg) {
   const tick = system.currentTick;
   let p;
   try { const l = posFn?.(); if (l) p = [Math.round(l.x * 10) / 10, Math.round(l.y * 10) / 10, Math.round(l.z * 10) / 10]; } catch { /* between a death and the respawn */ }
-  traces.push({ tick, msg: String(msg).slice(0, 300), p });
+  traces.push({ tick, msg: String(msg).slice(0, String(msg).includes('\n') ? 2500 : 300), p });
+  try { noteLoop(msg); } catch { /* never breaks a trace */ }
   if (traces.length > 300) traces.splice(0, traces.length - 300);
   for (const f of traceListeners) { try { f(tick, msg); } catch { /* a listener never breaks a trace */ } }
 }

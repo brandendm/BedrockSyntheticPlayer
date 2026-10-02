@@ -10,6 +10,7 @@ import { runTests } from './game/scenarios.js';
 import { poll, sendEvent } from './game/bridge.js';
 import { CONFIG } from './config.js';
 import { orderOf } from './core/toggles.js';
+import { probeApis } from './game/probe.js';
 import { chainItem, chainOutline } from './core/chain.js';
 import { getPlan, setPlan, planMaterials, describe } from './core/learnhouse.js';
 
@@ -264,6 +265,13 @@ function handle(text, player) {
       }
     }
     return reply(player, 'testcave: none found');
+  }
+  // !bot probe api: try the game calls the bot relies on, once, and write down what the game answered (trace, events.jsonl).
+  if (lower === 'probe api' || lower === 'probe') {
+    if (!agent) return reply(player, 'spawn first');
+    reply(player, 'Probing the game calls on a patch in front of me...');
+    probeApis(agent).then((r) => reply(player, `Probe done: ${r.length} answers, in the decisions list and brain/logs/events.jsonl.`)).catch((e) => reply(player, `Probe failed: ${e}`));
+    return;
   }
   if (lower === 'aimprobe') {
     // Debug: how far off the crosshair lands from where the bot means it (head vs eye, turn error).

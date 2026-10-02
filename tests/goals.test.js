@@ -23,3 +23,15 @@ test('goal chain: a later goal is current when that is what the bot is working o
   assert.deepEqual([house.tasks[1].have, house.tasks[1].need], [10, 16]);
   assert.deepEqual([house.tasks[4].have, house.tasks[4].need], [20, 69]);
 });
+
+test('a goal switched off is shown off and is never the current one', () => {
+  const g = goalChain({ inv: { wooden_pickaxe: 1, stone_pickaxe: 1, stone_sword: 1, stone_axe: 1, stone_shovel: 1, cobblestone: 9, furnace: 1 }, tableKnown: true, step: null, toggles: { beds: false, torches: false, house: false, farm: false, iron: false } });
+  const by = Object.fromEntries(g.map((x) => [x.goal, x.status]));
+  assert.equal(by.Bed, 'off');
+  assert.equal(by.Torches, 'off');
+  assert.equal(by.House, 'off');
+  assert.equal(by['Move in'], 'off');
+  assert.ok(!g.some((x) => x.status === 'current')); // (everything switched on is done)
+  const on = goalChain({ inv: {}, tableKnown: false, toggles: { house: true } });
+  assert.ok(!on.some((x) => x.status === 'off'));
+});

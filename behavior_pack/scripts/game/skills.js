@@ -501,6 +501,19 @@ export class Skills {
     } catch {}
   }
 
+  /**
+   * Universal: whatever we were holding and it's gone (placed, used up, put on a horse, handed over), the
+   * hand stops showing it. Watched every few ticks from the agent's tick, so no single place has to remember
+   * to call afterUse. (The off hand is a different slot: a shield or torch put there is meant to stay.)
+   */
+  heldSweep() {
+    const c = container(this.sim);
+    if (!c) return;
+    const slot = this.sim.selectedSlotIndex, id = c.getItem(slot)?.typeId ?? null, prev = this._held;
+    this._held = { slot, id };
+    if (prev && prev.slot === slot && prev.id && !id) this.afterUse(slot);
+  }
+
   /** Put the weapon back in hand (or an empty hand) after building or crafting. */
   restHands() {
     hold(this.sim, this.a.weaponId && findSlot(this.sim, this.a.weaponId) >= 0 ? this.a.weaponId : null);
@@ -4089,6 +4102,7 @@ export class Skills {
         // Nothing works from this spot (water, lava, sand everywhere): try again from somewhere else.
         if (relocations++ < 6 && (await this.relocate(gen))) { stalls = 0; continue; }
         this.a.sayOnce('cantdigup', "I can't find a safe way up from here.", 60000);
+        this.a.whyNot('escape (no way up)', { rimClimb: this.rimClimb(), coverAbove: this.coverAbove(), blocks: this.blockCount(), byHand, relocations, shaftMoves, actionTries, pillarStopped: why }, true);
         return false;
       }
       const y = this.feet().y;
@@ -4767,6 +4781,7 @@ export class Skills {
   async explore(gen, what, want = wantOf(what)) {
     const st = this.exploreStall ?? (this.exploreStall = new ExploreStall());
     st.start(this.sim.location, want ?? what);
+    const p0 = this.sim.location;
     try {
       if (want === 'log' && (await this.ravineOut(gen))) return;
       const v = st.verdict();
@@ -4774,6 +4789,7 @@ export class Skills {
         this.exploreGaveUp[want ?? what] = Date.now() + 600000;
         this.a.say(`I'm not getting anywhere looking for ${what}: leaving that for now.`);
         this.log(`explore: ${what}: six goes that got nowhere, giving up on it for 10 minutes`);
+        this.a.whyNot('explore', { what, goes: st.n, pos: [Math.round(p0.x), Math.round(p0.y), Math.round(p0.z)] }, true);
         st.n = 0;
         return;
       }

@@ -68,7 +68,8 @@ def append_traces(traces: list) -> None:
     global _trace_seq
     with f.open("a", encoding="utf-8") as fh:
         for t in traces[:500]:
-            rec = {"t": now, "tick": t.get("tick"), "msg": str(t.get("msg", ""))[:300]}
+            m = str(t.get("msg", ""))
+            rec = {"t": now, "tick": t.get("tick"), "msg": m[:2500] if "\n" in m else m[:300]}
             if isinstance(t.get("p"), list) and len(t["p"]) == 3:
                 rec["p"] = t["p"]
             fh.write(json.dumps(rec) + "\n")

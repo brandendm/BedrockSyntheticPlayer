@@ -359,6 +359,7 @@ export class Agent {
     // (Not while the job is already out picking things up, and not more than once in ten seconds: a
     // restart every two seconds meant it never got there, and each one used up a try at getting our
     // own gear back. The same item that's had three restarts is left to the ordinary pickup.)
+    if (t % 4 === 1) { try { this.skills.heldSweep(); } catch { /* a stale hand is cosmetic */ } }
     if (t % 40 === 10 && this.mode === 'none' && this.autoEnabled && (this.task?.kind === 'auto' || !this.task) && !this.pickingUp &&
         t - (this.lootTriggerAt ?? -1e9) >= 200 && !(this.deathSpot && Date.now() - this.deathSpot.at < LOOT_WINDOW_MS)) {
       const tries = (this.lootTries ??= new Map());
@@ -594,6 +595,32 @@ export class Agent {
     this.autoEnabled = true; this.autoDone = false; this.nextAutoTry = 0;
   }
   clearChain() { this.memory.data.chain = []; this.memory.save(); }
+
+  /**
+   * A give-up with its reasons: what was tried, the numbers that decided it, and (map: true) the place as ASCII.
+   * One note, so the log says why and not just that.
+   */
+  whyNot(tag, facts = {}, map = false) {
+    let m = '';
+    if (map) { try { m = `\n${this.flight.mapText()}`; } catch { /* no map */ } }
+    trace(`give-up ${tag}: ${JSON.stringify(facts)}${m}`);
+  }
+
+  /** Why the plan has nothing to do: the switches that are off, what's held back and until when, what's queued. */
+  idleReasons() {
+    const out = [];
+    const off = Object.entries(this.toggles()).filter(([, on]) => on === false).map(([k]) => k);
+    if (off.length) out.push(`switched off: ${off.join(', ')}`);
+    const hold = (until, what) => { const left = Math.round(((until ?? 0) - Date.now()) / 1000); if (left > 0) out.push(`${what} held back ${left} s more`); };
+    hold(this.villageHoldUntil, 'the village hunt');
+    hold(this.bedDeferredUntil, 'the bed/sheep search');
+    for (const [k, d] of this.deferred) { const left = Math.round((d.until - Date.now()) / 1000); if (left > 0) out.push(`${d.step} (${k}) set aside ${left} s more`); }
+    const q = this.chainQueue();
+    if (q.length) out.push(`chain queued: ${q.map((g) => `${g.n} ${g.item}`).join(', ')}`);
+    if (this.keepRiding) out.push('riding (!bot dismount to get off)');
+    if (!this.homestead.house) out.push('no house');
+    return out.length ? out.join('; ') : 'every goal is done';
+  }
 
   /** The order of the movable goals after moving in (core/toggles.js): `!bot order farm iron village`. */
   setOrder(text) {
@@ -1183,6 +1210,7 @@ export class Agent {
           // list (core/focus.js); it only goes exploring when nothing else is doable.
           if (step.step === 'hunt' && step.what === 'sheep') this.bedDeferredUntil = Date.now() + 300000;
           this.deferred.set(stepKey(step), { until: Date.now() + 180000, step: step.step });
+          this.whyNot('step set aside', { step: stepKey(step), repeats, same, why: 'it kept failing' }, true);
           if (CONFIG.debug) console.warn(`[agent] setting aside ${stepKey(step)} for 3 min`);
           repeats = 0; same = 0;
           last = '';
@@ -1237,7 +1265,7 @@ export class Agent {
             const gained = Math.hypot(from.x - b.pos.x, from.z - b.pos.z) - Math.hypot(this.sim.location.x - b.pos.x, this.sim.location.z - b.pos.z);
             if (gained < 8) { this.villageStuck = (this.villageStuck ?? 0) + 1; await S.wait(gen, 100); } else this.villageStuck = 0; // (a few seconds between tries: not three in one breath)
             if (this.villageStuck > 0 && this.villageStuck < 3) await S.explore(gen, 'a village', null); // (the straight way ended in a dead end: fresh ground by the usual search)
-            if (this.villageStuck >= 3 || this.villageMisses >= 6) { this.villageMisses = 0; this.villageStuck = 0; this.villageHoldUntil = Date.now() + 1800000; trace('village hunt: got nowhere / six legs without one; not again for 30 min'); }
+            if (this.villageStuck >= 3 || this.villageMisses >= 6) { this.villageMisses = 0; this.villageStuck = 0; this.villageHoldUntil = Date.now() + 1800000; this.whyNot('village hunt', { stuckLegs: this.villageStuck, legsWithoutVillage: this.villageMisses, lastGain: Math.round(gained), target: b.id, distance: Math.round(b.dist), pos: [Math.round(this.sim.location.x), Math.round(this.sim.location.y), Math.round(this.sim.location.z)], hold: '30 min' }, true); }
             break;
           }
           case 'horse': {
@@ -1384,6 +1412,7 @@ export class Agent {
             break;
           case 'done':
             if ((await S.needsEscape(gen)) && !(await S.toSurface(gen))) { await S.wait(gen, 200); break; } // try again shortly
+            if (!this.idleNoted || Date.now() - this.idleNoted > 60000) { this.idleNoted = Date.now(); trace(`idle: nothing to do: ${this.idleReasons()}`); }
             this.sayOnce('all-done', H.house ? 'Every goal done: I\'ll keep the place up (farm, chest, repairs, nights at home) and stand by.' : 'Got stone tools. Standing by for the next goal.', 3600000);
             // Not finished for good: nights, the farm, repairs, a full pack still need seeing to.
             // Idle for half a minute (free for orders and a look around), then plan again.
@@ -1547,6 +1576,7 @@ export class Agent {
       project: p ? { ...H.projectProgress(), needs: H.houseNeeds(p, p.dir, { fittings: true }) } : H.house ? { placed: 69, total: 69 } : null,
       // A side job doesn't move the dashboard's goal (it's for later): the ladder's goal stays current.
       step: this.task?.kind === 'auto' && !this.autoOpportunity ? this.autoStep : null,
+      toggles: this.toggles(),
       advance: H.house ? { ...advanceProgress({ inv: invCounts(this.sim), worn: this.worn() }), waterKnown: this.memory.data.waterNearHouse != null && (this.memory.data.waterNearHouse || advanceProgress({ inv: invCounts(this.sim), worn: this.worn() }).bucket) } : null,
     });
   }

@@ -23,6 +23,7 @@ export function goalChain(f) {
   const inv = f.inv;
   const logs = count(inv, isLog), planks = count(inv, isPlanks), cobble = count(inv, (id) => TOOL_STONE.has(id));
   const wool = Math.max(0, ...Object.entries(inv).filter(([id]) => isWool(id)).map(([, n]) => n));
+  /** @type {Array<any>} */
   const goals = [];
 
   // 1. Wooden tools
@@ -144,24 +145,29 @@ export function goalChain(f) {
     });
   }
 
+  // Switched off (core/toggles.js): not part of the plan, so not "current" and not waiting its turn. A goal already
+  // done stays done. Move in goes with the house, the iron gear with iron.
+  const SWITCH = { 'Bed': 'beds', 'Torches': 'torches', 'House': 'house', 'Move in': 'house', 'Farm': 'farm', 'Iron': 'iron', 'Iron gear': 'iron' };
+  for (const g of goals) g.off = !!(f.toggles && SWITCH[g.goal] && f.toggles[SWITCH[g.goal]] === false && !g.done);
+
   // Status: goals are worked in order; the current one is the first not done.
   // Normally the first unfinished one; but if the bot is working on a later one (no sheep around
   // yet, so the bed waits), the one its current step belongs to.
   // A later goal only takes over the display when the step clearly belongs to it and not to the
   // first unfinished goal (generic steps like explore or craft never move it: that made the
   // dashboard flip between "Wooden pickaxe" and "Bed inside" with every glance).
-  const first = goals.findIndex((g) => !g.done);
+  const first = goals.findIndex((g) => !g.done && !g.off);
   // Only steps that belong to one goal can pull the display ahead (hunting sheep: the bed;
   // the furnace jobs: torches; house steps). Logs and stone feed half the goals: never.
   const DISTINCT = new Set(['hunt', 'smelt', 'collect_smelt', 'wait_smelt', 'plan_house', 'build_house', 'repair_house', 'make_farm', 'get_iron', 'check_water', 'tend_farm', 'store']);
   const mine = (g) => g.tasks.some((t) => !t.done && t.steps.includes(f.step));
   let current = first;
   if (first >= 0 && DISTINCT.has(f.step) && !mine(goals[first])) {
-    const later = goals.findIndex((g, i) => i > first && !g.done && mine(g));
+    const later = goals.findIndex((g, i) => i > first && !g.done && !g.off && mine(g));
     if (later >= 0) current = later;
   }
   return goals.map((g, i) => {
-    const status = g.done ? 'done' : i === current ? 'current' : 'todo';
+    const status = g.done ? 'done' : g.off ? 'off' : i === current ? 'current' : 'todo';
     let currentTask = null;
     if (status === 'current') {
       const byStep = g.tasks.findIndex((t) => !t.done && t.steps.includes(f.step));

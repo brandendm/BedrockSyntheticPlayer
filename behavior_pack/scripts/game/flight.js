@@ -58,6 +58,25 @@ export class Flight {
     return out;
   }
 
+  /** The place as one block of text for a note (feet and floor layers, 9 x 9): where it was when it gave up. */
+  mapText() {
+    const S = this.a.skills, f = S.feet(), r = 4, rows = [];
+    for (const dy of [1, 0, -1]) {
+      rows.push(`y ${f.y + dy}${dy === 0 ? ' feet' : dy === 1 ? ' head' : ' floor'}`);
+      for (let dz = -r; dz <= r; dz++) {
+        let row = '';
+        for (let dx = -r; dx <= r; dx++) {
+          if (dx === 0 && dz === 0 && dy >= 0) { row += '@'; continue; }
+          let id = null;
+          try { id = S.blockAt({ x: f.x + dx, y: f.y + dy, z: f.z + dz }); } catch { /* */ }
+          row += id === null ? '?' : blockChar(id);
+        }
+        rows.push(row);
+      }
+    }
+    return rows.join('\n');
+  }
+
   /** Pack changes, a line each (the big stacks of stone and junk left out): who took the crafting table. Every 10 ticks. */
   ledger(t) {
     if (t % 10 !== 5) return;

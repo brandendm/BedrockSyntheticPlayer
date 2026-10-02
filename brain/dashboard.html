@@ -64,6 +64,8 @@
   .chain { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 14px; }
   .step { display: flex; align-items: center; gap: 6px; padding: 5px 10px; border-radius: 999px; background: var(--chip); color: var(--muted); font-size: 13px; }
   .step.done { color: var(--good); }
+  .step.off { opacity: .45; text-decoration: line-through; }
+  .goal.off { opacity: .4; border-style: dashed; }
   .step.current { background: var(--accent); color: var(--accent-ink); font-weight: 600; }
   .arrow { color: var(--muted); align-self: center; }
   .toggles { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 6px 12px; }
@@ -423,14 +425,15 @@ const STEP_TEXT = {
 function renderGoals(s) {
   const goals = s.goals || [];
   const cur = goals.find((g) => g.status === 'current');
+  const active = goals.filter((g) => g.status !== 'off'), offN = goals.length - active.length;
   const OPP = { sheep: 'sheep were right there', food: 'animals were right there', log: 'a tree was right there', stone: 'stone was right there' };
   const side = s.stepLabel ? '' : (s.opportunity ? ` <span class="muted">(side job: ${OPP[s.opportunity] || s.opportunity})</span>` : '') +
     (s.setAside?.length ? ` <span class="muted">· set aside for now: ${[...new Set(s.setAside)].map((k) => esc(STEP_TEXT[k] || k)).join(', ')}</span>` : '');
   const doing = s.mode === 'fight' ? 'fighting' : s.mode === 'flee' ? 'getting away from a mob' : s.stepLabel || STEP_TEXT[s.step] || pretty(s.task);
   $('nowline').innerHTML = cur
-    ? `Goal <b>${esc(cur.goal)}</b> (${goals.indexOf(cur) + 1} of ${goals.length}) · right now: <b>${esc(doing)}</b>${side}`
-    : goals.length ? `All ${goals.length} goals done · right now: <b>${esc(doing)}</b>${side}` : '—';
-  $('chain').innerHTML = goals.map((g, i) => `${i ? '<span class="arrow">›</span>' : ''}<span class="step ${g.status}">${g.status === 'done' ? '✓ ' : ''}${esc(g.goal)}</span>`).join('');
+    ? `Goal <b>${esc(cur.goal)}</b> (${active.indexOf(cur) + 1} of ${active.length}${offN ? `, ${offN} switched off` : ''}) · right now: <b>${esc(doing)}</b>${side}`
+    : goals.length ? `All ${active.length} goals done${offN ? ` (${offN} switched off)` : ''} · right now: <b>${esc(doing)}</b>${side}` : '—';
+  $('chain').innerHTML = goals.map((g, i) => `${i ? '<span class="arrow">›</span>' : ''}<span class="step ${g.status}">${g.status === 'done' ? '✓ ' : ''}${esc(g.goal)}${g.status === 'off' ? ' (off)' : ''}</span>`).join('');
   $('goals').innerHTML = goals.map((g) => {
     const doneN = g.tasks.filter((t) => t.done).length;
     const rows = g.tasks.map((t, i) => {
@@ -439,7 +442,7 @@ function renderGoals(s) {
       const bar = t.need != null && !t.done ? `<div class="mini"><i style="width:${Math.round((t.have / Math.max(1, t.need)) * 100)}%"></i></div>` : '';
       return `<div class="task${now ? ' now' : ''}"><span class="${t.done ? 'ok' : 'no'}">${t.done ? '✓' : '○'}</span><span class="tname">${esc(t.name)}</span>${num}${bar}</div>`;
     }).join('');
-    return `<div class="goal ${g.status}"><h3>${esc(g.goal)} <small>${g.status === 'done' ? 'done' : `${doneN}/${g.tasks.length}`}</small></h3>${rows}</div>`;
+    return `<div class="goal ${g.status}"><h3>${esc(g.goal)} <small>${g.status === 'done' ? 'done' : g.status === 'off' ? 'switched off' : `${doneN}/${g.tasks.length}`}</small></h3>${rows}</div>`;
   }).join('');
 }
 const esc = (x) => String(x ?? '').replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
@@ -555,8 +558,8 @@ async function fullReport() {
   out.push(section('WATCHDOG / FLIGHT', `watch: ${j(s.flight?.watch)}  last dump: ${j(s.flight?.lastDump)}  steps: ${(s.flight?.steps || []).map((r) => `${r.k} ${r.s}`).join(' > ')}`));
   out.push(section('BRAIN', `jev: ${j(st?.jev)}`));
   const lines = (tr?.lines || []);
-  out.push(section(`DECISIONS (all ${lines.length} the brain holds, oldest first, with the bot's position)`, lines.map((l) => `${(l.t || '').slice(11)} ${l.msg}${l.p ? ` @${l.p.join(',')}` : ''}`).join('\n')));
-  { const w = (await getJSON('/api/why'))?.why || []; out.push(section(`PLANNER REASONS (last ${Math.min(60, w.length)} of ${w.length}; the whole log: Copy planner log)`, w.slice(-60).map((r) => `${r.t} @${(r.pos || []).join(',')} ${r.key} | ${JSON.stringify(r.facts)}`).join('\n'))); }
+  out.push(section(`DECISIONS (all ${lines.length} the brain holds, oldest first, with the bot's position)`, lines.map((l) => `${(l.t || '').slice(11)} t${l.tick ?? '?'} ${l.msg}${l.p ? ` @${l.p.join(',')}` : ''}`).join('\n')));
+  { const w = (await getJSON('/api/why'))?.why || []; out.push(section(`PLANNER REASONS (last ${Math.min(60, w.length)} of ${w.length}; the whole log: Copy planner log)`, w.slice(-60).map((r) => `${r.t} t${r.tick ?? '?'} @${(r.pos || []).join(',')} ${r.key} | ${JSON.stringify(r.facts)}`).join('\n'))); }
   out.push(section('WHAT IT SAID (chat/log events)', (ev?.events || []).map((e) => `${(e.t || '').slice(11)} ${e.text ?? e.message ?? j(e)}${e.pos ? ` @${e.pos.x},${e.pos.y},${e.pos.z}` : ''}`).join('\n')));
   out.push(section(`FLIGHT REPORTS (${(fl?.reports || []).length})`, (fl?.reports || []).map((r) => `--- ${r.t} ${r.why}\n${(r.report || []).join('\n')}`).join('\n\n')));
   const res = ts?.results || {};
@@ -575,7 +578,7 @@ async function pathLogText() {
 }
 async function whyLogText() {
   const d = await getJSON('/api/why'), rows = d?.why || [];
-  const line = (r) => `${r.t} @${(r.pos || []).join(',')} ${r.key} | ${r.step} | ${JSON.stringify(r.facts)}`;
+  const line = (r) => `${r.t} t${r.tick ?? '?'} @${(r.pos || []).join(',')} ${r.key} | ${r.step} | ${JSON.stringify(r.facts)}`;
   return { text: `PLANNER LOG (${rows.length} choices, build ${rows.length ? rows[rows.length - 1].build : '?'})\n${rows.map(line).join('\n')}`, n: rows.length };
 }
 $('pathcopy').onclick = async () => { const r = await pathLogText(); copyText(r.text, `Path log copied (${r.n} rows)`); };
