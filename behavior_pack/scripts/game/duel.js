@@ -8,7 +8,7 @@ import { TestRecorder } from './testrun.js';
 import { container, hold, invCounts, take } from './inventory.js';
 import { weaponReach } from '../core/tactics.js';
 import { bestWeapon } from '../core/tactics.js';
-import { solvePitch } from '../core/ballistics.js';
+import { shootAt } from './aim.js';
 
 /** @type {Array<[string, number]>} */
 const ARSENAL = [
@@ -118,24 +118,8 @@ export async function runDuel(agent, player, { cmd, x, gy, z, extraRuns, secs })
           agent.setBlocking(false);
           agent.body.move(-dz * strafe, dx * strafe, 0.5);
           if (t >= nextShot) {
-            // Aim where you will be when the arrow arrives, at the angle its drop needs, hold the view there, draw, release.
-            try {
-              const v = player.getVelocity(), flight = d / 2.8;
-              const tgt = { x: eyeY.x + v.x * flight * 1, y: eyeY.y - 0.4 + v.y * flight * 0.3, z: eyeY.z + v.z * flight };
-              const eye = sim.getHeadLocation();
-              const ddx = tgt.x - eye.x, ddz = tgt.z - eye.z, dd = Math.hypot(ddx, ddz) || 1;
-              const th = solvePitch(dd, tgt.y - eye.y);
-              const pt = { x: eye.x + (ddx / dd) * 30 * Math.cos(th), y: eye.y + 30 * Math.sin(th), z: eye.z + (ddz / dd) * 30 * Math.cos(th) };
-              /** @type {any} */ (sim).lookAtLocation(pt);
-              agent.motor.setFocus(pt);
-              await system.waitTicks(6);
-              const item = simPk?.getItem(sim.selectedSlotIndex);
-              try { /** @type {any} */ (sim).useItem(item); } catch { /* */ }
-              for (let k = 0; k < 11 && !over(); k++) { agent.body.move(-dz * strafe, dx * strafe, 0.5); await system.waitTicks(2); }
-              try { /** @type {any} */ (sim).stopUsingItem(); } catch { /* */ }
-              await system.waitTicks(2);
-            } finally { agent.motor.setFocus(null); }
-            nextShot = system.currentTick + 10;
+            await shootAt(agent, player, { strafe: { x: -dz * strafe, z: dx * strafe }, stop: () => !!over() });
+            nextShot = system.currentTick + 6;
           }
           continue;
         }

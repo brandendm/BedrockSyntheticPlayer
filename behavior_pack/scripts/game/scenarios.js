@@ -290,7 +290,9 @@ async function runOne(agent, player, name, arg, human = false) {
   const sky = !GROUND.has(name);
   const gy = sky ? Math.min(Math.max(gy0 + 60, 120), 280) : gy0;
   // (the farm test lays 55 x 41 of its own: its slab and backup are that big)
-  const ext = name === 'farm' ? { w: 22, e: 36, r: 22 } : name === 'horserace' ? { w: 8, e: 54, r: 10 } : { w: 14, e: 18, r: 12 };
+  const ext = name === 'farm' ? { w: 22, e: 36, r: 22 } : name === 'horserace' ? { w: 8, e: 54, r: 10 } : name === 'bow' ? { w: 14, e: 34, r: 14 } : { w: 14, e: 18, r: 12 };
+  // The rim wall is only low (to keep walkers on the slab) where things fly: a ghast or blaze hovering out over the edge, the arrows at it.
+  const wallH = ['ghast', 'blaze', 'bow'].includes(name) ? 2 : 8;
   const box = sky ? { x1: x - ext.w, y1: gy - 10, z1: z - ext.r, x2: x + ext.e, y2: gy + 20, z2: z + ext.r } : { x1: x - 8, y1: gy - 8, z1: z - 8, x2: x + 14, y2: gy + 18, z2: z + 8 };
   const pHome = player ? { x: player.location.x, y: player.location.y, z: player.location.z } : null;
   const cmd = (c) => { try { dim.runCommand(c); return true; } catch (e) { console.warn(`[test] ${c}: ${e}`); return false; } };
@@ -304,7 +306,7 @@ async function runOne(agent, player, name, arg, human = false) {
     cmd(`fill ${x - ext.w} ${gy} ${z - ext.r} ${x + ext.e} ${gy} ${z + ext.r} grass_block`);
     // A glass wall round the slab's rim, so nobody (the bot in a fight, a horse, you) can walk or be knocked off it into the sky.
     const wx1 = x - ext.w, wx2 = x + ext.e, wz1 = z - ext.r, wz2 = z + ext.r;
-    for (const [a1, b1, a2, b2] of [[wx1, wz1, wx2, wz1], [wx1, wz2, wx2, wz2], [wx1, wz1, wx1, wz2], [wx2, wz1, wx2, wz2]]) cmd(`fill ${a1} ${gy + 1} ${b1} ${a2} ${gy + 8} ${b2} glass`);
+    for (const [a1, b1, a2, b2] of [[wx1, wz1, wx2, wz1], [wx1, wz2, wx2, wz2], [wx1, wz1, wx1, wz2], [wx2, wz1, wx2, wz2]]) cmd(`fill ${a1} ${gy + 1} ${b1} ${a2} ${gy + wallH} ${b2} glass`);
     // Whoever is not doing the test waits on the slab too (the bot by the edge while you do it).
     try { if (human) sim.teleport({ x: x - 4.5, y: gy + 1, z: z + 6.5 }); else sim.teleport({ x: x + 0.5, y: gy + 1, z: z + 0.5 }); } catch { /* */ }
     if (human && player) { try { player.teleport({ x: x + 0.5, y: gy + 1, z: z + 0.5 }); } catch { /* */ } }
@@ -1583,23 +1585,29 @@ async function runOne(agent, player, name, arg, human = false) {
         const gen = agent.newTask({ kind: 'test' });
         const notes = [];
         try {
-          await S.goNear(gen, { x: x + 2.5, y: gy + 1, z: z + 0.5 }, 1, 2);
-          for (const dz of [0, -1, 1]) {
-            const cell = { x: x + 3, y: gy, z: z + dz };
-            if (!/lava/.test(S.blockAt(cell) ?? '')) continue;
-            const slot = hold(sim, 'water_bucket');
-            if (slot < 0) { notes.push('no water bucket'); break; }
-            try { sim.lookAtBlock(cell); } catch { /* */ }
+          // Water goes on the ground by the pool (a bucket will not take the lava block itself as a target) and runs onto the lava,
+          // which turns to obsidian where the water reaches it.
+          await S.goNear(gen, { x: x + 1.5, y: gy + 1, z: z + 0.5 }, 1, 2);
+          const slot = hold(sim, 'water_bucket');
+          if (slot < 0) notes.push('no water bucket');
+          else {
+            const edge = { x: x + 2, y: gy, z };
+            try { sim.lookAtBlock(edge); } catch { /* */ }
             await system.waitTicks(4);
-            try { sim.useItemInSlotOnBlock(slot, cell, Direction.Up); } catch (e) { notes.push(`bucket: ${e}`); }
-            await system.waitTicks(25);
-            notes.push(`${cell.z - z}: ${S.blockAt(cell)}`);
-            if (S.blockAt(cell) === 'obsidian') break;
+            let ok = false;
+            try { ok = sim.useItemInSlotOnBlock(slot, edge, Direction.Up); } catch (e) { notes.push(`bucket: ${e}`); }
+            notes.push(`water put ${ok ? 'down' : 'refused'}`);
+            await system.waitTicks(50);
+            notes.push(`pool now: ${[0, -1, 1].map((dz) => S.blockAt({ x: x + 3, y: gy, z: z + dz })).join('/')}`);
           }
-          const target = [0, -1, 1].map((dz) => ({ x: x + 3, y: gy, z: z + dz })).find((c) => S.blockAt(c) === 'obsidian');
+          const cells = [];
+          for (let cx = x + 3; cx <= x + 5; cx++) for (let cz = z - 1; cz <= z + 1; cz++) cells.push({ x: cx, y: gy, z: cz });
+          const target = cells.find((c) => S.blockAt(c) === 'obsidian');
           if (target) {
             hold(sim, 'diamond_pickaxe');
+            const was = S.essential; S.essential = true;
             const mined = await S.mine(gen, target, { collect: true, force: true }).catch((e) => { notes.push(`mine: ${e}`); return false; });
+            S.essential = was;
             notes.push(mined ? 'mined it' : 'would not mine it (lava beside it?)');
           }
         } catch (e) { notes.push(`${e}`); }
@@ -1631,6 +1639,8 @@ async function runOne(agent, player, name, arg, human = false) {
         hold(sim, 'iron_pickaxe');
         const t1 = system.currentTick;
         const notes = [];
+        const essential0 = S.essential; S.essential = true; // (digging through stone to the ore, which it only does for what it needs)
+        cleanup.push(() => { S.essential = essential0; });
         while (have(sim) < KINDS.length && system.currentTick - t1 < 240 * 20 && !agent.testSkipped) {
           const need = new Set(KINDS.filter(([, , item]) => !(invCountsOf(sim)[item] ?? 0)).map(([ore]) => ore));
           const f = S.feet();
@@ -1736,16 +1746,17 @@ async function runOne(agent, player, name, arg, human = false) {
         if (human) { pass = await humanTry(() => nHit() >= SPOTS.length, 150); pass = nHit() >= SPOTS.length - 1; detail = `you hit ${nHit()}/${SPOTS.length} targets with ${shots} arrows in ${secs()}s`; break; }
         giveItem('bow', 1); giveItem('arrow', 48);
         agent.testHold = true;
-        const order = [...stands].sort((a2, b2) => dist3D(sim.location, a2.location) - dist3D(sim.location, b2.location));
+        const order = [...stands].sort((a2, b2) => SPOTS[stands.indexOf(a2)][0] - SPOTS[stands.indexOf(b2)][0]);
         const notes = [];
         for (const st of order) {
           let n = 0;
-          while (!hitIds.has(st.id) && n < 4 && !agent.testSkipped && st.isValid) {
+          while (!hitIds.has(st.id) && n < 4 && !agent.testSkipped && (() => { try { return st.isValid; } catch { return false; } })()) {
             n++;
             await shootAt(agent, st, { stop: () => agent.testSkipped });
             await system.waitTicks(22);                       // the flight and the hit
           }
-          notes.push(`${Math.round(dist3D(sim.location, st.location))} blocks${st.location.y > gy + 1.5 ? ` up ${Math.round(st.location.y - gy - 1)}` : ''}: ${hitIds.has(st.id) ? `hit with ${n}` : `missed ${n}`}`);
+          const sp2 = SPOTS[stands.indexOf(st)];
+          notes.push(`${Math.round(Math.hypot(sp2[0], sp2[1]))} blocks${sp2[2] ? ` up ${sp2[2]}` : ''}: ${hitIds.has(st.id) ? `hit with ${n}` : `missed ${n}`}`);
         }
         pass = nHit() >= SPOTS.length - 1;
         detail = `${nHit()}/${SPOTS.length} targets with ${shots} arrows in ${secs()}s (${notes.join('; ')})`;
@@ -2261,6 +2272,8 @@ async function runOne(agent, player, name, arg, human = false) {
     if (sky) { try { sim.teleport(home); } catch { /* */ } }
     try { if (player && pHome) player.teleport(pHome); } catch { /* */ }
     await system.waitTicks(5);
+    // Lava does not vanish when the structure is put back (what flowed stays for a while): turned to air first, in the whole box.
+    if (name === 'lavacross' || name === 'obsidian') { for (const liq of ['lava', 'flowing_lava', 'obsidian']) cmd(`fill ${box.x1} ${box.y1} ${box.z1} ${box.x2} ${box.y2} ${box.z2} air replace ${liq}`); await system.waitTicks(10); }
     // Put the ground back, then make sure the bot isn't left inside a restored block.
     cmd(`structure load agent_test_backup ${box.x1} ${box.y1} ${box.z1}`);
     cmd('structure delete agent_test_backup');
