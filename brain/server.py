@@ -621,7 +621,7 @@ def main():
     if "--server" in sys.argv:
         # The Bedrock server as our child (its console is this window): needed for /locate answers.
         from .serverproc import ServerProc
-        exe = ROOT / "server" / ("bedrock_server.exe" if os.name == "nt" else "bedrock_server")
+        exe = ROOT.parent / "server" / ("bedrock_server.exe" if os.name == "nt" else "bedrock_server")
         if exe.exists():
             sp = ServerProc(exe)
             _server["proc"] = sp
