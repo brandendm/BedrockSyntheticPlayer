@@ -124,7 +124,7 @@ class LocateJobs:
         self.jobs = {}
         self.guard = threading.Lock()
 
-    def ask(self, kind, name, x, z, wait: float = 3.5) -> dict:
+    def ask(self, kind, name, x, z, wait: float = 2.0) -> dict:
         key = (kind, name, None if x is None else int(x) // 256, None if z is None else int(z) // 256)
         with self.guard:
             job = self.jobs.get(key)

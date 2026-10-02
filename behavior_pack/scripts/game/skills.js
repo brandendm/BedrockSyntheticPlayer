@@ -4605,17 +4605,26 @@ export class Skills {
   /** Up on something with a long fall beside us, and not under rock (that's a cave, not a tower). */
   /** Break down through leaves (and logs) under us until we stand on real ground. */
   async offCanopy(gen) {
-    let moved = false;
-    for (let i = 0; i < 16; i++) {
+    let moved = false, said = false;
+    // (Inside the canopy too, not only on top of it: the u195 run mined one leaf, dropped into the layer below, found nothing leaf-like under its
+    // feet, stopped, and spent 25 s in the escape loop planning a way out of a cell walled in by leaves.)
+    const leafAt = (x, y, z) => /leaves/.test(this.blockAt({ x, y, z }) ?? '');
+    const inside = () => { const f = this.feet(); for (const dy of [0, 1]) for (const [dx, dz] of [[0, 0], [1, 0], [-1, 0], [0, 1], [0, -1]]) if (leafAt(f.x + dx, f.y + dy, f.z + dz)) return true; return false; };
+    for (let i = 0; i < 40; i++) {
       this.check(gen);
       const f = this.feet();
       const below = { x: f.x, y: f.y - 1, z: f.z };
       const id = this.blockAt(below) ?? 'air';
-      if (!/leaves/.test(id) && !(moved && isLog(id))) break;
-      if (i === 0) this.log(`escape: on a tree canopy at ${f.x} ${f.y} ${f.z}, breaking down through it`);
-      if (!(await this.mine(gen, below, { collect: isLog(id), allowBelow: true }))) break;
-      moved = true;
-      for (let t = 0; t < 20 && this.feet().y >= f.y; t++) await this.wait(gen, 1); // fall
+      if (/leaves/.test(id) || (moved && isLog(id))) {
+        if (!said) { said = true; this.log(`escape: on a tree canopy at ${f.x} ${f.y} ${f.z}, breaking down through it`); }
+        if (!(await this.mine(gen, below, { collect: isLog(id), allowBelow: true }))) break;
+        moved = true;
+        for (let t = 0; t < 20 && this.feet().y >= f.y; t++) await this.wait(gen, 1); // fall
+        continue;
+      }
+      // Air under us inside the canopy: wait to fall; solid ground or anything else: down.
+      if (moved && OPEN.test(id) && inside()) { for (let t = 0; t < 20 && this.feet().y >= f.y; t++) await this.wait(gen, 1); if (this.feet().y >= f.y) break; continue; }
+      break;
     }
     if (moved) await this.collect(gen, this.sim.location, 4, 2);
     return moved;
