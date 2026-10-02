@@ -413,6 +413,18 @@ def make_handler(engine: DecisionEngine, key: str | None = None):
                     cmds = list(_commands)
                     _commands.clear()
                 return self._send(200, {"commands": cmds})
+            if self.path == "/api/live_report":
+                # The dashboard's full report, rewritten every few seconds: brain/logs/live_report.txt.
+                try:
+                    n = min(int(self.headers.get("Content-Length", 0)), 16_000_000)
+                    text = self.rfile.read(n).decode("utf-8", "replace")
+                    LOG_DIR.mkdir(parents=True, exist_ok=True)
+                    tmp = LOG_DIR / "live_report.txt.tmp"
+                    tmp.write_text(text, encoding="utf-8")
+                    tmp.replace(LOG_DIR / "live_report.txt")
+                except (OSError, ValueError) as e:
+                    return self._send(500, {"error": str(e)})
+                return self._send(200, {"bytes": len(text)})
             if self.path == "/api/command":
                 try:
                     text = str(self._read_json().get("text", "")).strip()[:200]

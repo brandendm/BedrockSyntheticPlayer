@@ -1773,6 +1773,43 @@ export class Skills {
   }
 
   /** Put a block item down next to us, on the ground. */
+  /** Is p one of the quarry stairs' own cells (a tread's stand and head room)? */
+  inShaft(p) {
+    const q = this.quarry;
+    if (!q) return false;
+    for (const k of q.steps) {
+      const [x, y, z] = k.split(',').map(Number);
+      if (x === p.x && z === p.z && p.y >= y + 1 && p.y <= y + 2) return true;
+    }
+    return false;
+  }
+
+  /** Put a table or furnace in a niche dug into the stairs' side wall, at the height we stand. */
+  async placeInNiche(gen, itemId) {
+    const f = this.feet();
+    for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+      const c = { x: f.x + dx, y: f.y, z: f.z + dz };
+      const id = this.blockAt(c) ?? 'air', under = { x: c.x, y: c.y - 1, z: c.z };
+      if (this.inShaft(c) || this.isProtected(c) || OPEN.test(id) || this.isLiquid(c) || UNBREAKABLE.test(id)) continue;
+      if (this.touchesLava(c) || this.touchesLiquid(c) || OPEN.test(this.blockAt(under) ?? 'air') || this.isLiquid(under)) continue;
+      if (this.inShaft({ x: c.x, y: c.y + 1, z: c.z })) continue;
+      if (!(await this.clearCampCell(gen, c))) continue;
+      const slot = hold(this.sim, itemId);
+      if (slot < 0) return null;
+      await this.a.motor.lookAt({ x: c.x + 0.5, y: c.y, z: c.z + 0.5 }, 1, 20);
+      this.check(gen);
+      await this.placeOn(gen, slot, under, Direction.Up, { x: 0.5, y: 1, z: 0.5 }, c);
+      if (this.blockAt(c) === itemId) {
+        this.log(`place ${itemId}: in a niche cut into the stairs' wall at ${c.x} ${c.y} ${c.z}`);
+        if (itemId === 'crafting_table') { this.a.memory.rememberTable(this.dim.id, c); this.tablePlaced = { ...c, tick: system.currentTick }; }
+        this.restHands();
+        return c;
+      }
+    }
+    this.restHands();
+    return null;
+  }
+
   async place(gen, itemId, retry = true) {
     const f = this.feet();
     const cls = this.a.classifier();
@@ -1790,11 +1827,17 @@ export class Skills {
           const under = isGround(cls(p.x, p.y - 1, p.z)) || /leaves$/.test(this.blockAt({ x: p.x, y: p.y - 1, z: p.z }) ?? ''); // leaves hold a block fine
           const open = OPEN.test(this.blockAt(p) ?? '?'), reach = this.inReach(p);
           if (!under) why.floor++; else if (!open) why.taken++; else if (!reach) why.far++;
-          if (under && open && reach) spots.push({ ...p, seen: this.sees({ x: p.x, y: p.y - 1, z: p.z }, true) });
+          if (under && open && reach && !this.inShaft(p)) spots.push({ ...p, seen: this.sees({ x: p.x, y: p.y - 1, z: p.z }, true) });
         }
       }
     }
     spots.sort((a, b) => (b.seen ? 1 : 0) - (a.seen ? 1 : 0) || Math.abs(a.y - f.y) - Math.abs(b.y - f.y) || dist3D(f, a) - dist3D(f, b));
+    // In the quarry's stairs the only open cells are the stairs themselves (a table set down there blocked them, and the bot
+    // read its own rebuilt-around table as "something blew my stairs apart"): cut a niche in the side wall instead.
+    if (!spots.length && this.quarry && this.nearQuarry(f, 3)) {
+      const n = await this.placeInNiche(gen, itemId);
+      if (n) return n;
+    }
     if (!spots.length) this.log(`place ${itemId}: no open spot around ${f.x} ${f.y} ${f.z} (no ground ${why.floor}, taken ${why.taken}, out of reach ${why.far})`);
     for (const p of spots.slice(0, 6)) {
       const ground = { x: p.x, y: p.y - 1, z: p.z };
@@ -3941,10 +3984,27 @@ export class Skills {
     return !!ok;
   }
 
+  /**
+   * Boxed in by high walls with open sky (the floor of a pit or ravine whose walkable part is small, 900 cells or
+   * fewer with nothing 24 blocks away): the trapped test passes (a spot 8 away exists), but there is no way on
+   * but up. The 02:29 run stood in one for 4 minutes with nothing to do.
+   */
+  async isPocket(gen) {
+    if (this.rimClimb() < 4) return false;
+    const f = this.feet(), k = `${f.x},${f.y},${f.z}`, c = this.pocketAt;
+    if (c && c.k === k && system.currentTick - c.at < 200) return c.v;
+    const res = await this.a.plan(this.sim.location, this.sim.location, 0, 900, (x, y, z, w) => w.standable(x, y, z) && Math.hypot(x - f.x, z - f.z) >= 24);
+    this.check(gen);
+    const v = !res.complete && res.expanded < 900;
+    this.pocketAt = { k, at: system.currentTick, v };
+    return v;
+  }
+
   async needsEscape(gen) {
     if (this.a.homestead?.isHome()) return false; // our own house: the door is the way out
     if (this.isUnderground()) { this.log(`escape: underground at ${this.feet().x} ${this.feet().y} ${this.feet().z}`); return true; }
     if (await this.isTrapped(gen)) { this.log(`escape: hemmed in at ${this.feet().x} ${this.feet().y} ${this.feet().z}`); return true; }
+    if (await this.isPocket(gen)) { this.log(`escape: boxed into a pocket with walls ${this.rimClimb()} high at ${this.feet().x} ${this.feet().y} ${this.feet().z}`); return true; }
     return false;
   }
 

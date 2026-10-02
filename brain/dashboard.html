@@ -381,7 +381,7 @@ function render(d) {
   $('airv').textContent = `${s.air}%`; bar($('air'), s.air, 100, 'var(--accent)');
   $('pos').textContent = `${s.pos.x}, ${s.pos.y}, ${s.pos.z}`;
   $('dim').textContent = pretty(s.dim);
-  $('under').textContent = (s.underground ? 'underground' : 'surface') + (s.biome ? ` · ${s.biome}` : '');
+  $('under').textContent = (s.underground ? 'underground' : s.ravine ? `in a ravine (walls ${s.ravine})` : 'surface') + (s.biome ? ` · ${s.biome}` : '');
   $('home').textContent = s.house ? `${s.house.x}, ${s.house.y}, ${s.house.z}${s.house.bed ? ' (bed)' : ''}`
     : s.project ? `building at ${s.project.x}, ${s.project.y}, ${s.project.z}: ${s.project.placed}/${s.project.total} blocks${s.project.needs && (s.project.needs.stone || s.project.needs.planks) ? ` (needs ${[s.project.needs.stone ? s.project.needs.stone + ' cobblestone' : '', s.project.needs.planks ? s.project.needs.planks + ' planks' : ''].filter(Boolean).join(', ')})` : ''}` : 'none yet';
   // players
@@ -540,7 +540,7 @@ async function fullReport() {
     `bot online: ${s.online}  status age: ${st?.age_s ?? '?'} s  game: ${j(dg.game)}`,
   ].join('\n')));
   out.push(section('NOW', [
-    `pos ${s.pos ? `${s.pos.x} ${s.pos.y} ${s.pos.z}` : '?'} (${s.dim})  biome ${s.biome ?? '?'}  underground ${s.underground}  day ${s.day} time ${s.time} ${s.night ? '(night)' : ''}`,
+    `pos ${s.pos ? `${s.pos.x} ${s.pos.y} ${s.pos.z}` : '?'} (${s.dim})  biome ${s.biome ?? '?'}  underground ${s.underground}  ravine ${s.ravine ? `yes, walls ${s.ravine} high` : 'no'}  day ${s.day} time ${s.time} ${s.night ? '(night)' : ''}`,
     `health ${s.health}  food ${s.hunger}  air ${s.air}%  held ${s.held ?? 'nothing'}  mode ${s.mode}  task ${s.task}  step ${s.step ?? '-'}  (${s.stepLabel ?? ''})`,
     `auto ${s.auto} done ${s.autoDone}  opportunity ${s.opportunity ?? '-'}  set aside: ${(s.setAside || []).join(', ') || 'none'}  deaths ${s.deaths}`,
     `goals: ${(s.goals || []).map((g) => `${g.goal}: ${g.status}${(g.tasks || []).length ? ` (${g.tasks.map((t) => `${t.label ?? t.name ?? ''} ${t.have ?? ''}${t.need != null ? '/' + t.need : ''}`.trim()).join(', ')})` : ''}`).join(' | ')}`,
@@ -566,19 +566,37 @@ async function fullReport() {
 // (#report in the address: the report shown on the page, for a phone where the clipboard won't take it.)
 if (location.hash === '#report') setTimeout(async () => { const pre = document.createElement('pre'); pre.id = 'reporttext'; pre.style.cssText = 'white-space:pre-wrap;font-size:11px;padding:12px'; pre.textContent = await fullReport(); document.body.prepend(pre); }, 1500);
 $('fullcopy').onclick = async () => { toast('Gathering…'); copyText(await fullReport(), 'Full report copied'); };
-$('pathcopy').onclick = async () => {
+async function pathLogText() {
   const d = await getJSON('/api/paths'), rows = d?.rows || [];
   const line = (r) => r.k === 'plan'
     ? `${r.at} plan t${r.t} ${r.who} ${r.from.join(',')} -> ${r.to ? r.to.join(',') : 'search'} d${r.d ?? '-'} tol${r.tol} cap${r.cap} nodes ${r.nodes} ${r.ticks}t ${r.ok ? 'complete' : 'PARTIAL'} len${r.len}${r.search ? ' search' : ''}${r.actions ? ' actions' : ''}`
     : `${r.at} walk t${r.t} ${r.from.join(',')} -> ${r.to ? r.to.join(',') : '-'} ended ${r.end.join(',')} (${r.short} off) ${r.wps} wps ${r.len} blocks ${r.leaps} leaps ${r.status.toUpperCase()} ${r.ticks}t ${r.bps} b/s`;
-  copyText(`PATH LOG ${j(d?.summary)}\n${rows.map(line).join('\n')}`, `Path log copied (${rows.length} rows)`);
-};
-$('whycopy').onclick = async () => {
+  return { text: `PATH LOG ${j(d?.summary)}\n${rows.map(line).join('\n')}`, n: rows.length };
+}
+async function whyLogText() {
   const d = await getJSON('/api/why'), rows = d?.why || [];
   const line = (r) => `${r.t} @${(r.pos || []).join(',')} ${r.key} | ${r.step} | ${JSON.stringify(r.facts)}`;
-  copyText(`PLANNER LOG (${rows.length} choices, build ${rows.length ? rows[rows.length - 1].build : '?'})\n${rows.map(line).join('\n')}`, `Planner log copied (${rows.length} choices)`);
-};
+  return { text: `PLANNER LOG (${rows.length} choices, build ${rows.length ? rows[rows.length - 1].build : '?'})\n${rows.map(line).join('\n')}`, n: rows.length };
+}
+$('pathcopy').onclick = async () => { const r = await pathLogText(); copyText(r.text, `Path log copied (${r.n} rows)`); };
+$('whycopy').onclick = async () => { const r = await whyLogText(); copyText(r.text, `Planner log copied (${r.n} choices)`); };
 $('tcopyall').onclick = () => copyText(traceLines.map((l) => `${(l.t || '').slice(11)} ${l.msg}${l.p ? ` @${l.p.join(',')}` : ''}`).join('\n'), `All ${traceLines.length} decisions copied`);
+
+// ---------------------------------------------------------------- the live report file
+// The full report with the whole path log and planner log after it, written to brain/logs/live_report.txt
+// every 10 s while this page is open: hand that file over instead of copying three things.
+let liveBusy = false;
+async function writeLiveReport() {
+  if (liveBusy) return;
+  liveBusy = true;
+  try {
+    const [full, path, why] = await Promise.all([fullReport(), pathLogText(), whyLogText()]);
+    const text = `${full}\n\n===== PATH LOG (whole) =====\n${path.text}\n\n===== PLANNER LOG (whole) =====\n${why.text}\n`;
+    await fetch('/api/live_report', { method: 'POST', headers: { 'Content-Type': 'text/plain' }, body: text });
+  } catch {} finally { liveBusy = false; }
+}
+setInterval(writeLiveReport, 10000);
+setTimeout(writeLiveReport, 3000);
 
 // ---------------------------------------------------------------- flight reports
 let lastReports = [], seenReports = null;

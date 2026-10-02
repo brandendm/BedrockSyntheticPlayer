@@ -1226,6 +1226,8 @@ export class Agent {
             const b = this.lookout?.seedSearch('village');
             if (!b) { this.villageHoldUntil = Date.now() + 900000; trace('village hunt: no village biome found by the seed search; not again for 15 min'); break; }
             this.sayOnce('village-hunt', `Looking for a village: heading for the ${biomeName(b.id)} about ${Math.round(b.dist)} blocks away.`, 300000);
+            // Boxed into a pit or ravine floor: out of it first (that isn't a failed leg).
+            if (await S.needsEscape(gen)) { await S.toSurface(gen); break; }
             await S.packUp(gen);
             const from = { ...this.sim.location };
             await S.travelToward(gen, { x: b.pos.x, y: b.pos.y, z: b.pos.z }, 6);
@@ -1233,7 +1235,7 @@ export class Agent {
             this.villageMisses = (this.villageMisses ?? 0) + 1;
             // Progress is distance gained toward the village biome, not blocks walked (a partial path into a dead-end ravine and back walked 26 blocks each way and gained none): three legs in a row that gain under 8 blocks, or six legs without a village, is nowhere.
             const gained = Math.hypot(from.x - b.pos.x, from.z - b.pos.z) - Math.hypot(this.sim.location.x - b.pos.x, this.sim.location.z - b.pos.z);
-            if (gained < 8) this.villageStuck = (this.villageStuck ?? 0) + 1; else this.villageStuck = 0;
+            if (gained < 8) { this.villageStuck = (this.villageStuck ?? 0) + 1; await S.wait(gen, 100); } else this.villageStuck = 0; // (a few seconds between tries: not three in one breath)
             if (this.villageStuck > 0 && this.villageStuck < 3) await S.explore(gen, 'a village', null); // (the straight way ended in a dead end: fresh ground by the usual search)
             if (this.villageStuck >= 3 || this.villageMisses >= 6) { this.villageMisses = 0; this.villageStuck = 0; this.villageHoldUntil = Date.now() + 1800000; trace('village hunt: got nowhere / six legs without one; not again for 30 min'); }
             break;
@@ -1639,6 +1641,7 @@ export class Agent {
       health: Math.round(this.health()), hunger: Math.round(hunger), air: Math.round(air * 100),
       mode: this.mode, task: this.task?.kind ?? 'idle', step: this.task?.kind === 'auto' ? this.autoStep ?? null : null,
       auto: this.autoEnabled, autoDone: this.autoDone, underground,
+      ravine: (() => { try { const r = this.skills.rimClimb(); return !underground && r >= 4 ? r : 0; } catch { return 0; } })(),
       time, night: isNight(time), day: Math.floor(world.getDay?.() ?? 0),
       held, inventory: inv, where: this.whereList().slice(0, 12),
       house: this.homestead.house ? { ...this.homestead.house } : null,
