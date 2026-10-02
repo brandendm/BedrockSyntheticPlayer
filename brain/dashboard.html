@@ -236,8 +236,10 @@
       <select id="test2"></select>
       <input id="testarg" placeholder="arg" style="max-width:80px;min-width:60px">
       <button id="runtest2">Run one</button>
+      <label class="muted"><input type="checkbox" id="testme"> I do it (bot stands by, then we compare)</label>
       <span class="muted" id="testsum"></span>
     </div>
+    <div id="testbar" style="display:none;margin:6px 0"><div style="background:var(--line,#333);border-radius:4px;height:14px;overflow:hidden"><div id="testfill" style="height:100%;width:0;background:#4a9"></div></div><div class="muted" id="testbartxt"></div></div>
     <table class="tests"><thead><tr><th>Test</th><th>Result</th><th>Secs</th><th>Detail</th></tr></thead><tbody id="testrows"></tbody></table>
   </section>
 
@@ -369,6 +371,11 @@ function render(d) {
   dot.className = 'dot ' + (!s.online ? 'off' : stale ? 'stale' : 'on');
   $('conn').textContent = !s.online ? 'bot not spawned' : stale ? `no update for ${Math.round(age)}s` : 'live';
   try { renderToggles(s); } catch {}
+  try {
+    const tp = s.tests, bar = $('testbar');
+    bar.style.display = tp && tp.running ? '' : 'none';
+    if (tp && tp.running) { $('testfill').style.width = `${Math.round((tp.done / Math.max(1, tp.total)) * 100)}%`; $('testbartxt').textContent = `${tp.done}/${tp.total} tests done${tp.current ? `, now ${tp.current}` : ''}${tp.human ? ' (you)' : ''}`; }
+  } catch {}
   $('name').textContent = s.name || 'Scout';
   if (!s.online) return;
   $('clock').textContent = `${clock(s.time, s.day)}${s.night ? ' · night' : ''}${d.jev?.enabled ? ` · Jev $${d.jev.usd_today.toFixed(4)} today` : ''}`;
@@ -484,7 +491,7 @@ $('cmd').addEventListener('keydown', (e) => {
 // ---------------------------------------------------------------- tests
 const TESTS = ['roof', 'tower', 'hole', 'pit', 'trap', 'climb', 'ledge', 'ladder', 'husk', 'creeper', 'sheep', 'pen', 'smelt', 'smeltlogs', 'shelter', 'house', 'resume', 'ghostlog', 'quarry', 'dark', 'replant', 'litter', 'trader', 'iron', 'farm', 'equip', 'water', 'bucketfarm', 'treetop', 'corner', 'leap', 'bridge', 'fall', 'vines', 'stairgap', 'loot', 'shield', 'skel', 'rest', 'nights', 'calibrate', 'portal', 'horse', 'leadboat', 'leadsling'];
 $('test2').innerHTML = TESTS.map((t) => `<option>${t}</option>`).join('');
-$('runtest2').onclick = () => { const a = $('testarg').value.trim(); send(`test ${$('test2').value}${a ? ' ' + a : ''}`); };
+$('runtest2').onclick = () => { const a = $('testarg').value.trim(); send(`test ${$('test2').value}${a ? ' ' + a : ''}${$('testme').checked ? ' me' : ''}`); };
 async function loadTests() {
   try {
     const d = await (await fetch('/api/tests', { cache: 'no-store' })).json();

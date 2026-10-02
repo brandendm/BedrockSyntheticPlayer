@@ -55,6 +55,8 @@ import { CONFIG } from '../config.js';
 import { system, world, ItemStack, EquipmentSlot, Direction } from '@minecraft/server';
 import { blueprint, furnishings } from '../core/house.js';
 import { invCounts as invCountsOf, hold, take, container as packOf } from './inventory.js';
+import { TestRecorder } from './testrun.js';
+import { compare } from '../core/testrun.js';
 
 const NAMES = ['roof', 'tower', 'hole', 'pit', 'trap', 'climb', 'ledge', 'ladder', 'husk', 'creeper', 'sheep', 'pen', 'smelt', 'smeltlogs', 'shelter', 'house', 'resume', 'ghostlog', 'quarry', 'dark', 'replant', 'litter', 'trader', 'iron', 'farm', 'equip', 'water', 'bucketfarm', 'treetop', 'corner', 'leap', 'bridge', 'fall', 'vines', 'stairgap', 'loot', 'shield', 'skel', 'rest', 'nights', 'calibrate', 'portal', 'horse', 'leadboat', 'leadsling'];
 let running = false;
@@ -64,6 +66,10 @@ let running = false;
 // corrected from data: anything over QUICK_S in the last report belongs here.
 const SLOW = new Set(['loot', 'nights', 'rest', 'shelter', 'house', 'resume', 'quarry', 'farm', 'bucketfarm', 'iron', 'sheep', 'pen', 'smelt', 'smeltlogs', 'trader', 'ghostlog', 'stairgap', 'portal', 'horse', 'leadboat', 'leadsling']);
 const QUICK_S = 60;
+// The ones that need monsters about (and the world's own difficulty); the rest run peaceful with monsters cleared.
+const COMBAT = new Set(['husk', 'creeper', 'skel', 'shield', 'dark']);
+// The ones a player can do too (`!bot test <name> me`): a goal the player can reach and the test can see.
+const HUMAN_OK = new Set(['tower', 'hole', 'pit', 'climb', 'ladder', 'corner', 'leap', 'bridge', 'ledge']);
 // No single test runs longer than this (the task is ended and the test left to report what it has).
 const CAP_S = 240;
 
@@ -78,33 +84,45 @@ const CAP_S = 240;
  */
 export async function runTests(agent, player, args) {
   if (running) return agent.say('A test is already running.');
-  const [name = 'all', arg] = args;
+  // `!bot test <name> me`: you do it (same setup, you at the start, the bot stands by); both runs are measured and compared.
+  const human = args.includes('me') || args.includes('human');
+  const [name = 'all', arg] = args.filter((a) => a !== 'me' && a !== 'human');
   const mode = name === 'all' && ['quick', 'slow'].includes(String(arg)) ? String(arg) : null;
   const named = String(name).includes(',') ? String(name).split(',').map((n) => n.trim()) : null;
   const list = named && named.every((n) => NAMES.includes(n)) ? named
     : name === 'all' ? NAMES.filter((n) => (mode === 'quick' ? !SLOW.has(n) : mode === 'slow' ? SLOW.has(n) : true))
     : NAMES.includes(name) ? [name] : null;
   if (!list) return agent.say(`Tests: ${NAMES.join(', ')}, all [quick|slow], or a,b,c.`);
+  if (human && !player) return agent.say('Say it in chat yourself: `!bot test <name> me`.');
   running = true;
   const autoWas = agent.autoEnabled;
   agent.autoEnabled = false;
   const results = [];
   const argN = mode || arg === undefined ? undefined : Number(arg);
   const tAll = system.currentTick;
+  // Progress (the dashboard's bar), and the world kept calm: peaceful for everything but the fights, which get back what it was.
+  agent.testProgress = { running: true, done: 0, total: list.length, current: null, human, startedAt: Date.now() };
+  const diff0 = (() => { try { return String(world.getDifficulty()).toLowerCase(); } catch { return 'normal'; } })();
+  const setDiff = (d) => { try { world.getDimension('overworld').runCommand(`difficulty ${d}`); } catch { /* */ } };
   try {
     for (const n of list) {
       const t0 = system.currentTick;
+      agent.testProgress.current = n;
+      setDiff(COMBAT.has(n) ? diff0 : 'peaceful');
       // The cap: at the deadline the task ends, so waits on it return and the test reports.
       let capped = false;
       const capS = n === 'leadboat' || n === 'leadsling' ? 480 : CAP_S;
       const cap = system.runTimeout(() => { capped = true; agent.newTask(null); agent.motor.stop(); }, capS * 20);
       let r;
-      try { r = await runOne(agent, player, n, argN); } finally { try { system.clearRun(cap); } catch {} }
+      try { r = await runOne(agent, player, n, argN, human); } finally { try { system.clearRun(cap); } catch {} }
+      agent.testProgress.done++;
       r.secs = Math.round((system.currentTick - t0) / 20);
       if (capped) { r.pass = false; r.detail = `cut off after ${capS} s; ${r.detail}`; }
       results.push(r);
     }
   } finally {
+    setDiff(diff0);
+    agent.testProgress = { ...agent.testProgress, running: false, current: null };
     agent.autoEnabled = autoWas;
     running = false;
   }
@@ -117,7 +135,7 @@ export async function runTests(agent, player, args) {
   }
 }
 
-async function runOne(agent, player, name, arg) {
+async function runOne(agent, player, name, arg, human = false) {
   const dim = agent.dim, sim = agent.sim, S = agent.skills;
   // Site: 10 blocks in front of whoever asked (or of the bot), on natural ground.
   const from = player ?? sim;
@@ -133,6 +151,8 @@ async function runOne(agent, player, name, arg) {
   }
   agent.newTask(null);
   agent.motor.stop();
+  // A calm site: hostile mobs near it (creepers walking into a house test) are cleared unless the test is a fight.
+  if (!COMBAT.has(name)) { try { dim.runCommand(`kill @e[family=monster,x=${x},y=${gy},z=${z},r=64]`); } catch { /* none */ } }
   // Tables and furnaces remembered from earlier tests (their blocks were put back when those ended)
   // would change what the bot does here: replanting keeps clear of "our table", crafting walks
   // off to it. Every test starts without them; the ones that need one place it themselves.
@@ -154,10 +174,20 @@ async function runOne(agent, player, name, arg) {
     for (let i = 0; i < maxS * 4 && agent.task; i++) await system.waitTicks(5);
     return !agent.task;
   };
-  const tp = (px, py, pz) => sim.teleport({ x: px + 0.5, y: py, z: pz + 0.5 });
+  const who = human ? player : sim;
+  // Human mode: the same setup, you do it while the bot stands by; ends when the goal is met or the time is up.
+  const humanTry = async (done, maxS) => {
+    agent.say('Your turn: do it your way. I am watching.');
+    for (let i = 0; i < maxS * 4; i++) { if (done()) return true; await system.waitTicks(5); }
+    return false;
+  };
+  const rec = new TestRecorder(who).start();
+  const tp = (px, py, pz) => who.teleport({ x: px + 0.5, y: py, z: pz + 0.5 });
   let pass = false, detail = '';
+  /** @type {any} */ let runSummary = null;
   try {
-    agent.say(`Test ${name}: starting (build ${CONFIG.build}).`);
+    const tpg = agent.testProgress;
+    agent.say(`Test ${name}${tpg ? ` (${tpg.done + 1}/${tpg.total})` : ''}${human ? ' [you]' : ''}: starting (build ${CONFIG.build}).`);
     switch (name) {
       case 'roof': {
         const h = arg ?? 8;
@@ -176,6 +206,7 @@ async function runOne(agent, player, name, arg) {
         cmd(`fill ${x} ${gy + 1} ${z} ${x} ${gy + h} ${z} cobblestone`);
         tp(x, gy + h + 1, z);
         await system.waitTicks(20);
+        if (human) { pass = await humanTry(() => who.location.y <= gy + 2, 150); detail = `you ${pass ? 'did it' : 'did not finish'} in ${secs()}s`; break; }
         S.getDownStats = { hops: 0, digs: 0 };
         agent.apply([{ type: 'surface' }]);
         await idle(150);
@@ -191,6 +222,7 @@ async function runOne(agent, player, name, arg) {
         tp(x, gy - d + 1, z);
         await system.waitTicks(20);
         const goal = agent.resolveY({ x: x + 12, z });
+        if (human) { pass = await humanTry(() => dist3D(who.location, goal) <= 2.5, 120); detail = `you ${pass ? 'did it' : 'did not finish'} in ${secs()}s`; break; }
         agent.startGoto(goal, 1);
         await idle(120);
         const dd = dist3D(sim.location, goal);
@@ -260,6 +292,7 @@ async function runOne(agent, player, name, arg) {
         break;
       }
       case 'sheep': {
+        flatPatch(cmd, x, gy, z);
         tp(x, gy + 1, z);
         for (let i = 0; i < 3; i++) cmd(`summon sheep ${x + 6} ${gy + 1} ${z + i - 1}`);
         if (!invCountsOf(sim).stone_sword) sim.getComponent('minecraft:inventory').container.addItem(new ItemStack('minecraft:stone_sword', 1));
@@ -325,6 +358,7 @@ async function runOne(agent, player, name, arg) {
         cmd(`fill ${x + 2} ${gy - 6} ${z} ${x + 2} ${gy - 5} ${z} stone`);            // ...and another
         cmd(`fill ${x + 3} ${gy - 3} ${z - 2} ${x + 3} ${gy - 1} ${z + 2} dirt`);     // dirt in the wall up top
         tp(x - 1, gy - 6, z);
+        if (human) { pass = await humanTry(() => who.location.y >= gy + 1, 150); detail = `you ${pass ? 'got out' : 'did not get out'} in ${secs()}s`; break; }
         // No pickaxe for this one (it's the case where punching stone is the slow way).
         const inv = sim.getComponent('minecraft:inventory').container;
         const stash = [];
@@ -348,6 +382,7 @@ async function runOne(agent, player, name, arg) {
         tp(x - 2, gy + 1, z);
         await system.waitTicks(10);
         const goal = { x: x + 6, y: gy + 5, z };
+        if (human) { pass = await humanTry(() => dist3D(who.location, goal) <= 2, 60); detail = `you ${pass ? 'did it' : 'did not finish'} in ${secs()}s`; break; }
         agent.startGoto(goal, 1);
         await idle(60);
         const dd = dist3D(sim.location, goal);
@@ -364,6 +399,7 @@ async function runOne(agent, player, name, arg) {
         tp(x - 3, gy + 1, z + 5);
         await system.waitTicks(10);
         const goal = { x: x + 8, y: gy + 3, z };
+        if (human) { pass = await humanTry(() => dist3D(who.location, goal) <= 2, 40); detail = `you ${pass ? 'did it' : 'did not finish'} in ${secs()}s`; break; }
         agent.startGoto(goal, 1);
         await idle(40);
         const dd = dist3D(sim.location, goal);
@@ -385,6 +421,7 @@ async function runOne(agent, player, name, arg) {
         tp(x - 2, gy + 1, z);
         await system.waitTicks(10);
         const goal = { x: x + 9, y: gy + 1, z };
+        if (human) { let low = who.location.y; const w = system.runInterval(() => { low = Math.min(low, who.location.y); }, 2); pass = await humanTry(() => dist3D(who.location, goal) <= 2.5, 90); system.clearRun(w); pass = pass && low >= gy; detail = `you ${pass ? 'got across' : 'did not make it across dry'} in ${secs()}s`; break; }
         let lowest = S.feet().y;
         const watch = system.runInterval(() => { try { lowest = Math.min(lowest, S.feet().y); } catch {} }, 2);
         const gen = agent.newTask({ kind: 'test' });
@@ -406,6 +443,7 @@ async function runOne(agent, player, name, arg) {
         cmd(`setblock ${table.x} ${table.y} ${table.z} crafting_table`);
         tp(x, gy + 1, z);
         await system.waitTicks(10);
+        if (human) { const eye = () => Math.hypot(who.location.x - table.x - 0.5, who.location.y + 1.62 - table.y - 0.5, who.location.z - table.z - 0.5); pass = await humanTry(() => eye() <= 4.5, 60); detail = `you ${pass ? 'reached the table' : 'did not reach it'} in ${secs()}s`; break; }
         const gen = agent.newTask({ kind: 'test' });
         const ok = await S.reach(gen, table).catch(() => false);
         pass = ok && S.inReach(table);
@@ -1506,6 +1544,7 @@ async function runOne(agent, player, name, arg) {
     const at = String(e?.stack ?? '').split('\n').slice(1, 4).map((l) => l.trim()).join(' < ');
     detail = e?.constructor?.name === 'Aborted' ? `${detail ? `${detail}; ` : ''}interrupted: the task was replaced (mode ${agent.mode}${agent.lastTaskSwap ? `; ${agent.lastTaskSwap.from} -> ${agent.lastTaskSwap.to} ${Math.round((system.currentTick - agent.lastTaskSwap.tick) / 20)} s ago by ${agent.lastTaskSwap.where}` : ''})` : `${detail ? `${detail}; ` : ''}error: ${e}${at ? ` (${at})` : ''}`;
   } finally {
+    runSummary = rec.stop();
     agent.testHold = false;
     for (const f of cleanup) f();
     try { for (const [id, n] of Object.entries(gave)) { const have = invCountsOf(sim)[id] ?? 0; if (have > 0) take(sim, id, Math.min(have, n)); } S.restHands(); } catch {}
@@ -1519,6 +1558,14 @@ async function runOne(agent, player, name, arg) {
       const top = S.groundTop(Math.floor(sim.location.x), Math.floor(sim.location.z));
       if (Number.isFinite(top) && top >= Math.floor(sim.location.y)) sim.teleport({ x: sim.location.x, y: top + 1, z: sim.location.z });
     } catch {} // (the bot died in the test: it respawns on its own)
+  }
+  if (runSummary) {
+    const runs = (agent.memory.data.testRuns ??= {});
+    const slot = (runs[name] ??= {});
+    slot[human ? 'human' : 'bot'] = { ...runSummary, pass, build: CONFIG.build, at: Date.now() };
+    agent.memory.save();
+    if (slot.human && slot.bot) { try { agent.say(`You vs me, ${name}: ${compare(name, slot.human, slot.bot)}`); } catch { /* */ } }
+    sendEvent({ type: 'test_run', name, who: human ? 'human' : 'bot', pass, summary: runSummary }).catch(() => {});
   }
   return report(agent, name, pass, detail);
 }

@@ -379,7 +379,8 @@ export class Homestead {
     // failing here over and over. One with nothing cooking first; if they're all busy and there's a
     // furnace in the pack, that one goes down (it used to try the busy one over and over).
     const known = this.furnaceFor(input);
-    if (known?.pos && (known.dist < 128 || !invCounts(this.sim).furnace)) {
+    // (One in the pack and the known one far off: set ours down here. The smelt test walked 84 blocks to the mine camp's furnace for two logs of charcoal.)
+    if (known?.pos && (known.dist < (invCounts(this.sim).furnace ? 32 : 128) || !invCounts(this.sim).furnace)) {
       // A long way off: most of the way first (one path search doesn't reach 80 blocks).
       if (known.dist > 40) await S.travelToward(gen, known.pos, Math.ceil(known.dist / 40) + 1);
       await S.reach(gen, known.pos);

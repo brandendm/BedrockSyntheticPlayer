@@ -1707,6 +1707,7 @@ export class Agent {
     const time = world.getTimeOfDay();
     return {
       name: this.sim.name, online: this.sim.isValid,
+      tests: /** @type {any} */ (this).testProgress ?? null,
       pos: { x: Math.floor(p.x), y: Math.floor(p.y), z: Math.floor(p.z) }, dim: this.dim.id.replace('minecraft:', ''),
       health: Math.round(this.health()), hunger: Math.round(hunger), air: Math.round(air * 100),
       mode: this.mode, task: this.task?.kind ?? 'idle', step: this.task?.kind === 'auto' ? this.autoStep ?? null : null,
@@ -2267,6 +2268,13 @@ export class Agent {
     // (Never through a block: a wall we just put up, the rock of a step.)
     let clearShot = true;
     try { clearShot = canSee(this.dim, this.sim.getHeadLocation(), chest); } catch {}
+    // Swing wanted but no clear shot or not facing it (a creeper a level below, round a corner): turn to it, and if the way is blocked, go to it.
+    // (It stood still "swinging" for 1.5 s at 3.8 blocks with the creeper two below, until it went off.)
+    if (mv.swing && d <= reach && d >= minReach && canSwing && !(clearShot && this.facing(chest, 25))) {
+      this.noSwing = (this.noSwing ?? 0) + 1;
+      if (this.noSwing >= 3) this.motor.lookAt(chest, 6, 20).catch(() => {});
+      if (!clearShot && this.noSwing >= 8 && t >= this.nextRoute) { this.nextRoute = t + 6; this.routeTo({ x: mob.x, y: mob.y, z: mob.z }, Math.max(1.5, reach - 1.4), false, 1500, true); }
+    } else if (mv.swing) this.noSwing = 0;
     if (mv.swing && d <= reach && d >= minReach && canSwing && clearShot && this.facing(chest, 25)) {
       this.setBlocking(false);
       if (swingWith !== this.heldWeapon) { hold(this.sim, swingWith); this.heldWeapon = swingWith; }
