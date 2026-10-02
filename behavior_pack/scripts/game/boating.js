@@ -102,6 +102,12 @@ export class Boating {
     const t0 = system.currentTick, how = { placed: '', boarded: '', steered: '', picked: '' };
     const out = (ok, why) => { const r = { ok, why, how, secs: Math.round((system.currentTick - t0) / 20) }; this.last = r; trace(`boat: ${ok ? 'crossed' : `stopped: ${why}`} in ${r.secs}s (${JSON.stringify(how)})`); return r; };
     if (!(await this.acquire(gen, { gather: true }))) return out(false, 'no boat and no wood for one');
+    this.crossing = true;
+    try { return await this.crossInner(gen, shore, far, t0, how, out); } finally { this.crossing = false; }
+  }
+
+  async crossInner(gen, shore, far, t0, how, out) {
+    const a = this.a, S = a.skills, sim = a.sim, dim = a.dim;
     const id = this.have();
     // To the water's edge toward the far shore.
     await S.goNear(gen, { x: shore.x, y: shore.y, z: shore.z }, 1.2, 2).catch(() => false);

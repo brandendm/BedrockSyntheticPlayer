@@ -289,12 +289,50 @@ export class Agent {
       .map((m) => (marks.has(m.id) ? { ...m, targetingMe: true } : m));
   }
 
+  /**
+   * On fire (a ghast's fireball, a burning mob, lava's edge): the u200 run stood in the fire it was set alight by and lost 4 of its last hearts to
+   * it without once moving. Water within a dozen blocks puts it out (stepped into); else away from the fire blocks, fast, and out of the grass that
+   * is burning. Returns true while that is what it is doing.
+   */
+  burnTick(t) {
+    let ticks = 0;
+    try { ticks = this.sim.getComponent('minecraft:onfire')?.onFireTicksRemaining ?? 0; } catch { /* not burning */ }
+    if (ticks <= 0 && !(this.burnUntil > t)) { if (this.task?.kind === 'burn') { this.newTask(null); this.motor.stop(); } return false; }
+    if (this.task?.kind === 'burn' || (this.burnRunAt ?? 0) > t - 30) return this.task?.kind === 'burn';
+    if (ticks <= 0) return false;
+    this.burnRunAt = t;
+    if (!['fight', 'flee', 'swim_out', 'burn'].includes(this.task?.kind)) this.suspended = this.task ?? this.suspended;
+    const gen = this.newTask({ kind: 'burn' });
+    this.motor.stop();
+    this.say('On fire: putting it out.');
+    trace(`burning (${ticks} ticks): looking for water or getting clear of the fire; was ${this.suspended?.kind ?? '-'} / ${this.autoStep ?? '-'}`);
+    (async () => {
+      const S = this.skills;
+      const here = this.sim.location;
+      const water = (await S.scan((id) => id === 'water', { radius: 12, below: 4, above: 3, limit: 4 }).catch(() => []))
+        .filter((b) => /air/.test(S.blockAt({ x: b.x, y: b.y + 1, z: b.z }) ?? 'air')).sort((p, q) => dist3D(here, p) - dist3D(here, q))[0];
+      if (water) { await S.goNear(gen, { x: water.x + 0.5, y: water.y, z: water.z + 0.5 }, 0.6, 2).catch(() => false); S.check(gen); await S.wait(gen, 20); return; }
+      // No water near: away from the fire, 8 blocks on the side with none, sprinting.
+      const fires = (await S.scan((id) => /^fire$|^soul_fire$|lava/.test(id), { radius: 7, below: 3, above: 3, limit: 12 }).catch(() => []));
+      let dx = 0, dz = 0;
+      for (const f of fires) { dx += here.x - f.x; dz += here.z - f.z; }
+      const len = Math.hypot(dx, dz) || 1;
+      const to = fires.length ? { x: here.x + (dx / len) * 8, y: here.y, z: here.z + (dz / len) * 8 } : { x: here.x + 6, y: here.y, z: here.z };
+      const top = S.groundTop(Math.floor(to.x), Math.floor(to.z));
+      await S.goNear(gen, { x: to.x, y: Number.isFinite(top) ? top + 1 : to.y, z: to.z }, 2, 1).catch(() => false);
+      S.check(gen);
+      await S.wait(gen, 40);
+    })().catch(() => {}).finally(() => { if (gen === this.taskGen) { this.newTask(null); this.motor.stop(); this.calmSince = system.currentTick; } });
+    return true;
+  }
+
   /** Called from main.js on entityHurt where we're the victim. */
   onHurt(attacker, cause = '', amount = 0) {
     if (attacker && attacker.id !== this.sim.id) this.attackers.set(attacker.id, system.currentTick);
     // For the combat log (brain/logs/trace.jsonl): what hit us, how hard, from how far.
     let who = '', d = '';
     try { who = attacker ? attacker.typeId.replace('minecraft:', '') : ''; d = attacker ? dist3D(this.body.getPos(), attacker.location).toFixed(2) : ''; } catch {}
+    if (/fire|lava|burn/i.test(String(cause))) this.burnUntil = system.currentTick + 60;
     this.flight.note('hurt', `${cause}${who ? ` by ${who}` : ''} ${Number(amount).toFixed(1)}${d ? ` at ${d}` : ''}, hp ${this.health()}, mode ${this.mode}`);
     trace(`hurt: ${cause}${who ? ` by ${who}` : ''} ${Number(amount).toFixed(1)}${d ? ` at ${d}` : ''}, hp ${this.health()}, mode ${this.mode}, blocking ${this.blocking}`);
   }
@@ -669,6 +707,8 @@ export class Agent {
     let ents = [];
     try {
       ents = this.dim.getEntities({ location: pos, maxDistance: radius, families: ['monster'] });
+      // A ghast shoots from 30 and more blocks: seen out to 48 (the scan is 16, and one was fired at from 14-21 blocks and never noticed).
+      if (radius < 48) { const ids = new Set(ents.map((e) => e.id)); for (const g of this.dim.getEntities({ location: pos, maxDistance: 48, type: 'minecraft:ghast' })) if (!ids.has(g.id)) ents.push(g); }
     } catch { /* unloading */ }
     const out = [];
     for (const e of ents) {
@@ -808,8 +848,9 @@ export class Agent {
     // else has us out of it first.
     if (this.boatUnder(this.sim)) {
       if (this.task?.kind === 'follow') { if (this.mode !== 'none') this.endCombat(); return; }
-      this.leaveBoat();
+      if (!this.boating?.crossing) this.leaveBoat(); // (our own crossing: staying in it)
     }
+    if (this.burnTick(t)) return;
     const seen = this.scanMobs(this.mode === 'none' ? 16 : 24);
     const mobs = this.task?.kind === 'follow' ? this.escortMobs(seen, t) : seen;
     const inWater = this.sim.isInWater;
@@ -2160,6 +2201,7 @@ export class Agent {
       goals: this.toggles(),
       armed: SWORD_OK.test(Object.keys(inv).join(' ')),
       health: this.health(),
+      food: (() => { try { return this.sim.getComponent('minecraft:player.hunger')?.currentValue ?? 20; } catch { return 20; } })(),
       villageKnown: !!(this.villages.pick('bed', 900) ?? this.villages.pick('food', 900)),
       villageVisited: (this.memory.data.villages ?? []).some((v) => v.visited),
       villageReady: Date.now() >= (this.villageHoldUntil ?? 0),
@@ -2222,7 +2264,8 @@ export class Agent {
     const type = target.type;
     let worth = false;
     if (type === 'creeper') worth = d >= 5 && d <= 22;
-    else if (['skeleton', 'stray', 'bogged', 'witch', 'pillager', 'blaze', 'ghast', 'phantom'].includes(type)) worth = d >= 6.5 && d <= 28;
+    else if (type === 'ghast') worth = d >= 8 && d <= 46;
+    else if (['skeleton', 'stray', 'bogged', 'witch', 'pillager', 'blaze', 'phantom'].includes(type)) worth = d >= 6.5 && d <= 28;
     else if (target.canReach === false) worth = d >= 5 && d <= 28;
     else if (this.health() < 10 && MOBS[type]?.kind === 'melee' && d >= 8 && d <= 20) worth = true;
     if (!worth) return false;

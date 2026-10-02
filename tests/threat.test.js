@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { decide, fleePoint, weaponDamage } from '../behavior_pack/scripts/core/threat.js';
+import { villageStep } from '../behavior_pack/scripts/core/advance.js';
 
 const mob = (type, dist, extra = {}) => ({ id: `${type}${dist}`, type, dist, visible: true, targetingMe: false, attackedMe: false, pos: { x: dist, y: 64, z: 0 }, ...extra });
 
@@ -163,4 +164,18 @@ test('with a bow: creepers 6+ off are shot even in a crowd of them; nothing lit 
   assert.equal(d.target, 'creeper6.5');
   assert.equal(decide({ health: 20, damage: 6, bow: true, mobs: [mob('creeper', 4), mob('creeper', 7)] }).mode, 'flee', 'one close: not the bow');
   assert.equal(decide({ health: 20, damage: 6, bow: true, mobs: [mob('creeper', 7, { lit: true }), mob('creeper', 7.5)] }).mode, 'flee', 'one lit');
+});
+
+test('a ghast: shot with a bow and arrows from as far as it is seen, run from without', () => {
+  const g = mob('ghast', 30, { targetingMe: true, canReach: false });
+  const d = decide({ health: 17, damage: 6, bow: true, mobs: [g] });
+  assert.equal(d.mode, 'fight');
+  assert.equal(d.target, 'ghast30');
+  assert.notEqual(decide({ health: 17, damage: 6, mobs: [mob('ghast', 12, { targetingMe: true, canReach: false })] }).mode, 'fight', 'no bow: not walked up to');
+  assert.equal(decide({ health: 17, damage: 6, bow: true, mobs: [g, mob('zombie', 3)] }).mode === 'fight' && decide({ health: 17, damage: 6, bow: true, mobs: [g, mob('zombie', 3)] }).target === 'ghast30', false, 'a zombie on us first');
+});
+test('the village hunt starts at 11 hearts when the hunger bar is too low to heal', () => {
+  const f = { goals: {}, armed: true, health: 12, food: 16, villageReady: true };
+  assert.equal(villageStep(f)?.step, 'seek_village');
+  assert.equal(villageStep({ ...f, food: 20 }), null, 'with a full bar it waits to heal to 14');
 });

@@ -47,6 +47,7 @@ export const MOBS = {
   piglin: { hp: 16, dps: 5, kind: 'melee', neutral: true },
   hoglin: { hp: 40, dps: 6, kind: 'melee' },
   blaze: { hp: 20, dps: 5, kind: 'ranged', never: true },
+  ghast: { hp: 10, dps: 4, kind: 'ranged', never: true, flying: true }, // (shot with a bow when there is one: decide `bow`; else out of its sight)
   wither_skeleton: { hp: 20, dps: 8, kind: 'melee' },
   guardian: { hp: 30, dps: 4, kind: 'ranged', never: true },
   warden: { hp: 500, dps: 30, kind: 'melee', never: true },
@@ -108,6 +109,12 @@ export function decide({ health, damage = FIST_DAMAGE, isNight = false, prevMode
   const threats = mobs.filter((m) => isActiveThreat(m, isNight, alert)).sort((a, b) => a.dist - b.dist);
   if (!threats.length) return { mode: 'none', threats, reason: 'clear' };
 
+  // A ghast with a bow and arrows: shot, from as far as it can be seen (it fires from 30 blocks and more; walking up to it is not a thing a
+  // walker can do). Not while a melee mob is on us.
+  if (bow) {
+    const g = threats.find((m) => m.type === 'ghast' && m.dist <= 46 && m.visible);
+    if (g && !threats.some((m) => m.type !== 'ghast' && MOBS[m.type].kind === 'melee' && m.dist <= 5)) return { mode: 'fight', target: g.id, threats, reason: 'ghast: shoot it' };
+  }
   // Creepers. Noticed early: one we can see within 8, one after us within 12, one hissing within 8
   // (heard, seen or not) and anything within 4 whatever the path search said (it's right there).
   // Handled by keeping it at arm's length (core/tactics.js creeperFight: it never gets to light) if

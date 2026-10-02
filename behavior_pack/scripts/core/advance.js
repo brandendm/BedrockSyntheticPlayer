@@ -221,7 +221,9 @@ export { FOOD_GOAL };
 export function villageStep(f) {
   if (f.goals?.villages === false || !f.armed || f.underground || f.villageVisited || f.villageReady === false) return null;
   // (A hunt already under way carries on from 10 hearts' worth less: the u192 run dropped it for exploring and hunting chickens after one fight.)
-  if ((f.health ?? 20) < (f.villageHunting ? 10 : 14)) return null;
+  // (Natural healing needs the hunger bar at 18: at 13 hearts with 16 food it never came, and with hunting off nothing fed it: the u200 run stood about 3 minutes
+  // "done". The bar is 11 when there is no healing to wait for.)
+  if ((f.health ?? 20) < (f.villageHunting ? 10 : (f.food ?? 20) >= 18 ? 14 : 11)) return null;
   return f.villageKnown ? { step: 'seek_village', known: true } : { step: 'seek_village' };
 }
 
