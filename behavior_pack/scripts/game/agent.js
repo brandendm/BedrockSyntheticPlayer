@@ -3389,24 +3389,26 @@ export class Agent {
 
   async updateFollow() {
     if (this.followClimb) return; // building our way up to them: let it finish
+    // On a horse it keeps further back (a horse is wide and does not stop on a dime); worked out each time, so getting off or dying puts it back.
+    const fd = CONFIG.followDistance + (this.horses?.mounted?.() ? 3 : 0);
     const p = this.findPlayer(this.task.player);
     if (!p) { this.leaveBoat(); this.say(`Lost ${this.task.player}.`); this.newTask(null); return; }
     if (await this.followBoat(p)) return;
     const gen = this.taskGen;
     const d = dist3D(this.body.getPos(), p.location);
-    if (d <= CONFIG.followDistance + 0.5) {
+    if (d <= fd + 0.5) {
       if (this.motor.busy) this.motor.stop();
       this.motor.glanceAt(p.getHeadLocation(), CONFIG.followRepathTicks + 5);
       return;
     }
-    const res = await this.plan(this.body.getPos(), p.location, CONFIG.followDistance);
+    const res = await this.plan(this.body.getPos(), p.location, fd);
     if (gen !== this.taskGen) return;
     // No walking way to them (up a tower, over a gap): pillar, dig or bridge one, like a player would.
     const end = res.path[res.path.length - 1];
-    if (!res.complete && (!end || dist3D(end, p.location) > CONFIG.followDistance + 2) && d <= 64) {
+    if (!res.complete && (!end || dist3D(end, p.location) > fd + 2) && d <= 64) {
       this.followClimb = true;
       this.say(`No way up to you on foot, ${this.task.player}: building one.`);
-      this.skills.goNear(gen, p.location, CONFIG.followDistance, 2, { actionRange: 64 }).catch(() => {}).finally(() => { this.followClimb = false; });
+      this.skills.goNear(gen, p.location, fd, 2, { actionRange: 64 }).catch(() => {}).finally(() => { this.followClimb = false; });
       return;
     }
     if (res.path.length < 2) return;
