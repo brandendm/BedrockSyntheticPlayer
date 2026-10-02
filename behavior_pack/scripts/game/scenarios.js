@@ -1359,14 +1359,21 @@ async function runOne(agent, player, name, arg) {
           lit = inner.some((cell) => /(^|_)portal$/.test(S.blockAt(cell) ?? '')); // (the block is `portal`)
         }
         if (!lit) { detail = `built the frame (${byBot} placed by the bot, ${byCmd} by command) but it didn't light after ${tries} tries (use returned ${used}, slot ${slot}, inner block ${S.blockAt(inner[0])}, held ${sim.getComponent('minecraft:inventory').container.getItem(sim.selectedSlotIndex)?.typeId ?? 'nothing'})`; break; }
-        // 5. Walk in and wait for the game to move us (about 4 s inside it).
+        // 5. Walk in (up onto the bottom obsidian: a one-block step, so jump when held up) and wait for the game to move us.
         const there = { x: x + 1.5, y: gy + 2, z: z + 0.5 };
-        let dimNow = sim.dimension.id;
+        let dimNow = sim.dimension.id, closest = Infinity, jumps = 0;
         for (let i = 0; i < 20 * 20 && dimNow === dim.id; i++) {
-          if (i % 20 === 0) { try { sim.moveToLocation(there, { speed: 0.6 }); } catch {} }
+          if (i % 10 === 0) {
+            const dd = Math.hypot(sim.location.x - there.x, sim.location.z - there.z);
+            closest = Math.min(closest, dd);
+            try { sim.navigateToLocation(there, 0.6); } catch { try { sim.moveToLocation(there, { speed: 0.6 }); } catch {} }
+            if (dd > 0.6 && dd < 2.6 && sim.location.y < gy + 1.9) { try { sim.jump(); jumps++; } catch {} } // (the step up onto the frame's bottom edge)
+          }
           await system.waitTicks(1);
           dimNow = sim.dimension.id;
         }
+        const standingIn = /(^|_)portal$/.test(S.blockAt({ x: Math.floor(sim.location.x), y: Math.floor(sim.location.y), z: Math.floor(sim.location.z) }) ?? '');
+        const finalAt = `${sim.location.x.toFixed(1)} ${sim.location.y.toFixed(1)} ${sim.location.z.toFixed(1)}`;
         const arrived = dimNow !== dim.id;
         const where = { x: Math.round(sim.location.x), y: Math.round(sim.location.y), z: Math.round(sim.location.z) };
         if (arrived) {
@@ -1374,7 +1381,7 @@ async function runOne(agent, player, name, arg) {
           try { sim.teleport(home, { dimension: dim }); } catch (e) { console.warn(`[test] portal back: ${e}`); }
         }
         pass = arrived;
-        detail = `${arrived ? `lit it and arrived in ${dimNow} at ${where.x} ${where.y} ${where.z}` : `lit but didn't leave the overworld in 20 s`}; frame ${byBot} placed by the bot, ${byCmd} by command; lighting took ${tries} click(s), ${secs()}s`;
+        detail = `${arrived ? `lit it and arrived in ${dimNow} at ${where.x} ${where.y} ${where.z}` : `lit but didn't leave the overworld in 20 s (ended at ${finalAt}, ${standingIn ? 'inside' : 'not inside'} the portal, closest ${closest.toFixed(1)} from its middle, ${jumps} jumps)`}; frame ${byBot} placed by the bot, ${byCmd} by command; lighting took ${tries} click(s), ${secs()}s`;
         break;
       }
       case 'horse': {
@@ -1458,7 +1465,7 @@ async function runOne(agent, player, name, arg) {
   } catch (e) {
     // Where it broke: the first line of the stack in our code.
     const at = String(e?.stack ?? '').split('\n').slice(1, 4).map((l) => l.trim()).join(' < ');
-    detail = e?.constructor?.name === 'Aborted' ? `${detail ? `${detail}; ` : ''}interrupted: a fight or another command took over the test (mode ${agent.mode})` : `${detail ? `${detail}; ` : ''}error: ${e}${at ? ` (${at})` : ''}`;
+    detail = e?.constructor?.name === 'Aborted' ? `${detail ? `${detail}; ` : ''}interrupted: the task was replaced (mode ${agent.mode}${agent.lastTaskSwap ? `; ${agent.lastTaskSwap.from} -> ${agent.lastTaskSwap.to} ${Math.round((system.currentTick - agent.lastTaskSwap.tick) / 20)} s ago by ${agent.lastTaskSwap.where}` : ''})` : `${detail ? `${detail}; ` : ''}error: ${e}${at ? ` (${at})` : ''}`;
   } finally {
     agent.testHold = false;
     for (const f of cleanup) f();

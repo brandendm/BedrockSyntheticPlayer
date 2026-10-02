@@ -167,6 +167,15 @@ export class Villages {
     try { const b = dim.getTopmostBlock({ x, z }); return !!b && typeof b.typeId === 'string' && b.location.y < 300; } catch { return false; }
   }
 
+  /** A village the player pointed at (x, z): remembered as a confirmed one, at the surface there if it is loaded. */
+  addKnown(x, z) {
+    let y = 64;
+    try { const top = this.a.dim.getTopmostBlock({ x, z }); if (top && typeof top.typeId === 'string' && top.location.y < 300) y = top.location.y; } catch { /* not loaded: a guess is fine, the walk there finds the ground */ }
+    this.a.memory.data.villages = mergeKnown(this.known, [{ x, y, z, score: 20, kinds: { bell: 1, villager: 3, path: 3 } }], this.dimId, Date.now());
+    this.a.memory.save();
+    trace(`village: told of one at ${x} ${z}`);
+  }
+
   /** A known village we'd go to (not raided, not visited lately), as a position. */
   nearestKnown() {
     const v = this.pick('bed') ?? this.pick('food');

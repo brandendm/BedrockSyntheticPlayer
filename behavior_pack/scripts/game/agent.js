@@ -624,6 +624,9 @@ export class Agent {
     return out.length ? out.join('; ') : 'every goal is done';
   }
 
+  /** @type {{ tick: number, from: string, to: string, where: string } | null} */
+  lastTaskSwap = null;
+
   /** The order of the movable goals after moving in (core/toggles.js): `!bot order farm iron village`. */
   setOrder(text) {
     const order = parseOrder(text);
@@ -3064,6 +3067,8 @@ export class Agent {
       const where = String(new Error().stack ?? '').split('\n').slice(2, 4).map((l) => l.trim().replace(/^at /, '')).join(' < ');
       trace(`task: auto -> ${task?.kind ?? 'none'} (${where})`);
     }
+    // Who replaced a running job, for a test that reports "interrupted" (it never said what by).
+    if (this.task && this.task.kind !== 'auto') this.lastTaskSwap = { tick: system.currentTick, from: this.task.kind, to: task?.kind ?? 'none', where: String(new Error().stack ?? '').split('\n').slice(2, 5).map((l) => l.trim().replace(/^at /, '')).join(' < ') };
     this.task = task;
     if (this.skills) this.skills.essential = false; // (the auto loop sets it again for its own jobs)
     return ++this.taskGen;

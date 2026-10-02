@@ -92,16 +92,22 @@ export class Horses {
     return saddledOf(h);
   }
 
-  /** Get on (walk up to it first). */
+  /** Get on (walk up to it first, again on each try: horses wander). */
   async getOn(gen, h) {
     const S = this.a.skills, sim = this.a.sim;
     if (ridersOf(h).some((r) => r.id === sim.id)) return true;
-    if (!(await this.approach(gen, h))) return false;
-    for (let i = 0; i < 3; i++) {
-      try { hold(sim, null); sim.interactWithEntity(h); } catch (e) { trace(`horse: mount: ${e}`); return false; }
+    const why = { tries: 0, near: false, tamed: tamed(h), saddled: saddledOf(h), threw: '', rider: ridersOf(h).length };
+    for (let i = 0; i < 4; i++) {
+      why.tries = i + 1;
+      if (!h.isValid) { why.threw = 'the horse is gone'; break; }
+      why.near = await this.approach(gen, h);
+      if (!why.near) continue;
+      try { hold(sim, null); sim.lookAtEntity?.(h); sim.interactWithEntity(h); } catch (e) { why.threw = `${e}`; break; }
       await S.wait(gen, 20);
       if (ridersOf(h).some((r) => r.id === sim.id)) { this.a.memory.data.horseId = h.id; return true; }
     }
+    why.rider = ridersOf(h).length;
+    this.a.whyNot('get on the horse', { ...why, dist: Math.round(dist(sim.location, h.location)) });
     return false;
   }
 

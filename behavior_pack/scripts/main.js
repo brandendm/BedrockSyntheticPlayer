@@ -153,7 +153,8 @@ function handle(text, player) {
   }
   // !bot get <item> [n] / !bot chain [clear]: AltoClef-style task chains (core/chain.js). Asks for an item and the bot works out
   // and does everything it takes: wood, a table, a pickaxe, stone, iron, a furnace, smelting, the crafting.
-  if (lower === 'chain' || lower.startsWith('chain ') || lower.startsWith('get ')) {
+  if (/^get (on|off)( .*)?$/.test(lower)) { /* handled below: get on / get off the horse */ }
+  else if (lower === 'chain' || lower.startsWith('chain ') || lower.startsWith('get ')) {
     if (!agent) return reply(player, 'spawn first');
     const words = lower.replace(/^(chain|get)\s*/, '').split(/\s+/).filter(Boolean);
     if (words[0] === 'clear') { agent.clearChain(); return reply(player, 'Chain queue cleared.'); }
@@ -168,8 +169,8 @@ function handle(text, player) {
     return reply(player, `Chain: ${n} ${item}: ${chainOutline(item).join(' > ')}.`);
   }
   // !bot mount / !bot dismount: get on its horse (tamed and saddled first if it can), and off again.
-  if (lower === 'mount' || lower === 'get on' || lower === 'ride') { if (!agent) return reply(player, 'spawn first'); agent.startMount(); return reply(player, 'Going to its horse.'); }
-  if (lower === 'dismount' || lower === 'get off') { if (!agent) return reply(player, 'spawn first'); agent.startDismount(); return reply(player, 'Getting off.'); }
+  if (lower === 'mount' || /^get on( .*)?$/.test(lower) || lower === 'ride') { if (!agent) return reply(player, 'spawn first'); agent.startMount(); return reply(player, 'Going to its horse.'); }
+  if (lower === 'dismount' || /^get off( .*)?$/.test(lower)) { if (!agent) return reply(player, 'spawn first'); agent.startDismount(); return reply(player, 'Getting off.'); }
   // !bot order [village farm iron]: which goal after moving in comes first (what's named first, the rest in the usual order).
   if (lower === 'order' || lower.startsWith('order ')) {
     if (!agent) return reply(player, 'spawn first');
@@ -182,6 +183,14 @@ function handle(text, player) {
     if (!agent) return reply(player, 'spawn first');
     const here = agent.sim.location;
     const list = agent.villages.status().map((v) => `${v.x} ${v.y} ${v.z} (${Math.round(Math.hypot(v.x - here.x, v.z - here.z))} away, score ${v.score}${v.danger ? ', RAIDERS' : ''}${v.visited ? ', visited' : ''})`);
+    // !bot village at <x> <z>: a village you found (`/locate structure village` shows it to you; the script never sees command text).
+    const at = lower.match(/^villages?\s+at\s+(-?\d+)\s+(?:-?\d+\s+)?(-?\d+)$/);
+    if (at) {
+      const x = +at[1], z = +at[2];
+      agent.villages.addKnown(x, z);
+      agent.setGoal('villages', true);
+      return reply(player, `Noted a village at ${x} ${z}: going there when the plan gets to villages (switched on).`);
+    }
     if (lower.endsWith('visit')) {
       const v = agent.villages.pick('bed') ?? agent.villages.pick('food');
       if (!v) return reply(player, list.length ? 'None to go to now (raiders, visited lately or too far).' : 'No village known yet.');
