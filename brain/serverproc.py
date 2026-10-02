@@ -16,7 +16,7 @@ from pathlib import Path
 log = logging.getLogger("serverproc")
 # "The nearest village is at (1056, ~, 112)", "... at block 1056, (y), 112", "... located at 1056, 64, 112": two numbers with a middle that is
 # a third number, ~ or (y).
-COORDS = re.compile(r"(-?\d+)\s*,\s*(?:\(y\)|~|-?\d+(?:\.\d+)?)\s*,\s*(-?\d+)")
+COORDS = re.compile(r"(-?\d+)\s*[, ]\s*(?:\(y\)|~|-?\d+(?:\.\d+)?)\s*[, ]\s*(-?\d+)")
 PREFIX = re.compile(r"^\s*\[[^\]]*\]\s*")
 FAIL = re.compile(r"could not|cannot|no (?:\w+ )*(?:found|within)|not found|unknown|syntax|incorrect|invalid", re.I)
 
@@ -78,7 +78,7 @@ class ServerProc:
                         continue
                     body = PREFIX.sub("", text)
                     m = COORDS.search(body)
-                    if m and ("nearest" in body.lower() or "located" in body.lower() or "at " in body.lower()):
+                    if m and not body.lower().startswith(("execute", "locate", "running", "player connected", "player disconnected")):
                         return (int(m.group(1)), int(m.group(2)))
                     if FAIL.search(body) and "locate" not in body.lower().split("command")[0] and ts >= t0:
                         return ("fail", body)
