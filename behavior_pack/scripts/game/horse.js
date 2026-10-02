@@ -5,6 +5,7 @@ import { system } from '@minecraft/server';
 import { hold, invCounts } from './inventory.js';
 import { trace } from './bridge.js';
 
+const babyOf = (e) => { try { return e.hasComponent('minecraft:is_baby'); } catch { return false; } };
 const tamed = (e) => { try { return e.hasComponent('minecraft:is_tamed'); } catch { return false; } };
 export const ridersOf = (e) => { try { return e.getComponent('minecraft:rideable')?.getRiders() ?? []; } catch { return []; } };
 export const saddledOf = (e) => { try { return /saddle/.test(e.getComponent('minecraft:inventory')?.container?.getItem(0)?.typeId ?? ''); } catch { return false; } };
@@ -20,7 +21,8 @@ export class Horses {
     let found = null;
     try {
       const all = a.dim.getEntities({ type: 'minecraft:horse', location: a.sim.location, maxDistance: r });
-      found = all.find((e) => e.id === id) ?? all.sort((p, q) => dist(a.sim.location, p.location) - dist(a.sim.location, q.location))[0] ?? null;
+      const grown = all.filter((e) => !babyOf(e)); // (a baby can't be ridden)
+      found = grown.find((e) => e.id === id) ?? grown.sort((p, q) => dist(a.sim.location, p.location) - dist(a.sim.location, q.location))[0] ?? null;
     } catch { /* none loaded */ }
     return found;
   }
@@ -57,6 +59,7 @@ export class Horses {
    */
   async tame(gen, h, patience = 14) {
     const S = this.a.skills, sim = this.a.sim;
+    if (babyOf(h)) return { ok: false, tries: 0, how: "it's a foal: a baby horse can't be ridden" };
     let tries = 0;
     for (; tries < 40 && !tamed(h); tries++) {
       if (!h.isValid) return { ok: false, tries, how: 'the horse is gone' };

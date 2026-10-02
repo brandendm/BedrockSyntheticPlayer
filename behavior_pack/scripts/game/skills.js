@@ -4961,6 +4961,7 @@ export class Skills {
    * Animals: the ones in sight within 24. Cheap enough for twice a second. Returns a position.
    */
   spotCheck(want) {
+    if (want === 'village') return this.a.villages?.sweep() ?? null;
     if (want === 'log') {
       const eye = this.eye();
       const yaw0 = this.a.motor.yaw;

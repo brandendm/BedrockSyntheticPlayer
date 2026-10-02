@@ -56,9 +56,9 @@ export class Villages {
   }
 
   /** Villagers and raiders within 64 blocks (loaded chunks): evidence, and a warning. */
-  scanEntities() {
+  scanEntities(r = 64) {
     let ents = [];
-    try { ents = this.a.dim.getEntities({ location: this.a.sim.location, maxDistance: 64 }); } catch { return; }
+    try { ents = this.a.dim.getEntities({ location: this.a.sim.location, maxDistance: r }); } catch { return; }
     const vil = [], raiders = [];
     for (const e of ents) {
       let t;
@@ -75,6 +75,42 @@ export class Villages {
       this.a.memory.save();
     }
     return { villagers: vil.length, raiders: raiders.length };
+  }
+
+  /**
+   * A denser look than the lookout's ten columns every three seconds: while hunting for a village, every second or so a third of
+   * a spiral of columns out to 112 blocks (a column every ~10 blocks along rings 8 apart) for paths, farmland, hay and the
+   * rest, and villagers out to 128. Returns { x, y, z } of a confirmed village not visited lately, or null.
+   * `force`: don't wait out the throttle.
+   */
+  sweep(force = false) {
+    const now = Date.now();
+    if (!force && now - (this.sweptAt ?? 0) < 900) return this.nearestKnown();
+    this.sweptAt = now;
+    const eye = this.a.sim.location, dim = this.a.dim, items = [];
+    const part = (this.sweepTurn = ((this.sweepTurn ?? -1) + 1) % 3);
+    for (let r = 20; r <= 112; r += 8) {
+      if (!force && Math.round((r - 20) / 8) % 3 !== part) continue;
+      const n = Math.max(10, Math.round(2 * Math.PI * r / 10));
+      const spin = Math.random();
+      for (let i = 0; i < n; i++) {
+        const ang = ((i + spin) / n) * Math.PI * 2;
+        const x = Math.floor(eye.x + Math.cos(ang) * r), z = Math.floor(eye.z + Math.sin(ang) * r);
+        let top;
+        try { top = dim.getTopmostBlock({ x, z }); } catch { continue; } // not loaded
+        if (!top) continue;
+        const e = this.seeBlock(strip(top.typeId), top.location.x, top.location.y, top.location.z);
+        if (e) items.push(e);
+      }
+    }
+    try { if (items.length) this.feed(items); this.scanEntities(128); } catch { /* a sweep never breaks the hunt */ }
+    return this.nearestKnown();
+  }
+
+  /** A known village we'd go to (not raided, not visited lately), as a position. */
+  nearestKnown() {
+    const v = this.pick('bed') ?? this.pick('food');
+    return v ? { x: v.x, y: v.y, z: v.z } : null;
   }
 
   /** The village to go to for `want`, or null. */

@@ -51,7 +51,7 @@ import { EXPECTED } from '../core/calibrate.js';
 import { CONFIG } from '../config.js';
 import { system, world, ItemStack, EquipmentSlot, Direction } from '@minecraft/server';
 import { blueprint, furnishings } from '../core/house.js';
-import { invCounts as invCountsOf, hold, container as packOf } from './inventory.js';
+import { invCounts as invCountsOf, hold, take, container as packOf } from './inventory.js';
 
 const NAMES = ['roof', 'tower', 'hole', 'pit', 'trap', 'climb', 'ledge', 'ladder', 'husk', 'creeper', 'sheep', 'pen', 'smelt', 'smeltlogs', 'shelter', 'house', 'resume', 'ghostlog', 'quarry', 'dark', 'replant', 'litter', 'trader', 'iron', 'farm', 'equip', 'water', 'bucketfarm', 'treetop', 'corner', 'leap', 'bridge', 'fall', 'vines', 'stairgap', 'loot', 'shield', 'skel', 'rest', 'nights', 'calibrate', 'portal', 'horse', 'leadboat'];
 let running = false;
@@ -142,6 +142,9 @@ async function runOne(agent, player, name, arg) {
   const home = { x: sim.location.x, y: sim.location.y, z: sim.location.z };
   /** @type {Array<() => void>} */
   const cleanup = [];
+  /** What a test put in the pack: taken out again at the end (the flint and steel stayed in the bot's hand and pack). @type {Record<string, number>} */
+  const gave = {};
+  const giveItem = (id, n) => { packOf(sim)?.addItem(new ItemStack(`minecraft:${id}`, n)); gave[id] = (gave[id] ?? 0) + n; };
   const secs = () => ((system.currentTick - t0) / 20).toFixed(0);
   const idle = async (maxS) => { // wait for the task to end (or time out)
     await system.waitTicks(10);
@@ -1315,10 +1318,7 @@ async function runOne(agent, player, name, arg) {
         // two bottom corners give the columns something to stand on, the top corners aren't needed).
         cmd(`fill ${x - 6} ${gy} ${z - 4} ${x + 9} ${gy} ${z + 6} grass_block`);
         cmd(`fill ${x - 6} ${gy + 1} ${z - 4} ${x + 9} ${gy + 8} ${z + 6} air`);
-        const c = packOf(sim);
-        c.addItem(new ItemStack('minecraft:obsidian', 12));
-        c.addItem(new ItemStack('minecraft:flint_and_steel', 1));
-        c.addItem(new ItemStack('minecraft:cobblestone', 6));
+        giveItem('obsidian', 12); giveItem('flint_and_steel', 1); giveItem('cobblestone', 6);
         tp(x + 1, gy + 1, z + 4);
         await system.waitTicks(20);
         const H = agent.homestead;
@@ -1356,7 +1356,7 @@ async function runOne(agent, player, name, arg) {
           try { used = String(sim.useItemInSlotOnBlock(slot, { x: x + 1, y: gy + 1, z }, Direction.Up, { x: 0.5, y: 1, z: 0.5 })); } catch (e) { used = `threw ${e}`; }
           S.lastUseTick = system.currentTick;
           await system.waitTicks(12);
-          lit = inner.some((cell) => /nether_portal/.test(S.blockAt(cell) ?? ''));
+          lit = inner.some((cell) => /(^|_)portal$/.test(S.blockAt(cell) ?? '')); // (the block is `portal`)
         }
         if (!lit) { detail = `built the frame (${byBot} placed by the bot, ${byCmd} by command) but it didn't light after ${tries} tries (use returned ${used}, slot ${slot}, inner block ${S.blockAt(inner[0])}, held ${sim.getComponent('minecraft:inventory').container.getItem(sim.selectedSlotIndex)?.typeId ?? 'nothing'})`; break; }
         // 5. Walk in and wait for the game to move us (about 4 s inside it).
@@ -1379,9 +1379,10 @@ async function runOne(agent, player, name, arg) {
       }
       case 'horse': {
         flatPatch(cmd, x, gy, z);
-        packOf(sim).addItem(new ItemStack('minecraft:saddle', 1));
+        giveItem('saddle', 1);
         tp(x, gy + 1, z);
-        const horse = dim.spawnEntity('minecraft:horse', { x: x + 4.5, y: gy + 1, z: z + 0.5 });
+        const horse = await spawnAdultHorse(dim, { x: x + 4.5, y: gy + 1, z: z + 0.5 });
+        if (!horse) { detail = "couldn't get an adult horse (only babies spawned, and they can't be ridden)"; break; }
         cleanup.push(() => { try { horse.remove(); } catch {} });
         await system.waitTicks(20);
         const gen = agent.newTask({ kind: 'test' });
@@ -1402,9 +1403,7 @@ async function runOne(agent, player, name, arg) {
         const heightAt = (xx) => (xx < x - 3 ? 0 : xx < x + 2 ? 1 : xx < x + 9 ? 2 : 1);
         const lane = [];
         for (let xx = x - 6; xx <= x + 12; xx += 2) lane.push({ x: xx + 0.5, y: gy + 1 + heightAt(xx), z: z + 0.5 });
-        const c = packOf(sim);
-        c.addItem(new ItemStack('minecraft:lead', 3));
-        c.addItem(new ItemStack('minecraft:saddle', 1));
+        giveItem('lead', 3); giveItem('saddle', 1);
         const gen = agent.newTask({ kind: 'test' });
         const cal = { legs: {} };
         const lines = [];
@@ -1427,7 +1426,8 @@ async function runOne(agent, player, name, arg) {
         if (!walkOk && !lines.length) break;
         // Riding: a tame saddled horse, the boat on a lead behind it, the same lane.
         tp(x - 6, gy + 1, z);
-        const horse = dim.spawnEntity('minecraft:horse', { x: x - 4.5, y: gy + 1, z: z + 2.5 });
+        const horse = await spawnAdultHorse(dim, { x: x - 4.5, y: gy + 1, z: z + 2.5 });
+        if (!horse) { lines.push("horse leg: couldn't get an adult horse (babies can't be ridden)"); agent.memory.data.leadCal = { ...cal, at: Date.now(), build: CONFIG.build }; agent.memory.save(); pass = false; detail = lines.join(' | '); break; }
         cleanup.push(() => { try { horse.remove(); } catch {} });
         await system.waitTicks(20);
         const r = await horseReady(agent, gen, horse, secs);
@@ -1458,10 +1458,11 @@ async function runOne(agent, player, name, arg) {
   } catch (e) {
     // Where it broke: the first line of the stack in our code.
     const at = String(e?.stack ?? '').split('\n').slice(1, 4).map((l) => l.trim()).join(' < ');
-    detail = `${detail ? `${detail}; ` : ''}error: ${e}${at ? ` (${at})` : ''}`;
+    detail = e?.constructor?.name === 'Aborted' ? `${detail ? `${detail}; ` : ''}interrupted: a fight or another command took over the test (mode ${agent.mode})` : `${detail ? `${detail}; ` : ''}error: ${e}${at ? ` (${at})` : ''}`;
   } finally {
     agent.testHold = false;
     for (const f of cleanup) f();
+    try { for (const [id, n] of Object.entries(gave)) { const have = invCountsOf(sim)[id] ?? 0; if (have > 0) take(sim, id, Math.min(have, n)); } S.restHands(); } catch {}
     try { if (sim.dimension.id !== dim.id) sim.teleport(home, { dimension: dim }); } catch {}
     agent.newTask(null);
     agent.motor.stop();
@@ -1597,4 +1598,18 @@ async function leadWalk(gen, S, sim, boat, lane, speed, mount = null) {
 function leadLine(m, goal) {
   const f = (v) => (v == null ? '?' : Number(v).toFixed(1));
   return `${m.arrived ? 'got there' : 'DID NOT get there'} in ${m.secs}s, boat ${m.boatEnd ? `${f(flat(m.boatEnd, goal))} from the goal` : 'gone'}; first pulled at ${f(m.pullAt)}, furthest ${f(m.maxSep)} apart, ${m.snapped ? `lead SNAPPED at ${f(m.snapAt)}` : 'lead held'}, held up ${m.holds}x, tugged ${m.tugs}x (game limits soft ${m.soft}, hard ${m.hard}, max ${m.max}; held at ${f(m.pauseAt)})`;
+}
+
+/** A grown horse: babies can't be ridden. One that spawns young is grown up by its own event, else replaced (up to 8 tries). */
+async function spawnAdultHorse(dim, loc) {
+  const baby = (e) => { try { return e.hasComponent('minecraft:is_baby'); } catch { return false; } };
+  for (let i = 0; i < 8; i++) {
+    let h;
+    try { h = dim.spawnEntity('minecraft:horse', loc); } catch { return null; }
+    await system.waitTicks(4);
+    if (baby(h)) { try { h.triggerEvent('minecraft:ageable_grow_up'); } catch { /* no such event */ } await system.waitTicks(4); }
+    if (!baby(h)) return h;
+    try { h.remove(); } catch { /* */ }
+  }
+  return null;
 }

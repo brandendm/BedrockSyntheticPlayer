@@ -1252,20 +1252,35 @@ export class Agent {
               break;
             }
             const b = this.lookout?.seedSearch('village');
-            if (!b) { this.villageHoldUntil = Date.now() + 900000; trace('village hunt: no village biome found by the seed search; not again for 15 min'); break; }
-            this.sayOnce('village-hunt', `Looking for a village: heading for the ${biomeName(b.id)} about ${Math.round(b.dist)} blocks away.`, 300000);
+            if (!b) { this.villageHoldUntil = Date.now() + 900000; this.whyNot('village hunt', { why: 'the seed search found no village biome within reach', hold: '15 min' }); break; }
             // Boxed into a pit or ravine floor: out of it first (that isn't a failed leg).
             if (await S.needsEscape(gen)) { await S.toSurface(gen); break; }
+            // The biome is only where to look. Reaching it with no village in sight, search round it in widening rings (6 points
+            // 48 out, then 6 at 96, ...) rather than wander off and come back (that paced 57,-67 <-> 11,-73 for a minute), with the
+            // whole loaded area swept for village blocks and villagers as it goes (game/villages.js sweep).
+            const base = this.villageBase;
+            if (!base || Math.hypot(base.x - b.pos.x, base.z - b.pos.z) > 64) { this.villageBase = { x: b.pos.x, y: b.pos.y, z: b.pos.z }; this.villageRing = 0; }
+            const ring = this.villageRing ?? 0;
+            const R = 48 * (1 + Math.floor(ring / 6)), ang = (ring % 6) * Math.PI / 3 + (Math.floor(ring / 6) % 2 ? Math.PI / 6 : 0);
+            const tgt = ring === 0 ? { x: b.pos.x, y: b.pos.y, z: b.pos.z } : { x: this.villageBase.x + Math.cos(ang) * R, y: b.pos.y, z: this.villageBase.z + Math.sin(ang) * R };
+            this.sayOnce('village-hunt', ring === 0 ? `Looking for a village: heading for the ${biomeName(b.id)} about ${Math.round(b.dist)} blocks away.` : `No village yet: searching round the ${biomeName(b.id)} (ring ${ring}).`, 120000);
             await S.packUp(gen);
             const from = { ...this.sim.location };
-            await S.travelToward(gen, { x: b.pos.x, y: b.pos.y, z: b.pos.z }, 6);
-            V.scanEntities();
+            S.spotted = null; S.spotWant = 'village';
+            try { await S.travelToward(gen, tgt, 6); } finally { S.spotWant = null; }
+            const left = Math.hypot(this.sim.location.x - tgt.x, this.sim.location.z - tgt.z);
+            const found = S.spotted ?? V.sweep(true);
+            S.spotted = null;
+            if (found) { this.villageRing = 0; this.villageStuck = 0; this.villageMisses = 0; this.sayOnce('village-seen', `I can see a village about ${Math.round(Math.hypot(found.x - this.sim.location.x, found.z - this.sim.location.z))} blocks away.`, 60000); break; }
             this.villageMisses = (this.villageMisses ?? 0) + 1;
-            // Progress is distance gained toward the village biome, not blocks walked (a partial path into a dead-end ravine and back walked 26 blocks each way and gained none): three legs in a row that gain under 8 blocks, or six legs without a village, is nowhere.
-            const gained = Math.hypot(from.x - b.pos.x, from.z - b.pos.z) - Math.hypot(this.sim.location.x - b.pos.x, this.sim.location.z - b.pos.z);
-            if (gained < 8) { this.villageStuck = (this.villageStuck ?? 0) + 1; await S.wait(gen, 100); } else this.villageStuck = 0; // (a few seconds between tries: not three in one breath)
-            if (this.villageStuck > 0 && this.villageStuck < 3) await S.explore(gen, 'a village', null); // (the straight way ended in a dead end: fresh ground by the usual search)
-            if (this.villageStuck >= 3 || this.villageMisses >= 6) { this.villageMisses = 0; this.villageStuck = 0; this.villageHoldUntil = Date.now() + 1800000; this.whyNot('village hunt', { stuckLegs: this.villageStuck, legsWithoutVillage: this.villageMisses, lastGain: Math.round(gained), target: b.id, distance: Math.round(b.dist), pos: [Math.round(this.sim.location.x), Math.round(this.sim.location.y), Math.round(this.sim.location.z)], hold: '30 min' }, true); }
+            const gained = Math.hypot(from.x - tgt.x, from.z - tgt.z) - left;
+            if (left < 24) { this.villageRing = ring + 1; this.villageStuck = 0; } // (got there, none in sight: the next point on the ring)
+            else if (gained < 8) { this.villageStuck = (this.villageStuck ?? 0) + 1; await S.wait(gen, 100); } else this.villageStuck = 0;
+            if (this.villageStuck > 0 && this.villageStuck < 3) await S.explore(gen, 'a village', null); // (the way there ended in a dead end: fresh ground by the usual search)
+            if (this.villageStuck >= 3 || (this.villageRing ?? 0) >= 18) {
+              this.whyNot('village hunt', { stuckLegs: this.villageStuck, ring: this.villageRing, legs: this.villageMisses, lastGain: Math.round(gained), target: b.id, distance: Math.round(b.dist), pos: [Math.round(this.sim.location.x), Math.round(this.sim.location.y), Math.round(this.sim.location.z)], hold: '30 min' }, true);
+              this.villageMisses = 0; this.villageStuck = 0; this.villageRing = 0; this.villageHoldUntil = Date.now() + 1800000;
+            }
             break;
           }
           case 'horse': {
