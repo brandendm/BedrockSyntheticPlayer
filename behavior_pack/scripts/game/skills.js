@@ -4635,7 +4635,7 @@ export class Skills {
       if (Math.abs(dx) + Math.abs(dz) !== 1) { this.log(`staged descent: standing at ${fx} ${fz}, not beside the pillar at ${ctx.pillar.x} ${ctx.pillar.z}`); return false; }
       ctx.d = [dx, dz];
       faceDir = [-dz, dx];                                                       // round to the next side
-      edgeV = [faceDir[0] - dx, faceDir[1] - dz];                                // from this ledge toward the new one (a diagonal)
+      edgeV = faceDir;                                                           // out to the lip on the new side only (the u183 run crept out diagonally, off the one-block ledge, and fell 7)
       S = { x: ctx.pillar.x, y: fy - 4, z: ctx.pillar.z };
       N = { x: ctx.pillar.x + faceDir[0], y: fy - 4, z: ctx.pillar.z + faceDir[1] };
       if (!solid(S.x, S.y, S.z) || !open(N.x, N.y, N.z)) return false;
@@ -4655,6 +4655,7 @@ export class Skills {
         if (doneX && doneZ) break;
         this.a.body.move(doneX ? 0 : Math.sign(edgeV[0]), doneZ ? 0 : Math.sign(edgeV[1]), 0.22);
         await this.wait(gen, 1);
+        if (i > 2 && !this.a.body.isOnGround()) break; // over the edge already: no further push
       }
       this.a.body.stop();
       await this.wait(gen, 2);

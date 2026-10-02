@@ -2586,19 +2586,24 @@ async function runOne(agent, player, name, arg, human = false) {
         const gen = agent.newTask({ kind: 'test' });
         if (!leashTo(sim, boat)) { detail = "couldn't put a lead on the boat"; break; }
         rec.reset(); t0 = system.currentTick;
-        // Capture: past the villager on the far side from the boat, so the boat is pulled up against it; 6 s a try, 3 tries, then the game is helped.
+        // Capture, the way you did it: the boat trails the bot on its lead, so the bot walks a good way PAST the villager and the boat sweeps into
+        // it. From 6 blocks short of it, a moment for the boat to come up behind, then through it and 5 on at a walk; if that did not take it,
+        // again from the sides; the game is helped only after three sweeps.
         for (const v of vils) {
-          for (let tryN = 0; tryN < 3 && v.isValid && !riding(v) && ridersN() < 2; tryN++) {
+          for (let pass = 0; pass < 3 && v.isValid && !riding(v) && ridersN() < 2; pass++) {
             const vl = v.location, bl = boat.location;
-            const ux = vl.x - bl.x, uz = vl.z - bl.z, ul = Math.hypot(ux, uz) || 1;
-            const stand = { x: vl.x + (ux / ul) * 2.4, y: gy + 1, z: vl.z + (uz / ul) * 2.4 };
-            await S.goNear(gen, stand, 1, 1).catch(() => false);
-            for (let i = 0; i < 60 && v.isValid && !riding(v); i++) {
-              const bd = Math.hypot(v.location.x - boat.location.x, v.location.z - boat.location.z);
-              if (bd > 1.6) { try { sim.moveToLocation({ x: v.location.x + (v.location.x - boat.location.x) / (bd || 1) * 2, y: gy + 1, z: v.location.z + (v.location.z - boat.location.z) / (bd || 1) * 2 }, { speed: 0.6 }); } catch { /* */ } }
+            const ang = Math.atan2(vl.z - bl.z, vl.x - bl.x) + (pass === 0 ? 0 : pass === 1 ? Math.PI / 2 : -Math.PI / 2);
+            const ux = Math.cos(ang), uz = Math.sin(ang);
+            await S.goNear(gen, { x: vl.x - ux * 6, y: gy + 1, z: vl.z - uz * 6 }, 1, 1).catch(() => false);
+            await system.waitTicks(20);
+            const end = { x: v.location.x + ux * 5, y: gy + 1, z: v.location.z + uz * 5 };
+            for (let i = 0; i < 90 && v.isValid && !riding(v); i++) {
+              try { sim.moveToLocation(end, { speed: 0.7 }); } catch { /* */ }
               await system.waitTicks(2);
+              if (Math.hypot(sim.location.x - end.x, sim.location.z - end.z) < 1) break;
             }
             try { sim.stopMoving(); } catch { /* */ }
+            await system.waitTicks(10);
           }
           if (v.isValid && !riding(v) && ridersN() < 2) putIn(v, 'by command');
         }

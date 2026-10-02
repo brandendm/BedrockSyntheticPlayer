@@ -22,9 +22,8 @@ export async function flyElytra(agent, pad, ctx) {
   await system.waitTicks(5);
   // Off the edge: walk toward the pad.
   const x0 = sim.location.x;
-  let tries = 0, lastTry = -99, lastY = sim.location.y, rocketAt = -99, airborne = false, glideT0 = 0, last = { ...sim.location };
+  let seen = '', tries = 0, lastTry = -99, lastY = sim.location.y, rocketAt = -99, airborne = false, glideT0 = 0, last = { ...sim.location };
   const t0 = system.currentTick;
-  try { sim.startGliding?.(); } catch { /* not in this version */ }
   for (let tick = 0; tick < 20 * 45; tick++) {
     const now = system.currentTick, p = sim.location, onGround = !!sim.isOnGround;
     if (!airborne && !onGround) airborne = true;
@@ -34,11 +33,15 @@ export async function flyElytra(agent, pad, ctx) {
     if (!airborne) {
       try { sim.moveToLocation({ x: pad.x, y: p.y, z: pad.z }, { speed: 1 }); } catch { /* */ }
     } else if (!gliding()) {
-      // Falling and the wings shut: a jump in the air opens them (what a player's second jump does).
-      if (vy < -0.2 && now - lastTry > 5 && tries < 10) { try { sim.jump(); } catch { /* */ } tries++; lastTry = now; }
+      // Falling and the wings shut: the simulated player's own glide() (a player's second jump), a jump in the air if that is refused.
+      if (vy < -0.2 && now - lastTry > 3 && tries < 14) {
+        try { const r = sim.glide(); seen = `glide() gave ${r}`; } catch (e) { seen = `glide() threw ${e}`; }
+        if (tries >= 4 && tries % 2 === 0) { try { sim.jump(); } catch { /* */ } }
+        tries++; lastTry = now;
+      }
       // The fall would kill from here: slow falling (the test goes on, and says so).
       if (p.y < ctx.gy + 9 && !out.saved && tries >= 3) { try { sim.runCommand('effect @s slow_falling 8 0 true'); } catch { /* */ } out.saved = true; }
-      if (tries >= 10 && !out.why) out.why = `jumped ${tries} times in the air, isGliding stayed false`;
+      if (tries >= 14 && !out.why) out.why = `${tries} tries in the air, isGliding stayed false (${seen})`;
     } else {
       if (!out.glided) { out.glided = true; glideT0 = now; }
       out.peak = Math.max(out.peak, speed);
@@ -59,6 +62,7 @@ export async function flyElytra(agent, pad, ctx) {
     await agent.skills.wait(gen, 1);
     if (ctx.hp() <= 0) break;
   }
+  if (!out.glided && !out.why) out.why = `${tries} tries, isGliding stayed false (${seen || 'never fell fast enough to try'})`;
   out.glideS = out.glided ? (system.currentTick - glideT0) / 20 : 0;
   try { sim.stopMoving(); } catch { /* */ }
   void x0;

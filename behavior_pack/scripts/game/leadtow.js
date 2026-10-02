@@ -53,7 +53,7 @@ export class LeadTow {
    * (never past `guard`), then jump; the boat flies to us. Watches the next 2 s. Returns
    * { ok, snapped, stretch, peak (the boat's fastest, blocks/s), climbed (how much higher it ended than it began) }.
    */
-  async sling(gen, boat, { ride = false, target, guard }) {
+  async sling(gen, boat, { ride = false, target, guard, dir = null }) {
     const a = this.a, S = a.skills, sim = a.sim, subj = () => (ride ? (a.horses.mounted() ?? sim) : sim);
     const lim = this.limits(boat);
     const goal = Math.min(target, guard - 0.4, lim.max - 1);
@@ -64,7 +64,9 @@ export class LeadTow {
       const p = subj().location, b = boat.location, d = flat(p, b);
       if (d >= goal) break;
       const k = 2 / (d || 1);
-      try { sim.moveToLocation({ x: p.x + (p.x - b.x) * k, y: p.y, z: p.z + (p.z - b.z) * k }, { speed: 1 }); } catch { /* */ }
+      // Along the runway if there is one (the way it was built), else straight away from the boat.
+      const to = dir ? { x: p.x + dir[0] * 2, y: p.y, z: p.z + dir[1] * 2 } : { x: p.x + (p.x - b.x) * k, y: p.y, z: p.z + (p.z - b.z) * k };
+      try { sim.moveToLocation(to, { speed: d > goal - 1.5 ? 0.4 : 1 }); } catch { /* */ }
       await S.wait(gen, 1);
     }
     try { sim.stopMoving(); } catch { /* */ }
@@ -86,6 +88,40 @@ export class LeadTow {
   }
 
   /**
+   * A runway to stretch the lead along: what a player did who got the boat up steps and hills (a one-block-long elevation is no use: you
+   * step off its far side before the lead is tight). Standing above the boat, the cells straight on from here, as far as the stretch
+   * needs, at this level: any without a floor get one (a block placed against the last, the way a bridge is built), a wall stops it.
+   * Returns { dir, built, ok }.
+   */
+  async runway(gen, boat, target, guard) {
+    const S = this.a.skills, sim = this.a.sim;
+    const p = sim.location, b = boat.location, d = flat(p, b);
+    const dx = p.x - b.x, dz = p.z - b.z;
+    const dir = Math.abs(dx) >= Math.abs(dz) ? [Math.sign(dx) || 1, 0] : [0, Math.sign(dz) || 1];
+    const out = { dir, built: 0, ok: true };
+    const end = Math.min(target + 0.5, guard - 0.8);
+    const need = Math.min(10, Math.max(0, Math.ceil(end - d)));
+    const f = S.feet();
+    const OPENISH = /^(air|cave_air|void_air|short_grass|tall_grass|fern|snow_layer|water|flowing_water|lava|flowing_lava)$/;
+    let cur = { x: f.x, y: f.y, z: f.z };
+    for (let k = 1; k <= need; k++) {
+      S.check(gen);
+      const nx = f.x + dir[0] * k, nz = f.z + dir[1] * k;
+      const floor = S.blockAt({ x: nx, y: f.y - 1, z: nz }) ?? 'air';
+      const body = S.blockAt({ x: nx, y: f.y, z: nz }) ?? 'air', head = S.blockAt({ x: nx, y: f.y + 1, z: nz }) ?? 'air';
+      if (!OPENISH.test(body) || !OPENISH.test(head)) { out.ok = k > 2; break; }       // a wall: the runway ends here
+      if (OPENISH.test(floor)) {
+        if (S.blockCount() < 1) { out.ok = false; break; }
+        if (!(await S.bridgeTo(gen, cur, { x: nx, y: f.y, z: nz }))) { out.ok = false; break; }
+        out.built++;
+      }
+      cur = { x: nx, y: f.y, z: nz };
+    }
+    // Back to the near end so the stretch is made walking out along it.
+    return out;
+  }
+
+  /**
    * Tow `boat` (on a lead from us) to within 2.5 blocks of goal. opts: { mount (the horse we're on), speed (1 = full), maxS }.
    * Returns the measurements.
    */
@@ -96,7 +132,8 @@ export class LeadTow {
     // What a player was watched doing and what the sling calibration found, over the guesses.
     const L = cal?.learned?.[mount ? 'ride' : 'walk'] ?? null, SL = cal?.sling ?? {};
     const lo = L?.pullAt ?? cal?.pullAt ?? 5;
-    const guard = Math.min(SL.guard ?? lim.max * 0.9, lim.max * 0.95);
+    // (A lead was seen to break at 10.1 blocks with the stated maximum 12: never past 8.8 unless a calibration in this world found better.)
+    const guard = Math.min(SL.guard ?? 8.8, lim.max * 0.95, SL.snapAt ? SL.snapAt - 0.8 : 99);
     const patience = Math.max(12, Math.min(90, Math.round(L?.patience ?? 20)));
     const stretchFor = (rise) => L?.sling?.stretch ?? SL.byRise?.[Math.min(3, Math.max(1, Math.ceil(rise)))] ?? Math.min(guard - 0.5, lim.max * 0.7);
     const m = { arrived: false, snapped: false, why: '', secs: 0, idealS: 0, efficiency: 0, holds: 0, tugs: 0, reroutes: 0, steps: 0, slings: 0, slingOk: 0, maxSep: 0, pullAt: null, boatMoved: 0, boatEnd: null, pathLen: 0, wet: false, notes: [], built: 0, ...lim, holdAt: guard };
@@ -115,7 +152,10 @@ export class LeadTow {
       let res = await a.plan(from, target, 1.5, 12000);
       S.check(gen);
       let built = false;
-      if (!res.complete && !ride && opts.build !== false && S.blockCount() >= 2) {
+      const last = res.path?.[res.path.length - 1];
+      const progress = last ? Math.hypot(last.x + 0.5 - from.x, last.z + 0.5 - from.z) : 0;
+      // Only when walking gets no further (the edge of the gap): the walk to it is by the walking route, not a bridge across a pond.
+      if (!res.complete && progress < 4 && !ride && opts.build !== false && S.blockCount() >= 2) {
         const ar = await a.plan(from, target, 1.5, 20000, null, { actions: S.actionOpts(), weight: 2 });
         S.check(gen);
         if (ar.complete && ar.path.length >= 2) { res = ar; built = true; note(`route with ${ar.path.filter((p) => !isWalkMove(p)).length} building steps`); }
@@ -152,6 +192,9 @@ export class LeadTow {
         note(`no progress: new route`); route = null; bestAt = system.currentTick; continue; } }
       const wp = route[wi];
       const jammed = d > lo + 0.5 && system.currentTick - lastBoatMoveTick > patience;
+      const boatMoving = system.currentTick - lastBoatMoveTick <= 10;
+      // The lead nearly at its limit with the boat coming along: stop and let it catch up (no tug). Slower from 2.5 short of it.
+      if (d >= guard - 0.2 && boatMoving && !jammed) { try { sim.stopMoving(); } catch { /* */ } await S.wait(gen, 2); continue; }
       const stuck = jammed || d >= guard - 0.2;
       if (wp.act && !stuck) {
         // A building step (a bridge over a gap): the boat up close first, then all the steps in a row, with the blocks we carry.
@@ -176,7 +219,10 @@ export class LeadTow {
         if (rise >= 0.4 && pos.y - boat.location.y >= 0.4 && stuckCount <= 4) {
           // Below us against a step: the sling, a little further stretched each time it fails.
           m.slings++;
-          const r = await this.sling(gen, boat, { ride, target: stretchFor(rise) + (stuckCount - 1) * 1.0, guard });
+          const target = stretchFor(rise) + (stuckCount - 1) * 1.0;
+          const rw = ride ? null : await this.runway(gen, boat, target, guard);
+          if (rw?.built) { note(`runway: ${rw.built} blocks`); m.built += rw.built; }
+          const r = await this.sling(gen, boat, { ride, target, guard, dir: rw?.dir ?? null });
           trace(`tow: sling at rise ${rise}: stretch ${r.stretch}, ${r.ok ? 'it came' : r.snapped ? 'LEAD BROKE' : 'it did not come'}, boat peaked ${r.peak} b/s, climbed ${r.climbed}`);
           note(`sling at rise ${rise}: ${r.ok ? 'it came' : r.snapped ? 'LEAD BROKE' : 'did not come'}`);
           if (r.ok) { m.slingOk++; stuckCount = 0; }
@@ -195,9 +241,16 @@ export class LeadTow {
         continue;
       }
       // Full speed (what snaps a lead is being stuck, not going fast); a hop at a step up.
-      move(wp, Math.max(0.2, Math.min(1, opts.speed ?? 1)));
+      move(wp, Math.max(0.2, Math.min(1, (opts.speed ?? 1) * (d > guard - 2.5 ? 0.5 : 1))));
       if (wp.y - pos.y > 0.6 && flat(pos, wp) < 1.7 && system.currentTick - lastJump > 8) { try { sim.jump(); m.steps++; lastJump = system.currentTick; } catch { /* */ } }
       await S.wait(gen, 1);
+    }
+    if (m.snapped && m.maxSep > 3) {
+      // Where it broke is kept for the next tows in this world (and the guard stays under it).
+      const c0 = a.memory.data.leadCal ?? {}, sl0 = c0.sling ?? {};
+      const snapAt = Math.min(sl0.snapAt ?? 99, Math.round(m.maxSep * 10) / 10);
+      a.memory.data.leadCal = { ...c0, sling: { ...sl0, snapAt, guard: Math.max(5, snapAt - 0.8) } };
+      note(`the lead broke at ${snapAt}`);
     }
     m.secs = Math.round((system.currentTick - t0) / 20);
     m.boatMoved = boat.isValid ? flat(boat.location, b0) : 0;
