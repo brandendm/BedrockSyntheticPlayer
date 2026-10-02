@@ -66,6 +66,8 @@ import { compare } from '../core/testrun.js';
 
 const NAMES = ['roof', 'tower', 'hole', 'pit', 'trap', 'climb', 'ledge', 'ladder', 'husk', 'creeper', 'sheep', 'pen', 'smelt', 'smeltlogs', 'shelter', 'house', 'resume', 'ghostlog', 'quarry', 'dark', 'replant', 'litter', 'trader', 'iron', 'farm', 'equip', 'water', 'bucketfarm', 'treetop', 'corner', 'leap', 'bridge', 'fall', 'vines', 'stairgap', 'loot', 'shield', 'skel', 'rest', 'nights', 'calibrate', 'portal', 'horse', 'leadboat', 'leadsling', 'bow', 'duel', 'horserace', 'pillarrace', 'woodrace', 'lavacross', 'obsidian', 'mineore', 'enderman', 'blaze', 'ghast', 'witherskeleton', 'placerate'];
 let running = false;
+/** How many sky sites have been used this session (each test gets a new one, 120 blocks further). */
+let siteCounter = 0;
 
 // Tests that wait out real time (a 5 minute despawn, a night, a furnace, a long walk): left out of
 // `!bot test all quick`. Their real durations are in the batch report (`secs`), so this list can be
@@ -143,6 +145,17 @@ export async function runTests(agent, player, args) {
     return agent.say('Stopping the tests; what was collected so far is kept.');
   }
   if (args[0] === 'go') { agent.testGo = true; return; }
+  // `test clean`: lava and fire left by the old shared test site (all of them now have a site of their own, far off): turned to air within 48
+  // blocks of you, from 40 below you to 130 above.
+  if (args[0] === 'clean') {
+    if (!player) return agent.say('Say it in chat yourself: `!bot test clean`.');
+    const px = Math.floor(player.location.x), pz = Math.floor(player.location.z), py = Math.floor(player.location.y);
+    const X1 = px - 48, X2 = px + 48, Z1 = pz - 48, Z2 = pz + 48, y1 = Math.max(-60, py - 40), y2 = Math.min(319, py + 130);
+    const per = Math.max(1, Math.floor(30000 / ((X2 - X1 + 1) * (Z2 - Z1 + 1))));
+    let done = 0;
+    for (const liq of ['lava', 'flowing_lava', 'fire']) for (let yy = y1; yy <= y2; yy += per) { try { agent.dim.runCommand(`fill ${X1} ${yy} ${Z1} ${X2} ${Math.min(y2, yy + per - 1)} ${Z2} air replace ${liq}`); done++; } catch { /* unloaded part */ } }
+    return agent.say(`Cleared lava and fire within 48 blocks of you (${done} passes).`);
+  }
   // `test fast`: skip the waiting in this test (the night, a furnace cooking): the script API has no way to run the game faster,
   // so the waits the tests know about are cut short instead.
   if (args[0] === 'fast') {
@@ -278,17 +291,34 @@ export async function runTests(agent, player, args) {
 
 async function runOne(agent, player, name, arg, human = false) {
   const dim = agent.dim, sim = agent.sim, S = agent.skills;
-  // Site: 10 blocks in front of whoever asked (or of the bot), on natural ground.
-  const from = player ?? sim;
-  const v = from.getViewDirection();
-  const len = Math.hypot(v.x, v.z) || 1;
-  const x = Math.floor(from.location.x + (v.x / len) * 10), z = Math.floor(from.location.z + (v.z / len) * 10);
-  const gy0 = S.groundTop(x, z);
-  if (!Number.isFinite(gy0)) return report(agent, name, false, 'no ground in front of you (unloaded?)');
   // Most tests are built in the sky on a slab of their own (no lakes, slopes or trees to interfere); the ones that
   // need the real world (trees, water, ores, the night) stay on the ground.
   const sky = !GROUND.has(name);
-  const gy = sky ? Math.min(Math.max(gy0 + 60, 120), 280) : gy0;
+  const from = player ?? sim;
+  let x, z, gy;
+  /** The ticking area that keeps a far-off site loaded (removed at the end). */
+  let tickName = '';
+  if (sky) {
+    // Every sky test gets a site of its own, far from the world and from every earlier test: what a test leaves behind (flowing lava,
+    // fire) can never be where the next one is put (the lava tests left lava and fire at the one shared site). Out east by 4000 blocks,
+    // a fresh 120-block step for each, loaded for the test with a ticking area.
+    siteCounter++;
+    x = Math.floor(from.location.x) + 4000 + siteCounter * 120;
+    z = Math.floor(from.location.z);
+    gy = 150;
+    tickName = `agent_test_site_${siteCounter % 8}`;
+    try { dim.runCommand(`tickingarea remove ${tickName}`); } catch { /* none */ }
+    try { dim.runCommand(`tickingarea add circle ${x} ${gy} ${z} 4 ${tickName} true`); } catch (e) { console.warn(`[test] tickingarea: ${e}`); }
+    for (let i = 0; i < 60; i++) { let ok = false; try { ok = !!dim.getBlock({ x, y: gy, z }); } catch { /* not loaded yet */ } if (ok) break; await system.waitTicks(5); }
+  } else {
+    // Site: 10 blocks in front of whoever asked (or of the bot), on natural ground.
+    const v = from.getViewDirection();
+    const len = Math.hypot(v.x, v.z) || 1;
+    x = Math.floor(from.location.x + (v.x / len) * 10); z = Math.floor(from.location.z + (v.z / len) * 10);
+    const gy0 = S.groundTop(x, z);
+    if (!Number.isFinite(gy0)) return report(agent, name, false, 'no ground in front of you (unloaded?)');
+    gy = gy0;
+  }
   // (the farm test lays 55 x 41 of its own: its slab and backup are that big)
   const ext = name === 'farm' ? { w: 22, e: 36, r: 22 } : name === 'horserace' ? { w: 8, e: 54, r: 10 } : name === 'bow' ? { w: 14, e: 34, r: 14 } : { w: 14, e: 18, r: 12 };
   // The rim wall is only low (to keep walkers on the slab) where things fly: a ghast or blaze hovering out over the edge, the arrows at it.
@@ -297,6 +327,7 @@ async function runOne(agent, player, name, arg, human = false) {
   const pHome = player ? { x: player.location.x, y: player.location.y, z: player.location.z } : null;
   const cmd = (c) => { try { dim.runCommand(c); return true; } catch (e) { console.warn(`[test] ${c}: ${e}`); return false; } };
   if (!cmd(`structure save agent_test_backup ${box.x1} ${box.y1} ${box.z1} ${box.x2} ${box.y2} ${box.z2} false memory true`)) {
+    if (tickName) { try { dim.runCommand(`tickingarea remove ${tickName}`); } catch { /* */ } }
     return report(agent, name, false, "couldn't back up the test area, not touching it");
   }
   const home = { x: sim.location.x, y: sim.location.y, z: sim.location.z };
@@ -2323,10 +2354,16 @@ async function runOne(agent, player, name, arg, human = false) {
     try { if (player && pHome) player.teleport(pHome); } catch { /* */ }
     await system.waitTicks(5);
     // Lava does not vanish when the structure is put back (what flowed stays for a while): turned to air first, in the whole box.
-    if (name === 'lavacross' || name === 'obsidian') { for (const liq of ['lava', 'flowing_lava', 'obsidian']) cmd(`fill ${box.x1} ${box.y1} ${box.z1} ${box.x2} ${box.y2} ${box.z2} air replace ${liq}`); await system.waitTicks(10); }
+    if (name === 'lavacross' || name === 'obsidian') {
+      // (A fill takes at most 32768 blocks: in layers.)
+      const X1 = box.x1 - 6, X2 = box.x2 + 6, Z1 = box.z1 - 6, Z2 = box.z2 + 6, per = Math.max(1, Math.floor(30000 / ((X2 - X1 + 1) * (Z2 - Z1 + 1))));
+      for (const liq of ['lava', 'flowing_lava', 'obsidian', 'fire']) for (let yy = box.y1 - 8; yy <= box.y2; yy += per) cmd(`fill ${X1} ${yy} ${Z1} ${X2} ${Math.min(box.y2, yy + per - 1)} ${Z2} air replace ${liq}`);
+      await system.waitTicks(10);
+    }
     // Put the ground back, then make sure the bot isn't left inside a restored block.
     cmd(`structure load agent_test_backup ${box.x1} ${box.y1} ${box.z1}`);
     cmd('structure delete agent_test_backup');
+    if (tickName) { try { dim.runCommand(`tickingarea remove ${tickName}`); } catch { /* */ } }
     try {
       const top = S.groundTop(Math.floor(sim.location.x), Math.floor(sim.location.z));
       if (Number.isFinite(top) && top >= Math.floor(sim.location.y)) sim.teleport({ x: sim.location.x, y: top + 1, z: sim.location.z });
