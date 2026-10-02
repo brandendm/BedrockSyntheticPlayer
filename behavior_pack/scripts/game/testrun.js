@@ -26,6 +26,9 @@ export class TestRecorder {
   /** The path (downsampled) and the block events, for drawing. */
   trace() { return { path: downsample(this.samples, 240), blocks: this.blocks }; }
 
+  /** Start the record again from now (the reading time before a turn is not part of it). */
+  reset() { this.samples = []; this.blocks = []; this.counts = { placed: 0, broken: 0 }; this.sample(); }
+
   start() {
     this.sample();
     this.run = system.runInterval(() => this.sample(), 5);

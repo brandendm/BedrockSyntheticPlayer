@@ -445,7 +445,9 @@ function handle(text, player) {
   }
   if (lower === 'test' || lower.startsWith('test ')) {
     if (!agent?.sim.isValid) return reply(player, 'spawn first');
-    runTests(agent, player, lower.split(/\s+/).slice(1)).catch((e) => console.error(`[test] ${e}\n${e.stack}`));
+    // From the dashboard there is no sender: the first real player is the one who takes part.
+    const tester = player ?? world.getPlayers().find((pl) => pl.name !== agent.sim.name);
+    runTests(agent, tester, lower.split(/\s+/).slice(1)).catch((e) => console.error(`[test] ${e}\n${e.stack}`));
     return;
   }
   if (lower === 'despawn') {

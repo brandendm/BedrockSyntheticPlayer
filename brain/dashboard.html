@@ -236,6 +236,7 @@
       <select id="test2"></select>
       <input id="testarg" placeholder="arg" style="max-width:80px;min-width:60px">
       <button id="runtest2">Run one</button>
+      <button data-cmd="test go" title="Starts your clock now instead of when you move">Go (start my clock)</button>
       <button data-cmd="test skip">Skip current test</button>
       <button data-cmd="test stop" title="Ends the whole batch now; what was collected is kept">Stop tests</button>
       <label class="muted">Who: <select id="testwho"><option value="">Bot only</option><option value="both">Bot first, then me</option><option value="youfirst">Me first, then the bot</option><option value="me">Me only</option></select></label>
@@ -406,7 +407,7 @@ function render(d) {
   try {
     const tp = s.tests, bar = $('testbar');
     bar.style.display = tp && tp.running ? '' : 'none';
-    if (tp && tp.running) { $('testfill').style.width = `${Math.round((tp.done / Math.max(1, tp.total)) * 100)}%`; const left = tp.deadline ? Math.max(0, Math.round((tp.deadline - Date.now()) / 1000)) : null; $('testbartxt').textContent = `${tp.done}/${tp.total} tests done${tp.current ? `, now ${tp.current}` : ''}${tp.human ? ' (you)' : ''}${left !== null ? ` · ${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')} left of ${tp.limitS}s` : ''}`; }
+    if (tp && tp.running) { $('testfill').style.width = `${Math.round((tp.done / Math.max(1, tp.total)) * 100)}%`; const left = tp.reading ? null : tp.deadline ? Math.max(0, Math.round((tp.deadline - Date.now()) / 1000)) : null; $('testbartxt').textContent = `${tp.done}/${tp.total} tests done${tp.current ? `, now ${tp.current}` : ''}${tp.human ? ' (you)' : ''}${tp.reading ? ' · reading the objective: your clock starts when you move' : ''}${left !== null ? ` · ${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')} left of ${tp.limitS}s` : ''}`; }
   } catch {}
   $('name').textContent = s.name || 'Scout';
   if (!s.online) return;

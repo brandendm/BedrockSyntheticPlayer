@@ -79,7 +79,7 @@ const NIGHT = new Set(['shelter', 'house', 'resume', 'nights', 'rest', 'dark', '
 const NATURAL = new Set(['water', 'bucketfarm', 'treetop', 'vines', 'ghostlog', 'nights', 'calibrate']);
 const COMBAT = new Set(['husk', 'creeper', 'skel', 'shield', 'dark', 'duel']);
 // The ones a player can do too (`!bot test <name> me`): a goal the player can reach and the test can see.
-const HUMAN_OK = new Set(['tower', 'hole', 'pit', 'climb', 'ladder', 'corner', 'leap', 'bridge', 'ledge', 'bow']);
+const HUMAN_OK = new Set(['tower', 'hole', 'pit', 'climb', 'ladder', 'corner', 'leap', 'bridge', 'ledge', 'bow', 'husk', 'sheep', 'pen']);
 // No single test runs longer than this (the task is ended and the test left to report what it has).
 const CAP_S = 240;
 
@@ -95,6 +95,9 @@ const HUMAN_HELP = {
   bridge: { kit: [['dirt', 16]], text: 'A closed corridor with a 3-wide, 7-deep gap. You have 16 dirt. Get across without falling and reach the gold block at the far end.' },
   ledge: { kit: [['dirt', 16]], text: 'A crafting table sits on top of a 2-high cliff. Get close enough to open it (within about 4 blocks of it).' },
 };
+HUMAN_HELP.husk = { kit: [], text: 'A husk (a desert zombie) is 8 blocks east of you. Kill it. Use your sword.' };
+HUMAN_HELP.sheep = { kit: [], text: 'Three sheep stand 6 blocks east. Kill them and pick up 3 wool.' };
+HUMAN_HELP.pen = { kit: [], text: 'Two cows in a fenced pen with a gate, 4 blocks east. Go in through the gate, kill them and pick up 2 raw beef.' };
 HUMAN_HELP.bow = { kit: [['bow', 1], ['arrow', 16]], text: 'A target (armor stand) stands 12 blocks east of you. Hit it with an arrow (hold right-click to draw, release to shoot).' };
 const humanHelp = (name) => HUMAN_HELP[name] ?? null;
 /** What you are handed in every test you do: tools, blocks and food; the test's own extras on top. `climb` has no tools, like the bot's run. */
@@ -122,6 +125,7 @@ export async function runTests(agent, player, args) {
     try { agent.newTask(null); agent.motor.stop(); } catch { /* */ }
     return agent.say('Stopping the tests; what was collected so far is kept.');
   }
+  if (args[0] === 'go') { agent.testGo = true; return; }
   if (args[0] === 'skip') {
     if (!running) return agent.say('No test is running.');
     agent.testSkipped = true;
@@ -186,6 +190,10 @@ export async function runTests(agent, player, args) {
     else if (who === 'botfirst') jobs.push([n, false], [n, true]);
     else jobs.push([n, true], [n, false]);
   }
+  const humanTurns = list.filter((n) => HUMAN_OK.has(n));
+  if (who !== 'bot') agent.say(`You have a turn in ${humanTurns.length} of ${list.length} tests (${humanTurns.join(', ') || 'none'}); the rest are the bot's alone.`);
+  const gm0 = /** @type {any} */ (player)?.getGameMode?.() ?? 'survival';
+  const setGm = (m) => { try { /** @type {any} */ (player)?.setGameMode(m); } catch { /* */ } };
   agent.testProgress = { running: true, done: 0, total: jobs.length, current: null, human, startedAt: Date.now() };
   // Daylight: kept at day while the tests run (the ones that need the night turn the cycle back on), put back after.
   const cycle0 = (() => { try { return /** @type {any} */ (world).gameRules?.doDaylightCycle ?? true; } catch { return true; } })();
@@ -201,6 +209,8 @@ export async function runTests(agent, player, args) {
       agent.testSkipped = false;
       setDiff(COMBAT.has(n) ? diff0 : 'peaceful');
       setCycle(keepCycle || NIGHT.has(n));
+      // Creative while you watch (you can fly about), survival while you do a test or fight in one.
+      setGm(isYou || n === 'duel' ? 'survival' : 'creative');
       // The cap: at the deadline the task ends, so waits on it return and the test reports.
       let capped = false;
       const capS = n === 'leadboat' || n === 'leadsling' ? 480 : CAP_S;
@@ -218,6 +228,7 @@ export async function runTests(agent, player, args) {
   } finally {
     setDiff(diff0);
     setCycle(cycle0);
+    setGm(gm0);
     agent.testProgress = { ...agent.testProgress, running: false, current: null, deadline: null };
     agent.testSkipped = false; agent.testAbort = false;
     try { if (player && home0) player.teleport(home0); } catch { /* */ }
@@ -275,7 +286,7 @@ async function runOne(agent, player, name, arg, human = false) {
   // Items lying about from earlier tests (logs from the vine tree, saplings) would have it digging
   // through the fresh rock to fetch them: the site starts with none.
   try { for (const e of dim.getEntities({ type: 'minecraft:item', location: { x, y: gy, z }, maxDistance: 48 })) e.remove(); } catch {}
-  const t0 = system.currentTick;
+  let t0 = system.currentTick;
   const hp0 = agent.health();
   /** @type {Array<() => void>} */
   const cleanup = [];
@@ -293,12 +304,25 @@ async function runOne(agent, player, name, arg, human = false) {
   const humanTry = async (done, maxS, mark = null) => {
     if (mark) cmd(`setblock ${Math.floor(mark.x)} ${Math.ceil(mark.y) - 1} ${Math.floor(mark.z)} gold_block`);
     const h = humanHelp(name);
-    agent.say(`Your turn (${maxS} s, \`!bot test skip\` or the dashboard Skip button to give up): ${h ? h.text : 'do what the test describes.'}${kitFor(name).length ? ` You were given: ${kitFor(name).map(([id, n]) => `${n} ${id}`).join(', ')}.` : ' You were given nothing (like the bot).'}`);
-    if (agent.testProgress) { agent.testProgress.deadline = Date.now() + maxS * 1000; agent.testProgress.limitS = maxS; }
+    const kit = kitFor(name);
+    agent.say(`YOUR TURN, ${name}: ${h ? h.text : 'do what the test describes.'}${kit.length ? ` You were given: ${kit.map(([id, n]) => `${n} ${id}`).join(', ')}.` : ' You were given nothing (like the bot).'} Take your time: the clock starts when you move (or say \`!bot test go\`). \`!bot test skip\` gives up.`);
+    try { player.onScreenDisplay.setTitle(`Your turn: ${name}`, { subtitle: (h?.text ?? '').slice(0, 100), stayDuration: 160, fadeInDuration: 5, fadeOutDuration: 10 }); } catch { /* */ }
+    // Reading time is not on the clock: it starts when you move or jump (or say go), after 60 s at most.
+    agent.testGo = false;
+    if (agent.testProgress) { agent.testProgress.reading = true; agent.testProgress.deadline = null; }
+    const p0 = { x: who.location.x, y: who.location.y, z: who.location.z };
+    for (let i = 0; i < 60 * 10 && !agent.testSkipped && !agent.testGo; i++) {
+      await system.waitTicks(2);
+      const l = who.location;
+      if (Math.hypot(l.x - p0.x, l.y - p0.y, l.z - p0.z) > 0.8) break;
+    }
+    rec.reset(); t0 = system.currentTick;
+    if (agent.testProgress) { agent.testProgress.reading = false; agent.testProgress.deadline = Date.now() + maxS * 1000; agent.testProgress.limitS = maxS; }
     for (let i = 0; i < maxS * 4 && !agent.testSkipped; i++) { if (done()) return true; await system.waitTicks(5); }
     return false;
   };
   const rec = new TestRecorder(who).start();
+  if (human) agent.testHold = true; // the bot stands by while you do it (no fighting or fleeing of its own)
   /** What the human was handed, taken back at the end. @type {Array<[string, number]>} */
   const handed = [];
   if (human) {
@@ -312,7 +336,7 @@ async function runOne(agent, player, name, arg, human = false) {
   const extraRuns = [];
   try {
     const tpg = agent.testProgress;
-    agent.say(`Test ${name}${tpg ? ` (${tpg.done + 1}/${tpg.total})` : ''}${human ? ' [you]' : ''}: starting (build ${CONFIG.build}).`);
+    agent.say(`Test ${name}${tpg ? ` (${tpg.done + 1}/${tpg.total})` : ''}${human ? ' [you]' : ''}: starting (build ${CONFIG.build}).${!human && tpg?.human && !HUMAN_OK.has(name) ? ' (bot only: no turn for you in this one.)' : ''}`);
     // A floor to stand on: the two layers at ground level over the site filled where there is air or liquid (the tests that
     // carve their own terrain, or need the water, build over it).
     if (!sky && !NATURAL.has(name)) for (const rep of ['air', 'water', 'flowing_water', 'lava', 'flowing_lava']) { cmd(`fill ${x - 8} ${gy - 1} ${z - 8} ${x + 14} ${gy} ${z + 8} grass_block replace ${rep}`); }
@@ -327,12 +351,19 @@ async function runOne(agent, player, name, arg, human = false) {
       } else {
         // On the real ground the bot goes where the test takes it (trees, caves, a long walk): a floating camera in spectator mode,
         // through the rock if need be, that keeps within 12 blocks of it. The game mode is put back afterwards.
-        const gm0 = /** @type {any} */ (player).getGameMode?.() ?? 'survival';
-        try { /** @type {any} */ (player).setGameMode('spectator'); } catch { /* */ }
-        const cam = () => { try { const b = sim.location, p = player.location; if (Math.hypot(b.x - p.x, b.y - p.y, b.z - p.z) > 12) player.teleport({ x: b.x - 4, y: b.y + 4, z: b.z - 4 }, { facingLocation: { x: b.x, y: b.y + 1, z: b.z } }); } catch { /* */ } };
+        let under = false;
+        const cam = () => {
+          try {
+            const b = sim.location, p = player.location;
+            // Creative (flying) in the open; spectator, through the rock, when the bot is down in it.
+            const nowUnder = b.y < S.groundTop(Math.floor(b.x), Math.floor(b.z)) - 3;
+            if (nowUnder !== under) { under = nowUnder; /** @type {any} */ (player).setGameMode(under ? 'spectator' : 'creative'); }
+            if (Math.hypot(b.x - p.x, b.y - p.y, b.z - p.z) > 12) player.teleport({ x: b.x - 4, y: b.y + 4, z: b.z - 4 }, { facingLocation: { x: b.x, y: b.y + 1, z: b.z } });
+          } catch { /* */ }
+        };
         try { player.teleport({ x: x - 7, y: gy + 6, z: z - 4 }, { facingLocation: { x, y: gy + 1, z } }); } catch { /* */ }
         const camRun = system.runInterval(cam, 30);
-        cleanup.push(() => { try { system.clearRun(camRun); } catch { /* */ } try { /** @type {any} */ (player).setGameMode(gm0); } catch { /* */ } });
+        cleanup.push(() => { try { system.clearRun(camRun); } catch { /* */ } try { /** @type {any} */ (player).setGameMode('creative'); } catch { /* */ } });
       }
     }
     switch (name) {
@@ -445,6 +476,15 @@ async function runOne(agent, player, name, arg, human = false) {
         if (!invCountsOf(sim).stone_sword) sim.getComponent('minecraft:inventory').container.addItem(new ItemStack('minecraft:stone_sword', 1));
         agent.equipBestWeapon();
         await system.waitTicks(10);
+        if (human) {
+          const wp = () => Object.entries(invCountsOf(player)).filter(([id]) => id.endsWith('_wool')).reduce((a, [, n]) => a + n, 0);
+          const w0 = wp();
+          pass = await humanTry(() => wp() - w0 >= 3, 90);
+          detail = `you picked up ${wp() - w0} wool in ${secs()}s`;
+          for (const e of dim.getEntities({ type: 'minecraft:sheep', location: { x, y: gy, z }, maxDistance: 20 })) try { e.remove(); } catch { /* */ }
+          for (const [id, n] of Object.entries(invCountsOf(player))) if (id.endsWith('_wool')) { try { take(player, id, n); } catch { /* */ } }
+          break;
+        }
         const woolN = () => Object.entries(invCountsOf(sim)).filter(([id]) => id.endsWith('_wool')).reduce((a, [, n]) => a + n, 0);
         const w0 = woolN();
         const gen = agent.newTask({ kind: 'test' });
@@ -464,6 +504,15 @@ async function runOne(agent, player, name, arg, human = false) {
         cmd(`summon cow ${x + 7} ${gy + 1} ${z - 1}`); cmd(`summon cow ${x + 8} ${gy + 1} ${z + 1}`);
         tp(x, gy + 1, z);
         await system.waitTicks(10);
+        if (human) {
+          const bp = () => invCountsOf(player).beef ?? 0;
+          const b0 = bp();
+          pass = await humanTry(() => bp() - b0 >= 2, 90);
+          detail = `you picked up ${bp() - b0} beef in ${secs()}s`;
+          for (const e of dim.getEntities({ type: 'minecraft:cow', location: { x, y: gy, z }, maxDistance: 20 })) try { e.remove(); } catch { /* */ }
+          if (bp() > b0) { try { take(player, 'beef', bp() - b0); } catch { /* */ } }
+          break;
+        }
         const beef = () => invCountsOf(sim).beef ?? 0;
         const b0 = beef();
         const gen = agent.newTask({ kind: 'test' });
@@ -1556,6 +1605,7 @@ async function runOne(agent, player, name, arg, human = false) {
         await system.waitTicks(2);
         const husk = dim.getEntities({ type: 'minecraft:husk', location: { x: x + 8, y: gy + 1, z }, maxDistance: 3 })[0];
         if (!husk) { detail = "couldn't summon a husk"; break; }
+        if (human) { pass = await humanTry(() => !husk.isValid, 60); if (!pass) { try { husk.remove(); } catch { /* */ } } detail = `you ${pass ? 'killed the husk' : 'did not kill the husk'} in ${secs()}s`; break; }
         let minD = Infinity, closeTicks = 0;
         for (let i = 0; i < 20 * 40 && husk.isValid; i++) {
           await system.waitTicks(1);
