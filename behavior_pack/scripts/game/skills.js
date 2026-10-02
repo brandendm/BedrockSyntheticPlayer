@@ -4360,9 +4360,9 @@ export class Skills {
   }
 
   /** Slot of the least valuable block to put down (dirt before andesite before cobblestone before planks). */
-  placeableSlot() {
+  placeableSlot(all = false) {
     const inv = invCounts(this.sim);
-    const id = cheapestPlaceable(inv, this.blockReserve(inv));
+    const id = cheapestPlaceable(inv, all ? {} : this.blockReserve(inv));
     return id ? findSlot(this.sim, id) : -1;
   }
 
@@ -4616,7 +4616,9 @@ export class Skills {
    * @param {{ pillar: {x:number,z:number}|null, d: number[]|null, failed: boolean }} ctx
    */
   async stagedStep(gen, ctx) {
-    const slot = this.placeableSlot();
+    // (Any block: coming down off a pillar is no time to keep the house's cobblestone back: the u186 run held 32 cobblestone, all of it reserve, so it
+    // counted none, skipped the ledges, tried to dig out under its own feet, walked off the edge to look at the block and fell 9 for 7 hp.)
+    const slot = this.placeableSlot(true);
     if (slot < 0) return false;
     const f = this.feet();
     const fx = Math.floor(f.x), fy = Math.floor(f.y), fz = Math.floor(f.z);
@@ -4725,7 +4727,7 @@ export class Skills {
       this.log(`getting down: drop ${best.drop} onto ${best.landing}, hop ${hopOk ? dmg(best) * HP_S : 'unsafe'}s vs dig ${digCost.toFixed(1)}s`);
       // With blocks, and a long way down: ledges against the pillar's side (stagedStep), before a hop that costs health (the u180 run
       // put one ledge, then hopped the other 7 blocks for 3 hp) and before cutting the pillar out from under us.
-      if (!staged.failed && this.blockCount() > 1 && best.drop >= 5 && (await this.stagedStep(gen, staged))) {
+      if (!staged.failed && this.blockCount({ all: true }) > 1 && best.drop >= 5 && (await this.stagedStep(gen, staged))) {
         this.getDownStats.staged = (this.getDownStats.staged ?? 0) + 1;
         continue;
       }
