@@ -16,7 +16,7 @@ from pathlib import Path
 log = logging.getLogger("serverproc")
 # "The nearest village is at (1056, ~, 112)", "... at block 1056, (y), 112", "... located at 1056, 64, 112": two numbers with a middle that is
 # a third number, ~ or (y).
-COORDS = re.compile(r"(-?\d+)\s*[, ]\s*(?:\(y\)|~|-?\d+(?:\.\d+)?)\s*[, ]\s*(-?\d+)")
+COORDS = re.compile(r"(-?\d+)\s*[, ]\s*(?:\(y\??\)|~|-?\d+(?:\.\d+)?)\s*[, ]\s*(-?\d+)")
 PREFIX = re.compile(r"^\s*\[[^\]]*\]\s*")
 FAIL = re.compile(r"could not|cannot|no (?:\w+ )*(?:found|within)|not found|unknown|syntax|incorrect|invalid", re.I)
 

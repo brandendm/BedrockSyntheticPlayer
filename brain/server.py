@@ -377,8 +377,11 @@ def make_handler(engine: DecisionEngine, key: str | None = None):
             self.send_response(code)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(body)))
-            self.end_headers()
-            self.wfile.write(body)
+            try:
+                self.end_headers()
+                self.wfile.write(body)
+            except (ConnectionResetError, BrokenPipeError):
+                pass  # the game gave up waiting (its request timed out): nothing to send to
 
         def _read_json(self):
             n = int(self.headers.get("Content-Length", 0))
