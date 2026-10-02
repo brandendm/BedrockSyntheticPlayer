@@ -437,6 +437,7 @@ function handle(text, player) {
     }
     return;
   }
+  if (lower === 'done') { if (agent) /** @type {any} */ (agent).testDone = true; return; } // finished the house you were building for the test
   if (lower === 'test' || lower.startsWith('test ')) {
     if (!agent?.sim.isValid) return reply(player, 'spawn first');
     // From the dashboard there is no sender: the first real player is the one who takes part.

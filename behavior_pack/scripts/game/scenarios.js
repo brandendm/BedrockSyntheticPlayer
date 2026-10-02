@@ -320,7 +320,7 @@ async function runOne(agent, player, name, arg, human = false) {
   };
   const who = human ? player : sim;
   // Human mode: the same setup, you do it while the bot stands by; ends when the goal is met or the time is up.
-  const humanTry = async (done, maxS, mark = null) => {
+  const humanTry = async (done, maxS, mark = null, remind = '') => {
     if (mark) cmd(`setblock ${Math.floor(mark.x)} ${Math.ceil(mark.y) - 1} ${Math.floor(mark.z)} gold_block`);
     const h = humanHelp(name);
     const kit = kitFor(name);
@@ -337,10 +337,20 @@ async function runOne(agent, player, name, arg, human = false) {
     }
     rec.reset(); t0 = system.currentTick;
     if (agent.testProgress) { agent.testProgress.reading = false; agent.testProgress.deadline = Date.now() + maxS * 1000; agent.testProgress.limitS = maxS; }
-    for (let i = 0; i < maxS * 4 && !agent.testSkipped; i++) { if (done()) return true; await system.waitTicks(5); }
+    for (let i = 0; i < maxS * 4 && !agent.testSkipped; i++) {
+      if (done()) return true;
+      if (remind && i % 20 === 0) { try { player.onScreenDisplay.setActionBar(remind); } catch { /* */ } }
+      await system.waitTicks(5);
+    }
     return false;
   };
   const rec = new TestRecorder(who).start();
+  // The bot's clock starts when its task does (the setup's own waits are not its time; yours starts when you move).
+  if (!human) {
+    let began = false;
+    const watchStart = system.runInterval(() => { if (!began && agent.task) { began = true; rec.reset(); t0 = system.currentTick; } }, 1);
+    cleanup.push(() => { try { system.clearRun(watchStart); } catch { /* */ } });
+  }
   // The bot gets what you are handed in the tests you can do (it fought the husk bare-handed against your sword).
   if (!human && HUMAN_OK.has(name)) { for (const [id, n] of kitFor(name)) giveItem(id, n); try { agent.equipBestWeapon(); } catch { /* */ } }
   if (human) agent.testHold = true; // the bot stands by while you do it (no fighting or fleeing of its own)
@@ -468,11 +478,14 @@ async function runOne(agent, player, name, arg, human = false) {
         tp(x + 3, gy + 1, z);
         if (human) {
           // Your build is the lesson: the recording (game/demo.js) is the learning, and your things come back when it ends.
+          // Free materials: two double chests at the west end of the plot (two chests side by side), filled to the brim.
+          const supply = await supplyChests(dim, cmd, x - 6, gy + 1, z + 4);
+          agent.say(`Free materials: ${supply} in the chests at the west end of the plot (two double chests, left of where you stand).`);
           const before = getPlan();
           const started = agent.demo.startHouse(player);
           if (!agent.demo.on) { detail = String(started); break; }
           agent.testDone = false;
-          const done = await humanTry(() => !!agent.testDone, 900);
+          const done = await humanTry(() => !!agent.testDone, 900, null, 'Finished building? Say  !bot test done');
           agent.demo.stop();
           for (let i = 0; i < 80 && agent.memory.data.learnKit; i++) await system.waitTicks(5);   // learning, then your things back
           pass = done && !!getPlan() && getPlan() !== before;
@@ -1948,6 +1961,40 @@ function report(agent, name, pass, detail, human = false) {
 
 
 // ---------- helpers for the portal, horse and lead tests ----------
+
+/** @type {Array<[string, number]>} */
+const SUPPLY = [
+  ['cobblestone', 1024], ['oak_planks', 1024], ['oak_log', 256], ['spruce_planks', 256], ['birch_planks', 256], ['stone_bricks', 256], ['stone', 256],
+  ['glass', 256], ['glass_pane', 128], ['dirt', 128], ['oak_stairs', 128], ['cobblestone_stairs', 128], ['oak_slab', 128], ['cobblestone_slab', 128],
+  ['oak_door', 8], ['spruce_door', 4], ['bed', 4], ['crafting_table', 4], ['furnace', 6], ['chest', 12], ['oak_sign', 24], ['torch', 128],
+  ['ladder', 32], ['oak_fence', 64], ['oak_fence_gate', 8], ['oak_trapdoor', 16], ['white_wool', 32], ['bread', 32],
+];
+
+/** Two double chests at (x, y, z) and (x, y, z + 2), filled from SUPPLY. Returns a short description. */
+async function supplyChests(dim, cmd, x, y, z) {
+  const cells = [];
+  for (const dz of [0, 2]) {
+    cmd(`fill ${x - 1} ${y} ${z + dz} ${x + 2} ${y + 1} ${z + dz} air`);
+    cmd(`setblock ${x} ${y} ${z + dz} chest ["minecraft:cardinal_direction"="south"]`);
+    cmd(`setblock ${x + 1} ${y} ${z + dz} chest ["minecraft:cardinal_direction"="south"]`);
+    cells.push({ x, y, z: z + dz }, { x: x + 1, y, z: z + dz });
+  }
+  await system.waitTicks(5);
+  const boxes = cells.map((c) => { try { return dim.getBlock(c)?.getComponent('minecraft:inventory')?.container ?? null; } catch { return null; } }).filter(Boolean);
+  let stacks = 0;
+  for (const [id, total] of SUPPLY) {
+    let left = total;
+    while (left > 0) {
+      const n = Math.min(left, 64);
+      let rest = new ItemStack(`minecraft:${id}`, n);
+      for (const b of boxes) { if (!rest) break; try { rest = b.addItem(rest); } catch { break; } }
+      if (rest) break; // every chest is full
+      left -= n; stacks++;
+    }
+  }
+  return `${stacks} stacks (${SUPPLY.slice(0, 4).map(([id, n]) => `${n} ${id}`).join(', ')}, glass, stairs, slabs, doors, beds, furnaces, chests, signs, torches...)`;
+}
+
 
 /** A flat, clear patch of grass around the site (inside the backed-up box: x-8..x+14, z-8..z+8). */
 function flatPatch(cmd, x, gy, z) {
