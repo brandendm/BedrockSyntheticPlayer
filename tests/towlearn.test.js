@@ -36,7 +36,7 @@ test('speed against separation, and sessions folded together', () => {
   const curve = [{ from: 0, to: 4, frac: 1 }, { from: 4, to: 7, frac: 0.6 }, { from: 7, to: 99, frac: 0.1 }];
   assert.equal(speedFrac(curve, 1), 1);
   assert.equal(speedFrac(curve, 5), 0.6);
-  assert.equal(speedFrac(curve, 11), 0.1);
+  assert.equal(speedFrac(curve, 11), 0.35); // (the floor: easing to a stop is the hold distance's job)
   assert.equal(speedFrac(null, 3), 1);
   const m = mergeLearned({ ...r, secs: 10, pullAt: 4 }, { ...r, secs: 10, pullAt: 6 });
   assert.equal(m.pullAt, 5);
