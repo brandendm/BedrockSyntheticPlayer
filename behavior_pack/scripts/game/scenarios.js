@@ -72,7 +72,7 @@ function extFor(name) {
   return name === 'farm' || name === 'farmrace' ? { w: 22, e: 36, r: 24 } : name === 'horserace' || name === 'elytra' ? { w: 8, e: 54, r: 10 } : name === 'bow' ? { w: 14, e: 34, r: 14 }
     : name === 'leadboat' || name === 'villagerhaul' ? { w: 12, e: 44, r: 12 } : { w: 14, e: 18, r: 12 };
 }
-const NAMES = ['roof', 'tower', 'hole', 'pit', 'trap', 'climb', 'ledge', 'ladder', 'husk', 'creeper', 'sheep', 'pen', 'smelt', 'smeltlogs', 'shelter', 'house', 'resume', 'ghostlog', 'quarry', 'dark', 'replant', 'litter', 'trader', 'iron', 'farm', 'equip', 'water', 'bucketfarm', 'treetop', 'corner', 'leap', 'bridge', 'fall', 'vines', 'stairgap', 'loot', 'shield', 'skel', 'rest', 'nights', 'calibrate', 'portal', 'horse', 'leadboat', 'leadsling', 'bow', 'duel', 'horserace', 'pillarrace', 'woodrace', 'lavacross', 'obsidian', 'mineore', 'enderman', 'blaze', 'ghast', 'witherskeleton', 'placerate', 'farmrace', 'creepers', 'ravine', 'elytra', 'villagerhaul', 'forest', 'village'];
+const NAMES = ['roof', 'tower', 'hole', 'pit', 'trap', 'climb', 'ledge', 'ladder', 'husk', 'creeper', 'sheep', 'pen', 'smelt', 'smeltlogs', 'shelter', 'house', 'resume', 'ghostlog', 'quarry', 'dark', 'replant', 'litter', 'trader', 'iron', 'farm', 'equip', 'water', 'bucketfarm', 'treetop', 'corner', 'leap', 'bridge', 'fall', 'vines', 'stairgap', 'loot', 'shield', 'skel', 'rest', 'nights', 'calibrate', 'portal', 'horse', 'leadboat', 'leadsling', 'bow', 'duel', 'horserace', 'pillarrace', 'woodrace', 'lavacross', 'obsidian', 'mineore', 'enderman', 'blaze', 'ghast', 'witherskeleton', 'placerate', 'farmrace', 'creepers', 'ravine', 'elytra', 'villagerhaul', 'forest', 'village', 'vineclimb'];
 let running = false;
 /** How many sky sites have been used this session (each test gets a new one, 120 blocks further). */
 let siteCounter = 0;
@@ -95,7 +95,7 @@ const WORLDT = new Set(['forest', 'village']);
 const NATURAL = new Set(['forest', 'village', 'water', 'bucketfarm', 'treetop', 'vines', 'ghostlog', 'nights', 'calibrate']);
 const COMBAT = new Set(['husk', 'creeper', 'skel', 'shield', 'dark', 'duel', 'enderman', 'blaze', 'ghast', 'witherskeleton', 'creepers']);
 // The ones a player can do too (`!bot test <name> me`): a goal the player can reach and the test can see.
-const HUMAN_OK = new Set(['tower', 'hole', 'pit', 'climb', 'ladder', 'corner', 'leap', 'bridge', 'ledge', 'bow', 'husk', 'sheep', 'pen', 'replant', 'litter', 'house', 'lavacross', 'obsidian', 'mineore', 'enderman', 'blaze', 'ghast', 'witherskeleton', 'creepers', 'ravine', 'leadboat', 'elytra', 'villagerhaul', 'forest', 'village']);
+const HUMAN_OK = new Set(['tower', 'hole', 'pit', 'climb', 'ladder', 'corner', 'leap', 'bridge', 'ledge', 'bow', 'husk', 'sheep', 'pen', 'replant', 'litter', 'house', 'lavacross', 'obsidian', 'mineore', 'enderman', 'blaze', 'ghast', 'witherskeleton', 'creepers', 'ravine', 'leadboat', 'elytra', 'villagerhaul', 'forest', 'village', 'vineclimb']);
 // No single test runs longer than this (the task is ended and the test left to report what it has).
 const CAP_S = 240;
 
@@ -133,9 +133,10 @@ HUMAN_HELP.bow = { kit: [['bow', 1], ['arrow', 48]], text: 'Six targets (armor s
 HUMAN_HELP.leadboat = { kit: [['lead', 2]], text: 'Two villagers and a boat at the west end of a rough course: a pond, a step up and another with stones on it, a trench, a three-high hill, a gap 3 wide and 6 deep across the whole width, a plateau with a gold block and, just past it, a pit 3 wide and 3 deep. Put a lead on the boat (use the lead on it), get both villagers into it (walk it into them, it can take two), lead the boat over all of it and get both villagers into the pit (round it, so the boat is pulled in; if the boat is against a villager for 4 s and it does not board, it is put in for you). Your 32 cobblestone and 16 dirt are for the gap. The bot does the same, then rides a horse over the first part with the boat alone.' };
 HUMAN_HELP.villagerhaul = { kit: [['lead', 2]], text: 'Two villagers stand near the start, a boat at the west end. Put a lead on the boat, get both villagers into it (walk it into them, it can take two) and lead the boat over three hills and across a 3-wide gap (your cobblestone and dirt are for it) to the gold block: both villagers within 4 blocks of it. If the boat is against a villager for 4 s and it does not board, it is put in for you.' };
 HUMAN_HELP.elytra = { kit: [['firework_rocket', 6]], text: 'You stand on a 22-high tower with elytra on, 44 blocks west of a gold block, and have 6 firework rockets. Jump off, jump again in the air to open the wings, aim with the view (nose down for speed, up to slow), use a rocket for a boost, and land on the gold block (within 4 blocks, 5 hearts lost at most).' };
+HUMAN_HELP.vineclimb = { kit: [], text: 'A shaft one block wide cut into a stone tower 12 high, open at the bottom on the south side, with vines in it on alternating sides (one hangs on the east wall, the next on the west, and so on up). Climb the vines to the top of the tower, the gold block.' };
 HUMAN_HELP.forest = { kit: [], text: 'You and the bot are dropped, one after the other, at the same spot in a forest (the trees are put back between turns). Get 15 logs as fast as you can; the stone axe is in your kit.' };
 HUMAN_HELP.village = { kit: [], text: 'You are dropped about 170 blocks from a village, with no idea which way. Find it as fast as you can: the clock stops when you are within 24 blocks of its middle. The bot starts from the same spot.' };
-const SHORT = { forest: 'Get 15 logs', village: 'Find the village', leadboat: 'Lead villagers into the pit', villagerhaul: 'Villagers in a boat to the gold block', elytra: 'Glide to the gold block', creepers: 'Beat 4 creepers, shield up', ravine: 'Get out of the ravine', lavacross: 'Cross the lava', obsidian: 'Make and mine obsidian', mineore: 'One of each ore', enderman: 'Kill the enderman', blaze: 'Kill the blaze', ghast: 'Kill the ghast', witherskeleton: 'Kill the wither skeleton', tower: 'Get down, no fall damage', hole: 'Get out, reach the gold block', pit: 'Get out, reach the gold block', climb: 'Get out of the pit', ladder: 'Reach the gold block', corner: 'Reach the gold block', leap: 'Cross the gap, gold block', bridge: 'Bridge to the gold block', ledge: 'Get near the table', bow: 'Hit the 6 targets', husk: 'Kill the husk', sheep: 'Collect 3 wool', pen: 'Collect 2 raw beef', replant: 'Cut tree, replant sapling', litter: 'Collect 4 leaf litter', house: 'Build a house, then test done' };
+const SHORT = { vineclimb: 'Climb the vines to the top', forest: 'Get 15 logs', village: 'Find the village', leadboat: 'Lead villagers into the pit', villagerhaul: 'Villagers in a boat to the gold block', elytra: 'Glide to the gold block', creepers: 'Beat 4 creepers, shield up', ravine: 'Get out of the ravine', lavacross: 'Cross the lava', obsidian: 'Make and mine obsidian', mineore: 'One of each ore', enderman: 'Kill the enderman', blaze: 'Kill the blaze', ghast: 'Kill the ghast', witherskeleton: 'Kill the wither skeleton', tower: 'Get down, no fall damage', hole: 'Get out, reach the gold block', pit: 'Get out, reach the gold block', climb: 'Get out of the pit', ladder: 'Reach the gold block', corner: 'Reach the gold block', leap: 'Cross the gap, gold block', bridge: 'Bridge to the gold block', ledge: 'Get near the table', bow: 'Hit the 6 targets', husk: 'Kill the husk', sheep: 'Collect 3 wool', pen: 'Collect 2 raw beef', replant: 'Cut tree, replant sapling', litter: 'Collect 4 leaf litter', house: 'Build a house, then test done' };
 const humanHelp = (name) => HUMAN_HELP[name] ?? null;
 /** What you are handed in every test you do: tools, blocks and food; the test's own extras on top. `climb` has no tools, like the bot's run. */
 const STD_KIT = [['stone_pickaxe', 1], ['stone_axe', 1], ['stone_shovel', 1], ['stone_sword', 1], ['cobblestone', 32], ['dirt', 16], ['bread', 8]];
@@ -2645,6 +2646,26 @@ async function runOne(agent, player, name, arg, human = false) {
         await Promise.race([job, system.waitTicks(20)]);
         pass = near(sim);
         detail = `${pass ? 'found it' : `did not find it (${Math.round(Math.hypot(sim.location.x - V.x, sim.location.z - V.z))} blocks off)`} in ${secs()}s (start ${d0} away; ${worldInfo.what})`;
+        break;
+      }
+      case 'vineclimb': {
+        // A stone tower 3 x 3 and 12 high with a 1-wide shaft up the middle, a doorway at the bottom on the south side, and a vine in every block of
+        // the shaft, hanging on the east wall at one height and the west wall at the next (the way vines are put up a shaft). To the top.
+        const H = 12;
+        cmd(`fill ${x + 2} ${gy + 1} ${z - 1} ${x + 4} ${gy + H} ${z + 1} stone`);
+        cmd(`fill ${x + 3} ${gy + 1} ${z} ${x + 3} ${gy + H} ${z} air`);                  // the shaft
+        cmd(`fill ${x + 3} ${gy + 1} ${z + 1} ${x + 3} ${gy + 2} ${z + 1} air`);          // the doorway, south
+        // (vine_direction_bits: west 2, east 8: the side of the vine's block it hangs on)
+        for (let h = 1; h <= H; h++) cmd(`setblock ${x + 3} ${gy + h} ${z} vine ["vine_direction_bits"=${h % 2 ? 8 : 2}]`);
+        const top = { x: x + 3.5, y: gy + H + 1, z: z + 0.5 };
+        cmd(`setblock ${x + 2} ${gy + H} ${z - 1} gold_block`);
+        tp(x + 3, gy + 1, z + 4);
+        await system.waitTicks(15);
+        if (human) { pass = await humanTry(() => who.location.y >= gy + H + 0.9 && Math.hypot(who.location.x - top.x, who.location.z - top.z) <= 3, 90, null, 'Up the vines to the top of the tower'); detail = `you ${pass ? 'got to the top' : `did not get to the top (${Math.max(0, Math.round(who.location.y - gy - 1))} up)`} in ${secs()}s`; break; }
+        agent.startGoto(top, 1.5);
+        await idleOr(90, () => sim.location.y >= gy + H + 0.9 && Math.hypot(sim.location.x - top.x, sim.location.z - top.z) <= 3);
+        pass = sim.location.y >= gy + H + 0.9 && Math.hypot(sim.location.x - top.x, sim.location.z - top.z) <= 3;
+        detail = `${pass ? 'up the vines to the top' : `stuck ${Math.max(0, Math.round(gy + H + 1 - sim.location.y))} short of the top`} in ${secs()}s`;
         break;
       }
       case 'villagerhaul': {

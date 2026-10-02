@@ -220,7 +220,8 @@ export { FOOD_GOAL };
  */
 export function villageStep(f) {
   if (f.goals?.villages === false || !f.armed || f.underground || f.villageVisited || f.villageReady === false) return null;
-  if ((f.health ?? 20) < 14) return null;
+  // (A hunt already under way carries on from 10 hearts' worth less: the u192 run dropped it for exploring and hunting chickens after one fight.)
+  if ((f.health ?? 20) < (f.villageHunting ? 10 : 14)) return null;
   return f.villageKnown ? { step: 'seek_village', known: true } : { step: 'seek_village' };
 }
 

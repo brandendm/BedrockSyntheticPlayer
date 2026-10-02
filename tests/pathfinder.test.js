@@ -329,3 +329,14 @@ test('under water: a dive under a wall to the far side, only when allowed and th
   const deep = findPath(cls(9), { x: 0, y: 64, z: 0 }, { x: 10, y: 64, z: 0 }, { maxNodes: 4000, costs: { ...DEFAULT_COSTS, dive: 1.5 } });
   assert.equal(deep.complete, false, 'the gap is 7+ down: air too far');
 });
+
+test('climbs a 1-wide vine shaft 12 high (vines on alternating walls) from a doorway to the top', () => {
+  // A 3x3 tower 12 high with the middle column hollow and vined, a doorway south at the bottom, ground round it.
+  const shaft = (x, y, z) => x === 3 && z === 0 && y >= 64 && y < 76;
+  const tower = (x, y, z) => x >= 2 && x <= 4 && z >= -1 && z <= 1 && y >= 64 && y < 76 && !shaft(x, y, z) && !(x === 3 && z === 1 && y < 66);
+  const base = makeWorld({ ground: () => 64 });
+  const classify = (x, y, z) => (tower(x, y, z) ? Cell.SOLID : shaft(x, y, z) ? Cell.CLIMB : base.classify(x, y, z));
+  const r = findPath(classify, { x: 3, y: 64, z: 4 }, { x: 3, y: 76, z: 0 }, { maxNodes: 6000, tolerance: 1.5 });
+  assert.equal(r.complete, true, 'a way to the top');
+  assert.ok(r.path.filter((p) => p.x === 3 && p.z === 0).length >= 10, 'up the shaft');
+});

@@ -2154,6 +2154,7 @@ export class Agent {
       villageKnown: !!(this.villages.pick('bed') ?? this.villages.pick('food')),
       villageVisited: (this.memory.data.villages ?? []).some((v) => v.visited),
       villageReady: Date.now() >= (this.villageHoldUntil ?? 0),
+      villageHunting: !!this.villageBase,
       // Down at the mine camp (a table and a furnace at the foot of the quarry): craft and smelt there.
       camp: (() => { try { return !!S.campFurnace() && S.isUnderground() && S.nearQuarry(this.sim.location, 48); } catch { return false; } })(),
     };

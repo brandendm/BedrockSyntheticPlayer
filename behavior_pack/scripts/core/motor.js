@@ -308,6 +308,8 @@ export class MotorController {
       if (climbYaw != null) {
         return { gaze: { x: nextWp.x, y: nextWp.y + EYE_HEIGHT + 1.5, z: nextWp.z }, move: { yaw: climbYaw, speed: 1 }, headYaw: climbYaw };
       }
+      // On a vine with nothing beside it to push into (one hanging free): climbed by jumping, over and over.
+      if (this.body.onClimbable?.() && this.jumpCooldown === 0) { this.body.jump(); this.jumpCooldown = 5; }
     }
     const leap = this._leap(pos, it);
     if (leap === 'fell') {

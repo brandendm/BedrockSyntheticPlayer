@@ -85,25 +85,27 @@ class ServerProc:
                 self.cv.wait(0.2)
         return None
 
-    def locate(self, kind: str, name: str, x=None, z=None, timeout: float = 12.0) -> dict:
+    def locate(self, kind: str, name: str, x=None, z=None, timeout: float = 15.0) -> dict:
         """kind: 'structure' or 'biome'. Returns {x, z} or {error}."""
         if not self.alive():
             return {"error": "the server is not running under the brain"}
         if kind not in ("structure", "biome") or not re.fullmatch(r"[a-z_]+", name or ""):
             return {"error": "bad request"}
         with self.lock:
+            t_start = time.time()
             cmds = []
             if x is not None and z is not None:
                 cmds.append(f"execute positioned {int(x)} 64 {int(z)} run locate {kind} {name}")
             cmds.append(f"locate {kind} {name}")
             last = None
-            for c in cmds:
-                r = self._ask(c, timeout)
+            for i, c in enumerate(cmds):
+                r = self._ask(c, 6.0 if i == 0 and len(cmds) > 1 else timeout)
                 last = r
                 if isinstance(r, tuple) and r and r[0] != "fail":
                     log.info("locate %s %s -> %s", kind, name, r)
                     return {"x": r[0], "z": r[1], "how": c.split(" run ")[0] if " run " in c else "console"}
-            return {"error": f"no answer ({last[1] if isinstance(last, tuple) else 'silence'})"}
+            seen = [PREFIX.sub("", t) for ts, t in self.lines if ts >= t_start][-4:]
+            return {"error": f"no answer ({last[1] if isinstance(last, tuple) else 'silence'}); the console said: {' | '.join(seen)[:300] or 'nothing'}"}
 
     def stop(self):
         if self.alive():
@@ -112,3 +114,36 @@ class ServerProc:
                 self.proc.wait(timeout=20)
             except Exception:
                 self.proc.kill()
+
+
+class LocateJobs:
+    """/locate can take a while and a game-side HTTP request gives up after a few seconds: the request starts a job (one per question) and
+    waits a short time for it; if it is not done the reply is {pending: true} and the add-on asks again, until the answer is there."""
+    def __init__(self, proc):
+        self.proc = proc
+        self.jobs = {}
+        self.guard = threading.Lock()
+
+    def ask(self, kind, name, x, z, wait: float = 3.5) -> dict:
+        key = (kind, name, None if x is None else int(x) // 256, None if z is None else int(z) // 256)
+        with self.guard:
+            job = self.jobs.get(key)
+            if job is None or (job["done"] and time.time() - job["at"] > 600):
+                job = {"done": False, "res": None, "at": time.time()}
+                self.jobs[key] = job
+
+                def run():
+                    job["res"] = self.proc.locate(kind, name, x, z)
+                    job["done"] = True
+                    job["at"] = time.time()
+                threading.Thread(target=run, daemon=True).start()
+        end = time.time() + wait
+        while time.time() < end and not job["done"]:
+            time.sleep(0.1)
+        if job["done"]:
+            res = job["res"]
+            if "error" in res:           # a miss is asked again next time, not remembered for ten minutes
+                with self.guard:
+                    self.jobs.pop(key, None)
+            return res
+        return {"pending": True}

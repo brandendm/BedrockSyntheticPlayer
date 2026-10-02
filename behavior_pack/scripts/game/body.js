@@ -48,6 +48,11 @@ export class SimBodyAdapter {
     return null;
   }
 
+  /** In a ladder or vine cell (whether or not a wall is beside it to push into: a vine hanging free is climbed by jumping). */
+  onClimbable() {
+    try { const b = this.sim.dimension.getBlock({ x: Math.floor(this.sim.location.x), y: Math.floor(this.sim.location.y), z: Math.floor(this.sim.location.z) }); return !!b && CLIMBABLE.test(b.typeId); } catch { return false; }
+  }
+
   isInWater() {
     return this.sim.isInWater;
   }

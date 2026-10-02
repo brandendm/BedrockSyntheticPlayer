@@ -1030,6 +1030,24 @@ export class Skills {
   }
 
   /**
+   * An item lying on tree leaves (the top logs of a tree, dropped onto the canopy) that the walk to it never reaches, since a canopy is not
+   * ground to the path search: what a player does is break the leaf block it lies on from below, and it drops (a leaf at a time down through
+   * the layers). Returns true if a leaf was broken.
+   */
+  async knockDown(gen, it) {
+    let loc;
+    try { loc = { ...it.location }; } catch { return false; }
+    const under = { x: Math.floor(loc.x), y: Math.floor(loc.y - 0.3), z: Math.floor(loc.z) };
+    if (!/leaves$/.test(this.blockAt(under) ?? '')) return false;
+    // Only a canopy off the ground: 2 or more of air between the leaf and what is below it (a leaf at head height is walked to).
+    if (!OPEN.test(this.blockAt({ x: under.x, y: under.y - 1, z: under.z }) ?? 'air')) return false;
+    const ok = await this.mine(gen, under, { collect: false, force: false }).catch((e) => { if (e instanceof Aborted) throw e; return false; });
+    if (ok) this.log(`item: on leaves at ${under.x} ${under.y} ${under.z}, broke the leaf under it`);
+    else this.log(`item: on leaves at ${under.x} ${under.y} ${under.z}, could not get at the leaf under it`);
+    return !!ok;
+  }
+
+  /**
    * Walk over dropped items near a spot so they get picked up. waitNear: also stand and wait out
    * a fresh drop right at our feet (can't be picked up for a moment); off between blocks of a job
    * (we're staying put, it comes in anyway), on for the last sweep.
@@ -1108,6 +1126,12 @@ export class Skills {
         if (!gone()) local.add(itId); // still here: something odd about it, move on for now
         continue;
       }
+      // On the canopy: break the leaf under it so it drops, before any walking or building to it.
+      { const k = `k:${itId}`, n = tours.get(k) ?? 0;
+        if (n < 4 && /leaves$/.test(this.blockAt({ x: Math.floor(loc.x), y: Math.floor(loc.y - 0.3), z: Math.floor(loc.z) }) ?? '')) {
+          tours.set(k, n + 1);
+          if (await this.knockDown(gen, it)) { await this.wait(gen, 8); continue; }
+        } }
       const res = await this.a.plan(here, loc, 0.9, 1200); // (an item up out of reach ran the whole cap, then the breaking-through plan did the work)
       this.check(gen);
       if (gone()) continue;

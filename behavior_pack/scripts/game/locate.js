@@ -19,15 +19,21 @@ export async function locate(kind, name, from) {
   const t0 = Date.now();
   let pos = null, why = '';
   try {
-    const req = new HttpRequest(`${CONFIG.brainUrl}/locate`);
-    req.method = HttpRequestMethod.Post;
-    req.body = JSON.stringify({ kind, name, x: Math.floor(from.x), z: Math.floor(from.z) });
-    req.headers = [new HttpHeader('Content-Type', 'application/json')];
-    req.timeout = 30;
-    const res = await http.request(req);
-    const body = JSON.parse(res.body);
-    if (Number.isFinite(body.x) && Number.isFinite(body.z)) pos = { x: body.x, z: body.z };
-    else { why = String(body.error ?? 'no answer'); if (/not run by the brain/.test(why)) off = true; }
+    // The brain answers within a few seconds or says {pending}; asked again (the same question is the same job) for up to a minute.
+    for (let i = 0; i < 20; i++) {
+      const req = new HttpRequest(`${CONFIG.brainUrl}/locate`);
+      req.method = HttpRequestMethod.Post;
+      req.body = JSON.stringify({ kind, name, x: Math.floor(from.x), z: Math.floor(from.z) });
+      req.headers = [new HttpHeader('Content-Type', 'application/json')];
+      req.timeout = 8;
+      const res = await http.request(req);
+      const body = JSON.parse(res.body);
+      if (body.pending) continue;
+      if (Number.isFinite(body.x) && Number.isFinite(body.z)) pos = { x: body.x, z: body.z };
+      else { why = String(body.error ?? 'no answer'); if (/not run by the brain/.test(why)) off = true; }
+      break;
+    }
+    if (!pos && !why) why = 'still searching after a minute';
   } catch (e) { why = `${e}`; }
   trace(`locate ${kind} ${name}: ${pos ? `${pos.x} ${pos.z} (${Math.round(Math.hypot(pos.x - from.x, pos.z - from.z))} away)` : `none (${why})`} in ${Date.now() - t0} ms`);
   cache.set(key, { pos, at: Date.now() });

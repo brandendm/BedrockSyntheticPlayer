@@ -367,7 +367,7 @@ def authorized(client_ip: str, cookie: str, query_key: str, key: str | None) -> 
     return "no"
 
 
-_server = {"proc": None}
+_server = {"proc": None, "jobs": None}
 
 
 def make_handler(engine: DecisionEngine, key: str | None = None):
@@ -508,7 +508,7 @@ def make_handler(engine: DecisionEngine, key: str | None = None):
                 sp = _server["proc"]
                 if sp is None:
                     return self._send(200, {"error": "the server is not run by the brain (start it with Start Agent.bat)"})
-                return self._send(200, sp.locate(str(body.get("kind", "")), str(body.get("name", "")), body.get("x"), body.get("z")))
+                return self._send(200, _server["jobs"].ask(str(body.get("kind", "")), str(body.get("name", "")), body.get("x"), body.get("z")))
             if self.path == "/api/live_report":
                 # The dashboard's full report, rewritten every few seconds: brain/logs/live_report.txt.
                 try:
@@ -625,6 +625,8 @@ def main():
         if exe.exists():
             sp = ServerProc(exe)
             _server["proc"] = sp
+            from .serverproc import LocateJobs
+            _server["jobs"] = LocateJobs(sp)
             threading.Thread(target=httpd.serve_forever, daemon=True).start()
             sp.start()
             try:
