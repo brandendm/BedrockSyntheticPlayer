@@ -11,6 +11,7 @@ import { poll, sendEvent } from './game/bridge.js';
 import { CONFIG } from './config.js';
 import { orderOf } from './core/toggles.js';
 import { probeApis } from './game/probe.js';
+import { describeStyle } from './core/buildstyle.js';
 import { chainItem, chainOutline } from './core/chain.js';
 import { getPlan, setPlan, planMaterials, describe } from './core/learnhouse.js';
 
@@ -186,6 +187,8 @@ function handle(text, player) {
     const order = arg ? agent.setOrder(arg) : orderOf(agent.memory.data.settings);
     return reply(player, `After moving in: ${order.join(' > ')}${arg ? '' : ' (change it with `!bot order farm iron village`)'}.`);
   }
+  // !bot style: what it has learned of how you build (core/buildstyle.js).
+  if (lower === 'style') { if (!agent) return reply(player, 'spawn first'); return reply(player, describeStyle(agent.memory.data.style)); }
   // !bot village [visit]: the villages it has recognised from afar (game/villages.js); `visit` goes now.
   if (lower === 'village' || lower === 'villages' || lower.startsWith('village ')) {
     if (!agent) return reply(player, 'spawn first');

@@ -8,6 +8,7 @@ import { sendEvent } from './bridge.js';
 import { CONFIG } from '../config.js';
 import { container, kitOf, restoreKit } from './inventory.js';
 import { HOUSE_KIT, boxOf, buildPlan, describe, setPlan } from '../core/learnhouse.js';
+import { analyseStyle, mergeStyle, describeStyle } from '../core/buildstyle.js';
 
 const PLAN_KEY = 'agent:houseplan';
 
@@ -39,6 +40,7 @@ export class Demo {
     this.name = name;
     this.mode = mode;
     this.placed = new Map();
+    this.placeRows = [];
     this.firstDoor = null;
     this.session = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
     this.t0 = system.currentTick;
@@ -130,6 +132,16 @@ export class Demo {
         } else {
           say(`Couldn't use that house: ${res.problems.join('; ')}. The starter house stays. (Fix it and \`!bot learn house\` again.)`);
         }
+        // The habits, apart from the building: kept even when the house itself wasn't usable.
+        try {
+          const style = analyseStyle(this.placeRows, { door: this.firstDoor });
+          if (style) {
+            this.a.memory.data.style = mergeStyle(this.a.memory.data.style, style);
+            this.a.memory.save();
+            for (const line of describeStyle(style).split('\n')) say(line);
+            sendEvent({ type: 'build_style', player: name, style }).catch(() => {});
+          } else say('Too few blocks placed to read a building style from.');
+        } catch (e) { console.warn(`[agent] build style: ${e}`); }
         sendEvent({ type: 'learned_house', ok: res.ok, problems: res.problems, notes: res.notes, stats: res.stats, ascii, plan: res.ok ? res.plan : null, player: name }).catch(() => {});
       }
     } finally {
@@ -138,6 +150,7 @@ export class Demo {
       if (pl && this.restoreFor(pl)) say('Your things are back.');
       else if (this.a.memory.data.learnKit) say('Your things are still put aside: they come back when you rejoin, or `!bot learn restore`.');
       this.placed = new Map();
+      this.placeRows = [];
     }
   }
 
@@ -170,7 +183,9 @@ export class Demo {
   }
 
   row(r) {
-    this.buf.push({ t: system.currentTick - this.t0, ...r });
+    const row = { t: system.currentTick - this.t0, ...r };
+    if (r.k === 'p' && this.mode === 'house') { this.placeRows.push(row); if (this.placeRows.length > 4000) this.placeRows.shift(); } // (kept for the style analysis)
+    this.buf.push(row);
     if (this.buf.length > KEEP_ROWS) this.buf.splice(0, this.buf.length - KEEP_ROWS);
   }
 
