@@ -540,6 +540,7 @@ async function fullReport() {
     `game script build: ${s.build ?? '?'}`,
     `brain: commit ${about?.commit ?? '?'}${about?.dirty ? ' (+uncommitted changes)' : ''}, started ${about?.started ?? '?'}, python ${about?.python ?? '?'}, ${about?.platform ?? ''}`,
     `dashboard: ${location.href}  ${navigator.userAgent}`,
+    `world session: ${about?.session?.world ?? '?'} since ${about?.session?.started ?? '?'} (build ${about?.session?.build ?? '?'}; the logs below start there: a new world or a restarted game starts a new one, deaths and reloads don't)`,
     `bot online: ${s.online}  status age: ${st?.age_s ?? '?'} s  game: ${j(dg.game)}`,
   ].join('\n')));
   out.push(section('NOW', [

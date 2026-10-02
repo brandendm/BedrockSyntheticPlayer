@@ -60,6 +60,13 @@ async function spawnAgent(player) {
   for (const p of world.getPlayers({ name: CONFIG.botName })) {
     try { p.dimension.runCommand(`kick "${p.name}"`); } catch { try { p.kill(); } catch {} }
   }
+  // A new world session for the brain (its logs and the live report start over): the first spawn into a world, whatever the
+  // brain was last told. Not a death and respawn (no new Agent then), not a script reload in the same session.
+  try {
+    let wid = world.getDynamicProperty('agent:worldId');
+    if (typeof wid !== 'string') { wid = `${Math.random().toString(36).slice(2, 10)}${Date.now().toString(36)}`; world.setDynamicProperty('agent:worldId', wid); }
+    await sendEvent({ type: 'session', world: wid, build: CONFIG.build, tick: system.currentTick });
+  } catch { /* the brain may not be up: nothing to reset */ }
   const where = await spawnPoint(player);
   const sim = spawnSimulatedPlayer(where, CONFIG.botName, GameMode.Survival);
   // Simulated players respawn at world spawn, which can be mid-air. Pin a safe one.

@@ -516,3 +516,16 @@ class LearnTests(unittest.TestCase):
             httpd.shutdown()
         finally:
             server.SETTINGS_FILE = oldf
+
+
+def test_new_world_session_resets_logs_but_a_respawn_does_not():
+    from brain import server as s
+    assert s.new_session("world-a", "u145", 500) is True            # first spawn into a world
+    s.append_traces([{"tick": 900, "msg": "something"}])
+    assert len(s._traces) == 1
+    assert s.new_session("world-a", "u145", 950) is False           # a death and respawn / script reload: same session
+    assert len(s._traces) == 1
+    assert s.new_session("world-b", "u145", 20) is True             # a different world: start over
+    assert len(s._traces) == 0
+    s.append_traces([{"tick": 5000, "msg": "later"}])
+    assert s.new_session("world-b", "u145", 100) is True            # the game restarted (ticks went back)

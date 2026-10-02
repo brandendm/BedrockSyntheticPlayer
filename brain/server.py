@@ -47,6 +47,39 @@ def _about() -> dict:
 
 
 ABOUT = _about()
+# The world session the logs belong to: reset when the bot first spawns into a different world, or into the same one
+# after the game restarted (its tick count went back). Deaths and script reloads don't count.
+_session: dict = {"world": None, "started": None, "build": None}
+_last_tick = {"v": None}
+LIVE_REPORT = LOG_DIR / "live_report.txt"
+
+
+def new_session(world_id, build, tick) -> bool:
+    """A `session` event from the game. Returns True if it began a new session (the logs were saved aside and cleared)."""
+    last = _last_tick["v"]
+    changed = _session["world"] != world_id or (tick is not None and last is not None and tick + 200 < last)
+    if not changed:
+        _session["build"] = build
+        return False
+    stamp = time.strftime("%Y%m%d-%H%M%S")
+    try:
+        LOG_DIR.mkdir(parents=True, exist_ok=True)
+        if LIVE_REPORT.exists() and _session["world"] is not None:
+            LIVE_REPORT.replace(LOG_DIR / f"live_report.{stamp}.txt")
+            for old in sorted(LOG_DIR.glob("live_report.2*.txt"))[:-10]:
+                old.unlink()
+        with (LOG_DIR / "trace.jsonl").open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps({"t": time.strftime("%Y-%m-%d %H:%M:%S"), "tick": tick, "msg": f"--- new world session: world {world_id}, build {build} ---"}) + "\n")
+    except OSError:
+        pass
+    with _lock:
+        _traces.clear()
+        _why.clear()
+        _paths.clear()
+    _session.update({"world": world_id, "started": time.strftime("%Y-%m-%d %H:%M:%S"), "build": build})
+    _last_tick["v"] = tick
+    return True
+
 _recent: collections.deque = collections.deque(maxlen=400)
 # The bot's decision notes (the live trace panel), flight reports and test results, newest last.
 _traces: collections.deque = collections.deque(maxlen=5000)
@@ -69,6 +102,8 @@ def append_traces(traces: list) -> None:
     with f.open("a", encoding="utf-8") as fh:
         for t in traces[:500]:
             m = str(t.get("msg", ""))
+            if isinstance(t.get("tick"), int):
+                _last_tick["v"] = max(_last_tick["v"] or 0, t["tick"])
             rec = {"t": now, "tick": t.get("tick"), "msg": m[:2500] if "\n" in m else m[:300]}
             if isinstance(t.get("p"), list) and len(t["p"]) == 3:
                 rec["p"] = t["p"]
@@ -353,7 +388,7 @@ def make_handler(engine: DecisionEngine, key: str | None = None):
                 with _lock:
                     return self._send(200, {"why": list(_why)})
             if self.path == "/api/about":
-                return self._send(200, ABOUT)
+                return self._send(200, {**ABOUT, "session": dict(_session)})
             if self.path == "/api/events":
                 with _lock:
                     return self._send(200, {"events": list(_recent)})
@@ -467,6 +502,9 @@ def make_handler(engine: DecisionEngine, key: str | None = None):
                 except OSError:
                     pass
                 return self._send(200, {"actions": []})
+            if evt.get("type") == "session":
+                began = new_session(evt.get("world"), evt.get("build"), evt.get("tick"))
+                return self._send(200, {"actions": [], "new_session": began})
             if evt.get("type") == "why":
                 rec = {"t": time.strftime("%H:%M:%S"), **{k: v for k, v in evt.items() if k != "type"}}
                 with _lock:
