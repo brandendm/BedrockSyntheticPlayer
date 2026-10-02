@@ -64,7 +64,13 @@ export async function flyElytra(agent, pad, ctx) {
   }
   if (!out.glided && !out.why) out.why = `${tries} tries, isGliding stayed false (${seen || 'never fell fast enough to try'})`;
   out.glideS = out.glided ? (system.currentTick - glideT0) / 20 : 0;
+  // Landed (or out of time): the wings shut again, and the view level, so it is not left in the gliding state (the u186 run left the character looking bugged).
   try { sim.stopMoving(); } catch { /* */ }
+  try { sim.stopGliding(); } catch { /* */ }
+  try { sim.runCommand('effect @s clear'); } catch { /* */ }
+  await agent.skills.wait(gen, 4);
+  try { sim.stopGliding(); } catch { /* */ }
+  try { sim.lookAtLocation({ x: sim.location.x + 5, y: sim.location.y + 1.62, z: sim.location.z }); } catch { /* */ }
   void x0;
   return out;
 }

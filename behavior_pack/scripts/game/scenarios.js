@@ -2704,7 +2704,7 @@ async function runOne(agent, player, name, arg, human = false) {
         const eq = who.getComponent('minecraft:equippable');
         const oldChest = (() => { try { return eq?.getEquipment(EquipmentSlot.Chest); } catch { return undefined; } })();
         try { eq?.setEquipment(EquipmentSlot.Chest, new ItemStack('minecraft:elytra', 1)); } catch { /* */ }
-        cleanup.push(() => { try { eq?.setEquipment(EquipmentSlot.Chest, oldChest); } catch { /* */ } });
+        cleanup.push(() => { try { /** @type {any} */ (who).stopGliding?.(); } catch { /* */ } try { eq?.setEquipment(EquipmentSlot.Chest, oldChest); } catch { /* */ } });
         const TOP = 22, padX = x + 44;
         cmd(`fill ${x - 6} ${gy + 1} ${z} ${x - 6} ${gy + TOP} ${z} stone`);
         cmd(`fill ${x - 7} ${gy + TOP} ${z - 1} ${x - 5} ${gy + TOP} ${z + 1} stone_bricks`);
