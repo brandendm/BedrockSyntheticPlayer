@@ -59,6 +59,7 @@ import { TestRecorder } from './testrun.js';
 import { runDuel } from './duel.js';
 import { shootAt } from './aim.js';
 import { flyElytra } from './elytra.js';
+import { locate } from './locate.js';
 import { Tracker, isVillager } from '../core/village.js';
 import { isTamed, saddledOf } from './horse.js';
 import { solvePitch } from '../core/ballistics.js';
@@ -2985,10 +2986,13 @@ async function findForestSite(agent, from) {
   const kept = sites.forest;
   if (kept && kept.build === CONFIG.build && await loadCircle(dim, 'agent_test_world', kept.x, kept.z)) return { ...kept, tickName: 'agent_test_world' };
   let spot = null, what = '';
-  for (const size of [384, 768]) {
+  const lcF = await locate('biome', 'forest', { x: from.location.x, z: from.location.z });
+  for (const size of lcF ? [0, 384, 768] : [384, 768]) {
     for (const id of ['minecraft:forest', 'minecraft:birch_forest', 'minecraft:flower_forest', 'minecraft:taiga']) {
       let pos = null;
-      try { pos = dim.calculateClosestBiomeFromSeed(from.location, id, { boundingSize: { x: size, y: 128, z: size } }); } catch { continue; }
+      if (size === 0) { if (id !== 'minecraft:forest') continue; pos = { x: lcF.x, z: lcF.z }; } else {
+        try { pos = dim.calculateClosestBiomeFromSeed(from.location, id, { boundingSize: { x: size, y: 128, z: size } }); } catch { continue; }
+      }
       if (!pos) continue;
       if (!(await loadCircle(dim, 'agent_test_world', Math.floor(pos.x), Math.floor(pos.z)))) continue;
       // The densest canopy: columns on a 6-block grid whose top is leaves, counted within 14 blocks.
@@ -3073,7 +3077,8 @@ async function findVillageSite(agent, from) {
   if (kept && kept.build === CONFIG.build) {
     if (await loadCircle(dim, 'agent_test_world', kept.x, kept.z, 2)) return { ...kept, tickName: 'agent_test_world' };
   }
-  const hint = agent.lookout?.seedSearch?.('village') ?? null;
+  const lc = await locate('structure', 'village', { x: from.location.x, z: from.location.z });
+  const hint = lc ? { pos: { x: lc.x, z: lc.z }, id: 'village (the game\'s own answer)', dist: Math.hypot(lc.x - from.location.x, lc.z - from.location.z) } : (agent.lookout?.seedSearch?.('village') ?? null);
   const base = hint ? { x: Math.floor(hint.pos.x), z: Math.floor(hint.pos.z) } : { x: Math.floor(from.location.x), z: Math.floor(from.location.z) };
   let V = null, scanned = 0;
   const pts = [[0, 0]];

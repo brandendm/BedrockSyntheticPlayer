@@ -14,6 +14,7 @@ import collections
 import json
 import logging
 import os
+import sys
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -366,6 +367,9 @@ def authorized(client_ip: str, cookie: str, query_key: str, key: str | None) -> 
     return "no"
 
 
+_server = {"proc": None}
+
+
 def make_handler(engine: DecisionEngine, key: str | None = None):
     class Handler(BaseHTTPRequestHandler):
         def _send(self, code: int, obj: dict):
@@ -495,6 +499,16 @@ def make_handler(engine: DecisionEngine, key: str | None = None):
                     cmds = list(_commands)
                     _commands.clear()
                 return self._send(200, {"commands": cmds})
+            if self.path == "/locate":
+                # The add-on asks where the game says the nearest village (structure) or forest (biome) is: typed into the server's console.
+                try:
+                    body = self._read_json()
+                except ValueError:
+                    return self._send(400, {"error": "bad json"})
+                sp = _server["proc"]
+                if sp is None:
+                    return self._send(200, {"error": "the server is not run by the brain (start it with Start Agent.bat)"})
+                return self._send(200, sp.locate(str(body.get("kind", "")), str(body.get("name", "")), body.get("x"), body.get("z")))
             if self.path == "/api/live_report":
                 # The dashboard's full report, rewritten every few seconds: brain/logs/live_report.txt.
                 try:
@@ -603,7 +617,26 @@ def main():
     if key:
         log.info("PHONE: on the same Wi-Fi, open  http://%s:%d/?key=%s", lan_ip(), port, key)
         log.info("(first time only: allow Python through the Windows firewall for Private networks)")
-    ThreadingHTTPServer((host, port), make_handler(engine, key)).serve_forever()
+    httpd = ThreadingHTTPServer((host, port), make_handler(engine, key))
+    if "--server" in sys.argv:
+        # The Bedrock server as our child (its console is this window): needed for /locate answers.
+        from .serverproc import ServerProc
+        exe = ROOT / "server" / ("bedrock_server.exe" if os.name == "nt" else "bedrock_server")
+        if exe.exists():
+            sp = ServerProc(exe)
+            _server["proc"] = sp
+            threading.Thread(target=httpd.serve_forever, daemon=True).start()
+            sp.start()
+            try:
+                while sp.alive():
+                    time.sleep(1)
+            except KeyboardInterrupt:
+                pass
+            finally:
+                sp.stop()
+            return
+        log.warning("--server: %s not found; running the brain alone", exe)
+    httpd.serve_forever()
 
 
 if __name__ == "__main__":

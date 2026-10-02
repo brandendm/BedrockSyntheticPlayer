@@ -45,6 +45,7 @@ import { makeClassifier, canSee, isWatery, OPENABLE } from './world.js';
 import { sendEvent, trace, fetchProfile, fetchSettings, tracePosition } from './bridge.js';
 import { parseLocal } from './localCommands.js';
 import { CONFIG } from '../config.js';
+import { locate } from './locate.js';
 import { isWorkPickaxe } from '../core/costs.js';
 
 /** Steps done down the mine (the camp's furnace and table too): night doesn't send us home from them. */
@@ -1107,7 +1108,11 @@ export class Agent {
       if (/raiders|didn't get close/.test(r)) this.villageHoldUntil = Date.now() + 600000;
       return;
     }
-    const b = this.lookout?.seedSearch('village');
+    // The game's own answer first (the brain types /locate into the server's console: exact, a village's real place), the in-game seed search if not.
+    let b = null;
+    { const here = this.sim.location, lc = await locate('structure', 'village', here); S.check(gen);
+      if (lc) b = { pos: { x: lc.x, y: 64, z: lc.z }, id: 'village', dist: Math.hypot(lc.x - here.x, lc.z - here.z) }; }
+    if (!b) b = this.lookout?.seedSearch('village');
     if (!b) { this.villageHoldUntil = Date.now() + 900000; this.whyNot('village hunt', { why: 'the seed search found no village biome within reach', hold: '15 min' }); return; }
     // Boxed into a pit or ravine floor: out of it first (that isn't a failed leg).
     if (await S.needsEscape(gen)) { await S.toSurface(gen); return; }
