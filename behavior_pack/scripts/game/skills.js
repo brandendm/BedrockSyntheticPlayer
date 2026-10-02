@@ -1408,6 +1408,30 @@ export class Skills {
     return false;
   }
 
+  /**
+   * Straight after a log is broken, walk onto it if it landed out of pickup range (a player's next step is onto the drop).
+   * One within ~1.6 blocks is left to come in by itself while the next log is chopped (a drop can't be taken for half a
+   * second anyway); up to three further ones are walked to, each only a few blocks.
+   */
+  async pickJustBroken(gen, b) {
+    const c = { x: b.x + 0.5, y: b.y + 0.5, z: b.z + 0.5 };
+    await this.wait(gen, 3); // (it appears with the break and falls)
+    for (let n = 0; n < 3; n++) {
+      this.check(gen);
+      const here = this.sim.location;
+      const far = this.logItemsNear(c, 4).map((e) => { try { return { loc: { ...e.location } }; } catch { return null; } }).filter(Boolean)
+        .filter((w) => dist3D(here, w.loc) > 1.6 && dist3D(here, w.loc) <= 6)
+        .sort((p, q) => dist3D(here, p.loc) - dist3D(here, q.loc));
+      if (!far.length) return;
+      const spot = { x: far[0].loc.x, y: Math.floor(far[0].loc.y + 0.1), z: far[0].loc.z };
+      const res = await this.a.plan(this.sim.location, spot, 0.8, 300);
+      this.check(gen);
+      if (!res.complete || res.path.length < 2 || res.path.length > 10) return; // (the end-of-tree sweep has the long ways round)
+      await this.a.motor.followPath(res.path.map((q) => ({ x: q.x + 0.5, y: q.y, z: q.z + 0.5 })), { walk: true });
+      this.check(gen);
+    }
+  }
+
   /** Log item stacks on the ground near p (valid entities only). */
   logItemsNear(p, r) {
     try {
@@ -1691,6 +1715,7 @@ export class Skills {
       if (await this.mine(gen, b, { collect: false })) {
         chopped++;
         this.noteDrops(b); // (which items this break made: watched until they're in the pack)
+        await this.pickJustBroken(gen, b); // the log that just fell: picked up now, not in a sweep at the end
       }
     }
     if (chopped) this.memVisits.clear(); // trips paid off: nothing to hold against those memories
