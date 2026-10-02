@@ -84,6 +84,10 @@ export class Villages {
    * `force`: don't wait out the throttle.
    */
   sweep(force = false) {
+    try { return this.sweepInner(force); } catch (e) { trace(`village sweep: ${e}`); return null; }
+  }
+
+  sweepInner(force) {
     const now = Date.now();
     if (!force && now - (this.sweptAt ?? 0) < 900) return this.nearestKnown();
     this.sweptAt = now;
@@ -96,10 +100,7 @@ export class Villages {
       for (let i = 0; i < n; i++) {
         const ang = ((i + spin) / n) * Math.PI * 2;
         const x = Math.floor(eye.x + Math.cos(ang) * r), z = Math.floor(eye.z + Math.sin(ang) * r);
-        let top;
-        try { top = dim.getTopmostBlock({ x, z }); } catch { continue; } // not loaded
-        if (!top) continue;
-        const e = this.seeBlock(strip(top.typeId), top.location.x, top.location.y, top.location.z);
+        const e = this.topEvidence(dim, x, z);
         if (e) items.push(e);
       }
     }
@@ -124,7 +125,7 @@ export class Villages {
       for (let i = 0; i < 120 && !loaded; i++) {
         S.check(gen);
         await S.wait(gen, 2);
-        try { loaded = !!dim.getTopmostBlock({ x: x0, z: z0 }); } catch { /* not yet */ }
+        loaded = this.columnLoaded(dim, x0, z0);
       }
       if (!loaded) return { found: null, loaded: false, why: 'the area did not load in 12 s' };
       const items = [];
@@ -132,10 +133,7 @@ export class Villages {
         const n = Math.max(8, Math.round(2 * Math.PI * rr / 8));
         for (let i = 0; i < n; i++) {
           const ang = (i / n) * Math.PI * 2;
-          let top;
-          try { top = dim.getTopmostBlock({ x: Math.floor(x0 + Math.cos(ang) * rr), z: Math.floor(z0 + Math.sin(ang) * rr) }); } catch { continue; }
-          if (!top) continue;
-          const e = this.seeBlock(strip(top.typeId), top.location.x, top.location.y, top.location.z);
+          const e = this.topEvidence(dim, Math.floor(x0 + Math.cos(ang) * rr), Math.floor(z0 + Math.sin(ang) * rr));
           if (e) items.push(e);
         }
       }
@@ -149,6 +147,24 @@ export class Villages {
       trace(`village scout at ${x0} ${z0}: ${items.length} village-looking blocks and villagers${this.nearestKnown() ? ', a village is known now' : ''}`);
       return { found: this.nearestKnown(), loaded: true, why: '' };
     } finally { drop(); }
+  }
+
+  /**
+   * getTopmostBlock hands back a block even in a chunk that isn't loaded (at the build limit); reading anything off it
+   * throws LocationInUnloadedChunkError, which ended the whole auto task every second. Evidence for the column or null.
+   */
+  topEvidence(dim, x, z) {
+    try {
+      const top = dim.getTopmostBlock({ x, z });
+      if (!top) return null;
+      const id = strip(top.typeId), l = top.location;
+      return this.seeBlock(id, l.x, l.y, l.z);
+    } catch { return null; } // (not loaded)
+  }
+
+  /** Is the chunk at (x, z) loaded: can a block there be read? */
+  columnLoaded(dim, x, z) {
+    try { const b = dim.getTopmostBlock({ x, z }); return !!b && typeof b.typeId === 'string' && b.location.y < 300; } catch { return false; }
   }
 
   /** A known village we'd go to (not raided, not visited lately), as a position. */

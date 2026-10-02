@@ -102,7 +102,8 @@ export class Lookout {
       let top;
       try { top = dim.getTopmostBlock({ x, z }); } catch { continue; } // not loaded
       if (!top) continue;
-      const tl = top.location, id = strip(top.typeId);
+      let tl, id;
+      try { tl = top.location; id = strip(top.typeId); } catch { continue; } // (a block handle in an unloaded chunk throws when read)
       // Can we see it? Aim at the top face; anything in the way closer than it means no.
       const to = { x: tl.x + 0.5, y: tl.y + 1.02, z: tl.z + 0.5 };
       const d = { x: to.x - eye.x, y: to.y - eye.y, z: to.z - eye.z };

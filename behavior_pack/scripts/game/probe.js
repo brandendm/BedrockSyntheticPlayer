@@ -86,12 +86,13 @@ export async function probeApis(agent) {
     // Far sight: can a ticking area load a place we are not near, so its blocks can be read from here?
     try {
       const fx = f.x + 400, fz = f.z + 400;
-      let before = null; try { before = !!dim.getTopmostBlock({ x: fx, z: fz }); } catch { before = false; }
+      const readable = () => { try { const b = dim.getTopmostBlock({ x: fx, z: fz }); return !!b && typeof b.typeId === 'string' && b.location.y < 300; } catch { return false; } };
+      const before = readable();
       note('far point readable before', before);
       try { dim.runCommand('tickingarea remove agent_probe'); } catch { /* none */ }
       try { dim.runCommand(`tickingarea add circle ${fx} 64 ${fz} 2 agent_probe true`); note('tickingarea add', 'accepted'); } catch (e) { note('tickingarea add', `THREW ${e}`); }
       let loaded = false;
-      for (let i = 0; i < 100 && !loaded; i++) { await system.waitTicks(2); try { loaded = !!dim.getTopmostBlock({ x: fx, z: fz }); } catch { /* not yet */ } }
+      for (let i = 0; i < 100 && !loaded; i++) { await system.waitTicks(2); loaded = readable(); }
       note('far point readable after a ticking area', loaded);
       try { dim.runCommand('tickingarea remove agent_probe'); } catch { /* */ }
     } catch (e) { note('far sight probe', `${e}`); }
