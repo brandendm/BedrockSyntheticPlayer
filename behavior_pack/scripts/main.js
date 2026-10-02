@@ -168,6 +168,8 @@ function handle(text, player) {
     agent.addChain(item, n);
     return reply(player, `Chain: ${n} ${item}: ${chainOutline(item).join(' > ')}.`);
   }
+  // !bot tow <x> <z>: lead the nearest boat there over whatever is in the way, on foot or on the horse it is on (game/leadtow.js).
+  { const t = lower.match(/^tow\s+(-?\d+)\s+(?:-?\d+\s+)?(-?\d+)$/); if (t) { if (!agent) return reply(player, 'spawn first'); agent.startTow(+t[1], +t[2]); return reply(player, `Towing the nearest boat to ${t[1]} ${t[2]}.`); } }
   // !bot mount / !bot dismount: get on its horse (tamed and saddled first if it can), and off again.
   if (lower === 'mount' || /^get on( .*)?$/.test(lower) || lower === 'ride') { if (!agent) return reply(player, 'spawn first'); agent.startMount(); return reply(player, 'Going to its horse.'); }
   if (lower === 'dismount' || /^get off( .*)?$/.test(lower)) { if (!agent) return reply(player, 'spawn first'); agent.startDismount(); return reply(player, 'Getting off.'); }

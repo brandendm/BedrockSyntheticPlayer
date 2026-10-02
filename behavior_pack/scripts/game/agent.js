@@ -26,6 +26,7 @@ import { GOALS, goalsOf, goalKey, orderOf, parseOrder } from '../core/toggles.js
 import { biomeName } from '../core/biomes.js';
 import { chainStep, chainItem, chainOutline, held } from '../core/chain.js';
 import { Horses } from './horse.js';
+import { LeadTow } from './leadtow.js';
 import { FULL_SLOTS } from '../core/storage.js';
 import { itemValue, armorUpgrades, armorTotal } from '../core/wants.js';
 import { lootPlan, lootWorth, backoffMs, LOOT_WINDOW_MS } from '../core/loot.js';
@@ -108,6 +109,7 @@ export class Agent {
     this.lookout = new Lookout(this);
     this.villages = new Villages(this);
     this.horses = new Horses(this);
+    this.tow = new LeadTow(this);
     /** @type {Set<string>} Far places already looked at for a village (game/villages.js scout). */
     this.villageScouted = new Set();
     tracePosition(() => this.sim.location); // (villages seen from afar: game/villages.js)
@@ -3094,6 +3096,23 @@ export class Agent {
   startGoto(target, tolerance) {
     const gen = this.newTask({ kind: 'goto', target, tolerance });
     this.runGoto(gen, target, tolerance).catch((e) => console.error(`[agent] goto failed: ${e}\n${e.stack}`));
+  }
+
+  /** `!bot tow <x> <z>`: the nearest boat (within 16) on a lead, towed to there, on foot or on the horse we're on. */
+  startTow(x, z) {
+    const gen = this.newTask({ kind: 'tow' });
+    (async () => {
+      const boats = this.dim.getEntities({ type: 'minecraft:boat', location: this.sim.location, maxDistance: 16 })
+        .sort((p, q) => Math.hypot(p.location.x - this.sim.location.x, p.location.z - this.sim.location.z) - Math.hypot(q.location.x - this.sim.location.x, q.location.z - this.sim.location.z));
+      const boat = boats[0];
+      if (!boat) return this.say('No boat within 16 blocks to tow.', true);
+      if (!(await this.skills.goNear(gen, boat.location, 2.5, 3))) this.say("Couldn't get next to the boat.", true);
+      const how = this.tow.attach(boat);
+      if (!how) return this.say("Couldn't put a lead on the boat (do I have one?).", true);
+      const top = this.skills.groundTop(Math.floor(x), Math.floor(z));
+      const m = await this.tow.run(gen, boat, { x: x + 0.5, y: Number.isFinite(top) ? top + 1 : this.sim.location.y, z: z + 0.5 }, { mount: this.horses.mounted() });
+      this.say(m.arrived ? `Towed the boat there in ${m.secs} s (${m.holds} holds, ${m.tugs} unsticks).` : `Stopped towing: ${m.why || 'out of time'}${m.snapped ? ' (the lead broke)' : ''}.`, true);
+    })().catch((e) => { if (e?.constructor?.name !== 'Aborted') console.warn(`[agent] tow: ${e}`); }).finally(() => { if (gen === this.taskGen) this.newTask(null); });
   }
 
   /** `!bot mount`: get on its horse (taming and saddling it first if it needs that and can). */
