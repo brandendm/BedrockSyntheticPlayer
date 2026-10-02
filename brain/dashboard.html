@@ -238,7 +238,8 @@
       <button id="runtest2">Run one</button>
       <button data-cmd="test skip">Skip current test</button>
       <button data-cmd="test stop" title="Ends the whole batch now; what was collected is kept">Stop tests</button>
-      <label class="muted"><input type="checkbox" id="testme"> I do it (bot stands by, then we compare)</label>
+      <label class="muted">Who: <select id="testwho"><option value="">Bot only</option><option value="both">Bot first, then me</option><option value="youfirst">Me first, then the bot</option><option value="me">Me only</option></select></label>
+      <label class="muted"><input type="checkbox" id="testcycle"> keep the day/night cycle going</label>
       <span class="muted" id="testsum"></span>
     </div>
     <div id="testbar" style="display:none;margin:6px 0"><div style="background:var(--line,#333);border-radius:4px;height:14px;overflow:hidden"><div id="testfill" style="height:100%;width:0;background:#4a9"></div></div><div class="muted" id="testbartxt"></div></div>
@@ -335,7 +336,8 @@ async function send(text) {
   } catch { toast('Brain not reachable'); }
 }
 
-document.querySelectorAll('[data-cmd]').forEach((b) => b.onclick = () => send(b.dataset.cmd));
+const testOpts = () => `${$('testwho') && $('testwho').value ? ' ' + $('testwho').value : ''}${$('testcycle') && $('testcycle').checked ? ' daycycle' : ''}`;
+document.querySelectorAll('[data-cmd]').forEach((b) => b.onclick = () => send(b.dataset.cmd + (/^test all/.test(b.dataset.cmd) ? testOpts() : '')));
 let following = false;
 $('followbtn').onclick = () => send(following ? 'stop' : '@ follow me');
 $('spawnbtn').onclick = () => send($('player').value ? '@ spawn' : 'spawn'); // next to the player if one's picked
@@ -521,7 +523,7 @@ $('cmd').addEventListener('keydown', (e) => {
 // ---------------------------------------------------------------- tests
 const TESTS = ['roof', 'tower', 'hole', 'pit', 'trap', 'climb', 'ledge', 'ladder', 'husk', 'creeper', 'sheep', 'pen', 'smelt', 'smeltlogs', 'shelter', 'house', 'resume', 'ghostlog', 'quarry', 'dark', 'replant', 'litter', 'trader', 'iron', 'farm', 'equip', 'water', 'bucketfarm', 'treetop', 'corner', 'leap', 'bridge', 'fall', 'vines', 'stairgap', 'loot', 'shield', 'skel', 'rest', 'nights', 'calibrate', 'portal', 'horse', 'leadboat', 'leadsling', 'bow', 'duel'];
 $('test2').innerHTML = TESTS.map((t) => `<option>${t}</option>`).join('');
-$('runtest2').onclick = () => { const a = $('testarg').value.trim(); send(`test ${$('test2').value}${a ? ' ' + a : ''}${$('testme').checked ? ' me' : ''}`); };
+$('runtest2').onclick = () => { const a = $('testarg').value.trim(); send(`test ${$('test2').value}${a ? ' ' + a : ''}${$('testwho').value ? ' ' + $('testwho').value : ''}${$('testcycle').checked ? ' daycycle' : ''}`); };
 let RUNS = {};
 function setRuns(r) {
   RUNS = r;

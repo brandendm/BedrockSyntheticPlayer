@@ -71,6 +71,10 @@ const SLOW = new Set(['loot', 'nights', 'rest', 'shelter', 'house', 'resume', 'q
 const PLAYER_ONLY = new Set(['duel']);
 const QUICK_S = 60;
 // The ones that need monsters about (and the world's own difficulty); the rest run peaceful with monsters cleared.
+/** Tests that stay on the real ground (trees, water, ores, the night, long walks); everything else is built in the sky. */
+const GROUND = new Set(['water', 'bucketfarm', 'treetop', 'vines', 'ghostlog', 'nights', 'calibrate', 'quarry', 'dark', 'iron', 'trader', 'farm', 'replant', 'litter', 'loot', 'rest', 'house', 'resume', 'shelter']);
+/** Tests that need the day and night going round (the rest are kept at day while the tests run). */
+const NIGHT = new Set(['shelter', 'house', 'resume', 'nights', 'rest', 'dark', 'loot']);
 /** Tests that need the natural terrain or water as it is: no floor is laid for them. */
 const NATURAL = new Set(['water', 'bucketfarm', 'treetop', 'vines', 'ghostlog', 'nights', 'calibrate']);
 const COMBAT = new Set(['husk', 'creeper', 'skel', 'shield', 'dark', 'duel']);
@@ -141,8 +145,12 @@ export async function runTests(agent, player, args) {
   const except = new Set(exIdx >= 0 ? String(args[exIdx + 1] ?? '').split(',').map((n) => n.trim()) : []);
   if (exIdx >= 0) args = args.slice(0, exIdx);
   // `!bot test <name> me`: you do it (same setup, you at the start, the bot stands by); both runs are measured and compared.
-  const human = args.includes('me') || args.includes('human');
-  const [name = 'all', arg] = args.filter((a) => a !== 'me' && a !== 'human');
+  // Who does it: the bot (default), `me` (you only), `both` (the bot, then you, each test), `youfirst` (you, then the bot).
+  const MODE_WORDS = ['me', 'human', 'both', 'botfirst', 'youfirst', 'mefirst', 'daycycle'];
+  const who = args.includes('youfirst') || args.includes('mefirst') ? 'youfirst' : args.includes('both') || args.includes('botfirst') ? 'botfirst' : args.includes('me') || args.includes('human') ? 'you' : 'bot';
+  const keepCycle = args.includes('daycycle');
+  const human = who !== 'bot';
+  const [name = 'all', arg] = args.filter((a) => !MODE_WORDS.includes(a));
   const mode = name === 'all' && ['quick', 'slow'].includes(String(arg)) ? String(arg) : null;
   const named = String(name).includes(',') ? String(name).split(',').map((n) => n.trim()) : null;
   const list = named && named.every((n) => NAMES.includes(n)) ? named
@@ -150,7 +158,8 @@ export async function runTests(agent, player, args) {
     : NAMES.includes(name) ? [name] : null;
   if (!list) return agent.say(`Tests: ${NAMES.join(', ')}, all [quick|slow], or a,b,c.`);
   if (!list.length) return agent.say('Every test is omitted.');
-  if (human && !player) return agent.say('Say it in chat yourself: `!bot test <name> me`.');
+  if (human && !player) return agent.say('Say it in chat yourself: `!bot test <name> me` (or both / youfirst).');
+  if (who === 'you' && !list.some((n) => HUMAN_OK.has(n))) agent.say(`None of those can be done by you yet (${[...HUMAN_OK].join(', ')}); the bot does them.`);
   running = true;
   const autoWas = agent.autoEnabled;
   agent.autoEnabled = false;
@@ -160,16 +169,30 @@ export async function runTests(agent, player, args) {
   const home0 = player ? { x: player.location.x, y: player.location.y, z: player.location.z } : null;
   // Progress (the dashboard's bar), and the world kept calm: peaceful for everything but the fights, which get back what it was.
   agent.testAbort = false;
-  agent.testProgress = { running: true, done: 0, total: list.length, current: null, human, startedAt: Date.now() };
+  // The runs: [test, you?]. A test you can do is done by the bot, you, or both in the order you chose; the others by the bot.
+  /** @type {Array<[string, boolean]>} */
+  const jobs = [];
+  for (const n of list) {
+    if (!HUMAN_OK.has(n) || who === 'bot') jobs.push([n, false]);
+    else if (who === 'you') jobs.push([n, true]);
+    else if (who === 'botfirst') jobs.push([n, false], [n, true]);
+    else jobs.push([n, true], [n, false]);
+  }
+  agent.testProgress = { running: true, done: 0, total: jobs.length, current: null, human, startedAt: Date.now() };
+  // Daylight: kept at day while the tests run (the ones that need the night turn the cycle back on), put back after.
+  const cycle0 = (() => { try { return /** @type {any} */ (world).gameRules?.doDaylightCycle ?? true; } catch { return true; } })();
+  const setCycle = (on) => { try { world.getDimension('overworld').runCommand(`gamerule dodaylightcycle ${on}`); } catch { /* */ } if (!on) { try { world.setTimeOfDay(1000); } catch { /* */ } } };
   const diff0 = (() => { try { return String(world.getDifficulty()).toLowerCase(); } catch { return 'normal'; } })();
   const setDiff = (d) => { try { world.getDimension('overworld').runCommand(`difficulty ${d}`); } catch { /* */ } };
   try {
-    for (const n of list) {
+    for (const [n, isYou] of jobs) {
       if (agent.testAbort) break;
+      const human = isYou;
       const t0 = system.currentTick;
       agent.testProgress.current = n;
       agent.testSkipped = false;
       setDiff(COMBAT.has(n) ? diff0 : 'peaceful');
+      setCycle(keepCycle || NIGHT.has(n));
       // The cap: at the deadline the task ends, so waits on it return and the test reports.
       let capped = false;
       const capS = n === 'leadboat' || n === 'leadsling' ? 480 : CAP_S;
@@ -186,6 +209,7 @@ export async function runTests(agent, player, args) {
     }
   } finally {
     setDiff(diff0);
+    setCycle(cycle0);
     agent.testProgress = { ...agent.testProgress, running: false, current: null, deadline: null };
     agent.testSkipped = false; agent.testAbort = false;
     try { if (player && home0) player.teleport(home0); } catch { /* */ }
@@ -208,12 +232,27 @@ async function runOne(agent, player, name, arg, human = false) {
   const v = from.getViewDirection();
   const len = Math.hypot(v.x, v.z) || 1;
   const x = Math.floor(from.location.x + (v.x / len) * 10), z = Math.floor(from.location.z + (v.z / len) * 10);
-  const gy = S.groundTop(x, z);
-  if (!Number.isFinite(gy)) return report(agent, name, false, 'no ground in front of you (unloaded?)');
-  const box = { x1: x - 8, y1: gy - 8, z1: z - 8, x2: x + 14, y2: gy + 18, z2: z + 8 };
+  const gy0 = S.groundTop(x, z);
+  if (!Number.isFinite(gy0)) return report(agent, name, false, 'no ground in front of you (unloaded?)');
+  // Most tests are built in the sky on a slab of their own (no lakes, slopes or trees to interfere); the ones that
+  // need the real world (trees, water, ores, the night) stay on the ground.
+  const sky = !GROUND.has(name);
+  const gy = sky ? Math.min(Math.max(gy0 + 60, 120), 280) : gy0;
+  const box = sky ? { x1: x - 14, y1: gy - 10, z1: z - 12, x2: x + 18, y2: gy + 20, z2: z + 12 } : { x1: x - 8, y1: gy - 8, z1: z - 8, x2: x + 14, y2: gy + 18, z2: z + 8 };
+  const pHome = player ? { x: player.location.x, y: player.location.y, z: player.location.z } : null;
   const cmd = (c) => { try { dim.runCommand(c); return true; } catch (e) { console.warn(`[test] ${c}: ${e}`); return false; } };
   if (!cmd(`structure save agent_test_backup ${box.x1} ${box.y1} ${box.z1} ${box.x2} ${box.y2} ${box.z2} false memory true`)) {
     return report(agent, name, false, "couldn't back up the test area, not touching it");
+  }
+  const home = { x: sim.location.x, y: sim.location.y, z: sim.location.z };
+  if (sky) {
+    cmd(`fill ${x - 14} ${gy - 10} ${z - 12} ${x + 18} ${gy - 4} ${z + 12} stone`);
+    cmd(`fill ${x - 14} ${gy - 3} ${z - 12} ${x + 18} ${gy - 1} ${z + 12} dirt`);
+    cmd(`fill ${x - 14} ${gy} ${z - 12} ${x + 18} ${gy} ${z + 12} grass_block`);
+    // Whoever is not doing the test waits on the slab too (the bot by the edge while you do it).
+    try { if (human) sim.teleport({ x: x - 4.5, y: gy + 1, z: z + 6.5 }); else sim.teleport({ x: x + 0.5, y: gy + 1, z: z + 0.5 }); } catch { /* */ }
+    if (human && player) { try { player.teleport({ x: x + 0.5, y: gy + 1, z: z + 0.5 }); } catch { /* */ } }
+    await system.waitTicks(5);
   }
   agent.newTask(null);
   agent.motor.stop();
@@ -228,7 +267,6 @@ async function runOne(agent, player, name, arg, human = false) {
   try { for (const e of dim.getEntities({ type: 'minecraft:item', location: { x, y: gy, z }, maxDistance: 48 })) e.remove(); } catch {}
   const t0 = system.currentTick;
   const hp0 = agent.health();
-  const home = { x: sim.location.x, y: sim.location.y, z: sim.location.z };
   /** @type {Array<() => void>} */
   const cleanup = [];
   /** What a test put in the pack: taken out again at the end (the flint and steel stayed in the bot's hand and pack). @type {Record<string, number>} */
@@ -267,11 +305,14 @@ async function runOne(agent, player, name, arg, human = false) {
     agent.say(`Test ${name}${tpg ? ` (${tpg.done + 1}/${tpg.total})` : ''}${human ? ' [you]' : ''}: starting (build ${CONFIG.build}).`);
     // A floor to stand on: the two layers at ground level over the site filled where there is air or liquid (the tests that
     // carve their own terrain, or need the water, build over it).
-    if (!NATURAL.has(name)) for (const rep of ['air', 'water', 'flowing_water', 'lava', 'flowing_lava']) { cmd(`fill ${x - 8} ${gy - 1} ${z - 8} ${x + 14} ${gy} ${z + 8} grass_block replace ${rep}`); }
+    if (!sky && !NATURAL.has(name)) for (const rep of ['air', 'water', 'flowing_water', 'lava', 'flowing_lava']) { cmd(`fill ${x - 8} ${gy - 1} ${z - 8} ${x + 14} ${gy} ${z + 8} grass_block replace ${rep}`); }
     // Spectators' seat: a small glass platform behind the site, you looking at where the bot starts.
     if (!human && player && name !== 'duel') {
-      cmd(`fill ${x - 8} ${gy + 4} ${z - 1} ${x - 6} ${gy + 4} ${z + 1} stone_bricks`);
-      try { player.teleport({ x: x - 6.5, y: gy + 5, z: z + 0.5 }, { facingLocation: { x, y: gy + 2, z: z + 0.5 } }); } catch { /* */ }
+      // The seat: a 3x3 stone-brick platform raised over the slab's west edge with a clear view of the site; slow falling in case of a slip.
+      const sx = sky ? x - 12 : x - 8;
+      cmd(`fill ${sx} ${gy + 3} ${z - 1} ${sx + 2} ${gy + 3} ${z + 1} stone_bricks`);
+      try { player.teleport({ x: sx + 1.5, y: gy + 4, z: z + 0.5 }, { facingLocation: { x, y: gy + 2, z: z + 0.5 } }); } catch { /* */ }
+      try { player.addEffect('slow_falling', 2400, { showParticles: false }); } catch { /* */ }
     }
     switch (name) {
       case 'roof': {
@@ -1649,10 +1690,13 @@ async function runOne(agent, player, name, arg, human = false) {
           const r = await horseReady(agent, gen, horse, secs);
           if (!r.ok) lines.push(`horse leg: ${r.detail}`);
           else {
-            const boat = dim.spawnEntity('minecraft:boat', { x: x - 7.5, y: gy + 1, z: z + 0.5 });
+            // Up on the horse first, then the boat goes down behind it (a boat dropped beside a loose horse trapped it).
+            const ride = await rideAcross(agent, gen, horse, 0);
+            const hl = horse.location;
+            const bp = hl.x - 2.4 >= x - 7.9 ? { x: hl.x - 2.4, y: gy + 1, z: hl.z } : { x: hl.x, y: gy + 1, z: Math.min(hl.z + 2.6, z + 3.5) };
+            const boat = dim.spawnEntity('minecraft:boat', bp);
             cleanup.push(() => { try { boat.remove(); } catch {} });
             await system.waitTicks(10);
-            const ride = await rideAcross(agent, gen, horse, 0);
             if (!ride.mounted) lines.push(`horse leg: ${ride.detail}`);
             else if (!leashTo(sim, boat)) lines.push("horse leg: couldn't lead the boat from the saddle");
             else {
@@ -1684,10 +1728,12 @@ async function runOne(agent, player, name, arg, human = false) {
     try { if (sim.dimension.id !== dim.id) sim.teleport(home, { dimension: dim }); } catch {}
     agent.newTask(null);
     agent.motor.stop();
+    // Everyone down from the sky before the slab goes.
+    if (sky) { try { sim.teleport(home); } catch { /* */ } try { if (player && pHome) player.teleport(pHome); } catch { /* */ } await system.waitTicks(5); }
     // Put the ground back, then make sure the bot isn't left inside a restored block.
     cmd(`structure load agent_test_backup ${box.x1} ${box.y1} ${box.z1}`);
     cmd('structure delete agent_test_backup');
-    if (!human && player && name !== 'duel') { try { const tg = S.groundTop(x - 7, z); if (Number.isFinite(tg)) player.teleport({ x: x - 6.5, y: tg + 1, z: z + 0.5 }); } catch { /* */ } }
+    if (!sky && !human && player && name !== 'duel') { try { const tg = S.groundTop(x - 7, z); if (Number.isFinite(tg)) player.teleport({ x: x - 6.5, y: tg + 1, z: z + 0.5 }); } catch { /* */ } }
     try {
       const top = S.groundTop(Math.floor(sim.location.x), Math.floor(sim.location.z));
       if (Number.isFinite(top) && top >= Math.floor(sim.location.y)) sim.teleport({ x: sim.location.x, y: top + 1, z: sim.location.z });
