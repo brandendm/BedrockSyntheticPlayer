@@ -57,6 +57,7 @@ import { blueprint, furnishings } from '../core/house.js';
 import { invCounts as invCountsOf, hold, take, container as packOf } from './inventory.js';
 import { TestRecorder } from './testrun.js';
 import { runDuel } from './duel.js';
+import { solvePitch } from '../core/ballistics.js';
 import { getPlan } from '../core/learnhouse.js';
 import { passRates, addStat } from '../core/testrun.js';
 import { compare } from '../core/testrun.js';
@@ -132,6 +133,14 @@ export async function runTests(agent, player, args) {
     return agent.say('Stopping the tests; what was collected so far is kept.');
   }
   if (args[0] === 'go') { agent.testGo = true; return; }
+  // `test fast`: skip the waiting in this test (the night, a furnace cooking): the script API has no way to run the game faster,
+  // so the waits the tests know about are cut short instead.
+  if (args[0] === 'fast') {
+    if (!running) return agent.say('No test is running.');
+    agent.testFast = true;
+    try { const t = world.getTimeOfDay(); if (t >= 12500 && t < 23000) world.setTimeOfDay(23500); } catch { /* */ }
+    return agent.say('Skipping the waiting in this test.');
+  }
   if (args[0] === 'done') { agent.testDone = true; return; }
   if (args[0] === 'skip') {
     if (!running) return agent.say('No test is running.');
@@ -176,7 +185,7 @@ export async function runTests(agent, player, args) {
     : name === 'all' ? NAMES.filter((n) => !omitList().includes(n) && !except.has(n) && (player || !PLAYER_ONLY.has(n))).filter((n) => (mode === 'quick' ? !SLOW.has(n) : mode === 'slow' ? SLOW.has(n) : true))
     : NAMES.includes(name) ? [name] : null;
   // When you take part, `test all` leaves out the tests that have no turn for you (`alsobot` brings them back).
-  if (who !== 'bot' && name === 'all' && !args.includes('alsobot') && list) { const keep = list.filter((n) => HUMAN_OK.has(n)); list.length = 0; list.push(...keep); }
+  if (who !== 'bot' && name === 'all' && !args.includes('alsobot') && list) { const keep = list.filter((n) => HUMAN_OK.has(n) || PLAYER_ONLY.has(n)); list.length = 0; list.push(...keep); }
   if (!list) return agent.say(`Tests: ${NAMES.join(', ')}, all [quick|slow], or a,b,c.`);
   if (!list.length) return agent.say('Every test is omitted.');
   if (human && !player) return agent.say('Say it in chat yourself: `!bot test <name> me` (or both / youfirst).');
@@ -199,7 +208,7 @@ export async function runTests(agent, player, args) {
     else if (who === 'botfirst') jobs.push([n, false], [n, true]);
     else jobs.push([n, true], [n, false]);
   }
-  const humanTurns = list.filter((n) => HUMAN_OK.has(n));
+  const humanTurns = list.filter((n) => HUMAN_OK.has(n) || PLAYER_ONLY.has(n));
   if (who !== 'bot') agent.say(`You have a turn in ${humanTurns.length} of ${list.length} tests (${humanTurns.join(', ') || 'none'}); the rest are the bot's alone.`);
   const gm0 = /** @type {any} */ (player)?.getGameMode?.() ?? 'survival';
   const setGm = (m) => { try { /** @type {any} */ (player)?.setGameMode(m); } catch { /* */ } };
@@ -215,7 +224,7 @@ export async function runTests(agent, player, args) {
       const human = isYou;
       const t0 = system.currentTick;
       agent.testProgress.current = n;
-      agent.testSkipped = false;
+      agent.testSkipped = false; agent.testFast = false;
       setDiff(COMBAT.has(n) ? diff0 : 'peaceful');
       setCycle(keepCycle || NIGHT.has(n));
       // Creative while you watch (you can fly about), survival while you do a test or fight in one.
@@ -332,6 +341,8 @@ async function runOne(agent, player, name, arg, human = false) {
     return false;
   };
   const rec = new TestRecorder(who).start();
+  // The bot gets what you are handed in the tests you can do (it fought the husk bare-handed against your sword).
+  if (!human && HUMAN_OK.has(name)) { for (const [id, n] of kitFor(name)) giveItem(id, n); try { agent.equipBestWeapon(); } catch { /* */ } }
   if (human) agent.testHold = true; // the bot stands by while you do it (no fighting or fleeing of its own)
   /** What the human was handed, taken back at the end. @type {Array<[string, number]>} */
   const handed = [];
@@ -571,7 +582,17 @@ async function runOne(agent, player, name, arg, human = false) {
         const H = agent.homestead;
         const gen = agent.newTask({ kind: 'test' });
         const started = await H.startSmelt(gen, 'log', 2, 2).catch(() => false);
-        if (started) { while (system.currentTick < H.smeltJob.readyAt) await system.waitTicks(20); await H.collectSmelt(gen); }
+        if (started) {
+          while (system.currentTick < H.smeltJob.readyAt) {
+            if (agent.testFast) {
+              // Fast-forward: what the furnace would have made is put in its output.
+              try { const c = H.container(H.smeltJob.pos); c.setItem(2, new ItemStack('minecraft:charcoal', 2)); c.setItem(0, undefined); H.smeltJob.readyAt = system.currentTick; } catch { /* */ }
+              break;
+            }
+            await system.waitTicks(20);
+          }
+          await H.collectSmelt(gen);
+        }
         const got = (invCountsOf(sim).charcoal ?? 0) - c0;
         pass = started && got >= 2;
         detail = `${started ? 'loaded the furnace' : "couldn't load a furnace"}, got ${got} charcoal in ${secs()}s`;
@@ -962,7 +983,8 @@ async function runOne(agent, player, name, arg, human = false) {
         const logs0 = Object.entries(invCountsOf(sim)).filter(([id]) => /_log$/.test(id)).reduce((a, [, n]) => a + n, 0);
         const gen = agent.newTask({ kind: 'test' });
         agent.memory.forgetNear('log', dim.id, { x: tx, y: gy + 1, z }, 64);
-        await S.gatherLogs(gen, logs0 + 5).catch((e) => { detail = `${e}`; });
+        if (name === 'litter') await S.grabLitter(gen).catch((e) => { detail = `${e}`; });
+        else await S.gatherLogs(gen, logs0 + 5).catch((e) => { detail = `${e}`; });
         const at = S.blockAt({ x: tx, y: gy + 1, z });
         const litter = invCountsOf(sim).leaf_litter ?? 0;
         pass = name === 'litter' ? litter >= 4 : /sapling/.test(at ?? '');
@@ -1352,7 +1374,15 @@ async function runOne(agent, player, name, arg, human = false) {
         for (let i = 0; i < 8 && hits < 1 && !agent.testSkipped; i++) {
           flying.clear();
           try { for (const a of dim.getEntities({ type: 'minecraft:arrow', location: center, maxDistance: 60 })) ignore.add(a.id); } catch { /* */ }
-          await agent.motor.lookAt(aim, 6, 30).catch(() => {});
+          // The view is set exactly (lookAtLocation, the way a glance at you is exact; the motor's smoothed, human-like turn
+          // wandered by a block or more), at the angle the arrow's own flight needs: up from the straight line by its drop.
+          try {
+            const eye = sim.getHeadLocation();
+            const dx = aim.x - eye.x, dz = aim.z - eye.z, d = Math.hypot(dx, dz) || 1;
+            const th = solvePitch(d, aim.y - eye.y);
+            /** @type {any} */ (sim).lookAtLocation({ x: eye.x + (dx / d) * 30 * Math.cos(th), y: eye.y + 30 * Math.sin(th), z: eye.z + (dz / d) * 30 * Math.cos(th) });
+          } catch { await agent.motor.lookAt(aim, 6, 30).catch(() => {}); }
+          await system.waitTicks(3);
           const item = packOf(sim)?.getItem(sim.selectedSlotIndex);
           try { notes.push(`useItem ${/** @type {any} */ (sim).useItem(item)}`); } catch (e) { notes.push(`useItem threw ${e}`); }
           await system.waitTicks(25);                       // a full draw is 20 ticks
