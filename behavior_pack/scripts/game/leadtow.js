@@ -88,6 +88,42 @@ export class LeadTow {
   }
 
   /**
+   * A gap straight on from the lip we stand at (the walking route ends there): how wide, and if the blocks and the lead allow, a bridge across it,
+   * a cell at a time, the boat brought up close first (a lead left behind while the bot builds breaks at 10). Returns { built, width, why }.
+   */
+  async bridgeGap(gen, boat, goal, guard) {
+    const S = this.a.skills, sim = this.a.sim;
+    const OPENISH = /^(air|cave_air|void_air|short_grass|tall_grass|fern|snow_layer|water|flowing_water|lava|flowing_lava)$/;
+    const f = S.feet();
+    const dx = goal.x - (f.x + 0.5), dz = goal.z - (f.z + 0.5);
+    const dir = Math.abs(dx) >= Math.abs(dz) ? [Math.sign(dx) || 1, 0] : [0, Math.sign(dz) || 1];
+    const at = (k, dy = 0) => S.blockAt({ x: f.x + dir[0] * k, y: f.y + dy, z: f.z + dir[1] * k }) ?? 'air';
+    if (!OPENISH.test(at(1, -1)) || !OPENISH.test(at(1)) || !OPENISH.test(at(1, 1))) return { built: 0, width: 0, why: 'no gap straight on' };
+    // The far side: the first cell with a floor at this level (or one up: a step), clear above it.
+    let land = 0;
+    for (let k = 2; k <= 10 && !land; k++) if (!OPENISH.test(at(k, -1)) && OPENISH.test(at(k)) && OPENISH.test(at(k, 1))) land = k;
+    const width = land ? land - 1 : 0;
+    if (!land) return { built: 0, width: 0, why: 'no far side within 10' };
+    if (S.blockCount() < width) return { built: 0, width, why: `${S.blockCount()} blocks for a gap ${width} wide` };
+    let cur = { x: f.x, y: f.y, z: f.z }, built = 0;
+    for (let k = 1; k <= land; k++) {
+      S.check(gen);
+      // The boat close enough that the next cell will not stretch the lead past the guard.
+      for (let w = 0; w < 100; w++) {
+        const sepNow = flat(sim.location, boat.location);
+        if (sepNow <= guard - 2 || !boat.isValid) break;
+        try { sim.stopMoving(); } catch { /* */ }
+        await S.wait(gen, 2);
+      }
+      const next = { x: f.x + dir[0] * k, y: f.y, z: f.z + dir[1] * k };
+      if (!(await S.bridgeTo(gen, cur, next))) return { built, width, why: `the block would not go at cell ${k}` };
+      if (OPENISH.test(S.blockAt({ x: next.x, y: next.y - 1, z: next.z }) ?? 'air') === false || k < land) built++;
+      cur = next;
+    }
+    return { built, width, why: '' };
+  }
+
+  /**
    * A runway to stretch the lead along: what a player did who got the boat up steps and hills (a one-block-long elevation is no use: you
    * step off its far side before the lead is tight). Standing above the boat, the cells straight on from here, as far as the stretch
    * needs, at this level: any without a floor get one (a block placed against the last, the way a bridge is built), a wall stops it.
@@ -156,9 +192,17 @@ export class LeadTow {
       const progress = last ? Math.hypot(last.x + 0.5 - from.x, last.z + 0.5 - from.z) : 0;
       // Only when walking gets no further (the edge of the gap): the walk to it is by the walking route, not a bridge across a pond.
       if (!res.complete && progress < 4 && !ride && opts.build !== false && S.blockCount() >= 2) {
+        // At the lip of a gap: a bridge across it, built a cell at a time with the boat kept close (the u186 run went down into the gap
+        // with the boat left behind, and the lead broke at 11.6 apart); the building search is only for what that does not cover, and
+        // only bridging and pillaring (never a drop, a dig).
+        const bg = await this.bridgeGap(gen, boat, target, guard);
+        if (bg.built) { m.built += bg.built; note(`bridged a gap ${bg.width} wide`); return plan(target); }
+        if (bg.why && bg.why !== 'no gap straight on') note(`gap: ${bg.why}`);
         const ar = await a.plan(from, target, 1.5, 20000, null, { actions: S.actionOpts(), weight: 2 });
         S.check(gen);
-        if (ar.complete && ar.path.length >= 2) { res = ar; built = true; note(`route with ${ar.path.filter((p) => !isWalkMove(p)).length} building steps`); }
+        const tame = ar.path?.every((c, i) => i === 0 || isWalkMove(c) || ['bridge', 'pillar'].includes(c.move?.type) ) && ar.path.every((c, i) => i === 0 || ar.path[i - 1].y - c.y <= 2);
+        if (ar.complete && ar.path.length >= 2 && tame) { res = ar; built = true; note(`route with ${ar.path.filter((p) => !isWalkMove(p)).length} building steps`); }
+        else if (ar.complete) note('a building route was found but it drops or digs: not taken');
       }
       if (!res.path || res.path.length < 2) return null;
       m.pathLen += res.path.length;
@@ -181,6 +225,7 @@ export class LeadTow {
       if (flat(pos, goal) < 2.5) { m.arrived = true; break; }
       if (sim.isInWater && !ride) { m.wet = true; m.why = 'in water (the route should never go there)'; break; }
       if (!route || wi >= route.length) {
+        try { sim.stopMoving(); } catch { /* */ }
         if (replans++ > 12) { m.why = 'could not find a way on'; break; }
         route = await plan(goal); wi = 0;
         if (!route) { m.why = 'no land route to the goal'; break; }

@@ -2486,6 +2486,7 @@ async function runOne(agent, player, name, arg, human = false) {
         // a few 1-high stones scattered on it, down one, a 1-wide trench; then a three-high hill, a gap 3 wide and 6 deep across the whole
         // slab (blocks are needed: the bot builds across it, the boat follows over), and a plateau with a gold block. The bot tows a boat
         // over all of it on foot (game/leadtow.js), then again on a horse over the first part; you tow one over all of it on foot.
+        tp(x - 6, gy + 1, z - 8);   // (out of the way: the course is built where whoever it is stood, inside stone)
         flatPatch(cmd, x, gy, z);
         cmd(`fill ${x - 5} ${gy - 1} ${z - 1} ${x - 4} ${gy} ${z + 3} water`);              // a pond in the straight line
         cmd(`fill ${x - 3} ${gy + 1} ${z - 3} ${x + 13} ${gy + 1} ${z + 3} stone`);        // up one at x-3
@@ -2564,6 +2565,7 @@ async function runOne(agent, player, name, arg, human = false) {
           }
           legSummary = rec.snapshot();
           lines.push(`on foot: ${vils.filter((v) => fns.riding(v)).length}/2 villagers in the boat, ${nPit()}/2 in the pit${circled ? '' : ' (never got round the pit)'}; ${towLine(m, farGoal)}${m.notes.length ? ` [${m.notes.join('; ')}]` : ''}`);
+          detail = lines.join(' | ');
           walkOk = m.arrived && !m.snapped && nPit() === 2;
           try { boat.remove(); } catch {}
         }
@@ -2647,6 +2649,7 @@ async function runOne(agent, player, name, arg, human = false) {
       case 'villagerhaul': {
         // Two villagers stand near the start; you have a boat, a lead, blocks. Get both into the boat (walk it into them on its lead), and
         // lead the boat with them in it over three hills and across a gap (build over it) to the gold block. Both within 4 blocks of it.
+        tp(x - 6, gy + 1, z - 8);
         flatPatch(cmd, x, gy, z);
         const farGoal = towTail(cmd, x, gy, z);
         cmd(`fill ${x + 8} ${gy + 1} ${z - 3} ${x + 11} ${gy + 1} ${z + 3} stone`);        // a low rise before the hills
