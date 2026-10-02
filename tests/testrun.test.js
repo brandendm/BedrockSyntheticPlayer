@@ -55,3 +55,18 @@ test('lifetime stats and the average pass rate', () => {
   assert.equal(a.human.pct, 100);
   assert.equal(avgRates(st, ['tower']).human.pct, null);
 });
+
+import { technique } from '../behavior_pack/scripts/core/testrun.js';
+test('technique: first action, view turning, held items, event counts', () => {
+  const S = Array.from({ length: 40 }, (_, i) => ({ t: i * 2, x: i < 10 ? 0 : (i - 10) * 0.3, y: 64, z: 0, g: 1, sn: 0, sp: 0, hp: 20, yw: i * 5, pt: 0, w: 0, cl: 0, sl: i < 20 ? 0 : 3, hd: i < 20 ? 'stone_sword' : 'dirt' }));
+  const ev = [[1.2, 'p', 'dirt', 0, 64, 0, 'dirt'], [1.5, 'b', 'stone', 1, 64, 0, 'stone_pickaxe'], [2, 'h', 'husk'], [2, 'd', 'husk', 5], [3, 'D', 'contact', 2, 'husk'], [3, 'k', 'husk']];
+  const t = technique(S, ev);
+  assert.ok(t.firstActionS >= 0.9 && t.firstActionS <= 1.3, `first ${t.firstActionS}`);
+  assert.equal(t.slotChanges, 1);
+  assert.ok(t.turnYawDeg >= 190);
+  assert.deepEqual(t.placedBy, { dirt: 1 });
+  assert.equal(t.hits, 1); assert.equal(t.dealt, 5); assert.equal(t.taken, 2); assert.equal(t.kills, 1);
+  assert.ok(t.held.stone_sword > 0 && t.held.dirt > 0);
+  const m = summarise(S, { placed: 1, inv: { gained: {}, spent: { dirt: 1 } } }, ev);
+  assert.equal(m.inv.spent.dirt, 1);
+});

@@ -652,10 +652,21 @@ async function fullReport() {
         const x = r && r[w]; if (!x) continue;
         const sm = x.summary || {}, tr = x.trace || {}, p = tr.path || [];
         const o0 = p[0] || [0, 0, 0, 0];
-        const step = Math.max(1, Math.ceil(p.length / 28));
-        const pts = p.filter((_, i) => i % step === 0 || i === p.length - 1).map((q) => `${q[0]}s:${f1(q[1] - o0[1])},${f1(q[2] - o0[2])},${f1(q[3] - o0[3])}`).join(' ');
-        const bl = (tr.blocks || []).slice(0, 40).map((b) => `${b[0]}s ${b[1] === 'p' ? 'put' : 'broke'} ${f1(b[2] - o0[1])},${f1(b[3] - o0[2])},${f1(b[4] - o0[3])}`).join('; ');
-        lines.push(`${name} ${w === 'human' ? 'YOU' : 'BOT'} ${x.pass ? 'pass' : 'FAIL'} ${sm.secs}s path ${sm.path} straight ${sm.straight} jumps ${sm.jumps} idle ${sm.idleS}s sprint ${sm.sprintS}s sneak ${sm.sneakS}s placed ${sm.placed} broken ${sm.broken} dmg ${sm.damage}\n    blocks: ${bl || '-'}\n    path: ${pts || '-'}`);
+        const step = Math.max(1, Math.ceil(p.length / 45));
+        const pts = p.filter((_, i) => i % step === 0 || i === p.length - 1).map((q) => `${q[0]}s:${f1(q[1] - o0[1])},${f1(q[2] - o0[2])},${f1(q[3] - o0[3])}${q.length > 4 ? ` ${q[4]}/${q[5]} f${q[6]} s${q[7]}` : ''}`).join(' ');
+        const ev = (tr.events || []).slice(0, 70).map((e) => {
+          const t = `${e[0]}s`;
+          if (e[1] === 'p' || e[1] === 'b') return `${t} ${e[1] === 'p' ? 'put' : 'broke'} ${e[2]} @${f1(e[3] - o0[1])},${f1(e[4] - o0[2])},${f1(e[5] - o0[3])} holding ${e[6] || 'nothing'}`;
+          if (e[1] === 'h') return `${t} hit ${e[2]}`;
+          if (e[1] === 'd') return `${t} dealt ${e[3]} to ${e[2]}`;
+          if (e[1] === 'D') return `${t} took ${e[3]} (${e[2]}${e[4] ? ' by ' + e[4] : ''})`;
+          if (e[1] === 'k') return `${t} killed ${e[2]}`;
+          if (e[1] === 'u' || e[1] === 'U' || e[1] === 'R' || e[1] === 'e') return `${t} ${{ u: 'used', U: 'started using', R: 'released', e: 'ate' }[e[1]]} ${e[2]}`;
+          return `${t} ${e[1] === 'i' ? 'used block' : 'used entity'} ${e[2]} holding ${e[3] || 'nothing'}`;
+        }).join('; ');
+        const bl = ev;
+        const tc = `first action ${sm.firstActionS}s, avg speed ${sm.avgSpeed} (max ${sm.maxSpeed}) b/s, still-and-idle ${sm.stillNoActionS}s, view turned ${sm.turnYawDeg}/${sm.turnPitchDeg} deg (peak ${sm.maxTurnDegS} deg/s), air ${sm.airS}s water ${sm.waterS}s climbing ${sm.climbS}s, hotbar changes ${sm.slotChanges}, held ${JSON.stringify(sm.held || {})}, put ${JSON.stringify(sm.placedBy || {})}, broke ${JSON.stringify(sm.brokenBy || {})}, hits ${sm.hits} dealt ${sm.dealt} taken ${sm.taken} kills ${sm.kills}, uses ${sm.uses}, interacts ${sm.interacts}, ate ${sm.eaten}, pack +${JSON.stringify((sm.inv && sm.inv.gained) || {})} -${JSON.stringify((sm.inv && sm.inv.spent) || {})}`;
+        lines.push(`${name} ${w === 'human' ? 'YOU' : 'BOT'} ${x.pass ? 'pass' : 'FAIL'} ${sm.secs}s path ${sm.path} straight ${sm.straight} jumps ${sm.jumps} idle ${sm.idleS}s sprint ${sm.sprintS}s sneak ${sm.sneakS}s placed ${sm.placed} broken ${sm.broken} dmg ${sm.damage}\n    technique: ${tc}\n    events: ${bl || '-'}\n    path (s:x,y,z yaw/pitch flags slot): ${pts || '-'}`);
       }
     }
     out.push(section('TEST RUNS: YOU vs THE BOT (paths and blocks, relative to each start)', lines.join('\n') || '(none yet this brain session)'));
