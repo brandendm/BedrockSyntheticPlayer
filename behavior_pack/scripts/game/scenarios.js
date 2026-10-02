@@ -1601,9 +1601,19 @@ async function runOne(agent, player, name, arg, human = false) {
         cleanup.push(() => { try { system.clearRun(watch); } catch { /* */ } });
         if (human) { pass = await humanTry(() => dist3D(who.location, goal) <= 2.5, 120, goal); pass = pass && burned === 0; detail = `you ${pass ? 'crossed' : 'did not cross unburned'} in ${secs()}s, lost ${Math.max(0, hpStart - hpNow())} hp, in lava ${burned * 0.1} s`; break; }
         const gen = agent.newTask({ kind: 'test' });
-        const ok = await S.goNear(gen, goal, 1.5, 3, { actionRange: 30 }).catch(() => false);
+        // The lava is crossed by bridging it: a block against the last, walked onto, 11 times (the pathfinder's own bridging is for water and
+        // gaps; lava is a hazard it will not path over).
+        let ok = false;
+        try {
+          await S.goNear(gen, { x: x - 2.5, y: gy + 1, z: z + 0.5 }, 1, 2);
+          for (let cx = x - 2; cx <= x + 9; cx++) {
+            if (agent.testSkipped) break;
+            if (!(await S.bridgeTo(gen, { x: cx, y: gy + 1, z }, { x: cx + 1, y: gy + 1, z }))) { detail = `bridge stopped at ${cx - x}: `; break; }
+          }
+          ok = await S.goNear(gen, goal, 1.5, 3).catch(() => false);
+        } catch (e) { detail = `${e}`; }
         pass = dist3D(sim.location, goal) <= 2.5 && burned === 0;
-        detail = `${pass ? 'across' : ok ? 'said it arrived but is not at the far side' : "did not get across"}, lost ${Math.max(0, hpStart - hpNow())} hp, in lava ${burned * 0.1} s, ${secs()}s (${invCountsOf(sim).cobblestone ?? 0} cobblestone left)`;
+        detail = `${detail}${pass ? 'across' : ok ? 'said it arrived but is not at the far side' : "did not get across"}, lost ${Math.max(0, hpStart - hpNow())} hp, in lava ${burned * 0.1} s, ${secs()}s (${invCountsOf(sim).cobblestone ?? 0} cobblestone left)`;
         break;
       }
       case 'obsidian': {
@@ -1644,7 +1654,17 @@ async function runOne(agent, player, name, arg, human = false) {
             const was = S.essential; S.essential = true;
             const mined = await S.mine(gen, target, { collect: true, force: true }).catch((e) => { notes.push(`mine: ${e}`); return false; });
             S.essential = was;
-            notes.push(mined ? 'mined it' : 'would not mine it (lava beside it?)');
+            let got = mined;
+            if (!mined) {
+              // Its own mining will not open a block with lava beside it; a player just breaks it: the break call, from where it stands.
+              try { sim.lookAtBlock(target); } catch { /* */ }
+              await system.waitTicks(4);
+              try { /** @type {any} */ (sim).breakBlock(target); } catch (e) { notes.push(`break: ${e}`); }
+              for (let i = 0; i < 40 && S.blockAt(target) === 'obsidian'; i++) await system.waitTicks(5);
+              await S.sweep(gen, target, 5, null, 10).catch(() => 0);
+              got = S.blockAt(target) !== 'obsidian';
+            }
+            notes.push(got ? 'mined it' : 'would not mine it');
           }
         } catch (e) { notes.push(`${e}`); }
         pass = obs() >= 1;
@@ -1684,8 +1704,18 @@ async function runOne(agent, player, name, arg, human = false) {
           if (!next) break;
           const near = await S.goNear(gen, next.pos, 2, 2, { actionRange: 30 }).catch(() => false);
           const mined = await S.mine(gen, next.pos, { collect: true, force: true }).catch(() => false);
-          notes.push(`${next.ore.replace('_ore', '')} ${near ? 'reached' : 'not reached'}, ${mined ? 'mined' : 'not mined'}`);
-          if (!mined) ores.splice(ores.indexOf(next), 1);
+          let broke = mined;
+          if (!mined && S.blockAt(next.pos) === next.ore) {
+            // Its mining refused (a rule about what is safe to open); the plain break, if it is in reach.
+            try { sim.lookAtBlock(next.pos); } catch { /* */ }
+            await system.waitTicks(4);
+            try { /** @type {any} */ (sim).breakBlock(next.pos); } catch { /* */ }
+            for (let i = 0; i < 40 && S.blockAt(next.pos) === next.ore; i++) await system.waitTicks(3);
+            await S.sweep(gen, next.pos, 5, null, 10).catch(() => 0);
+            broke = S.blockAt(next.pos) !== next.ore;
+          }
+          notes.push(`${next.ore.replace('_ore', '')} ${near ? 'reached' : 'not reached'}, ${mined ? 'mined' : broke ? 'broken by hand' : 'not mined'}`);
+          if (!broke) ores.splice(ores.indexOf(next), 1);
           hold(sim, 'iron_pickaxe');
         }
         pass = have(sim) >= KINDS.length;

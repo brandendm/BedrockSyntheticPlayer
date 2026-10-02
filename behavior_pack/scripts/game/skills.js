@@ -684,6 +684,9 @@ export class Skills {
 
   /** Jump and put a block under our feet: one level up, right here. */
   async stepUp(gen) {
+    // Landed first: asked again straight after a placement it was still in the air above the new block, the jump was ignored, nothing
+    // went down in the 12 ticks and it returned failed (a pillar race: 1.3 s a block against a player's 0.5).
+    for (let t = 0; t < 14 && !this.a.body.isOnGround(); t++) await this.wait(gen, 1);
     const f = this.feet();
     const slot = this.placeableSlot();
     if (slot < 0) return false;
@@ -4638,9 +4641,18 @@ export class Skills {
     const faceLoc = { x: faceDir[0] > 0 ? 1 : faceDir[0] < 0 ? 0 : 0.5, y: 0.5, z: faceDir[1] > 0 ? 1 : faceDir[1] < 0 ? 0 : 0.5 };
     const len = Math.hypot(edgeV[0], edgeV[1]) || 1;
     try {
-      // 1. Sneak out to the lip (sneaking stops us at it, hanging a little over, which is what lets the side of the pillar be seen).
-      this.sim.isSneaking = true;
-      for (let i = 0; i < 9; i++) { this.a.body.move(edgeV[0] / len, edgeV[1] / len, 0.45); await this.wait(gen, 2); }
+      // 1. Out to the lip, by position: a simulated player's sneak does not hold it on the edge (the u177 run walked off the top and fell 10
+      // blocks), so it creeps at a fifth of walking speed and stops with its centre 0.66 from the middle of the block along each way it is going:
+      // hanging 0.16 over, still standing on it, with the side of the pillar in view.
+      const base = { x: fx + 0.5, z: fz + 0.5 };
+      for (let i = 0; i < 50; i++) {
+        const l = this.sim.location;
+        const offX = edgeV[0] ? (l.x - base.x) * Math.sign(edgeV[0]) : 0, offZ = edgeV[1] ? (l.z - base.z) * Math.sign(edgeV[1]) : 0;
+        const doneX = !edgeV[0] || offX >= 0.66, doneZ = !edgeV[1] || offZ >= 0.66;
+        if (doneX && doneZ) break;
+        this.a.body.move(doneX ? 0 : Math.sign(edgeV[0]), doneZ ? 0 : Math.sign(edgeV[1]), 0.22);
+        await this.wait(gen, 1);
+      }
       this.a.body.stop();
       await this.wait(gen, 2);
       // 2. Look down the side and put the block against it.
@@ -4650,11 +4662,11 @@ export class Skills {
       this.sim.isSneaking = false;
       if (!ok) { this.log(`staged descent: the block would not go against the pillar at ${S.x} ${S.y} ${S.z}`); ctx.failed = true; return false; }
       this.markPlaced(N);
-      // 3. Step off onto it: a drop of 3.
-      for (let i = 0; i < 14 && this.feet().y > fy - 1.5; i++) {
+      // 3. Step off onto it: a drop of 3, creeping toward the middle of the ledge and stopping the push as soon as the feet leave the top.
+      for (let i = 0; i < 40 && this.feet().y > fy - 0.4; i++) {
         const dx = N.x + 0.5 - this.sim.location.x, dz = N.z + 0.5 - this.sim.location.z, l = Math.hypot(dx, dz) || 1;
-        this.a.body.move(dx / l, dz / l, 0.5);
-        await this.wait(gen, 2);
+        this.a.body.move(dx / l, dz / l, 0.3);
+        await this.wait(gen, 1);
       }
       this.a.body.stop();
       for (let i = 0; i < 10 && !this.a.body.isOnGround(); i++) await this.wait(gen, 2);
