@@ -90,6 +90,8 @@ const HUMAN_OK = new Set(['tower', 'hole', 'pit', 'climb', 'ladder', 'corner', '
 const CAP_S = 240;
 
 /** For `test <name> me`: what the test is, what is given to you, and how it ends. */
+/** The hotbar slot holding this item, or -1. */
+const findSlotOf = (e, id) => { const c = packOf(e); for (let i = 0; c && i < c.size; i++) if (c.getItem(i)?.typeId === `minecraft:${id}`) return i; return -1; };
 const HUMAN_HELP = {
   tower: { kit: [], text: 'You start on top of a 10-block cobblestone tower. Get down to the ground safely (no fall damage) any way you like.' },
   hole: { kit: [['dirt', 16], ['stone_pickaxe', 1]], text: 'You start at the bottom of a 2-deep hole. Get out and walk to the gold block 12 blocks east (a gold block).' },
@@ -180,6 +182,11 @@ export async function runTests(agent, player, args) {
   if (!agent.memory.data.retiredV2) {
     agent.memory.data.testOmit = [...new Set([...agent.memory.data.testOmit, 'sheep', 'enderman', 'blaze', 'ghast', 'witherskeleton', 'horserace', 'bow', 'duel', 'litter', 'replant'])];
     agent.memory.data.retiredV2 = true; agent.memory.save();
+  }
+  // The third (the u181 run): the bot ties or beats you on these.
+  if (!agent.memory.data.retiredV3) {
+    agent.memory.data.testOmit = [...new Set([...agent.memory.data.testOmit, 'lavacross', 'obsidian', 'pillarrace'])];
+    agent.memory.data.retiredV3 = true; agent.memory.save();
   }
   const omitList = () => (agent.memory.data.testOmit ??= []);
   if (args[0] === 'omit' || args[0] === 'include') {
@@ -1727,8 +1734,32 @@ async function runOne(agent, player, name, arg, human = false) {
           const f = S.feet();
           const next = ores.filter((o) => need.has(o.ore) && S.blockAt(o.pos) === o.ore).sort((a, b) => dist3D(f, a.pos) - dist3D(f, b.pos))[0];
           if (!next) break;
-          const near = await S.goNear(gen, next.pos, 2, 2, { actionRange: 30 }).catch(() => false);
-          const mined = await S.mine(gen, next.pos, { collect: true, force: true }).catch(() => false);
+          let near = await S.goNear(gen, next.pos, 2, 2, { actionRange: 30 }).catch(() => false);
+          let mined = await S.mine(gen, next.pos, { collect: true, force: true }).catch(() => false);
+          if (!mined) {
+            // Not exposed: dig to it. Down (a block under the feet, drop onto the next) while it is deeper, then sideways in a tunnel 2 high,
+            // until it is beside us; then the ore.
+            for (let step = 0; step < 40 && !mined && !agent.testSkipped; step++) {
+              const fc = { x: Math.floor(sim.location.x), y: Math.floor(sim.location.y), z: Math.floor(sim.location.z) };
+              const dx = next.pos.x - fc.x, dy = next.pos.y - fc.y, dz = next.pos.z - fc.z;
+              if (Math.abs(dx) + Math.abs(dz) <= 1 && dy >= -1 && dy <= 2) { mined = await S.mine(gen, next.pos, { collect: true, force: true }).catch(() => false); break; }
+              if (dy < -1 && Math.abs(dx) + Math.abs(dz) <= 1) { // straight down onto it
+                await S.mine(gen, { x: fc.x, y: fc.y - 1, z: fc.z }, { collect: true, force: true, allowBelow: true }).catch(() => false);
+                await system.waitTicks(8);
+                continue;
+              }
+              if (dy < -1 && (Math.abs(dx) + Math.abs(dz) > 1 || step % 3 === 0)) { // down first, three at a time, then across
+                await S.mine(gen, { x: fc.x, y: fc.y - 1, z: fc.z }, { collect: true, force: true, allowBelow: true }).catch(() => false);
+                await system.waitTicks(8);
+                continue;
+              }
+              const sx = Math.abs(dx) >= Math.abs(dz) ? Math.sign(dx) : 0, sz = sx === 0 ? Math.sign(dz) : 0;
+              if (!sx && !sz) break;
+              for (const yy of [0, 1]) await S.mine(gen, { x: fc.x + sx, y: fc.y + yy, z: fc.z + sz }, { collect: true, force: true }).catch(() => false);
+              for (let k = 0; k < 14 && Math.floor(sim.location.x) === fc.x && Math.floor(sim.location.z) === fc.z; k++) { agent.body.move(sx, sz, 0.6); await system.waitTicks(2); }
+              agent.body.stop();
+            }
+          }
           let broke = mined;
           if (!mined && S.blockAt(next.pos) === next.ore) {
             // Its mining refused (a rule about what is safe to open); the plain break, if it is in reach.
@@ -1810,7 +1841,9 @@ async function runOne(agent, player, name, arg, human = false) {
         const gen = agent.newTask({ kind: 'test' });
         agent.testHold = true;
         const slot = hold(sim, 'cobblestone');
-        const METHODS = ['use', 'interact', 'useOnBlock'];
+        giveItem('dirt', 32);
+        const slotB = findSlotOf(sim, 'dirt');
+        const METHODS = ['use', 'interact', 'useOnBlock', 'alternate'];
         const GAPS = [2, 3, 4, 6, 8, 10];
         const table = [];
         let best = null;
@@ -1825,11 +1858,12 @@ async function runOne(agent, player, name, arg, human = false) {
               let ok = false;
               try {
                 if (method === 'use') ok = sim.useItemInSlotOnBlock(slot, nb, Direction.Up);
+                else if (method === 'alternate') ok = sim.useItemInSlotOnBlock(i % 2 ? slotB : slot, nb, Direction.Up);   // two different items in turn
                 else if (method === 'interact') ok = /** @type {any} */ (sim).interactWithBlock(nb, Direction.Up);
                 else ok = /** @type {any} */ (sim).useItemOnBlock(packOf(sim)?.getItem(slot), nb, Direction.Up);
               } catch { /* */ }
               await system.waitTicks(1);
-              if (S.blockAt(cell) === 'cobblestone') put++;
+              if (S.blockAt(cell) === 'cobblestone' || S.blockAt(cell) === 'dirt') put++;
               await system.waitTicks(Math.max(0, gap - 1));
               void ok;
             }

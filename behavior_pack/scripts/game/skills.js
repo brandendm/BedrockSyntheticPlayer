@@ -4629,8 +4629,11 @@ export class Skills {
       faceDir = pick; edgeV = pick;
       S = { x: fx, y: fy - 4, z: fz }; N = { x: fx + pick[0], y: fy - 4, z: fz + pick[1] };
     } else {
-      const [dx, dz] = /** @type {number[]} */ (ctx.d);
-      if (fx !== ctx.pillar.x + dx || fz !== ctx.pillar.z + dz) return false;     // not on the ledge we expect
+      // Wherever it landed, if that is a ledge beside the pillar (a landing half a block off the middle is a different cell than the one
+      // aimed for, and the u181 run gave up there and hopped the rest of the way for 4 hp).
+      const dx = fx - ctx.pillar.x, dz = fz - ctx.pillar.z;
+      if (Math.abs(dx) + Math.abs(dz) !== 1) { this.log(`staged descent: standing at ${fx} ${fz}, not beside the pillar at ${ctx.pillar.x} ${ctx.pillar.z}`); return false; }
+      ctx.d = [dx, dz];
       faceDir = [-dz, dx];                                                       // round to the next side
       edgeV = [faceDir[0] - dx, faceDir[1] - dz];                                // from this ledge toward the new one (a diagonal)
       S = { x: ctx.pillar.x, y: fy - 4, z: ctx.pillar.z };
