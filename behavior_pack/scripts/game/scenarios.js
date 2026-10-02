@@ -97,6 +97,14 @@ const HUMAN_HELP = {
 };
 HUMAN_HELP.bow = { kit: [['bow', 1], ['arrow', 16]], text: 'A target (armor stand) stands 12 blocks east of you. Hit it with an arrow (hold right-click to draw, release to shoot).' };
 const humanHelp = (name) => HUMAN_HELP[name] ?? null;
+/** What you are handed in every test you do: tools, blocks and food; the test's own extras on top. `climb` has no tools, like the bot's run. */
+const STD_KIT = [['stone_pickaxe', 1], ['stone_axe', 1], ['stone_shovel', 1], ['stone_sword', 1], ['cobblestone', 32], ['dirt', 16], ['bread', 8]];
+/** @returns {Array<[string, number]>} */
+const kitFor = (name) => {
+  const extra = humanHelp(name)?.kit ?? [];
+  const base = name === 'climb' ? [] : STD_KIT.filter(([id]) => !extra.some(([e]) => e === id));
+  return /** @type {Array<[string, number]>} */ ([...base, ...extra]);
+};
 
 /**
  * !bot test <name> [arg]      one test
@@ -285,7 +293,7 @@ async function runOne(agent, player, name, arg, human = false) {
   const humanTry = async (done, maxS, mark = null) => {
     if (mark) cmd(`setblock ${Math.floor(mark.x)} ${Math.ceil(mark.y) - 1} ${Math.floor(mark.z)} gold_block`);
     const h = humanHelp(name);
-    agent.say(`Your turn (${maxS} s, \`!bot test skip\` or the dashboard Skip button to give up): ${h ? h.text : 'do what the test describes.'}${h?.kit.length ? ` You were given: ${h.kit.map(([id, n]) => `${n} ${id}`).join(', ')}.` : ''}`);
+    agent.say(`Your turn (${maxS} s, \`!bot test skip\` or the dashboard Skip button to give up): ${h ? h.text : 'do what the test describes.'}${kitFor(name).length ? ` You were given: ${kitFor(name).map(([id, n]) => `${n} ${id}`).join(', ')}.` : ' You were given nothing (like the bot).'}`);
     if (agent.testProgress) { agent.testProgress.deadline = Date.now() + maxS * 1000; agent.testProgress.limitS = maxS; }
     for (let i = 0; i < maxS * 4 && !agent.testSkipped; i++) { if (done()) return true; await system.waitTicks(5); }
     return false;
@@ -295,7 +303,7 @@ async function runOne(agent, player, name, arg, human = false) {
   const handed = [];
   if (human) {
     const pk = packOf(player);
-    for (const [id, n] of humanHelp(name)?.kit ?? []) { try { pk?.addItem(new ItemStack(`minecraft:${id}`, n)); handed.push([id, n]); } catch { /* */ } }
+    for (const [id, n] of kitFor(name)) { try { pk?.addItem(new ItemStack(`minecraft:${id}`, n)); handed.push([id, n]); } catch { /* */ } }
   }
   const tp = (px, py, pz) => who.teleport({ x: px + 0.5, y: py, z: pz + 0.5 });
   let pass = false, detail = '';
@@ -310,11 +318,22 @@ async function runOne(agent, player, name, arg, human = false) {
     if (!sky && !NATURAL.has(name)) for (const rep of ['air', 'water', 'flowing_water', 'lava', 'flowing_lava']) { cmd(`fill ${x - 8} ${gy - 1} ${z - 8} ${x + 14} ${gy} ${z + 8} grass_block replace ${rep}`); }
     // Spectators' seat: a small glass platform behind the site, you looking at where the bot starts.
     if (!human && player && name !== 'duel') {
-      // The seat: a 3x3 stone-brick platform raised over the slab's west edge with a clear view of the site; slow falling in case of a slip.
-      const sx = sky ? x - ext.w + 2 : x - 8;
-      cmd(`fill ${sx} ${gy + 3} ${z - 1} ${sx + 2} ${gy + 3} ${z + 1} stone_bricks`);
-      try { player.teleport({ x: sx + 1.5, y: gy + 4, z: z + 0.5 }, { facingLocation: { x, y: gy + 2, z: z + 0.5 } }); } catch { /* */ }
-      try { player.addEffect('slow_falling', 2400, { showParticles: false }); } catch { /* */ }
+      if (sky) {
+        // The seat: a 3x3 stone-brick platform raised over the slab's west edge with a clear view of the site; slow falling in case of a slip.
+        const sx = x - ext.w + 2;
+        cmd(`fill ${sx} ${gy + 3} ${z - 1} ${sx + 2} ${gy + 3} ${z + 1} stone_bricks`);
+        try { player.teleport({ x: sx + 1.5, y: gy + 4, z: z + 0.5 }, { facingLocation: { x, y: gy + 2, z: z + 0.5 } }); } catch { /* */ }
+        try { player.addEffect('slow_falling', 2400, { showParticles: false }); } catch { /* */ }
+      } else {
+        // On the real ground the bot goes where the test takes it (trees, caves, a long walk): a floating camera in spectator mode,
+        // through the rock if need be, that keeps within 12 blocks of it. The game mode is put back afterwards.
+        const gm0 = /** @type {any} */ (player).getGameMode?.() ?? 'survival';
+        try { /** @type {any} */ (player).setGameMode('spectator'); } catch { /* */ }
+        const cam = () => { try { const b = sim.location, p = player.location; if (Math.hypot(b.x - p.x, b.y - p.y, b.z - p.z) > 12) player.teleport({ x: b.x - 4, y: b.y + 4, z: b.z - 4 }, { facingLocation: { x: b.x, y: b.y + 1, z: b.z } }); } catch { /* */ } };
+        try { player.teleport({ x: x - 7, y: gy + 6, z: z - 4 }, { facingLocation: { x, y: gy + 1, z } }); } catch { /* */ }
+        const camRun = system.runInterval(cam, 30);
+        cleanup.push(() => { try { system.clearRun(camRun); } catch { /* */ } try { /** @type {any} */ (player).setGameMode(gm0); } catch { /* */ } });
+      }
     }
     switch (name) {
       case 'roof': {
