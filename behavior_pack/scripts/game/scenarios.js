@@ -1211,17 +1211,48 @@ async function runOne(agent, player, name, arg, human = false) {
         const api = new Set();
         for (let o = Object.getPrototypeOf(sim); o && o !== Object.prototype; o = Object.getPrototypeOf(o)) for (const k of Object.getOwnPropertyNames(o)) if (/use|release|charge|draw|shoot|startUsing/i.test(k) && !/^(get|is|set)/.test(k)) api.add(k);
         const notes = [];
-        const aim = { x: tpos.x, y: gy + 1.9, z: tpos.z };
-        for (let i = 0; i < 6 && hits < 1 && !agent.testSkipped; i++) {
+        const center = { x: tpos.x, y: gy + 2.0, z: tpos.z };   // the stand's middle (it is 1.975 tall, standing on gy+1)
+        const aim = { x: tpos.x, y: gy + 2.0, z: tpos.z };
+        // Every arrow in the air is followed: where it came closest to the target tells how far off the aim was, and the next
+        // shot is corrected by that (a bow's arrow also drops over 12 blocks, so a straight line always falls short).
+        /** @type {Map<string, { d: number, p: any }>} */
+        const flying = new Map();
+        const ignore = new Set();                                 // arrows from earlier shots, stuck in the ground or the stand
+        const watch = system.runInterval(() => {
+          try {
+            for (const a of dim.getEntities({ type: 'minecraft:arrow', location: center, maxDistance: 40 })) {
+              if (ignore.has(a.id)) continue;
+              const l = a.location, d = Math.hypot(l.x - center.x, l.y - center.y, l.z - center.z), cur = flying.get(a.id);
+              if (!cur || d < cur.d) flying.set(a.id, { d, p: { x: l.x, y: l.y, z: l.z } });
+            }
+          } catch { /* */ }
+        }, 1);
+        cleanup.push(() => { try { system.clearRun(watch); } catch { /* */ } });
+        const hurt = wa.entityHurt.subscribe((ev) => { try { if (ev.hurtEntity.typeId === 'minecraft:armor_stand' && ev.damageSource.cause === 'projectile') hits++; } catch { /* */ } });
+        cleanup.push(() => { try { wa.entityHurt.unsubscribe(hurt); } catch { /* */ } });
+        const misses = [];
+        for (let i = 0; i < 8 && hits < 1 && !agent.testSkipped; i++) {
+          flying.clear();
+          try { for (const a of dim.getEntities({ type: 'minecraft:arrow', location: center, maxDistance: 60 })) ignore.add(a.id); } catch { /* */ }
           await agent.motor.lookAt(aim, 6, 30).catch(() => {});
           const item = packOf(sim)?.getItem(sim.selectedSlotIndex);
           try { notes.push(`useItem ${/** @type {any} */ (sim).useItem(item)}`); } catch (e) { notes.push(`useItem threw ${e}`); }
-          await system.waitTicks(25);
+          await system.waitTicks(25);                       // a full draw is 20 ticks
           for (const m of ['stopUsingItem', 'releaseUsingItem', 'completeUsingItem', 'releaseItem']) if (typeof (/** @type {any} */ (sim))[m] === 'function') { try { (/** @type {any} */ (sim))[m](); notes.push(m); } catch { /* */ } }
-          await system.waitTicks(15);
+          await system.waitTicks(18);
+          const best = [...flying.values()].sort((a, b) => a.d - b.d)[0];
+          if (best) {
+            if (best.d < 0.9) hits++;                        // through the stand
+            const ey = best.p.y - center.y, ez = best.p.z - center.z;
+            misses.push(`shot ${i + 1}: closest ${best.d.toFixed(1)} (${ey >= 0 ? 'high' : 'low'} ${Math.abs(ey).toFixed(1)}, ${ez >= 0 ? 'right' : 'left'} ${Math.abs(ez).toFixed(1)})`);
+            aim.y = Math.max(gy + 0.6, Math.min(gy + 6, aim.y - ey * 0.9));
+            aim.z = Math.max(z - 3, Math.min(z + 4, aim.z - ez * 0.9));
+          } else misses.push(`shot ${i + 1}: no arrow seen`);
         }
         pass = hits >= 1;
-        detail = `${shots} arrows loosed, ${hits} hit the target in ${secs()}s${pass ? '' : `; tried ${[...new Set(notes)].join(', ')}; the API offers ${[...api].join(', ') || 'nothing for holding an item'}`}`;
+        agent.memory.data.bowCal = { aimY: aim.y - gy, aimZ: aim.z - tpos.z, shots, hits, at: Date.now(), build: CONFIG.build };
+        agent.memory.save();
+        detail = `${shots} arrows loosed, ${hits} hit the target in ${secs()}s (hold: useItem then ${[...new Set(notes)].filter((n) => !/^useItem/.test(n)).join('/') || 'nothing'}); ${misses.join('; ')}${pass ? '' : `; the API offers ${[...api].join(', ') || 'nothing for holding an item'}`}`;
         break;
       }
       case 'shield':
