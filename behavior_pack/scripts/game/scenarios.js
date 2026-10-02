@@ -1315,7 +1315,8 @@ async function runOne(agent, player, name, arg) {
       }
       case 'portal': {
         // A clear, flat patch; the frame stands in the x/y plane at z, 4 wide and 5 tall (12 obsidian: the
-        // two bottom corners give the columns something to stand on, the top corners aren't needed).
+        // two bottom corners give the columns something to stand on, the top corners aren't needed), its bottom row set
+        // into the ground so the way in is level.
         cmd(`fill ${x - 6} ${gy} ${z - 4} ${x + 9} ${gy} ${z + 6} grass_block`);
         cmd(`fill ${x - 6} ${gy + 1} ${z - 4} ${x + 9} ${gy + 8} ${z + 6} air`);
         giveItem('obsidian', 12); giveItem('flint_and_steel', 1); giveItem('cobblestone', 6);
@@ -1331,43 +1332,47 @@ async function runOne(agent, player, name, arg) {
           if (cmd(`setblock ${cell.x} ${cell.y} ${cell.z} ${item}`)) { if (item === 'obsidian') byCmd++; return true; }
           return false;
         };
-        // 1. The bottom row, from the front, against the ground.
-        for (const fx of [x, x + 1, x + 2, x + 3]) await put({ x: fx, y: gy + 1, z }, 'obsidian');
-        // 2. The way a player reaches the top: a little cobblestone stair in front (three blocks), up it
-        //    to eye height with the upper frame, then it's taken down again.
-        const steps = [{ x: x + 1, y: gy + 1, z: z + 3 }, { x: x + 1, y: gy + 1, z: z + 2 }, { x: x + 1, y: gy + 2, z: z + 2 }];
-        for (const cell of steps) await put(cell, 'cobblestone');
-        await S.goNear(gen, { x: x + 1.5, y: gy + 3, z: z + 2.5 }, 0.7, 3);
+        // 1. The bottom row sits in the ground (the grass dug out first, as a player does): the way in is then a walk, not a step up.
+        const bottom = [x, x + 1, x + 2, x + 3].map((fx) => ({ x: fx, y: gy, z }));
+        for (const cell of bottom) { try { await S.mine(gen, cell); } catch (e) { if (e?.constructor?.name === 'Aborted') throw e; } await put(cell, 'obsidian'); }
+        // 2. The way a player reaches the top: one block of cobblestone in front to stand on (eye height for the upper frame),
+        //    then it's taken down again.
+        const step = { x: x + 1, y: gy + 1, z: z + 2 };
+        await put(step, 'cobblestone');
+        await S.goNear(gen, { x: x + 1.5, y: gy + 2, z: z + 2.5 }, 0.7, 3);
         // 3. The two columns, low to high, then the top row against their sides.
-        for (const fy of [gy + 2, gy + 3, gy + 4]) { await put({ x, y: fy, z }, 'obsidian'); await put({ x: x + 3, y: fy, z }, 'obsidian'); }
-        for (const fx of [x + 1, x + 2]) await put({ x: fx, y: gy + 5, z }, 'obsidian');
-        for (const cell of [steps[2], steps[1], steps[0]]) { try { await S.mine(gen, cell); } catch (e) { if (e?.constructor?.name === 'Aborted') throw e; } }
-        const frame = [...[x, x + 1, x + 2, x + 3].map((fx) => ({ x: fx, y: gy + 1, z })), ...[gy + 2, gy + 3, gy + 4].flatMap((fy) => [{ x, y: fy, z }, { x: x + 3, y: fy, z }]), ...[x + 1, x + 2].map((fx) => ({ x: fx, y: gy + 5, z }))];
+        for (const fy of [gy + 1, gy + 2, gy + 3]) { await put({ x, y: fy, z }, 'obsidian'); await put({ x: x + 3, y: fy, z }, 'obsidian'); }
+        for (const fx of [x + 1, x + 2]) await put({ x: fx, y: gy + 4, z }, 'obsidian');
+        try { await S.mine(gen, step); } catch (e) { if (e?.constructor?.name === 'Aborted') throw e; }
+        const frame = [...bottom, ...[gy + 1, gy + 2, gy + 3].flatMap((fy) => [{ x, y: fy, z }, { x: x + 3, y: fy, z }]), ...[x + 1, x + 2].map((fx) => ({ x: fx, y: gy + 4, z }))];
         const built = frame.filter((cell) => S.blockAt(cell) === 'obsidian').length;
         if (built < frame.length) { detail = `frame incomplete (${built}/${frame.length} obsidian; the bot placed ${byBot})`; break; }
         // 4. Light it: flint and steel on the top of a bottom block, from in front, one use every 10 ticks.
         await S.goNear(gen, { x: x + 1.5, y: gy + 1, z: z + 3.5 }, 0.8, 3);
-        const inner = [{ x: x + 1, y: gy + 2, z }, { x: x + 2, y: gy + 2, z }];
+        const inner = [{ x: x + 1, y: gy + 1, z }, { x: x + 2, y: gy + 1, z }];
         const slot = hold(sim, 'flint_and_steel');
         let lit = false, tries = 0, used = '';
         for (; tries < 5 && !lit; tries++) {
-          await agent.motor.lookAt({ x: x + 1.5, y: gy + 2.2, z: z + 0.5 }, 8, 30);
+          await agent.motor.lookAt({ x: x + 1.5, y: gy + 1.2, z: z + 0.5 }, 8, 30);
           await S.useGap(gen);
-          try { used = String(sim.useItemInSlotOnBlock(slot, { x: x + 1, y: gy + 1, z }, Direction.Up, { x: 0.5, y: 1, z: 0.5 })); } catch (e) { used = `threw ${e}`; }
+          try { used = String(sim.useItemInSlotOnBlock(slot, { x: x + 1, y: gy, z }, Direction.Up, { x: 0.5, y: 1, z: 0.5 })); } catch (e) { used = `threw ${e}`; }
           S.lastUseTick = system.currentTick;
           await system.waitTicks(12);
           lit = inner.some((cell) => /(^|_)portal$/.test(S.blockAt(cell) ?? '')); // (the block is `portal`)
         }
         if (!lit) { detail = `built the frame (${byBot} placed by the bot, ${byCmd} by command) but it didn't light after ${tries} tries (use returned ${used}, slot ${slot}, inner block ${S.blockAt(inner[0])}, held ${sim.getComponent('minecraft:inventory').container.getItem(sim.selectedSlotIndex)?.typeId ?? 'nothing'})`; break; }
-        // 5. Walk in (up onto the bottom obsidian: a one-block step, so jump when held up) and wait for the game to move us.
-        const there = { x: x + 1.5, y: gy + 2, z: z + 0.5 };
-        let dimNow = sim.dimension.id, closest = Infinity, jumps = 0;
+        // 5. Walk in (the frame's bottom is level with the ground: no step) and wait for the game to move us (about 4 s inside).
+        const there = { x: x + 1.5, y: gy + 1, z: z + 0.5 };
+        let dimNow = sim.dimension.id, closest = Infinity, jumps = 0, lastDd = Infinity, stalled = 0;
         for (let i = 0; i < 20 * 20 && dimNow === dim.id; i++) {
           if (i % 10 === 0) {
             const dd = Math.hypot(sim.location.x - there.x, sim.location.z - there.z);
             closest = Math.min(closest, dd);
-            try { sim.navigateToLocation(there, 0.6); } catch { try { sim.moveToLocation(there, { speed: 0.6 }); } catch {} }
-            if (dd > 0.6 && dd < 2.6 && sim.location.y < gy + 1.9) { try { sim.jump(); jumps++; } catch {} } // (the step up onto the frame's bottom edge)
+            try { sim.moveToLocation(there, { speed: 0.6 }); } catch { /* */ }
+            // Held up short of it (something low in the way): a hop.
+            stalled = dd > 0.5 && lastDd - dd < 0.05 ? stalled + 1 : 0;
+            if (stalled >= 2) { try { sim.jump(); jumps++; } catch { /* */ } stalled = 0; }
+            lastDd = dd;
           }
           await system.waitTicks(1);
           dimNow = sim.dimension.id;

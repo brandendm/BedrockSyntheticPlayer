@@ -3040,6 +3040,10 @@ export class Agent {
           break;
         }
         case 'memory': this.sayWhere(); break;
+        case 'mount': this.startMount(); break;
+        case 'dismount': this.startDismount(); break;
+        case 'tow': this.startTow(Math.floor(a.x), Math.floor(a.z)); break;
+        case 'chain': { const it = chainItem(a.item); if (it) { this.addChain(it, Math.max(1, Math.min(256, Math.floor(a.n ?? 1)))); this.say(`Chain: ${chainOutline(it).join(' > ')}.`); } else this.say(`I don't know how to get ${a.item} yet.`); break; }
         case 'dig': {
           const gen = this.newTask({ kind: 'dig' });
           const have = () => Object.entries(invCounts(this.sim)).filter(([id]) => /^(cobblestone|cobbled_deepslate|blackstone)$/.test(id)).reduce((n, [, c]) => n + c, 0);

@@ -42,3 +42,17 @@ test('speed against separation, and sessions folded together', () => {
   assert.equal(m.pullAt, 5);
   assert.equal(m.sessions, 2);
 });
+
+test('standing still with the boat close does not teach a standstill', () => {
+  // A player who mostly stands about (boat near) and sometimes walks off: the slow buckets must not read as "stop".
+  const S = [];
+  let px = 0;
+  for (let i = 0; i < 120; i++) {
+    const moving = i % 30 >= 20;               // walks for the last third of each half minute
+    if (moving) px += 1;
+    S.push({ t: i * 5, px, pz: 0, bx: px - 1.5, bz: 0, by: 64, rise: 0, leashed: true, ride: false });
+  }
+  const r = analyseTow(S);
+  assert.ok(r.curve.every((row) => row.frac > 0.5), JSON.stringify(r.curve));
+  assert.ok(speedFrac(r.curve, 1) >= 0.35);
+});

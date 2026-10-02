@@ -110,7 +110,7 @@ export class LeadTow {
       // Speed follows tension: full below `lo`, easing to a standstill by `hi`.
       const speedCap = opts.speed ?? 1;
       let k = curve && L?.curve?.length >= 4 ? speedFrac(curve, d) : d <= lo ? 1 : Math.max(0, (hi - d) / (hi - lo));
-      if (d >= hi) k = 0; // (never past where the player held up)
+      if (d > hi - 1.5) k = Math.min(k, Math.max(0, (hi - d) / 1.5)); // (easing to a stop at where the player held up, never past it)
       // A step up ahead: close the gap first so the climb doesn't drag the boat into the step.
       if (wp.y - pos.y > 0.6 && d > 2.5 && flat(pos, wp) < 2.5) k = 0;
       if (k < 0.12) {

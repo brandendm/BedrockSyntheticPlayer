@@ -26,7 +26,8 @@ export function analyseTow(samples) {
   // Speed against separation.
   const curve = [];
   for (let e = 0; e + 1 < EDGES.length; e++) {
-    const v = pv.filter((_, i) => sep[i] >= EDGES[e] && sep[i] < EDGES[e + 1]);
+    // (Moving samples only: standing still while the boat is close says nothing about how fast to go; the waiting is `holdAt`.)
+    const v = pv.filter((x, i) => x > 0.5 && sep[i] >= EDGES[e] && sep[i] < EDGES[e + 1]);
     if (v.length >= 3) curve.push({ from: EDGES[e], to: EDGES[e + 1], frac: Math.min(1.2, median(v) / top) });
   }
   // Where the boat starts to follow: separation at the first sample it moves after sitting still for a second.
@@ -77,7 +78,7 @@ export function analyseTow(samples) {
 export function speedFrac(curve, d) {
   if (!curve?.length) return 1;
   const row = curve.find((r) => d >= r.from && d < r.to) ?? curve[curve.length - 1];
-  return Math.max(0, Math.min(1, row.frac));
+  return Math.max(0.35, Math.min(1, row.frac)); // (never a standstill from the curve: easing to a stop is the hold distance's job)
 }
 
 /** Fold a new session into what's learned already, weighted by how long each watched. */
