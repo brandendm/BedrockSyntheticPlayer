@@ -28,6 +28,7 @@ import { biomeName } from '../core/biomes.js';
 import { chainStep, chainItem, chainOutline, held } from '../core/chain.js';
 import { Horses } from './horse.js';
 import { LeadTow } from './leadtow.js';
+import { Boating } from './boating.js';
 import { TowLearn } from './towlearn.js';
 import { Portals } from './portal.js';
 import { FULL_SLOTS } from '../core/storage.js';
@@ -115,6 +116,7 @@ export class Agent {
     this.villages = new Villages(this);
     this.horses = new Horses(this);
     this.tow = new LeadTow(this);
+    this.boating = new Boating(this);
     this.towlearn = new TowLearn(this);
     this.portal = new Portals(this);
     /** @type {Set<string>} Far places already looked at for a village (game/villages.js scout). */
@@ -956,6 +958,7 @@ export class Agent {
    * land. Paths that deliberately cross water keep the motor busy, so they aren't interrupted.
    */
   checkWater(t, inWater) {
+    if (this.boatUnder?.(this.sim)) { this.waterIdle = 0; return false; } // sitting in a boat on the water: nothing to swim out of
     // Running out of air, whatever we're doing (climbing a flooded shaft, a path through water):
     // drop it and get our head into air now.
     if (this.task?.kind !== 'swim_out' && this.body.headUnderwater() && this.body.airRatio() < 0.5) {

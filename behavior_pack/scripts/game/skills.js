@@ -3191,6 +3191,7 @@ export class Skills {
 
   /** Is this an item in the running game (by id without the prefix)? */
   static itemExists(id) {
+    if (id === 'boat') return ['oak_boat', 'boat'].some((b) => { try { return !!ItemTypes.get(`minecraft:${b}`); } catch { return false; } });
     try { return !!ItemTypes.get(`minecraft:${id}`); } catch { return true; }
   }
 
@@ -5235,11 +5236,14 @@ export class Skills {
 
   /** Long-distance travel: up to `legs` path segments toward a far target (partial paths ok). */
   async travelToward(gen, target, legs = 4) {
+    const B = this.a.boating;
     for (let leg = 0; leg < legs; leg++) {
       this.check(gen);
       const from = this.sim.location;
       if (dist3D(from, target) < 12) return true;
-      const res = await this.a.plan(from, target, 8, 8000, null, { wetPartial: true });
+      // (A partial leg no longer ends out in the water: it ended mid-lake, where the survival reflex pulled the bot out and the whole walk started again,
+      // 11-21 s each time in the u197 report. A lake in the way is crossed by boat, below, or swum when there is no boat to be had.)
+      const res = await this.a.plan(from, target, 8, 8000, null, {});
       this.check(gen);
       // A partial leg ends where the search got closest, which can be inside a cave: end it at the
       // last point out in the open instead (or we'd escape back out and walk straight in again).
@@ -5253,6 +5257,33 @@ export class Skills {
         };
         for (let i = 0; i < path.length; i++) if (open(path[i])) last = i;
         path = path.slice(0, last + 1);
+      }
+      // Water ahead on the way: 8 or more wet cells in a row. By boat, from the last dry cell to the first one after.
+      let wet = null;
+      { let run = 0;
+        for (let i = 0; i < path.length; i++) {
+          if (this.isLiquid(path[i])) { run++; if (run >= 8 && !wet) wet = { a: i - run + 1, b: -1 }; }
+          else { if (wet && wet.b < 0) wet.b = i; run = 0; }
+        }
+        if (wet && wet.b < 0) wet.b = Math.min(path.length - 1, wet.a + 60); }
+      if (wet && wet.a >= 1 && path[wet.b] && !this.isLiquid(path[wet.b])) {
+        const shore = path[wet.a - 1], far = path[wet.b];
+        if (wet.a - 1 >= 1) await this.a.motor.followPath(smoothPath(this.a.classifier(), path.slice(0, wet.a)));
+        this.check(gen);
+        const r = await B.cross(gen, { x: shore.x + 0.5, y: shore.y, z: shore.z + 0.5 }, { x: far.x + 0.5, y: far.y, z: far.z + 0.5 });
+        this.log(`boat: ${r.ok ? 'crossed' : `no crossing (${r.why})`} (${r.secs} s)`);
+        if (r.ok) continue;
+        // No boat to be had: on through the water as before.
+        path = path.slice(Math.max(0, wet.a - 1));
+      } else if (path.length < 2 || dist3D(from, path[path.length - 1]) < 6) {
+        // The walking search stops at the shore with the target beyond (a lake or a sea between): the straight line to it, water then land.
+        const pr = B.probe(from, target);
+        if (pr) {
+          this.log(`water ahead: ${pr.width} wide, the far shore at ${Math.round(pr.far.x)} ${Math.round(pr.far.z)}`);
+          const r = await B.cross(gen, pr.shore, pr.far);
+          this.log(`boat: ${r.ok ? 'crossed' : `no crossing (${r.why})`} (${r.secs} s)`);
+          if (r.ok) continue;
+        }
       }
       if (path.length < 2) return false;
       await this.a.motor.followPath(smoothPath(this.a.classifier(), path));

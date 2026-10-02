@@ -55,6 +55,7 @@ export const RECIPES = {
   bed: { out: 1, table: true, inputs: [{ match: (id) => isWool(id), n: 3, sameId: true }, { match: isPlanks, n: 3 }] },
   wooden_door: { out: 3, table: true, inputs: [{ match: isPlanks, n: 6 }] },
   chest: { out: 1, table: true, inputs: [{ match: isPlanks, n: 8 }] },
+  boat: { out: 1, table: true, inputs: [{ match: isPlanks, n: 5 }] }, // (oak_boat, spruce_boat... by the planks: applyCraft)
   oak_sign: { out: 3, table: true, inputs: [{ match: isPlanks, n: 6 }, { match: 'stick', n: 1 }] }, // (for the chest room's labels)
   // Farming.
   wooden_hoe: { out: 1, table: true, inputs: [{ match: isPlanks, n: 2 }, { match: 'stick', n: 2 }] },
@@ -106,6 +107,7 @@ export function applyCraft(inv, name, plankId = 'oak_planks') {
   }
   let outId = name;
   if (name === 'planks') outId = planksForLog(Object.keys(used)[0]) || plankId;
+  if (name === 'boat') { const w = String(Object.keys(used)[0] ?? 'oak_planks').replace(/_planks$/, ''); outId = w === 'bamboo' ? 'bamboo_raft' : `${w}_boat`; }
   next[outId] = (next[outId] ?? 0) + r.out;
   return { inv: next, used, made: { [outId]: r.out } };
 }

@@ -69,10 +69,10 @@ import { compare } from '../core/testrun.js';
 
 /** How far the slab reaches round the site (west, east, to each side) for a test; the backed-up box is the same (a structure is 64 across at most). */
 function extFor(name) {
-  return name === 'farm' || name === 'farmrace' ? { w: 22, e: 36, r: 24 } : name === 'horserace' || name === 'elytra' ? { w: 8, e: 54, r: 10 } : name === 'bow' ? { w: 14, e: 34, r: 14 }
+  return name === 'farm' || name === 'farmrace' ? { w: 22, e: 36, r: 24 } : name === 'horserace' || name === 'elytra' || name === 'boatcross' ? { w: 8, e: 54, r: 10 } : name === 'bow' ? { w: 14, e: 34, r: 14 }
     : name === 'leadboat' || name === 'villagerhaul' ? { w: 12, e: 44, r: 12 } : { w: 14, e: 18, r: 12 };
 }
-const NAMES = ['roof', 'tower', 'hole', 'pit', 'trap', 'climb', 'ledge', 'ladder', 'husk', 'creeper', 'sheep', 'pen', 'smelt', 'smeltlogs', 'shelter', 'house', 'resume', 'ghostlog', 'quarry', 'dark', 'replant', 'litter', 'trader', 'iron', 'farm', 'equip', 'water', 'bucketfarm', 'treetop', 'corner', 'leap', 'bridge', 'fall', 'vines', 'stairgap', 'loot', 'shield', 'skel', 'rest', 'nights', 'calibrate', 'portal', 'horse', 'leadboat', 'leadsling', 'bow', 'duel', 'horserace', 'pillarrace', 'woodrace', 'lavacross', 'obsidian', 'mineore', 'enderman', 'blaze', 'ghast', 'witherskeleton', 'placerate', 'farmrace', 'creepers', 'ravine', 'elytra', 'villagerhaul', 'forest', 'village', 'vineclimb'];
+const NAMES = ['roof', 'tower', 'hole', 'pit', 'trap', 'climb', 'ledge', 'ladder', 'husk', 'creeper', 'sheep', 'pen', 'smelt', 'smeltlogs', 'shelter', 'house', 'resume', 'ghostlog', 'quarry', 'dark', 'replant', 'litter', 'trader', 'iron', 'farm', 'equip', 'water', 'bucketfarm', 'treetop', 'corner', 'leap', 'bridge', 'fall', 'vines', 'stairgap', 'loot', 'shield', 'skel', 'rest', 'nights', 'calibrate', 'portal', 'horse', 'leadboat', 'leadsling', 'bow', 'duel', 'horserace', 'pillarrace', 'woodrace', 'lavacross', 'obsidian', 'mineore', 'enderman', 'blaze', 'ghast', 'witherskeleton', 'placerate', 'farmrace', 'creepers', 'ravine', 'elytra', 'villagerhaul', 'forest', 'village', 'vineclimb', 'boatcross'];
 let running = false;
 /** How many sky sites have been used this session (each test gets a new one, 120 blocks further). */
 let siteCounter = 0;
@@ -95,7 +95,7 @@ const WORLDT = new Set(['forest', 'village']);
 const NATURAL = new Set(['forest', 'village', 'water', 'bucketfarm', 'treetop', 'vines', 'ghostlog', 'nights', 'calibrate']);
 const COMBAT = new Set(['husk', 'creeper', 'skel', 'shield', 'dark', 'duel', 'enderman', 'blaze', 'ghast', 'witherskeleton', 'creepers']);
 // The ones a player can do too (`!bot test <name> me`): a goal the player can reach and the test can see.
-const HUMAN_OK = new Set(['tower', 'hole', 'pit', 'climb', 'ladder', 'corner', 'leap', 'bridge', 'ledge', 'bow', 'husk', 'sheep', 'pen', 'replant', 'litter', 'house', 'lavacross', 'obsidian', 'mineore', 'enderman', 'blaze', 'ghast', 'witherskeleton', 'creepers', 'ravine', 'leadboat', 'elytra', 'villagerhaul', 'forest', 'village', 'vineclimb']);
+const HUMAN_OK = new Set(['tower', 'hole', 'pit', 'climb', 'ladder', 'corner', 'leap', 'bridge', 'ledge', 'bow', 'husk', 'sheep', 'pen', 'replant', 'litter', 'house', 'lavacross', 'obsidian', 'mineore', 'enderman', 'blaze', 'ghast', 'witherskeleton', 'creepers', 'ravine', 'leadboat', 'elytra', 'villagerhaul', 'forest', 'village', 'vineclimb', 'boatcross']);
 // No single test runs longer than this (the task is ended and the test left to report what it has).
 const CAP_S = 240;
 
@@ -133,10 +133,11 @@ HUMAN_HELP.bow = { kit: [['bow', 1], ['arrow', 48]], text: 'Six targets (armor s
 HUMAN_HELP.leadboat = { kit: [['lead', 2]], text: 'Two villagers and a boat at the west end of a rough course: a pond, a step up and another with stones on it, a trench, a three-high hill, a gap 3 wide and 6 deep across the whole width, a plateau with a gold block and, just past it, a pit 3 wide and 3 deep. Put a lead on the boat (use the lead on it), get both villagers into it (walk it into them, it can take two), lead the boat over all of it and get both villagers into the pit (round it, so the boat is pulled in; if the boat is against a villager for 4 s and it does not board, it is put in for you). Your 32 cobblestone and 16 dirt are for the gap. The bot does the same, then rides a horse over the first part with the boat alone.' };
 HUMAN_HELP.villagerhaul = { kit: [['lead', 2]], text: 'Two villagers stand near the start, a boat at the west end. Put a lead on the boat, get both villagers into it (walk it into them, it can take two) and lead the boat over three hills and across a 3-wide gap (your cobblestone and dirt are for it) to the gold block: both villagers within 4 blocks of it. If the boat is against a villager for 4 s and it does not board, it is put in for you.' };
 HUMAN_HELP.elytra = { kit: [['firework_rocket', 6]], text: 'You stand on a 22-high tower with elytra on, 44 blocks west of a gold block, and have 6 firework rockets. Jump off, jump again in the air to open the wings, aim with the view (nose down for speed, up to slow), use a rocket for a boost, and land on the gold block (within 4 blocks, 5 hearts lost at most).' };
+HUMAN_HELP.boatcross = { kit: [['oak_boat', 1]], text: 'A lake 40 blocks across spans the whole width, with the gold block on the far shore. You have a boat: put it on the water (use it on the water), get in, row across (W to go, A and D to turn), get out and walk to the gold block. The bot does it too and takes the boat back into its pack afterwards; picking yours up again (hit it) is not needed.' };
 HUMAN_HELP.vineclimb = { kit: [], text: 'A shaft one block wide cut into a stone tower 12 high, open at the bottom on the south side, with vines in it on alternating sides (one hangs on the east wall, the next on the west, and so on up). Climb the vines to the top of the tower, the gold block.' };
 HUMAN_HELP.forest = { kit: [], text: 'You and the bot are dropped, one after the other, at the same spot in a forest (the trees are put back between turns). Get 15 logs as fast as you can; the stone axe is in your kit.' };
 HUMAN_HELP.village = { kit: [], text: 'You are dropped about 170 blocks from a village, with no idea which way. Find it as fast as you can: the clock stops when you are within 24 blocks of its middle. The bot starts from the same spot.' };
-const SHORT = { vineclimb: 'Climb the vines to the top', forest: 'Get 15 logs', village: 'Find the village', leadboat: 'Lead villagers into the pit', villagerhaul: 'Villagers in a boat to the gold block', elytra: 'Glide to the gold block', creepers: 'Beat 4 creepers, shield up', ravine: 'Get out of the ravine', lavacross: 'Cross the lava', obsidian: 'Make and mine obsidian', mineore: 'One of each ore', enderman: 'Kill the enderman', blaze: 'Kill the blaze', ghast: 'Kill the ghast', witherskeleton: 'Kill the wither skeleton', tower: 'Get down, no fall damage', hole: 'Get out, reach the gold block', pit: 'Get out, reach the gold block', climb: 'Get out of the pit', ladder: 'Reach the gold block', corner: 'Reach the gold block', leap: 'Cross the gap, gold block', bridge: 'Bridge to the gold block', ledge: 'Get near the table', bow: 'Hit the 6 targets', husk: 'Kill the husk', sheep: 'Collect 3 wool', pen: 'Collect 2 raw beef', replant: 'Cut tree, replant sapling', litter: 'Collect 4 leaf litter', house: 'Build a house, then test done' };
+const SHORT = { boatcross: 'Cross the lake', vineclimb: 'Climb the vines to the top', forest: 'Get 15 logs', village: 'Find the village', leadboat: 'Lead villagers into the pit', villagerhaul: 'Villagers in a boat to the gold block', elytra: 'Glide to the gold block', creepers: 'Beat 4 creepers, shield up', ravine: 'Get out of the ravine', lavacross: 'Cross the lava', obsidian: 'Make and mine obsidian', mineore: 'One of each ore', enderman: 'Kill the enderman', blaze: 'Kill the blaze', ghast: 'Kill the ghast', witherskeleton: 'Kill the wither skeleton', tower: 'Get down, no fall damage', hole: 'Get out, reach the gold block', pit: 'Get out, reach the gold block', climb: 'Get out of the pit', ladder: 'Reach the gold block', corner: 'Reach the gold block', leap: 'Cross the gap, gold block', bridge: 'Bridge to the gold block', ledge: 'Get near the table', bow: 'Hit the 6 targets', husk: 'Kill the husk', sheep: 'Collect 3 wool', pen: 'Collect 2 raw beef', replant: 'Cut tree, replant sapling', litter: 'Collect 4 leaf litter', house: 'Build a house, then test done' };
 const humanHelp = (name) => HUMAN_HELP[name] ?? null;
 /** What you are handed in every test you do: tools, blocks and food; the test's own extras on top. `climb` has no tools, like the bot's run. */
 const STD_KIT = [['stone_pickaxe', 1], ['stone_axe', 1], ['stone_shovel', 1], ['stone_sword', 1], ['cobblestone', 32], ['dirt', 16], ['bread', 8]];
@@ -2646,6 +2647,28 @@ async function runOne(agent, player, name, arg, human = false) {
         await Promise.race([job, system.waitTicks(20)]);
         pass = near(sim);
         detail = `${pass ? 'found it' : `did not find it (${Math.round(Math.hypot(sim.location.x - V.x, sim.location.z - V.z))} blocks off)`} in ${secs()}s (start ${d0} away; ${worldInfo.what})`;
+        break;
+      }
+      case 'boatcross': {
+        // A lake 40 blocks across and the whole width of the slab (nothing to walk round), a boat in the pack: to the gold block on the far shore.
+        const lx1 = x + 4, lx2 = x + 43, R = 9;
+        cmd(`fill ${lx1} ${gy - 3} ${z - R} ${lx2} ${gy} ${z + R} water`);
+        cmd(`fill ${x - 8} ${gy + 1} ${z - 10} ${x + 54} ${gy + 6} ${z + 10} air`);
+        cmd(`setblock ${x + 47} ${gy} ${z} gold_block`);
+        cleanup.push(() => { try { for (const e of dim.getEntities({ location: { x: x + 24, y: gy, z }, maxDistance: 40 })) if (/boat|raft/.test(e.typeId)) e.remove(); } catch { /* */ } });
+        const goal = { x: x + 47.5, y: gy + 1, z: z + 0.5 };
+        tp(x - 2, gy + 1, z);
+        await system.waitTicks(15);
+        const near = () => Math.hypot(who.location.x - goal.x, who.location.z - goal.z) <= 3.5 && who.location.y >= gy + 0.5;
+        if (human) { pass = await humanTry(near, 120, { x: goal.x, y: goal.y, z: goal.z }, 'Across the lake to the gold block'); detail = `you ${pass ? 'got across' : 'did not get across'} in ${secs()}s`; break; }
+        const gen = agent.newTask({ kind: 'test' });
+        const job = S.travelToward(gen, goal, 8).catch(() => false);
+        for (let i = 0; i < 120 * 4 && !near() && !agent.testSkipped; i++) await system.waitTicks(5);
+        agent.newTask(null); agent.motor.stop();
+        await Promise.race([job, system.waitTicks(20)]);
+        pass = near();
+        const bl = agent.boating.last;
+        detail = `${pass ? 'across' : `${Math.round(Math.hypot(sim.location.x - goal.x, sim.location.z - goal.z))} blocks short`} in ${secs()}s; boat: ${bl ? `${bl.ok ? 'crossed' : `stopped (${bl.why})`}, ${JSON.stringify(bl.how)}` : 'not used'}; the boat is ${agent.boating.have() ? 'in the pack' : 'not in the pack'}`;
         break;
       }
       case 'vineclimb': {
