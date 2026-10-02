@@ -22,7 +22,7 @@
 /** @type {Array<[string, number]>} */
 export const HOUSE_KIT = [
   ['cobblestone', 384], ['oak_planks', 384], ['oak_log', 128], ['dirt', 64], ['glass', 64], ['glass_pane', 32], ['stone_bricks', 64],
-  ['oak_stairs', 64], ['cobblestone_stairs', 64], ['oak_slab', 64], ['cobblestone_slab', 64],
+  ['oak_stairs', 64], ['stone_stairs', 64], ['oak_slab', 64], ['cobblestone_slab', 64],
   ['oak_door', 4], ['bed', 2], ['crafting_table', 2], ['furnace', 4], ['chest', 8], ['oak_sign', 12], ['torch', 64], ['ladder', 16], ['oak_fence', 32],
   ['stone_pickaxe', 1], ['stone_axe', 1], ['stone_shovel', 1], ['bread', 16],
 ];

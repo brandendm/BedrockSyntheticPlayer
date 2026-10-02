@@ -368,7 +368,7 @@ async function runOne(agent, player, name, arg, human = false) {
   const extraRuns = [];
   try {
     const tpg = agent.testProgress;
-    agent.say(`Test ${name}${tpg ? ` (${tpg.done + 1}/${tpg.total})` : ''}${human ? ' [you]' : ''}: starting (build ${CONFIG.build}).${!human && tpg?.human && !HUMAN_OK.has(name) ? ' (bot only: no turn for you in this one.)' : ''}`);
+    agent.say(`Test ${name}${tpg ? ` (${tpg.done + 1}/${tpg.total})` : ''}${human ? ' [you]' : ''}: starting (build ${CONFIG.build}).${!human && tpg?.human && !HUMAN_OK.has(name) && !PLAYER_ONLY.has(name) ? ' (bot only: no turn for you in this one.)' : ''}`);
     // A floor to stand on: the two layers at ground level over the site filled where there is air or liquid (the tests that
     // carve their own terrain, or need the water, build over it).
     if (!sky && !NATURAL.has(name)) for (const rep of ['air', 'water', 'flowing_water', 'lava', 'flowing_lava']) { cmd(`fill ${x - 8} ${gy - 1} ${z - 8} ${x + 14} ${gy} ${z + 8} grass_block replace ${rep}`); }
@@ -2113,7 +2113,7 @@ function report(agent, name, pass, detail, human = false) {
 /** @type {Array<[string, number]>} */
 const SUPPLY = [
   ['cobblestone', 1024], ['oak_planks', 1024], ['oak_log', 256], ['spruce_planks', 256], ['birch_planks', 256], ['stone_bricks', 256], ['stone', 256],
-  ['glass', 256], ['glass_pane', 128], ['dirt', 128], ['oak_stairs', 128], ['cobblestone_stairs', 128], ['oak_slab', 128], ['cobblestone_slab', 128],
+  ['glass', 256], ['glass_pane', 128], ['dirt', 128], ['oak_stairs', 128], ['stone_stairs', 128], ['oak_slab', 128], ['cobblestone_slab', 128],
   ['oak_door', 8], ['spruce_door', 4], ['bed', 4], ['crafting_table', 4], ['furnace', 6], ['chest', 12], ['oak_sign', 24], ['torch', 128],
   ['ladder', 32], ['oak_fence', 64], ['oak_fence_gate', 8], ['oak_trapdoor', 16], ['white_wool', 32], ['bread', 32],
 ];
@@ -2134,7 +2134,8 @@ async function supplyChests(dim, cmd, x, y, z) {
     let left = total;
     while (left > 0) {
       const n = Math.min(left, 64);
-      let rest = new ItemStack(`minecraft:${id}`, n);
+      let rest;
+      try { rest = new ItemStack(`minecraft:${id}`, n); } catch { left = 0; break; } // (an id this version does not have: skipped)
       for (const b of boxes) { if (!rest) break; try { rest = b.addItem(rest); } catch { break; } }
       if (rest) break; // every chest is full
       left -= n; stacks++;
