@@ -113,8 +113,8 @@ HUMAN_HELP.enderman = { kit: [...MOB_KIT, ['carved_pumpkin', 1]], text: 'An ende
 HUMAN_HELP.blaze = { kit: MOB_KIT, text: 'A blaze, 10 blocks east and 4 up: kill it (it hovers and shoots fireballs). You have a diamond sword, a bow and arrows and a shield; iron armour is put on.' };
 HUMAN_HELP.ghast = { kit: MOB_KIT, text: 'A ghast, 14 blocks east and 9 up: kill it (it shoots exploding fireballs; a hit on the fireball sends it back, or shoot the ghast). You have a bow and arrows, a diamond sword and a shield; iron armour is put on.' };
 HUMAN_HELP.witherskeleton = { kit: MOB_KIT, text: 'A wither skeleton, 10 blocks east: kill it (its hits wither you). You have a diamond sword, a bow and arrows and a shield; iron armour is put on.' };
-HUMAN_HELP.bow = { kit: [['bow', 1], ['arrow', 16]], text: 'A target (armor stand) stands 12 blocks east of you. Hit it with an arrow (hold right-click to draw, release to shoot).' };
-const SHORT = { lavacross: 'Cross the lava', obsidian: 'Make and mine obsidian', mineore: 'One of each ore', enderman: 'Kill the enderman', blaze: 'Kill the blaze', ghast: 'Kill the ghast', witherskeleton: 'Kill the wither skeleton', tower: 'Get down, no fall damage', hole: 'Get out, reach the gold block', pit: 'Get out, reach the gold block', climb: 'Get out of the pit', ladder: 'Reach the gold block', corner: 'Reach the gold block', leap: 'Cross the gap, gold block', bridge: 'Bridge to the gold block', ledge: 'Get near the table', bow: 'Hit the target', husk: 'Kill the husk', sheep: 'Collect 3 wool', pen: 'Collect 2 raw beef', replant: 'Cut tree, replant sapling', litter: 'Collect 4 leaf litter', house: 'Build a house, then test done' };
+HUMAN_HELP.bow = { kit: [['bow', 1], ['arrow', 48]], text: 'Six targets (armor stands) in different spots in front of you: near and far, left and right, one on a pillar and one on a step. Hit as many as you can, 5 of 6 passes (hold right-click to draw, release to shoot).' };
+const SHORT = { lavacross: 'Cross the lava', obsidian: 'Make and mine obsidian', mineore: 'One of each ore', enderman: 'Kill the enderman', blaze: 'Kill the blaze', ghast: 'Kill the ghast', witherskeleton: 'Kill the wither skeleton', tower: 'Get down, no fall damage', hole: 'Get out, reach the gold block', pit: 'Get out, reach the gold block', climb: 'Get out of the pit', ladder: 'Reach the gold block', corner: 'Reach the gold block', leap: 'Cross the gap, gold block', bridge: 'Bridge to the gold block', ledge: 'Get near the table', bow: 'Hit the 6 targets', husk: 'Kill the husk', sheep: 'Collect 3 wool', pen: 'Collect 2 raw beef', replant: 'Cut tree, replant sapling', litter: 'Collect 4 leaf litter', house: 'Build a house, then test done' };
 const humanHelp = (name) => HUMAN_HELP[name] ?? null;
 /** What you are handed in every test you do: tools, blocks and food; the test's own extras on top. `climb` has no tools, like the bot's run. */
 const STD_KIT = [['stone_pickaxe', 1], ['stone_axe', 1], ['stone_shovel', 1], ['stone_sword', 1], ['cobblestone', 32], ['dirt', 16], ['bread', 8]];
@@ -158,6 +158,9 @@ export async function runTests(agent, player, args) {
     try { agent.newTask(null); agent.motor.stop(); } catch { /* */ }
     return agent.say('Skipping this test.');
   }
+  // Retired: the bot passes these, about as fast as a player (the sweeps to u172); `include all` or `include <name>` brings them back.
+  const RETIRED = ['leap', 'corner', 'ladder', 'ledge', 'pit', 'hole', 'bridge', 'husk', 'woodrace', 'roof', 'trap', 'smelt', 'smeltlogs', 'shelter', 'equip', 'fall', 'vines', 'stairgap', 'treetop', 'ghostlog', 'creeper', 'calibrate', 'nights', 'leadsling', 'portal', 'horse'];
+  if (agent.memory.data.testOmit === undefined) { agent.memory.data.testOmit = [...RETIRED]; agent.memory.save(); }
   const omitList = () => (agent.memory.data.testOmit ??= []);
   if (args[0] === 'omit' || args[0] === 'include') {
     const names = String(args[1] ?? '').split(',').map((n) => n.trim()).filter(Boolean);
@@ -1398,9 +1401,27 @@ async function runOne(agent, player, name, arg, human = false) {
         try {
           if (name === 'horserace') {
             // ---- 1. Two adult horses, a saddle each. Both of us tame ours (ride it until it accepts), saddle it, and get on it.
-            objective = 'tame, saddle and mount your horse, then ride it to the gold line.';
-            cmd(`fill ${x + 46} ${gy} ${z - 6} ${x + 46} ${gy} ${z + 6} gold_block`);
-            cmd(`fill ${x} ${gy} ${z - 6} ${x} ${gy} ${z + 6} quartz_block`);
+            objective = 'tame, saddle and mount your horse, then ride it over the rough ground to the gold line and back.';
+            // A rough course, the same in both lanes: ground that steps up and down a block at a time, ditches, mounds; out to the gold line
+            // at x + 48 and back to the start. A divider of bars between the lanes.
+            let seed = 20260502;
+            const rnd = () => ((seed = (seed * 1664525 + 1013904223) >>> 0) / 4294967296);
+            let hgt = 0;
+            for (let cx = x + 5; cx < x + 46;) {
+              const len = 2 + Math.floor(rnd() * 4), r = rnd();
+              hgt = r < 0.3 ? Math.max(-1, hgt - 1) : r < 0.7 ? Math.min(2, hgt + 1) : hgt;
+              if (cx + len > x + 45) hgt = 0;
+              for (const [zl, zh] of [[z - 9, z - 1], [z + 1, z + 9]]) {
+                if (hgt > 0) cmd(`fill ${cx} ${gy + 1} ${zl} ${cx + len - 1} ${gy + hgt} ${zh} stone`);
+                else if (hgt < 0) cmd(`fill ${cx} ${gy} ${zl} ${cx + len - 1} ${gy} ${zh} air`);
+              }
+              cx += len;
+            }
+            cmd(`fill ${x + 4} ${gy + 1} ${z} ${x + 49} ${gy + 3} ${z} iron_bars`);
+            cmd(`fill ${x + 48} ${gy} ${z - 9} ${x + 48} ${gy} ${z - 1} gold_block`);
+            cmd(`fill ${x + 48} ${gy} ${z + 1} ${x + 48} ${gy} ${z + 9} gold_block`);
+            cmd(`fill ${x} ${gy} ${z - 9} ${x} ${gy} ${z - 1} quartz_block`);
+            cmd(`fill ${x} ${gy} ${z + 1} ${x} ${gy} ${z + 9} quartz_block`);
             const hb = await spawnAdult(dim, 'minecraft:horse', { x: x - 3.5, y: gy + 1, z: z + 2.5 });
             const hh = await spawnAdult(dim, 'minecraft:horse', { x: x - 3.5, y: gy + 1, z: z - 2.5 });
             if (!hb || !hh) { detail = "couldn't get two adult horses (babies can't be ridden)"; break; }
@@ -1409,7 +1430,7 @@ async function runOne(agent, player, name, arg, human = false) {
             for (const h of [hb, hh]) { try { h.getComponent('minecraft:movement')?.setCurrentValue(0.25); } catch { /* */ } }
             giveItem('saddle', 1); givePlayer('saddle', 1);
             faceEast(sim, 2.5); faceEast(player, -2.5);
-            agent.say(`HORSE RACE: two adult horses, a saddle each. Tame yours (get on until it stops throwing you), saddle it (right-click with the saddle) and mount it; the bot does the same with its own. When we are both on, there is a countdown and a race to the gold line 46 blocks east.`);
+            agent.say(`HORSE RACE: two adult horses, a saddle each. Tame yours (get on until it stops throwing you), saddle it (right-click with the saddle) and mount it; the bot does the same with its own. When we are both on, there is a countdown and a race over rough ground (steps, ditches, mounds) to the gold line 48 blocks east and back to the start.`);
             try { player.onScreenDisplay.setTitle('Horse race', { subtitle: 'Tame, saddle, mount, race', stayDuration: 160, fadeInDuration: 5, fadeOutDuration: 10 }); } catch { /* */ }
             running(300);
             const tPrep = system.currentTick;
@@ -1441,16 +1462,25 @@ async function runOne(agent, player, name, arg, human = false) {
             // ---- 2. The race.
             await ready('You are both on your horses.', 'Ride to the gold line');
             cmd(`fill ${x - 1} ${gy + 1} ${z - 9} ${x - 1} ${gy + 3} ${z + 9} air`); // the barrier goes up... and down at GO
-            running(90);
+            running(150);
             rec.reset(); t0 = system.currentTick; recH.start();
-            const goalX = x + 45.5;
+            const turnX = x + 48.5, homeX = x + 1.5;
+            const stage = { bot: 0, you: 0 };
             const tStart = system.currentTick;
-            for (let i = 0; i < 90 * 20 && !agent.testSkipped && (result.bot === null || result.you === null); i++) {
+            let lastX = hb.location.x, lastChk = tStart;
+            for (let i = 0; i < 150 * 20 && !agent.testSkipped && (result.bot === null || result.you === null); i++) {
               if (result.bot === null) {
-                try { sim.moveToLocation({ x: goalX + 4, y: hb.location.y, z: z + 2.5 }, { speed: 1 }); } catch { /* */ }
-                if (hb.location.x >= goalX) result.bot = (system.currentTick - tStart) / 20;
+                const goal = stage.bot === 0 ? { x: turnX + 4, y: hb.location.y, z: z + 5 } : { x: homeX - 5, y: hb.location.y, z: z + 5 };
+                try { sim.moveToLocation(goal, { speed: 1 }); } catch { /* */ }
+                // Stuck against a step: jump (what a rider does).
+                if (system.currentTick - lastChk >= 10) { if (Math.abs(hb.location.x - lastX) < 0.15) { try { sim.jump(); } catch { /* */ } } lastX = hb.location.x; lastChk = system.currentTick; }
+                if (stage.bot === 0 && hb.location.x >= turnX) stage.bot = 1;
+                else if (stage.bot === 1 && hb.location.x <= homeX) result.bot = (system.currentTick - tStart) / 20;
               }
-              if (result.you === null && hh.location.x >= goalX) result.you = (system.currentTick - tStart) / 20;
+              if (result.you === null) {
+                if (stage.you === 0 && hh.location.x >= turnX) { stage.you = 1; agent.say('You are at the far line: back to the start!'); }
+                else if (stage.you === 1 && hh.location.x <= homeX) result.you = (system.currentTick - tStart) / 20;
+              }
               await system.waitTicks(1);
             }
           } else if (name === 'pillarrace') {
@@ -1676,78 +1706,49 @@ async function runOne(agent, player, name, arg, human = false) {
         break;
       }
       case 'bow': {
-        const tpos = { x: x + 12.5, y: gy + 1, z: z + 0.5 };
-        cmd(`summon armor_stand ${tpos.x} ${tpos.y} ${tpos.z}`);
-        who.teleport({ x: x + 0.5, y: gy + 1, z: z + 0.5 }, { facingLocation: { x: tpos.x, y: gy + 1.6, z: tpos.z } });
+        // Six armor stands in different spots: near and far, left and right, one up on a pillar, one on a step. Hit as many as you can.
+        const SPOTS = [[8, -5, 0], [12, 4, 0], [17, -8, 0], [20, 6, 3], [24, -1, 0], [10, 9, 2]];
+        const stands = [];
+        for (const [dx, dz, dy] of SPOTS) {
+          if (dy > 0) cmd(`fill ${x + dx} ${gy + 1} ${z + dz} ${x + dx} ${gy + dy} ${z + dz} stone`);
+          cmd(`summon armor_stand ${x + dx + 0.5} ${gy + dy + 1} ${z + dz + 0.5}`);
+        }
+        await system.waitTicks(6);
+        for (const [dx, dz, dy] of SPOTS) {
+          const st = dim.getEntities({ type: 'minecraft:armor_stand', location: { x: x + dx + 0.5, y: gy + dy + 1, z: z + dz + 0.5 }, maxDistance: 1.5 })[0];
+          if (st) stands.push(st);
+        }
+        if (stands.length < SPOTS.length) { detail = `only ${stands.length} of ${SPOTS.length} targets were set up`; break; }
+        who.teleport({ x: x + 0.5, y: gy + 1, z: z + 0.5 }, { facingLocation: { x: x + 12, y: gy + 1.6, z: z } });
         await system.waitTicks(10);
-        let shots = 0, hits = 0;
+        const hitIds = new Set();
+        let shots = 0;
         const wa = /** @type {any} */ (world.afterEvents);
         const sp = wa.entitySpawn.subscribe((ev) => { try { if (ev.entity.typeId === 'minecraft:arrow' && Math.hypot(ev.entity.location.x - who.location.x, ev.entity.location.z - who.location.z) < 4) shots++; } catch { /* */ } });
-        const hp = wa.projectileHitEntity.subscribe((ev) => { try { if (ev.source?.id === who.id && ev.getEntityHit()?.entity?.typeId === 'minecraft:armor_stand') hits++; } catch { /* */ } });
-        cleanup.push(() => { try { wa.entitySpawn.unsubscribe(sp); wa.projectileHitEntity.unsubscribe(hp); } catch { /* */ } for (const e of dim.getEntities({ type: 'minecraft:armor_stand', location: tpos, maxDistance: 6 })) try { e.remove(); } catch { /* */ } for (const e of dim.getEntities({ type: 'minecraft:arrow', location: tpos, maxDistance: 30 })) try { e.remove(); } catch { /* */ } });
-        if (human) { pass = await humanTry(() => hits >= 1, 60); detail = `you loosed ${shots} arrows, ${hits} hit the target, ${secs()}s`; break; }
-        giveItem('bow', 1); giveItem('arrow', 16);
-        hold(sim, 'bow');
+        const hp = wa.projectileHitEntity.subscribe((ev) => { try { const e = ev.getEntityHit()?.entity; if (ev.source?.id === who.id && e?.typeId === 'minecraft:armor_stand') hitIds.add(e.id); } catch { /* */ } });
+        const hu = wa.entityHurt.subscribe((ev) => { try { if (ev.hurtEntity.typeId === 'minecraft:armor_stand' && ev.damageSource.cause === 'projectile') hitIds.add(ev.hurtEntity.id); } catch { /* */ } });
+        cleanup.push(() => {
+          try { wa.entitySpawn.unsubscribe(sp); wa.projectileHitEntity.unsubscribe(hp); wa.entityHurt.unsubscribe(hu); } catch { /* */ }
+          for (const e of dim.getEntities({ type: 'minecraft:armor_stand', location: { x: x + 12, y: gy, z }, maxDistance: 40 })) try { e.remove(); } catch { /* */ }
+          for (const e of dim.getEntities({ type: 'minecraft:arrow', location: { x: x + 12, y: gy, z }, maxDistance: 60 })) try { e.remove(); } catch { /* */ }
+        });
+        const nHit = () => stands.filter((e) => hitIds.has(e.id)).length;
+        if (human) { pass = await humanTry(() => nHit() >= SPOTS.length, 150); pass = nHit() >= SPOTS.length - 1; detail = `you hit ${nHit()}/${SPOTS.length} targets with ${shots} arrows in ${secs()}s`; break; }
+        giveItem('bow', 1); giveItem('arrow', 48);
         agent.testHold = true;
-        // What the Script API offers a simulated player for using an item over time (a bow is drawn, then released).
-        const api = new Set();
-        for (let o = Object.getPrototypeOf(sim); o && o !== Object.prototype; o = Object.getPrototypeOf(o)) for (const k of Object.getOwnPropertyNames(o)) if (/use|release|charge|draw|shoot|startUsing/i.test(k) && !/^(get|is|set)/.test(k)) api.add(k);
+        const order = [...stands].sort((a2, b2) => dist3D(sim.location, a2.location) - dist3D(sim.location, b2.location));
         const notes = [];
-        const center = { x: tpos.x, y: gy + 2.0, z: tpos.z };   // the stand's middle (it is 1.975 tall, standing on gy+1)
-        const aim = { x: tpos.x, y: gy + 2.0, z: tpos.z };
-        // Every arrow in the air is followed: where it came closest to the target tells how far off the aim was, and the next
-        // shot is corrected by that (a bow's arrow also drops over 12 blocks, so a straight line always falls short).
-        /** @type {Map<string, { d: number, p: any }>} */
-        const flying = new Map();
-        const ignore = new Set();                                 // arrows from earlier shots, stuck in the ground or the stand
-        const watch = system.runInterval(() => {
-          try {
-            for (const a of dim.getEntities({ type: 'minecraft:arrow', location: center, maxDistance: 40 })) {
-              if (ignore.has(a.id)) continue;
-              const l = a.location, d = Math.hypot(l.x - center.x, l.y - center.y, l.z - center.z), cur = flying.get(a.id);
-              if (!cur || d < cur.d) flying.set(a.id, { d, p: { x: l.x, y: l.y, z: l.z } });
-            }
-          } catch { /* */ }
-        }, 1);
-        cleanup.push(() => { try { system.clearRun(watch); } catch { /* */ } });
-        const hurt = wa.entityHurt.subscribe((ev) => { try { if (ev.hurtEntity.typeId === 'minecraft:armor_stand' && ev.damageSource.cause === 'projectile') hits++; } catch { /* */ } });
-        cleanup.push(() => { try { wa.entityHurt.unsubscribe(hurt); } catch { /* */ } });
-        const misses = [];
-        for (let i = 0; i < 8 && hits < 1 && !agent.testSkipped; i++) {
-          flying.clear();
-          try { for (const a of dim.getEntities({ type: 'minecraft:arrow', location: center, maxDistance: 60 })) ignore.add(a.id); } catch { /* */ }
-          // The view is set exactly (lookAtLocation, the way a glance at you is exact; the motor's smoothed, human-like turn
-          // wandered by a block or more), at the angle the arrow's own flight needs: up from the straight line by its drop.
-          try {
-            const eye = sim.getHeadLocation();
-            const dx = aim.x - eye.x, dz = aim.z - eye.z, d = Math.hypot(dx, dz) || 1;
-            const th = solvePitch(d, aim.y - eye.y);
-            const pt = { x: eye.x + (dx / d) * 30 * Math.cos(th), y: eye.y + 30 * Math.sin(th), z: eye.z + (dz / d) * 30 * Math.cos(th) };
-            /** @type {any} */ (sim).lookAtLocation(pt);
-            // ...and HELD there: the u168 report showed the view drifting 20 to 30 degrees of yaw during the 1.2 s draw (the motor's idle head
-            // drift ran over the one-off look), so the motor is told to keep its gaze on the point until the arrow has gone.
-            agent.motor.setFocus(pt);
-          } catch { await agent.motor.lookAt(aim, 6, 30).catch(() => {}); }
-          await system.waitTicks(8);
-          const item = packOf(sim)?.getItem(sim.selectedSlotIndex);
-          try { notes.push(`useItem ${/** @type {any} */ (sim).useItem(item)}`); } catch (e) { notes.push(`useItem threw ${e}`); }
-          await system.waitTicks(25);                       // a full draw is 20 ticks
-          for (const m of ['stopUsingItem', 'releaseUsingItem', 'completeUsingItem', 'releaseItem']) if (typeof (/** @type {any} */ (sim))[m] === 'function') { try { (/** @type {any} */ (sim))[m](); notes.push(m); } catch { /* */ } }
-          await system.waitTicks(18);
-          agent.motor.setFocus(null);
-          const best = [...flying.values()].sort((a, b) => a.d - b.d)[0];
-          if (best) {
-            if (best.d < 0.9) hits++;                        // through the stand
-            const ey = best.p.y - center.y, ez = best.p.z - center.z;
-            misses.push(`shot ${i + 1}: closest ${best.d.toFixed(1)} (${ey >= 0 ? 'high' : 'low'} ${Math.abs(ey).toFixed(1)}, ${ez >= 0 ? 'right' : 'left'} ${Math.abs(ez).toFixed(1)})`);
-            aim.y = Math.max(gy + 0.6, Math.min(gy + 6, aim.y - ey * 0.9));
-            aim.z = Math.max(z - 3, Math.min(z + 4, aim.z - ez * 0.9));
-          } else misses.push(`shot ${i + 1}: no arrow seen`);
+        for (const st of order) {
+          let n = 0;
+          while (!hitIds.has(st.id) && n < 4 && !agent.testSkipped && st.isValid) {
+            n++;
+            await shootAt(agent, st, { stop: () => agent.testSkipped });
+            await system.waitTicks(22);                       // the flight and the hit
+          }
+          notes.push(`${Math.round(dist3D(sim.location, st.location))} blocks${st.location.y > gy + 1.5 ? ` up ${Math.round(st.location.y - gy - 1)}` : ''}: ${hitIds.has(st.id) ? `hit with ${n}` : `missed ${n}`}`);
         }
-        pass = hits >= 1;
-        agent.memory.data.bowCal = { aimY: aim.y - gy, aimZ: aim.z - tpos.z, shots, hits, at: Date.now(), build: CONFIG.build };
-        agent.memory.save();
-        detail = `${shots} arrows loosed, ${hits} hit the target in ${secs()}s (hold: useItem then ${[...new Set(notes)].filter((n) => !/^useItem/.test(n)).join('/') || 'nothing'}); ${misses.join('; ')}${pass ? '' : `; the API offers ${[...api].join(', ') || 'nothing for holding an item'}`}`;
+        pass = nHit() >= SPOTS.length - 1;
+        detail = `${nHit()}/${SPOTS.length} targets with ${shots} arrows in ${secs()}s (${notes.join('; ')})`;
         break;
       }
       case 'shield':
