@@ -126,10 +126,10 @@ HUMAN_HELP.witherskeleton = { kit: MOB_KIT, text: 'A wither skeleton, 10 blocks 
 HUMAN_HELP.creepers = { kit: [['stone_sword', 1], ['shield', 1], ['bow', 1], ['arrow', 32]], text: 'Four creepers come at you across the open ground. You have a shield (off hand: hold right-click to raise it, it takes most of a blast), a sword and a bow. Get rid of all four (killed or blown up) and lose as few hearts as you can: 7 hearts or less passes.' };
 HUMAN_HELP.ravine = { kit: [], text: 'You are at the bottom of a ravine, 9 deep and 3 wide, sheer walls. Get out onto the surface: your 32 cobblestone and 16 dirt are for building yourself out, the pickaxe for digging.' };
 HUMAN_HELP.bow = { kit: [['bow', 1], ['arrow', 48]], text: 'Six targets (armor stands) in different spots in front of you: near and far, left and right, one on a pillar and one on a step. Hit as many as you can, 5 of 6 passes (hold right-click to draw, release to shoot).' };
-HUMAN_HELP.leadboat = { kit: [['lead', 2]], text: 'A boat at the west end of a rough course: a pond, a step up and another with stones on it, a trench, a three-high hill, a gap 3 wide and 6 deep across the whole width, a plateau with a gold block. Put a lead on the boat (use the lead on it) and take it on foot to the gold block with the lead still on. Your 32 cobblestone and 16 dirt are for the gap. The bot does the same, then rides a horse over the first part.' };
+HUMAN_HELP.leadboat = { kit: [['lead', 2]], text: 'Two villagers and a boat at the west end of a rough course: a pond, a step up and another with stones on it, a trench, a three-high hill, a gap 3 wide and 6 deep across the whole width, a plateau with a gold block and, just past it, a pit 3 wide and 3 deep. Put a lead on the boat (use the lead on it), get both villagers into it (walk it into them, it can take two), lead the boat over all of it and get both villagers into the pit (round it, so the boat is pulled in; if the boat is against a villager for 4 s and it does not board, it is put in for you). Your 32 cobblestone and 16 dirt are for the gap. The bot does the same, then rides a horse over the first part with the boat alone.' };
 HUMAN_HELP.villagerhaul = { kit: [['lead', 2]], text: 'Two villagers stand near the start, a boat at the west end. Put a lead on the boat, get both villagers into it (walk it into them, it can take two) and lead the boat over three hills and across a 3-wide gap (your cobblestone and dirt are for it) to the gold block: both villagers within 4 blocks of it. If the boat is against a villager for 4 s and it does not board, it is put in for you.' };
 HUMAN_HELP.elytra = { kit: [['firework_rocket', 6]], text: 'You stand on a 22-high tower with elytra on, 44 blocks west of a gold block, and have 6 firework rockets. Jump off, jump again in the air to open the wings, aim with the view (nose down for speed, up to slow), use a rocket for a boost, and land on the gold block (within 4 blocks, 5 hearts lost at most).' };
-const SHORT = { leadboat: 'Boat on a lead over the course', villagerhaul: 'Villagers in a boat to the gold block', elytra: 'Glide to the gold block', creepers: 'Beat 4 creepers, shield up', ravine: 'Get out of the ravine', lavacross: 'Cross the lava', obsidian: 'Make and mine obsidian', mineore: 'One of each ore', enderman: 'Kill the enderman', blaze: 'Kill the blaze', ghast: 'Kill the ghast', witherskeleton: 'Kill the wither skeleton', tower: 'Get down, no fall damage', hole: 'Get out, reach the gold block', pit: 'Get out, reach the gold block', climb: 'Get out of the pit', ladder: 'Reach the gold block', corner: 'Reach the gold block', leap: 'Cross the gap, gold block', bridge: 'Bridge to the gold block', ledge: 'Get near the table', bow: 'Hit the 6 targets', husk: 'Kill the husk', sheep: 'Collect 3 wool', pen: 'Collect 2 raw beef', replant: 'Cut tree, replant sapling', litter: 'Collect 4 leaf litter', house: 'Build a house, then test done' };
+const SHORT = { leadboat: 'Lead villagers into the pit', villagerhaul: 'Villagers in a boat to the gold block', elytra: 'Glide to the gold block', creepers: 'Beat 4 creepers, shield up', ravine: 'Get out of the ravine', lavacross: 'Cross the lava', obsidian: 'Make and mine obsidian', mineore: 'One of each ore', enderman: 'Kill the enderman', blaze: 'Kill the blaze', ghast: 'Kill the ghast', witherskeleton: 'Kill the wither skeleton', tower: 'Get down, no fall damage', hole: 'Get out, reach the gold block', pit: 'Get out, reach the gold block', climb: 'Get out of the pit', ladder: 'Reach the gold block', corner: 'Reach the gold block', leap: 'Cross the gap, gold block', bridge: 'Bridge to the gold block', ledge: 'Get near the table', bow: 'Hit the 6 targets', husk: 'Kill the husk', sheep: 'Collect 3 wool', pen: 'Collect 2 raw beef', replant: 'Cut tree, replant sapling', litter: 'Collect 4 leaf litter', house: 'Build a house, then test done' };
 const humanHelp = (name) => HUMAN_HELP[name] ?? null;
 /** What you are handed in every test you do: tools, blocks and food; the test's own extras on top. `climb` has no tools, like the bot's run. */
 const STD_KIT = [['stone_pickaxe', 1], ['stone_axe', 1], ['stone_shovel', 1], ['stone_sword', 1], ['cobblestone', 32], ['dirt', 16], ['bread', 8]];
@@ -196,6 +196,11 @@ export async function runTests(agent, player, args) {
   if (!agent.memory.data.retiredV3) {
     agent.memory.data.testOmit = [...new Set([...agent.memory.data.testOmit, 'lavacross', 'obsidian', 'pillarrace'])];
     agent.memory.data.retiredV3 = true; agent.memory.save();
+  }
+  // The fourth (the u183 run): mineore (nothing to learn from a pickaxe test that fails 0/7 either way) and the house (the build is learned from your turn, the bot's own is too slow to wait for).
+  if (!agent.memory.data.retiredV4) {
+    agent.memory.data.testOmit = [...new Set([...agent.memory.data.testOmit, 'mineore', 'house'])];
+    agent.memory.data.retiredV4 = true; agent.memory.save();
   }
   const omitList = () => (agent.memory.data.testOmit ??= []);
   if (args[0] === 'omit' || args[0] === 'include') {
@@ -408,6 +413,14 @@ async function runOne(agent, player, name, arg, human = false) {
     for (let i = 0; i < maxS * 4 && agent.task; i++) await system.waitTicks(5);
     return !agent.task;
   };
+  /** Like idle, but also ends the moment `done()` holds (your clock stops when you are out; the bot's was running on while it walked off the top). */
+  const idleOr = async (maxS, done) => {
+    await system.waitTicks(10);
+    for (let i = 0; i < maxS * 4 && agent.task && !agent.testSkipped; i++) { if (done()) break; await system.waitTicks(5); }
+    const ok = done();
+    if (ok && agent.task) { agent.newTask(null); agent.motor.stop(); }
+    return ok || !agent.task;
+  };
   const who = human ? player : sim;
   // Human mode: the same setup, you do it while the bot stands by; ends when the goal is met or the time is up.
   const humanTry = async (done, maxS, mark = null, remind = '') => {
@@ -529,7 +542,7 @@ async function runOne(agent, player, name, arg, human = false) {
         }
         S.getDownStats = { hops: 0, digs: 0 };
         agent.apply([{ type: 'surface' }]);
-        await idle(150);
+        await idleOr(150, () => sim.location.y <= gy + 2 && sim.isOnGround);
         const f = S.feet();
         pass = f.y <= gy + 2 && !(await S.isTrapped(agent.newTask(null)));
         detail = `${pass ? 'down' : `still at y${f.y - gy - 1} above ground`} in ${secs()}s, dug ${S.getDownStats.digs}, ledges ${S.getDownStats.staged ?? 0}, hopped ${S.getDownStats.hops}, lost ${Math.max(0, hp0 - agent.health())} hp`;
@@ -729,7 +742,7 @@ async function runOne(agent, player, name, arg, human = false) {
         await system.waitTicks(20);
         const gen = agent.newTask({ kind: 'test' });
         agent.apply([{ type: 'surface' }]);
-        await idle(150);
+        await idleOr(150, () => sim.location.y >= gy + 1);
         const f = S.feet();
         pass = f.y >= gy + 1;
         detail = `${pass ? 'out' : `still ${gy + 1 - f.y} below the top`} in ${secs()}s (${agent.skills.lastUpCost ?? ''})`;
@@ -1898,7 +1911,7 @@ async function runOne(agent, player, name, arg, human = false) {
         if (human) { pass = await humanTry(out, 180); detail = `you ${pass ? 'got out' : 'did not get out'} in ${secs()}s`; break; }
         agent.newTask({ kind: 'test' });
         agent.apply([{ type: 'surface' }]);
-        await idle(150);
+        await idleOr(150, out);
         pass = out();
         detail = `${pass ? 'out of the ravine' : `still ${Math.round(gy + 1 - sim.location.y)} below the rim`} in ${secs()}s (ledges/digs: ${S.getDownStats?.staged ?? 0}/${S.getDownStats?.digs ?? 0}; ${invCountsOf(sim).cobblestone ?? 0} cobblestone left)`;
         break;
@@ -2467,18 +2480,34 @@ async function runOne(agent, player, name, arg, human = false) {
         cmd(`fill ${x + 2} ${gy + 2} ${z - 3} ${x + 8} ${gy + 2} ${z + 3} stone`);         // up another at x+2
         for (const [bx, bz] of [[3, 1], [5, -1], [6, 2], [4, -2], [7, 0]]) cmd(`setblock ${x + bx} ${gy + 3} ${z + bz} stone`); // rubble on it
         cmd(`fill ${x + 11} ${gy} ${z - 3} ${x + 11} ${gy + 1} ${z + 3} air`);             // a trench at x+11
-        const farGoal = towTail(cmd, x, gy, z);
+        const farGoal = towTail(cmd, x, gy, z, { pit: true });
         // The boats start at the west end, inside the backed-up box: solid grass under them and air round (it spawned in terrain before).
         cmd(`fill ${x - 8} ${gy} ${z - 3} ${x - 6} ${gy} ${z + 4} grass_block`);
         cmd(`fill ${x - 8} ${gy + 1} ${z - 3} ${x - 6} ${gy + 4} ${z + 4} air`);
         const goal = { x: x + 12.5, y: gy + 2, z: z + 0.5 };
+        // Two villagers at the start, to be led to the pit at the far end.
+        const vils = [];
+        for (const [vx, vz] of [[-7.5, -2.5], [-7.5, 3.5]]) { const v = await spawnAdult(dim, 'minecraft:villager_v2', { x: x + vx, y: gy + 1, z: z + vz }); if (v) { vils.push(v); cleanup.push(() => { try { v.remove(); } catch {} }); } }
+        if (vils.length < 2) { detail = `could only get ${vils.length} adult villagers`; break; }
+        const pit = farGoal.pit;
+        const inPit = (v) => { try { const l = v.location; return v.isValid && l.x >= pit.x1 && l.x < pit.x2 + 1 && l.z >= pit.z1 && l.z < pit.z2 + 1 && l.y < gy + 2.5; } catch { return false; } };
+        const nPit = () => vils.filter(inPit).length;
         if (human) {
           tp(x - 6, gy + 1, z);
           const boat = dim.spawnEntity('minecraft:boat', { x: x - 7.5, y: gy + 1, z: z + 0.5 });
           cleanup.push(() => { try { boat.remove(); } catch {} });
           const leashed = () => { try { return !!boat.getComponent('minecraft:leashable')?.isLeashed; } catch { return false; } };
-          pass = await humanTry(() => boat.isValid && leashed() && Math.hypot(boat.location.x - farGoal.x, boat.location.z - farGoal.z) <= 3, 240, { x: farGoal.x, y: farGoal.y, z: farGoal.z }, 'Boat on a lead to the gold block, over the hills and across the gap');
-          detail = `you ${pass ? 'got the boat there' : boat.isValid ? `did not get it there (it ended ${Math.round(Math.hypot(boat.location.x - farGoal.x, boat.location.z - farGoal.z))} from the gold block, lead ${leashed() ? 'on' : 'off'})` : 'lost the boat'} in ${secs()}s`;
+          const near = vils.map(() => 0);
+          const boatRiders = () => { try { return boat.getComponent('minecraft:rideable')?.getRiders() ?? []; } catch { return []; } };
+          pass = await humanTry(() => {
+            vils.forEach((v, i) => {
+              if (!v.isValid || boatRiders().some((r) => r.id === v.id)) { near[i] = 0; return; }
+              near[i] = Math.hypot(v.location.x - boat.location.x, v.location.z - boat.location.z) <= 1.8 ? near[i] + 1 : 0;
+              if (near[i] >= 16 && boatRiders().length < 2) { boardVillager(cmd, boat, v); near[i] = 0; try { player.onScreenDisplay.setActionBar('The game did not take the villager in: put in the boat for you.'); } catch { /* */ } }
+            });
+            return nPit() === 2;
+          }, 300, { x: farGoal.x, y: farGoal.y, z: farGoal.z }, 'Both villagers into the boat, led over the course, into the pit');
+          detail = `you ${pass ? 'got both villagers into the pit' : `did not finish (${nPit()}/2 villagers in the pit)`} in ${secs()}s`;
           break;
         }
         giveItem('lead', 3); giveItem('saddle', 1);
@@ -2489,7 +2518,7 @@ async function runOne(agent, player, name, arg, human = false) {
         let walkOk = false;
         // The lines so far are in the result however the test ends (the report of a skipped run said nothing of what the bot did).
         cleanup.push(() => { if (!detail && lines.length) detail = `${lines.join(' | ')} | (interrupted)`; });
-        // On foot, the whole course.
+        // On foot, the whole course, with the villagers.
         tp(x - 6, gy + 1, z);
         await system.waitTicks(10);
         {
@@ -2498,12 +2527,32 @@ async function runOne(agent, player, name, arg, human = false) {
           await system.waitTicks(10);
           const via = leashTo(sim, boat);
           if (!via) { detail = `couldn't put a lead on the boat (leashable: ${!!boat.getComponent('minecraft:leashable')})`; break; }
+          boat.addTag('vh_boat');
+          const rid = () => { try { return boat.getComponent('minecraft:rideable')?.getRiders() ?? []; } catch { return []; } };
+          const fns = { riding: (v) => rid().some((r) => r.id === v.id), ridersN: () => rid().length, putIn: (v) => { boardVillager(cmd, boat, v); } };
           rec.reset(); t0 = system.currentTick;
-          const m = await agent.tow.run(gen, boat, { ...farGoal, x: farGoal.x + 2.5 }, { maxS: 150 });
+          await sweepVillagers(agent, gen, boat, vils, gy, fns);
+          const m = await agent.tow.run(gen, boat, { ...farGoal, x: farGoal.x - 0.5 }, { maxS: 150 });
           cal.legs.walk = m;
+          // Round the pit to its far side: the boat is pulled straight across it and drops in with its riders.
+          let circled = false;
+          if (m.arrived && !m.snapped && boat.isValid) {
+            const wps = [{ x: pit.x1 - 0.5, z: pit.z2 + 2.5 }, { x: pit.x2 + 2, z: pit.z2 + 2.5 }, { x: pit.x2 + 2, z: z + 0.5 }];
+            for (const wp of wps) {
+              for (let i = 0; i < 160 && boat.isValid && nPit() < 2; i++) {
+                const sep = Math.hypot(sim.location.x - boat.location.x, sim.location.z - boat.location.z);
+                if (sep > 7) { try { sim.stopMoving(); } catch { /* */ } } else { try { sim.moveToLocation({ x: wp.x, y: gy + 3, z: wp.z }, { speed: 0.7 }); } catch { /* */ } }
+                await system.waitTicks(2);
+                if (Math.hypot(sim.location.x - wp.x, sim.location.z - wp.z) < 1.2) break;
+              }
+              if (nPit() >= 2) break;
+            }
+            circled = true;
+            for (let i = 0; i < 15 && nPit() < 2; i++) await system.waitTicks(10);
+          }
           legSummary = rec.snapshot();
-          lines.push(`on foot: ${towLine(m, farGoal)}`);
-          walkOk = m.arrived && !m.snapped;
+          lines.push(`on foot: ${vils.filter((v) => fns.riding(v)).length}/2 villagers in the boat, ${nPit()}/2 in the pit${circled ? '' : ' (never got round the pit)'}; ${towLine(m, farGoal)}${m.notes.length ? ` [${m.notes.join('; ')}]` : ''}`);
+          walkOk = m.arrived && !m.snapped && nPit() === 2;
           try { boat.remove(); } catch {}
         }
         // On a horse, the first part (the horse jumps a block, not a gap).
@@ -2586,27 +2635,7 @@ async function runOne(agent, player, name, arg, human = false) {
         const gen = agent.newTask({ kind: 'test' });
         if (!leashTo(sim, boat)) { detail = "couldn't put a lead on the boat"; break; }
         rec.reset(); t0 = system.currentTick;
-        // Capture, the way you did it: the boat trails the bot on its lead, so the bot walks a good way PAST the villager and the boat sweeps into
-        // it. From 6 blocks short of it, a moment for the boat to come up behind, then through it and 5 on at a walk; if that did not take it,
-        // again from the sides; the game is helped only after three sweeps.
-        for (const v of vils) {
-          for (let pass = 0; pass < 3 && v.isValid && !riding(v) && ridersN() < 2; pass++) {
-            const vl = v.location, bl = boat.location;
-            const ang = Math.atan2(vl.z - bl.z, vl.x - bl.x) + (pass === 0 ? 0 : pass === 1 ? Math.PI / 2 : -Math.PI / 2);
-            const ux = Math.cos(ang), uz = Math.sin(ang);
-            await S.goNear(gen, { x: vl.x - ux * 6, y: gy + 1, z: vl.z - uz * 6 }, 1, 1).catch(() => false);
-            await system.waitTicks(20);
-            const end = { x: v.location.x + ux * 5, y: gy + 1, z: v.location.z + uz * 5 };
-            for (let i = 0; i < 90 && v.isValid && !riding(v); i++) {
-              try { sim.moveToLocation(end, { speed: 0.7 }); } catch { /* */ }
-              await system.waitTicks(2);
-              if (Math.hypot(sim.location.x - end.x, sim.location.z - end.z) < 1) break;
-            }
-            try { sim.stopMoving(); } catch { /* */ }
-            await system.waitTicks(10);
-          }
-          if (v.isValid && !riding(v) && ridersN() < 2) putIn(v, 'by command');
-        }
+        await sweepVillagers(agent, gen, boat, vils, gy, { riding, ridersN, putIn });
         const m = await agent.tow.run(gen, boat, { ...farGoal, x: farGoal.x + 2.5 }, { maxS: 170 });
         pass = !m.snapped && done();
         detail = `${vils.filter((v) => riding(v)).length}/2 villagers in the boat (${boarded.length ? `${boarded.length} by command` : 'both took the boat by themselves'}); ${vils.filter((v) => v.isValid && goalD(v) <= 4).length}/2 at the gold block; ${towLine(m, farGoal)}${m.notes.length ? ` [${m.notes.join('; ')}]` : ''}`;
@@ -2740,17 +2769,58 @@ async function supplyChests(dim, cmd, x, y, z) {
 }
 
 
+/** A villager into the boat by the game's own call, else by command (said so by the caller). */
+function boardVillager(cmd, boat, v) {
+  let ok = false;
+  try { ok = !!boat.getComponent('minecraft:rideable')?.addRider(v); } catch { /* */ }
+  if (!ok) { try { v.addTag('vh_v'); boat.addTag('vh_boat'); ok = cmd('ride @e[tag=vh_v,c=1] start_riding @e[tag=vh_boat,c=1] teleport_rider'); v.removeTag('vh_v'); } catch { /* */ } }
+  return ok;
+}
+
+/**
+ * Villagers into a boat on a lead, the way a player did it: the boat trails the bot on its lead, so the bot walks a good way PAST the villager and the
+ * boat sweeps into it. From 6 blocks short of it, a moment for the boat to come up behind, then through it and 5 on at a walk; if that did not take
+ * it, again from the sides; the game is helped only after three sweeps. fns: { riding(v), ridersN(), putIn(v, how) }.
+ */
+async function sweepVillagers(agent, gen, boat, vils, gy, fns) {
+  const S = agent.skills, sim = agent.sim;
+  for (const v of vils) {
+    for (let pass = 0; pass < 3 && v.isValid && !fns.riding(v) && fns.ridersN() < 2; pass++) {
+      const vl = v.location, bl = boat.location;
+      const ang = Math.atan2(vl.z - bl.z, vl.x - bl.x) + (pass === 0 ? 0 : pass === 1 ? Math.PI / 2 : -Math.PI / 2);
+      const ux = Math.cos(ang), uz = Math.sin(ang);
+      await S.goNear(gen, { x: vl.x - ux * 6, y: gy + 1, z: vl.z - uz * 6 }, 1, 1).catch(() => false);
+      await system.waitTicks(20);
+      const end = { x: v.location.x + ux * 5, y: gy + 1, z: v.location.z + uz * 5 };
+      for (let i = 0; i < 90 && v.isValid && !fns.riding(v); i++) {
+        try { sim.moveToLocation(end, { speed: 0.7 }); } catch { /* */ }
+        await system.waitTicks(2);
+        if (Math.hypot(sim.location.x - end.x, sim.location.z - end.z) < 1) break;
+      }
+      try { sim.stopMoving(); } catch { /* */ }
+      await system.waitTicks(10);
+    }
+    if (v.isValid && !fns.riding(v) && fns.ridersN() < 2) fns.putIn(v, 'by command');
+  }
+}
+
 /**
  * The far part of the lead courses: from x+14 a three-high hill, a gap 3 wide and 6 deep across the whole slab, and a plateau
  * two high with a gold block. Returns the gold block's standing place.
  */
-function towTail(cmd, x, gy, z) {
+function towTail(cmd, x, gy, z, { pit = false } = {}) {
   const R = 11;
   cmd(`fill ${x + 14} ${gy + 1} ${z - R} ${x + 38} ${gy + 6} ${z + R} air`);
   const rise = [[16, 1], [17, 2], [18, 3], [19, 3], [20, 2], [21, 1]];
   for (const [dx, h] of rise) cmd(`fill ${x + dx} ${gy + 1} ${z - R} ${x + dx} ${gy + h} ${z + R} stone`);
   cmd(`fill ${x + 24} ${gy - 5} ${z - R} ${x + 26} ${gy} ${z + R} air`);                      // the gap
   cmd(`fill ${x + 31} ${gy + 1} ${z - R} ${x + 38} ${gy + 2} ${z + R} stone`);                  // the plateau
+  if (pit) {
+    // A pit 3 wide and 3 deep in the plateau (its floor the slab's grass, three blocks down: a villager cannot climb out).
+    cmd(`fill ${x + 35} ${gy} ${z - 1} ${x + 37} ${gy + 2} ${z + 1} air`);
+    cmd(`setblock ${x + 33} ${gy + 2} ${z} gold_block`);
+    return { x: x + 33.5, y: gy + 3, z: z + 0.5, pit: { x1: x + 35, x2: x + 37, z1: z - 1, z2: z + 1 } };
+  }
   cmd(`setblock ${x + 34} ${gy + 2} ${z} gold_block`);
   return { x: x + 34.5, y: gy + 3, z: z + 0.5 };
 }

@@ -803,12 +803,15 @@ export class Skills {
     }
     cells.sort((a, b) => a.d - b.d);
     let got = 0;
-    for (const { c } of cells) {
+    // (A player breaks one after another with the crosshair already moving to the next and picks the lot up once: 1.0 s a block against the bot's 1.7,
+    // which settled and swept after each one. Breaking in a row, the drops gathered every third block and at the end.)
+    const todo = cells.filter(({ c }) => this.usable(c) && !this.touchesLiquid(c) && !FALLING.test(this.blockAt({ x: c.x, y: c.y + 1, z: c.z }) ?? ''));
+    for (let i = 0; i < todo.length; i++) {
       if (this.blockCount() >= want || got >= want) break;
       this.check(gen);
-      if (!this.usable(c)) continue;
-      if (this.touchesLiquid(c) || FALLING.test(this.blockAt({ x: c.x, y: c.y + 1, z: c.z }) ?? '')) continue;
-      const ok = await this.mine(gen, c, { collect: true }).catch((e) => { if (e instanceof Aborted) throw e; return false; });
+      const c = todo[i].c, nxt = todo[i + 1]?.c ?? null;
+      const last = got + 1 >= want || !nxt;
+      const ok = await this.mine(gen, c, { collect: last || (got + 1) % 3 === 0, next: last ? null : nxt }).catch((e) => { if (e instanceof Aborted) throw e; return false; });
       if (ok) got++;
     }
     if (got) this.log(`escape: broke ${got} soft blocks out of the walls to build up with (${this.blockCount()} placeable now)`);
