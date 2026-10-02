@@ -4716,6 +4716,12 @@ export class Skills {
       const perLevel = canDig ? (chooseTool(bid, invCounts(this.sim), { needDrop: false })?.seconds ?? Infinity) + 0.5 : Infinity;
       const digCost = dmg(best) === 0 ? 0 : dmg(best) * perLevel;
       this.log(`getting down: drop ${best.drop} onto ${best.landing}, hop ${hopOk ? dmg(best) * HP_S : 'unsafe'}s vs dig ${digCost.toFixed(1)}s`);
+      // With blocks, and a long way down: ledges against the pillar's side (stagedStep), before a hop that costs health (the u180 run
+      // put one ledge, then hopped the other 7 blocks for 3 hp) and before cutting the pillar out from under us.
+      if (!staged.failed && this.blockCount() > 1 && best.drop >= 5 && (await this.stagedStep(gen, staged))) {
+        this.getDownStats.staged = (this.getDownStats.staged ?? 0) + 1;
+        continue;
+      }
       if (hopOk && dmg(best) * HP_S <= digCost) {
         this.getDownStats.hops++;
         const r = await this.a.motor.followPath([
@@ -4725,11 +4731,6 @@ export class Skills {
         this.check(gen);
         await this.wait(gen, 10);
         if (r.status !== 'arrived' && this.feet().y === f.y) return false;
-        continue;
-      }
-      // With blocks, and a long way down: ledges against the pillar's side (stagedStep) before cutting the pillar out from under us.
-      if (!hopOk && !staged.failed && this.blockCount() > 1 && best.drop >= 5 && (await this.stagedStep(gen, staged))) {
-        this.getDownStats.staged = (this.getDownStats.staged ?? 0) + 1;
         continue;
       }
       if (!canDig) {

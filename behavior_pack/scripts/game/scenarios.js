@@ -306,17 +306,26 @@ async function runOne(agent, player, name, arg, human = false) {
   /** The ticking area that keeps a far-off site loaded (removed at the end). */
   let tickName = '';
   if (sky) {
-    // Every sky test gets a site of its own, far from the world and from every earlier test: what a test leaves behind (flowing lava,
-    // fire) can never be where the next one is put (the lava tests left lava and fire at the one shared site). Out east by 4000 blocks,
-    // a fresh 120-block step for each, loaded for the test with a ticking area.
+    // Sky sites go round a ring 56 blocks from where you are (eight places, one after another), inside the chunks that are loaded: the
+    // first try, 4000 blocks out, was mostly not loaded when the slab was built (blocks missing, "none walkable" under the bot). What a
+    // test leaves (lava, fire) is cleaned out with a margin, and the next test is somewhere else.
     siteCounter++;
-    x = Math.floor(from.location.x) + 4000 + siteCounter * 120;
-    z = Math.floor(from.location.z);
+    const slot = siteCounter % 8, ang = (slot * Math.PI) / 4;
+    x = Math.floor(from.location.x + 56 * Math.cos(ang));
+    z = Math.floor(from.location.z + 56 * Math.sin(ang));
     gy = 150;
-    tickName = `agent_test_site_${siteCounter % 8}`;
+    tickName = `agent_test_site_${slot}`;
     try { dim.runCommand(`tickingarea remove ${tickName}`); } catch { /* none */ }
     try { dim.runCommand(`tickingarea add circle ${x} ${gy} ${z} 4 ${tickName} true`); } catch (e) { console.warn(`[test] tickingarea: ${e}`); }
-    for (let i = 0; i < 60; i++) { let ok = false; try { ok = !!dim.getBlock({ x, y: gy, z }); } catch { /* not loaded yet */ } if (ok) break; await system.waitTicks(5); }
+    // Every corner of the slab and its middle must answer before anything is built (a loaded chunk gives a block, an unloaded one nothing).
+    const e0 = name === 'farm' || name === 'farmrace' ? { w: 22, e: 36, r: 24 } : name === 'horserace' ? { w: 8, e: 54, r: 10 } : name === 'bow' ? { w: 14, e: 34, r: 14 } : { w: 14, e: 18, r: 12 };
+    const probes = [[x - e0.w, z - e0.r], [x + e0.e, z - e0.r], [x - e0.w, z + e0.r], [x + e0.e, z + e0.r], [x, z], [x + Math.floor(e0.e / 2), z]];
+    let loaded = false;
+    for (let i = 0; i < 120 && !loaded; i++) {
+      loaded = probes.every(([px, pz]) => { try { return !!dim.getBlock({ x: px, y: gy, z: pz }); } catch { return false; } });
+      if (!loaded) await system.waitTicks(5);
+    }
+    if (!loaded) { try { dim.runCommand(`tickingarea remove ${tickName}`); } catch { /* */ } return report(agent, name, false, 'the test site did not load (a corner of the slab had no chunk after 30 s)'); }
   } else {
     // Site: 10 blocks in front of whoever asked (or of the bot), on natural ground.
     const v = from.getViewDirection();
@@ -342,6 +351,15 @@ async function runOne(agent, player, name, arg, human = false) {
     cmd(`fill ${x - ext.w} ${gy - 10} ${z - ext.r} ${x + ext.e} ${gy - 4} ${z + ext.r} stone`);
     cmd(`fill ${x - ext.w} ${gy - 3} ${z - ext.r} ${x + ext.e} ${gy - 1} ${z + ext.r} dirt`);
     cmd(`fill ${x - ext.w} ${gy} ${z - ext.r} ${x + ext.e} ${gy} ${z + ext.r} grass_block`);
+    // Built, and checked: a corner and the middle must now be what was put there (a chunk that loaded late would have taken the fill and lost it).
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const okSlab = [[x - ext.w, z - ext.r], [x + ext.e, z + ext.r], [x, z]].every(([px, pz]) => { try { return dim.getBlock({ x: px, y: gy, z: pz })?.typeId === 'minecraft:grass_block'; } catch { return false; } });
+      if (okSlab) break;
+      await system.waitTicks(20);
+      cmd(`fill ${x - ext.w} ${gy - 10} ${z - ext.r} ${x + ext.e} ${gy - 4} ${z + ext.r} stone`);
+      cmd(`fill ${x - ext.w} ${gy - 3} ${z - ext.r} ${x + ext.e} ${gy - 1} ${z + ext.r} dirt`);
+      cmd(`fill ${x - ext.w} ${gy} ${z - ext.r} ${x + ext.e} ${gy} ${z + ext.r} grass_block`);
+    }
     // A glass wall round the slab's rim, so nobody (the bot in a fight, a horse, you) can walk or be knocked off it into the sky.
     const wx1 = x - ext.w, wx2 = x + ext.e, wz1 = z - ext.r, wz2 = z + ext.r;
     for (const [a1, b1, a2, b2] of [[wx1, wz1, wx2, wz1], [wx1, wz2, wx2, wz2], [wx1, wz1, wx1, wz2], [wx2, wz1, wx2, wz2]]) cmd(`fill ${a1} ${gy + 1} ${b1} ${a2} ${gy + wallH} ${b2} glass`);
@@ -2486,8 +2504,8 @@ async function runOne(agent, player, name, arg, human = false) {
     // Lava does not vanish when the structure is put back (what flowed stays for a while): turned to air first, in the whole box.
     if (name === 'lavacross' || name === 'obsidian') {
       // (A fill takes at most 32768 blocks: in layers.)
-      const X1 = box.x1 - 6, X2 = box.x2 + 6, Z1 = box.z1 - 6, Z2 = box.z2 + 6, per = Math.max(1, Math.floor(30000 / ((X2 - X1 + 1) * (Z2 - Z1 + 1))));
-      for (const liq of ['lava', 'flowing_lava', 'obsidian', 'fire']) for (let yy = box.y1 - 8; yy <= box.y2; yy += per) cmd(`fill ${X1} ${yy} ${Z1} ${X2} ${Math.min(box.y2, yy + per - 1)} ${Z2} air replace ${liq}`);
+      const X1 = box.x1 - 14, X2 = box.x2 + 14, Z1 = box.z1 - 14, Z2 = box.z2 + 14, per = Math.max(1, Math.floor(30000 / ((X2 - X1 + 1) * (Z2 - Z1 + 1))));
+      for (const liq of ['lava', 'flowing_lava', 'obsidian', 'fire']) for (let yy = box.y1 - 20; yy <= box.y2; yy += per) cmd(`fill ${X1} ${yy} ${Z1} ${X2} ${Math.min(box.y2, yy + per - 1)} ${Z2} air replace ${liq}`);
       await system.waitTicks(10);
     }
     // Put the ground back, then make sure the bot isn't left inside a restored block.

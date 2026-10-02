@@ -22,6 +22,9 @@ if not exist "server\bedrock_server.exe" (
   pause
   exit /b 1
 )
+rem A new world for each update (tools\new_world.ps1): only when the build changed; "Start Agent.bat keep" skips it.
+if /i "%~1"=="keep" (set "NEWWORLD=-Keep") else (set "NEWWORLD=")
+powershell -NoProfile -ExecutionPolicy Bypass -File "tools\new_world.ps1" %NEWWORLD%
 start "Bedrock Agent - server" /d "%~dp0server" bedrock_server.exe
 
 rem The dashboard (status and controls) is served by the brain.
