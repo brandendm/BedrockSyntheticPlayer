@@ -27,6 +27,7 @@ import { biomeName } from '../core/biomes.js';
 import { chainStep, chainItem, chainOutline, held } from '../core/chain.js';
 import { Horses } from './horse.js';
 import { LeadTow } from './leadtow.js';
+import { TowLearn } from './towlearn.js';
 import { FULL_SLOTS } from '../core/storage.js';
 import { itemValue, armorUpgrades, armorTotal } from '../core/wants.js';
 import { lootPlan, lootWorth, backoffMs, LOOT_WINDOW_MS } from '../core/loot.js';
@@ -110,6 +111,7 @@ export class Agent {
     this.villages = new Villages(this);
     this.horses = new Horses(this);
     this.tow = new LeadTow(this);
+    this.towlearn = new TowLearn(this);
     /** @type {Set<string>} Far places already looked at for a village (game/villages.js scout). */
     this.villageScouted = new Set();
     tracePosition(() => this.sim.location); // (villages seen from afar: game/villages.js)
@@ -363,6 +365,7 @@ export class Agent {
     // (Not while the job is already out picking things up, and not more than once in ten seconds: a
     // restart every two seconds meant it never got there, and each one used up a try at getting our
     // own gear back. The same item that's had three restarts is left to the ordinary pickup.)
+    if (t % 5 === 2 && this.towlearn.on) { try { this.towlearn.sample(t); } catch { /* watching never breaks the tick */ } }
     if (t % 4 === 1) { try { this.skills.heldSweep(); } catch { /* a stale hand is cosmetic */ } }
     if (t % 40 === 10 && this.mode === 'none' && this.autoEnabled && (this.task?.kind === 'auto' || !this.task) && !this.pickingUp &&
         t - (this.lootTriggerAt ?? -1e9) >= 200 && !(this.deathSpot && Date.now() - this.deathSpot.at < LOOT_WINDOW_MS)) {

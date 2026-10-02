@@ -104,6 +104,12 @@ function handle(text, player) {
   if (lower === 'learn' || lower.startsWith('learn ')) {
     if (!agent) return reply(player, 'spawn first');
     const [, sub = 'status', who] = lower.split(/\s+/);
+    if (sub === 'tow') {
+      const pl = world.getPlayers().find((p) => p.name.toLowerCase() === String(who ?? player?.name ?? '').toLowerCase()) ?? world.getPlayers().find((p) => p.id !== agent.sim.id);
+      if (!pl) return reply(player, 'Who? `!bot learn tow <name>`.');
+      return reply(player, agent.towlearn.start(pl));
+    }
+    if (sub === 'off' && agent.towlearn.on) return reply(player, agent.towlearn.stop());
     if (sub === 'off') { const was = agent.demo.mode === 'house'; agent.demo.stop(); return reply(player, was ? 'Reading the house you built...' : 'Stopped watching you.'); }
     // `learn house [name]`: your things put aside, a house kit given, the build recorded; `learn off` learns it and gives your things back.
     if (sub === 'house') {

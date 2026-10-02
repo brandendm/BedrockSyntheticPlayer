@@ -18,6 +18,7 @@
 import { system } from '@minecraft/server';
 import { trace } from './bridge.js';
 import { hold } from './inventory.js';
+import { speedFrac } from '../core/towlearn.js';
 
 const flat = (p, q) => Math.hypot(p.x - q.x, p.z - q.z);
 const WALK_BPS = 4.3, RIDE_BPS = 9; // blocks per second at full speed, on foot and on a horse (for the "ideal" time)
@@ -50,7 +51,10 @@ export class LeadTow {
     const a = this.a, S = a.skills, sim = a.sim, mount = opts.mount ?? null, subject = () => mount ?? sim;
     const lim = this.limits(boat);
     const cal = a.memory.data.leadCal;
-    const lo = cal?.pullAt ?? 5, hi = lim.max * 0.6;
+    // What a player was watched doing (`!bot learn tow`, core/towlearn.js) over the guesses: where the boat starts to follow, where to ease off,
+    // how fast at each separation, how long to wait on a stuck boat, where to go to free it.
+    const L = cal?.learned?.[opts.mount ? 'ride' : 'walk'] ?? null;
+    const lo = L?.pullAt ?? cal?.pullAt ?? 5, hi = Math.min(L?.holdAt ?? lim.max * 0.6, lim.max * 0.8), patience = Math.max(15, Math.min(90, Math.round((L?.patience ?? 30) / 1))), curve = L?.curve ?? null;
     const m = { arrived: false, snapped: false, why: '', secs: 0, idealS: 0, efficiency: 0, holds: 0, tugs: 0, reroutes: 0, steps: 0, maxSep: 0, pullAt: null, boatMoved: 0, boatEnd: null, pathLen: 0, wet: false, ...lim, holdAt: hi };
     const t0 = system.currentTick, b0 = { ...boat.location };
     let route = null, wi = 0, lastBoat = { ...boat.location }, lastBoatMoveTick = t0, stuckAt = null, stuckCount = 0, lastJump = 0, replans = 0;
@@ -90,14 +94,14 @@ export class LeadTow {
       const wp = route[wi];
       if (flat(pos, wp) < 1.1) { wi++; continue; }
       // Stuck: the boat hasn't moved for 1.5 s while the lead is taut.
-      if (d > lo + 0.5 && system.currentTick - lastBoatMoveTick > 30) {
+      if (d > lo + 0.5 && system.currentTick - lastBoatMoveTick > patience) {
         m.tugs++;
         const here = `${Math.round(boat.location.x)},${Math.round(boat.location.z)}`;
         stuckCount = stuckAt === here ? stuckCount + 1 : 1; stuckAt = here;
         try { sim.stopMoving(); } catch { /* */ }
         // Back to the boat (slack), then to a flank of it with a clear line, then on.
         await this.goTo(gen, { x: boat.location.x + 1.2, y: pos.y, z: boat.location.z + 1.2 }, ride, 3.5);
-        const flank = this.flank(boat, wp, stuckCount);
+        const flank = this.flank(boat, wp, stuckCount, L?.flank ?? null);
         if (flank) await this.goTo(gen, flank, ride, 3.5);
         lastBoatMoveTick = system.currentTick;
         if (stuckCount >= 3) { m.reroutes++; route = null; stuckCount = 0; }
@@ -105,7 +109,8 @@ export class LeadTow {
       }
       // Speed follows tension: full below `lo`, easing to a standstill by `hi`.
       const speedCap = opts.speed ?? 1;
-      let k = d <= lo ? 1 : Math.max(0, (hi - d) / (hi - lo));
+      let k = curve && L?.curve?.length >= 4 ? speedFrac(curve, d) : d <= lo ? 1 : Math.max(0, (hi - d) / (hi - lo));
+      if (d >= hi) k = 0; // (never past where the player held up)
       // A step up ahead: close the gap first so the climb doesn't drag the boat into the step.
       if (wp.y - pos.y > 0.6 && d > 2.5 && flat(pos, wp) < 2.5) k = 0;
       if (k < 0.12) {
@@ -147,18 +152,19 @@ export class LeadTow {
    * A spot 5 blocks from the boat to one side of the line to the next waypoint (alternating sides, wider each time),
    * standing room and nothing solid between it and the boat at boat height. Null if there's none.
    */
-  flank(boat, wp, n) {
+  flank(boat, wp, n, learned = null) {
     const S = this.a.skills, b = boat.location;
     const base = Math.atan2(wp.z - b.z, wp.x - b.x);
-    const side = n % 2 ? 1 : -1, spread = (Math.PI / 3) * (1 + Math.floor((n - 1) / 2) * 0.5);
+    const side = n % 2 ? 1 : -1, spread = ((learned?.angle ? Math.max(30, Math.min(120, learned.angle)) : 60) * Math.PI / 180) * (1 + Math.floor((n - 1) / 2) * 0.5);
+    const reach = learned?.dist ? Math.max(3, Math.min(8, learned.dist)) : 5;
     for (const sgn of [side, -side]) {
       const ang = base + sgn * spread;
-      const p = { x: b.x + Math.cos(ang) * 5, z: b.z + Math.sin(ang) * 5 };
+      const p = { x: b.x + Math.cos(ang) * reach, z: b.z + Math.sin(ang) * reach };
       const top = S.groundTop(Math.floor(p.x), Math.floor(p.z));
       if (!Number.isFinite(top) || Math.abs(top - b.y) > 2) continue;
       let clear = true;
       for (let t = 1; t <= 4 && clear; t++) {
-        const q = { x: Math.floor(b.x + (p.x - b.x) * t / 5), y: Math.floor(b.y + 0.5), z: Math.floor(b.z + (p.z - b.z) * t / 5) };
+        const q = { x: Math.floor(b.x + (p.x - b.x) * t / 5), y: Math.floor(b.y + 0.5), z: Math.floor(b.z + (p.z - b.z) * t / 5) }; // (4 points along the way)
         const id = S.blockAt(q) ?? 'air';
         if (!/^(air|cave_air|void_air|short_grass|tall_grass|fern|snow_layer)$/.test(id)) clear = false;
       }

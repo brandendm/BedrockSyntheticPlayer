@@ -1,0 +1,44 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { analyseTow, speedFrac, mergeLearned } from '../behavior_pack/scripts/core/towlearn.js';
+
+// A player leads a boat along +x: the boat only follows once they're over 5 apart, the player waits at 6.5 apart, and the boat
+// sticks for 3 seconds at one point; the player then goes round to its side (a quarter turn) and it comes free.
+function simulate() {
+  const out = [];
+  let px = 0, pz = 0, bx = -2, bz = 0;
+  for (let i = 0; i < 160; i++) {
+    const t = i * 5, sep = Math.hypot(px - bx, pz - bz);
+    const stuck = i >= 60 && i < 76;
+    if (sep > 5 && !stuck) { const d = 1 / (sep || 1); bx += (px - bx) * d; bz += (pz - bz) * d; } // 4 blocks/s toward the player
+    if (stuck && i === 75) { px = bx; pz = bz + 5; }                                                   // goes round to the side
+    else if (sep < 6.5 && !(stuck && sep > 5)) px += 1;                                                // 4 blocks/s unless waiting
+    out.push({ t, px, pz, bx, bz, by: 64, rise: stuck ? 1 : 0, leashed: true, ride: false });
+  }
+  return out;
+}
+
+test('a tow is worked out from a player doing it', () => {
+  const r = analyseTow(simulate());
+  assert.ok(r);
+  assert.ok(r.pullAt >= 4.5 && r.pullAt <= 6.5, `pullAt ${r.pullAt}`);
+  assert.ok(r.holdAt >= 5.5 && r.holdAt <= 7.2, `holdAt ${r.holdAt}`);
+  assert.ok(r.stuckEvents >= 1);
+  assert.ok(r.flank && r.flank.angle >= 50 && r.flank.angle <= 130, JSON.stringify(r.flank));
+  assert.equal(r.blockedRise, 1);
+  assert.equal(r.snapped, false);
+});
+
+test('too little to learn from gives nothing', () => assert.equal(analyseTow(simulate().slice(0, 10)), null));
+
+test('speed against separation, and sessions folded together', () => {
+  const r = analyseTow(simulate());
+  const curve = [{ from: 0, to: 4, frac: 1 }, { from: 4, to: 7, frac: 0.6 }, { from: 7, to: 99, frac: 0.1 }];
+  assert.equal(speedFrac(curve, 1), 1);
+  assert.equal(speedFrac(curve, 5), 0.6);
+  assert.equal(speedFrac(curve, 11), 0.1);
+  assert.equal(speedFrac(null, 3), 1);
+  const m = mergeLearned({ ...r, secs: 10, pullAt: 4 }, { ...r, secs: 10, pullAt: 6 });
+  assert.equal(m.pullAt, 5);
+  assert.equal(m.sessions, 2);
+});
