@@ -1367,12 +1367,12 @@ export class Skills {
    * breaks at a touch. Swiped through the whole patch (swipePatch), up to 64 layers (32 items of
    * cooking), ~15 s at most.
    */
-  async grabLitter(gen) {
+  async grabLitter(gen, target = 64) {
     const have = () => invCounts(this.sim).leaf_litter ?? 0;
-    if (have() >= 64) return 0;
+    if (have() >= target) return 0;
     const t0 = system.currentTick;
     let n = 0;
-    const r = await this.swipePatch(gen, (id) => id === 'leaf_litter', { radius: 6, rounds: 4, maxTicks: 300, enough: () => have() + n * 2 >= 64 });
+    const r = await this.swipePatch(gen, (id) => id === 'leaf_litter', { radius: 6, rounds: 4, maxTicks: 300, enough: () => have() + n * 2 >= target });
     n = r.broke;
     if (n) this.log(`leaf litter: swiped ${n} blocks for fuel in ${((system.currentTick - t0) / 20).toFixed(1)} s (had ${have()})`);
     return n;

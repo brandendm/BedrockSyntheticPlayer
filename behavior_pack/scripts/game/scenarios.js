@@ -299,6 +299,9 @@ async function runOne(agent, player, name, arg, human = false) {
     cmd(`fill ${x - ext.w} ${gy - 10} ${z - ext.r} ${x + ext.e} ${gy - 4} ${z + ext.r} stone`);
     cmd(`fill ${x - ext.w} ${gy - 3} ${z - ext.r} ${x + ext.e} ${gy - 1} ${z + ext.r} dirt`);
     cmd(`fill ${x - ext.w} ${gy} ${z - ext.r} ${x + ext.e} ${gy} ${z + ext.r} grass_block`);
+    // A glass wall round the slab's rim, so nobody (the bot in a fight, a horse, you) can walk or be knocked off it into the sky.
+    const wx1 = x - ext.w, wx2 = x + ext.e, wz1 = z - ext.r, wz2 = z + ext.r;
+    for (const [a1, b1, a2, b2] of [[wx1, wz1, wx2, wz1], [wx1, wz2, wx2, wz2], [wx1, wz1, wx1, wz2], [wx2, wz1, wx2, wz2]]) cmd(`fill ${a1} ${gy + 1} ${b1} ${a2} ${gy + 8} ${b2} glass`);
     // Whoever is not doing the test waits on the slab too (the bot by the edge while you do it).
     try { if (human) sim.teleport({ x: x - 4.5, y: gy + 1, z: z + 6.5 }); else sim.teleport({ x: x + 0.5, y: gy + 1, z: z + 0.5 }); } catch { /* */ }
     if (human && player) { try { player.teleport({ x: x + 0.5, y: gy + 1, z: z + 0.5 }); } catch { /* */ } }
@@ -436,7 +439,15 @@ async function runOne(agent, player, name, arg, human = false) {
         cmd(`fill ${x} ${gy + 1} ${z} ${x} ${gy + h} ${z} cobblestone`);
         tp(x, gy + h + 1, z);
         await system.waitTicks(20);
-        if (human) { pass = await humanTry(() => who.location.y <= gy + 2, 150); detail = `you ${pass ? 'did it' : 'did not finish'} in ${secs()}s`; break; }
+        if (human) {
+          const hpT = () => { try { return who.getComponent('minecraft:health').currentValue; } catch { return 20; } };
+          const hp0T = hpT();
+          pass = await humanTry(() => who.location.y <= gy + 2, 150);
+          const lost = Math.max(0, hp0T - hpT());
+          pass = pass && lost <= 3; // the test is getting down WITHOUT fall damage: a jump off costs 7
+          detail = `you ${pass ? 'did it' : 'did not get down safely'} in ${secs()}s, lost ${lost} hp`;
+          break;
+        }
         S.getDownStats = { hops: 0, digs: 0 };
         agent.apply([{ type: 'surface' }]);
         await idle(150);
@@ -1006,7 +1017,7 @@ async function runOne(agent, player, name, arg, human = false) {
         const logs0 = Object.entries(invCountsOf(sim)).filter(([id]) => /_log$/.test(id)).reduce((a, [, n]) => a + n, 0);
         const gen = agent.newTask({ kind: 'test' });
         agent.memory.forgetNear('log', dim.id, { x: tx, y: gy + 1, z }, 64);
-        if (name === 'litter') await S.grabLitter(gen).catch((e) => { detail = `${e}`; });
+        if (name === 'litter') await S.grabLitter(gen, 8).catch((e) => { detail = `${e}`; });
         else await S.gatherLogs(gen, logs0 + 5).catch((e) => { detail = `${e}`; });
         const at = S.blockAt({ x: tx, y: gy + 1, z });
         const litter = invCountsOf(sim).leaf_litter ?? 0;

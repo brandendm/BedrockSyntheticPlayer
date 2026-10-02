@@ -31,7 +31,7 @@ test('walks around a wall, arrives, never snaps the camera', async () => {
   assert.ok(maxYawStep(body.looks) <= 25, `camera snapped ${maxYawStep(body.looks).toFixed(1)} deg in one tick`);
 });
 
-test('movement never points more than ~20 deg off where the head faces', async () => {
+test('movement never points more than ~35 deg off where the head faces', async () => {
   const w = makeWorld();
   const body = new SimBody(w, { x: 0.5, y: 64, z: 0.5 }, 90);
   const motor = new MotorController(body, {}, makeRng(2));
@@ -45,7 +45,7 @@ test('movement never points more than ~20 deg off where the head faces', async (
   const wps = [{ x: 0.5, y: 64, z: 0.5 }, { x: 10.5, y: 64, z: 0.5 }, { x: 10.5, y: 64, z: 10.5 }];
   const { result } = await runMotor(motor, body, motor.followPath(wps));
   assert.equal(result?.status, 'arrived');
-  assert.ok(worst <= 21, `strafed ${worst.toFixed(1)} deg`);
+  assert.ok(worst <= 36, `strafed ${worst.toFixed(1)} deg`);
 });
 
 test('jumps up a step', async () => {

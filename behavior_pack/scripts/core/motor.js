@@ -42,11 +42,11 @@ export const DEFAULTS = Object.freeze({
   steerLookahead: 1.6,  // blocks
   gazeLookahead: 4.0,
   gazeDrop: 0.6,        // look this far below eye level at the gaze point (tuned in-game)
-  maxStrafeDeg: 20,     // max angle between facing and movement direction
-  turnInPlaceDeg: 75,   // above this heading error, stop and turn first
+  maxStrafeDeg: 35,     // max angle between facing and movement direction (was 20: the bot turned its view 10 to 50 times as far as a player in the same job)
+  turnInPlaceDeg: 100,  // above this heading error, stop and turn first (was 75)
   arriveRadius: 0.35,
   waypointRadius: 0.7,  // flat corners: start turning this early
-  reactionTicks: [3, 7], // 150-350 ms
+  reactionTicks: [1, 3], // 50-150 ms (was 150-350: the test runs had a player start moving 0.1 s in, the bot 0.3 to 1.1 s)
   stuckWindow: 40,      // ticks between progress checks
   stuckMinProgress: 0.4,
   sprintMinRemaining: 4,

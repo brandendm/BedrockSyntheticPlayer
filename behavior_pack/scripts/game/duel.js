@@ -94,6 +94,7 @@ export async function runDuel(agent, player, { cmd, x, gy, z, extraRuns, secs })
       /** @returns {string} why the round is over, or '' */
       const over = () => {
         if (agent.testSkipped) return 'skipped';
+        if (!sim.isValid || agent.sim !== sim || hpOf(sim) <= 0) return 'the bot died';
         if ((system.currentTick - t0) / 20 > ROUND_S) return 'time';
         if (hpOf(sim) <= END_HP) return 'you won';
         if (hpOf(player) <= END_HP) return 'the bot won';
