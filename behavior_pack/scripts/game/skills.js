@@ -677,7 +677,7 @@ export class Skills {
       }
     }
     this.afterUse(slot);
-    await this.wait(gen, 6);
+    await this.wait(gen, 3); // (a player jumps again about 11 ticks after the last jump: the old 6-tick settle made it 14+)
     this.a.cellChanged?.();
     if (placed) { this.markPlaced(f); this.markScaffold(f); }
     this.restHands();

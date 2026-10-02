@@ -643,6 +643,23 @@ async function fullReport() {
   out.push(section(`FLIGHT REPORTS (${(fl?.reports || []).length})`, (fl?.reports || []).map((r) => `--- ${r.t} ${r.why}\n${(r.report || []).join('\n')}`).join('\n\n')));
   const res = ts?.results || {};
   out.push(section('TESTS', `${ts?.batch ? `last batch ${ts.batch.t}: ${ts.batch.passed}/${ts.batch.total} in ${ts.batch.secs}s (build ${ts.batch.build})\n` : ''}${Object.entries(res).map(([k, v]) => `${v.pass ? 'PASS' : 'FAIL'} ${k} ${v.t} ${v.detail}`).join('\n')}`));
+  // How you and the bot did the same tests: the numbers, the blocks placed/broken (seconds in, where) and the path (seconds in, offset from the start), to study the technique.
+  try {
+    const f1 = (v) => (Math.round(v * 10) / 10);
+    const lines = [];
+    for (const [name, r] of Object.entries(RUNS || {})) {
+      for (const w of ['human', 'bot']) {
+        const x = r && r[w]; if (!x) continue;
+        const sm = x.summary || {}, tr = x.trace || {}, p = tr.path || [];
+        const o0 = p[0] || [0, 0, 0, 0];
+        const step = Math.max(1, Math.ceil(p.length / 28));
+        const pts = p.filter((_, i) => i % step === 0 || i === p.length - 1).map((q) => `${q[0]}s:${f1(q[1] - o0[1])},${f1(q[2] - o0[2])},${f1(q[3] - o0[3])}`).join(' ');
+        const bl = (tr.blocks || []).slice(0, 40).map((b) => `${b[0]}s ${b[1] === 'p' ? 'put' : 'broke'} ${f1(b[2] - o0[1])},${f1(b[3] - o0[2])},${f1(b[4] - o0[3])}`).join('; ');
+        lines.push(`${name} ${w === 'human' ? 'YOU' : 'BOT'} ${x.pass ? 'pass' : 'FAIL'} ${sm.secs}s path ${sm.path} straight ${sm.straight} jumps ${sm.jumps} idle ${sm.idleS}s sprint ${sm.sprintS}s sneak ${sm.sneakS}s placed ${sm.placed} broken ${sm.broken} dmg ${sm.damage}\n    blocks: ${bl || '-'}\n    path: ${pts || '-'}`);
+      }
+    }
+    out.push(section('TEST RUNS: YOU vs THE BOT (paths and blocks, relative to each start)', lines.join('\n') || '(none yet this brain session)'));
+  } catch {}
   return out.join('\n');
 }
 // (#report in the address: the report shown on the page, for a phone where the clipboard won't take it.)

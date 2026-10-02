@@ -233,6 +233,23 @@ def _load_test_stats() -> None:
         pass
 
 
+def _load_test_runs() -> None:
+    """The latest run of each test and side (with its path), read back from tests.jsonl so a restart does not empty the dashboard."""
+    try:
+        with (LOG_DIR / "tests.jsonl").open(encoding="utf-8") as fh:
+            lines = fh.readlines()[-3000:]
+    except OSError:
+        return
+    runs = _tests.setdefault("runs", {})
+    for line in lines:
+        try:
+            e = json.loads(line)
+        except ValueError:
+            continue
+        if e.get("type") == "test_run" and e.get("name") and e.get("who"):
+            runs.setdefault(str(e["name"]), {})[str(e["who"])] = {"t": e.get("t"), "pass": bool(e.get("pass")), "summary": e.get("summary"), "trace": e.get("trace")}
+
+
 def remember(evt: dict) -> None:
     """Keep what the dashboard shows from a logged event: flight reports, test results, the last batch."""
     kind = evt.get("type")
@@ -569,6 +586,7 @@ def make_handler(engine: DecisionEngine, key: str | None = None):
 
 def main():
     _load_test_stats()
+    _load_test_runs()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s: %(message)s")
     cfg = load_config()
     engine = build_engine(cfg)
