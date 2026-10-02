@@ -5240,11 +5240,21 @@ export class Skills {
     for (let leg = 0; leg < legs; leg++) {
       this.check(gen);
       const from = this.sim.location;
+      this.a.travelGoal = { x: target.x, z: target.z, at: system.currentTick }; // (where a flight should lean: game/agent.js flee)
       if (dist3D(from, target) < 12) return true;
       // (A partial leg no longer ends out in the water: it ended mid-lake, where the survival reflex pulled the bot out and the whole walk started again,
       // 11-21 s each time in the u197 report. A lake in the way is crossed by boat, below, or swum when there is no boat to be had.)
-      const res = await this.a.plan(from, target, 8, 8000, null, {});
-      this.check(gen);
+      // A far target in steps: the search to a point 80 blocks along the way finishes (a few thousand nodes) where one to a target 470 away ran
+      // its whole 8000 every time, partial, a second's hitch per leg (the u197 report: 7 plans, 56,000 nodes, all partial).
+      let res;
+      const far = dist3D(from, target);
+      if (far > 110) {
+        const k = 80 / far;
+        const mid = this.a.resolveY({ x: from.x + (target.x - from.x) * k, z: from.z + (target.z - from.z) * k });
+        res = await this.a.plan(from, mid, 6, 4000, null, {});
+        this.check(gen);
+        if (!res.complete) { res = await this.a.plan(from, target, 8, 8000, null, {}); this.check(gen); }
+      } else { res = await this.a.plan(from, target, 8, 8000, null, {}); this.check(gen); }
       // A partial leg ends where the search got closest, which can be inside a cave: end it at the
       // last point out in the open instead (or we'd escape back out and walk straight in again).
       let path = res.path;

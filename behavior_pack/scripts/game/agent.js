@@ -98,6 +98,8 @@ export class Agent {
     // survival state
     this.mode = 'none';      // none | fight | flee
     this.suspended = null;   // task interrupted by a fight/flight, resumed when calm
+    /** @type {{x: number, z: number, at: number} | null} where the last long walk was heading (a flight leans toward it) */
+    this.travelGoal = null;
     this.calmSince = 0;
     this.attackers = new Map(); // entity id -> tick it last hurt us
     this.escort = new Map(); // following a player: entity id -> tick it hit them or they hit it
@@ -884,6 +886,7 @@ export class Agent {
           if (d.mode === 'fight' && this.weaponId) { hold(this.sim, this.weaponId); this.heldWeapon = this.weaponId; } // turned round from running
         }
         this.emit('combat', { mode: d.mode, reason: d.reason, threats: d.threats.map((m) => ({ type: m.type, dist: +m.dist.toFixed(1) })) });
+        if (d.mode === 'flee') trace(`flee: ${d.reason}; from ${d.threats.slice(0, 3).map((m) => `${m.type} ${m.dist.toFixed(0)}`).join(', ')}; hp ${this.health()}; was doing ${this.suspended?.kind ?? this.task?.kind ?? '-'} / ${this.autoStep ?? '-'}${this.travelGoal && system.currentTick - this.travelGoal.at < 900 ? `, heading ${Math.round(this.travelGoal.x)} ${Math.round(this.travelGoal.z)}` : ''}`);
       }
       this.mode = d.mode;
       this.nextRoute = 0;
@@ -2469,7 +2472,14 @@ export class Agent {
     if (this.walling || this.digging) return;
     if (this.pinch(threats, t)) return;
     if ((t < this.nextRoute && this.motor.busy) || this.findingRefuge) return;
-    this.nextRoute = t + 20;
+    // On a height with a long drop beside us (a pillar, a tree, a cliff top) and hurt: running is how it fell to its death in two of the
+    // reports (a knock, a leap, a ledge in the dark). Stand and fight from there instead (the same switch as when cornered).
+    if (this.health() < 12 && this.skills.dropsAround().some((e) => e.drop > 3)) {
+      this.corneredUntil = t + 80;
+      trace('flee: on a height with a drop beside me and hurt: standing my ground instead of running');
+      return;
+    }
+    this.nextRoute = t + 30;
     this.findingRefuge = true;
     const gen = this.taskGen;
     const f = { x: Math.floor(me.x), z: Math.floor(me.z) };
@@ -2484,20 +2494,22 @@ export class Agent {
     // The refuge candidates from the last search, if we've barely moved: the search to its cap was
     // 7 ticks a time, 25 times in one run, all for the same ground.
     const rc = this.refugeCache;
-    const reuse = rc && t - rc.t < 60 && Math.hypot(rc.x - me.x, rc.z - me.z) < 3 && Math.abs(rc.y - me.y) < 1.5;
-    (reuse ? Promise.resolve(cands.push(...rc.cands)) : this.plan(me, me, 0, 2500, probe, { wrap, actions: this.fleeActions() })).then(() => {
+    const reuse = rc && t - rc.t < 120 && Math.hypot(rc.x - me.x, rc.z - me.z) < 6 && Math.abs(rc.y - me.y) < 2;
+    // (900 nodes, not 2500: the spots to run to are within a dozen blocks, and the search used to run its whole cap, 7 ticks, 20 times in a report, for the same ground.)
+    (reuse ? Promise.resolve(cands.push(...rc.cands)) : this.plan(me, me, 0, 900, probe, { wrap, actions: this.fleeActions(), costs: this.fleeCosts() })).then(() => {
       if (!reuse) this.refugeCache = { t, x: me.x, y: me.y, z: me.z, cands: cands.slice() };
       this.findingRefuge = false;
       if (gen !== this.taskGen || this.mode !== 'flee') return;
       // Out of sight: the ray from the shooter's eye to our chest there.
       const sees = (p, m) => { try { return canSee(this.dim, m.head, { x: p.x, y: p.y + 1.2, z: p.z }); } catch { return true; } };
       const now = this.body.getPos();
-      const spot = pickRefuge(now, threats, cands, sees);
+      const prefer = this.travelGoal && system.currentTick - this.travelGoal.at < 900 ? this.travelGoal : null;
+      const spot = pickRefuge(now, threats, cands, sees, 3, prefer);
       if (spot) { this.routeTo(spot, 1, true, 3000, false, wrap, true); return; }
       if (this.buildSlot(threats, threats.filter((m) => m.dist <= 12).sort((a, b) => a.dist - b.dist)[0])) return; // cornered by zombies: a kill slot, not a sealed wall
       if (this.wallOff(threats)) return;
       if (this.towerUp(threats)) return; // nowhere to run, no way in to block: up out of their reach
-      const deeper = pickRefuge(now, threats, cands, sees, 0.5);
+      const deeper = pickRefuge(now, threats, cands, sees, 0.5, prefer);
       if (deeper) { this.routeTo(deeper, 0.5, true, 1500, false, wrap, true); this.nextRoute = system.currentTick + 8; return; }
       this.corneredUntil = system.currentTick + 200; // 10 s: fight back
       if (CONFIG.debug && !(this.corneredSaid > system.currentTick - 200)) console.warn('[agent] cornered: nowhere better to run');
@@ -2516,7 +2528,8 @@ export class Agent {
   /** Plan and start walking, replacing any current path without a stop. */
   async routeTo(goal, tolerance, urgent, maxNodes, walk = false, wrap = null, climb = false) {
     const gen = this.taskGen, seq = this.routeSeq ?? 0;
-    const res = await this.plan(this.body.getPos(), goal, tolerance, maxNodes, null, wrap ? { wrap } : {});
+    const fleeing = this.mode === 'flee';
+    const res = await this.plan(this.body.getPos(), goal, tolerance, maxNodes, null, { ...(wrap ? { wrap } : {}), ...(fleeing ? { costs: this.fleeCosts() } : {}) });
     if (gen !== this.taskGen || seq !== (this.routeSeq ?? 0)) return;
     // No walking way there but one with a block or two to step up on (out of a trench, up a
     // terrace): that, a block under our feet at each step up (skills.followActionPath).
@@ -2535,6 +2548,14 @@ export class Agent {
     // into the creeper we'd stopped short of.
     if (res.path.length < 2) return;
     this.motor.followPath(smoothPath(this.classifier(), res.path), { seamless: true, urgent, walk });
+  }
+
+  /**
+   * Costs for a running route: drops of 2 (1 when hurt) at most, no bucket drops and no jumps over a deep gap: the walking search allows drops of 3
+   * and sure leaps, which is right at a leisurely walk and not with a mob at our back and half the health.
+   */
+  fleeCosts() {
+    return { ...this.moveCosts(), maxDrop: this.health() < 10 ? 1 : 2, bucketDrop: 0, riskyLeap: null };
   }
 
   /** Moves a running route may make: put a block down to step up a ledge (up to 4), never dig. */

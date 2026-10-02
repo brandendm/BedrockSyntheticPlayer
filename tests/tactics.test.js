@@ -317,3 +317,13 @@ test('squeezed in a tunnel: the creeper\'s way walled off; no blocks, a pocket d
   assert.equal(Math.abs(al.cells[0].z), 1, 'sideways, out of its line');
   assert.equal(al.into.y, 40);
 });
+
+test('a flight leans toward where the bot was going, never at the cost of safety', () => {
+  const me = { x: 0, y: 64, z: 0 };
+  const zombie = { type: 'zombie', dist: 4, pos: { x: 4, y: 64, z: 0 } };
+  const west = { x: -9, y: 64, z: 0, cost: 9 }, north = { x: 0, y: 64, z: -9, cost: 9 };
+  assert.deepEqual(pickRefuge(me, [zombie], [west, north], null, 3, { x: 0, z: -80 }), north, 'north when that is where it was going');
+  assert.deepEqual(pickRefuge(me, [zombie], [west, north], null, 3, { x: -80, z: 0 }), west);
+  const toward = { x: 6, y: 64, z: 0, cost: 6 }; // right past the zombie
+  assert.notDeepEqual(pickRefuge(me, [zombie], [toward, west], null, 3, { x: 80, z: 0 }), toward, 'never toward the mob');
+});

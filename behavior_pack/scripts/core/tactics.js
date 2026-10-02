@@ -344,7 +344,7 @@ export class Stalemate {
  * better out of sight of anything shooting at us (sees(spot, mob) -> bool). Returns the spot or
  * null when nowhere is clearly better than here.
  */
-export function pickRefuge(me, threats, candidates, sees = null, margin = 3) {
+export function pickRefuge(me, threats, candidates, sees = null, margin = 3, prefer = null) {
   const shooters = threats.filter((m) => MOBS[m.type]?.kind === 'ranged');
   const score = (p, cost) => {
     let nearest = Infinity;
@@ -352,6 +352,11 @@ export function pickRefuge(me, threats, candidates, sees = null, margin = 3) {
     for (const t of threats) nearest = Math.min(nearest, Math.hypot(p.x - t.pos.x, (p.y - t.pos.y) * 1.5, p.z - t.pos.z) / (t.type === 'creeper' ? 1.6 : 1));
     let s = Math.min(nearest, 24) - cost * 0.15;
     if (sees && shooters.length && shooters.every((m) => !sees(p, m))) s += 10; // out of the line of fire
+    // Running toward where we were going (up to 4 points): a flight that ends the other way costs a walk back and a lost thread of the job.
+    if (prefer) {
+      const gx = prefer.x - me.x, gz = prefer.z - me.z, gl = Math.hypot(gx, gz), cx = p.x - me.x, cz = p.z - me.z, cl = Math.hypot(cx, cz);
+      if (gl > 8 && cl > 1) s += 4 * ((gx * cx + gz * cz) / (gl * cl));
+    }
     return s;
   };
   const here = score(me, 0);
