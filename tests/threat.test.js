@@ -154,3 +154,13 @@ test('armor counts: what a hit leaves, and the fight-or-run race on health throu
   assert.equal(decide({ health: 5, damage: 7, mobs: [mob('zombie', 3)] }).mode, 'flee');
   assert.equal(decide({ health: 5, damage: 7, mobs: [mob('zombie', 3)], armor: 15 }).mode, 'fight');
 });
+
+test('with a bow: creepers 6+ off are shot even in a crowd of them; nothing lit or close', () => {
+  const crowd = [mob('creeper', 6.5), mob('creeper', 7.5), mob('creeper', 11)];
+  assert.equal(decide({ health: 20, damage: 6, mobs: crowd }).mode, 'flee', 'no bow: run from a crowd');
+  const d = decide({ health: 20, damage: 6, bow: true, mobs: crowd });
+  assert.equal(d.mode, 'fight');
+  assert.equal(d.target, 'creeper6.5');
+  assert.equal(decide({ health: 20, damage: 6, bow: true, mobs: [mob('creeper', 4), mob('creeper', 7)] }).mode, 'flee', 'one close: not the bow');
+  assert.equal(decide({ health: 20, damage: 6, bow: true, mobs: [mob('creeper', 7, { lit: true }), mob('creeper', 7.5)] }).mode, 'flee', 'one lit');
+});

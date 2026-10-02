@@ -102,7 +102,7 @@ export function isActiveThreat(m, isNight, alert = false) {
  * side can't hit us, and we can hit it through the gap. Fight it from there, hurt or not.
  * output: { mode: 'none'|'fight'|'flee', target?: id, threats: [mob], reason }
  */
-export function decide({ health, damage = FIST_DAMAGE, isNight = false, prevMode = 'none', mobs, inWater = false, shield = false, slot = false, witches = true, armor = 0, toughness = 0 }) {
+export function decide({ health, damage = FIST_DAMAGE, isNight = false, prevMode = 'none', mobs, inWater = false, shield = false, slot = false, witches = true, armor = 0, toughness = 0, bow = false }) {
   const held = (m) => slot && SLOT_SAFE.has(m.type) && !m.baby; // at the gap: can't get at us
   const alert = prevMode !== 'none';
   const threats = mobs.filter((m) => isActiveThreat(m, isNight, alert)).sort((a, b) => a.dist - b.dist);
@@ -115,6 +115,13 @@ export function decide({ health, damage = FIST_DAMAGE, isNight = false, prevMode
   const creeper = threats.find((m) => m.type === 'creeper' && (
     (m.dist <= 4 && !(m.canReach === false && m.visible === false && !m.lit)) || (m.lit && m.dist <= 8) ||
     ((m.canReach ?? true) && (m.visible || m.recent) && m.dist <= (alert ? 12 : m.targetingMe ? 12 : 8))));
+  // With a bow and arrows: creepers still 6+ off are shot, one after another, even in a crowd of them (running from four for ever
+  // took 10 s and 3.5 hp where a player walked at them and shot or hit them down in 4). Nothing lit or close, no melee mob near.
+  if (bow) {
+    const shots = threats.filter((m) => m.type === 'creeper' && m.visible && m.dist >= 6 && m.dist <= 20 && !m.lit);
+    const close = threats.some((m) => (m.type === 'creeper' && (m.lit || m.dist < 5.5)) || (m.type !== 'creeper' && MOBS[m.type].kind === 'melee' && m.dist <= 8 && (m.visible || m.attackedMe)));
+    if (shots.length && !close) return { mode: 'fight', target: shots[0].id, threats, reason: 'creeper: shoot it from afar' };
+  }
   if (creeper) {
     // Company that rules it out: something that would be on us while we hold the creeper off (a
     // zombie within 10, another creeper). A skeleton at range is less than a blast: hold the creeper

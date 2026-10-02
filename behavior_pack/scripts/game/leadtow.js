@@ -15,6 +15,7 @@
 import { system } from '@minecraft/server';
 import { trace } from './bridge.js';
 import { hold } from './inventory.js';
+import { isWalkMove } from '../core/pathfinder.js';
 
 const flat = (p, q) => Math.hypot(p.x - q.x, p.z - q.z);
 const WALK_BPS = 4.3, RIDE_BPS = 9; // blocks per second at full speed, on foot and on a horse (for the "ideal" time)
@@ -98,22 +99,36 @@ export class LeadTow {
     const guard = Math.min(SL.guard ?? lim.max * 0.9, lim.max * 0.95);
     const patience = Math.max(12, Math.min(90, Math.round(L?.patience ?? 20)));
     const stretchFor = (rise) => L?.sling?.stretch ?? SL.byRise?.[Math.min(3, Math.max(1, Math.ceil(rise)))] ?? Math.min(guard - 0.5, lim.max * 0.7);
-    const m = { arrived: false, snapped: false, why: '', secs: 0, idealS: 0, efficiency: 0, holds: 0, tugs: 0, reroutes: 0, steps: 0, slings: 0, slingOk: 0, maxSep: 0, pullAt: null, boatMoved: 0, boatEnd: null, pathLen: 0, wet: false, ...lim, holdAt: guard };
+    const m = { arrived: false, snapped: false, why: '', secs: 0, idealS: 0, efficiency: 0, holds: 0, tugs: 0, reroutes: 0, steps: 0, slings: 0, slingOk: 0, maxSep: 0, pullAt: null, boatMoved: 0, boatEnd: null, pathLen: 0, wet: false, notes: [], built: 0, ...lim, holdAt: guard };
     const t0 = system.currentTick, b0 = { ...boat.location };
+    let bestGoal = Infinity, bestAt = t0, noProg = 0, waitAct = -9999;
     let route = null, wi = 0, lastBoat = { ...boat.location }, lastBoatMoveTick = t0, stuckAt = null, stuckCount = 0, lastJump = 0, replans = 0;
     const ride = !!mount;
     const move = (to, speed) => { try { sim.moveToLocation(to, { speed }); } catch { /* */ } };
     const sep = () => flat(subject().location, boat.location);
 
+    const note = (t) => { if (m.notes.length < 16) m.notes.push(`${Math.round((system.currentTick - t0) / 20)}s ${t}`); };
+    // The route: the walking search first; where it cannot get there (a gap, a wall), the search that may also place and break blocks, its
+    // building steps kept as `act` points the bot does together (the boat brought up close first) when it gets to them.
     const plan = async (target) => {
       const from = subject().location;
-      const res = await a.plan(from, target, 1.5, 12000);
+      let res = await a.plan(from, target, 1.5, 12000);
       S.check(gen);
+      let built = false;
+      if (!res.complete && !ride && opts.build !== false && S.blockCount() >= 2) {
+        const ar = await a.plan(from, target, 1.5, 20000, null, { actions: S.actionOpts(), weight: 2 });
+        S.check(gen);
+        if (ar.complete && ar.path.length >= 2) { res = ar; built = true; note(`route with ${ar.path.filter((p) => !isWalkMove(p)).length} building steps`); }
+      }
       if (!res.path || res.path.length < 2) return null;
       m.pathLen += res.path.length;
-      const pts = res.path.map((c) => ({ x: c.x + 0.5, y: c.y, z: c.z + 0.5 }));
       const out = [];
-      pts.forEach((p, i) => { if (i === pts.length - 1 || i === 0 || p.y !== pts[i - 1].y || (i + 1 < pts.length && pts[i + 1].y !== p.y) || i % 2 === 0) out.push(p); });
+      res.path.forEach((c, i) => {
+        const pt = { x: c.x + 0.5, y: c.y, z: c.z + 0.5, node: c, act: built && i > 0 && !isWalkMove(c) };
+        const prev = res.path[i - 1], next = res.path[i + 1];
+        const keep = i === 0 || i === res.path.length - 1 || pt.act || (built && next && !isWalkMove(next)) || prev.y !== c.y || (next && next.y !== c.y) || i % 2 === 0;
+        if (keep) out.push(pt);
+      });
       return out;
     };
 
@@ -131,11 +146,29 @@ export class LeadTow {
         if (!route) { m.why = 'no land route to the goal'; break; }
         if (!m.idealS) m.idealS = flat(pos, goal) / (ride ? RIDE_BPS : WALK_BPS);
       }
+      // No progress: the boat no nearer the goal by 1.5 blocks in 25 s. The first time, a new route; the second, give up (said why).
+      { const bd = flat(boat.location, goal); if (bd < bestGoal - 1.5) { bestGoal = bd; bestAt = system.currentTick; } else if (system.currentTick - bestAt > 500) {
+        if (noProg++ >= 1) { m.why = `no progress for 25 s (boat ${bd.toFixed(0)} from the goal, ${d.toFixed(1)} from me)`; break; }
+        note(`no progress: new route`); route = null; bestAt = system.currentTick; continue; } }
       const wp = route[wi];
+      const jammed = d > lo + 0.5 && system.currentTick - lastBoatMoveTick > patience;
+      const stuck = jammed || d >= guard - 0.2;
+      if (wp.act && !stuck) {
+        // A building step (a bridge over a gap): the boat up close first, then all the steps in a row, with the blocks we carry.
+        if (d > 5.5 && system.currentTick - waitAct < 160) { try { sim.stopMoving(); } catch { /* */ } await S.wait(gen, 2); continue; }
+        const seg = [route[wi - 1]?.node ?? { x: Math.floor(pos.x), y: Math.floor(pos.y), z: Math.floor(pos.z) }];
+        let k = wi;
+        while (k < route.length && route[k].act) { seg.push(route[k].node); k++; }
+        note(`building ${seg.length - 1} steps at ${Math.round(pos.x)},${Math.round(pos.z)}`);
+        const ok = await S.followActionPath(gen, seg, { sweep: false });
+        m.built += seg.length - 1; waitAct = system.currentTick;
+        if (!ok) { note('the building failed: new route'); route = null; continue; }
+        wi = k; lastBoatMoveTick = system.currentTick;
+        continue;
+      }
       if (flat(pos, wp) < 1.1) { wi++; continue; }
       // Stuck: the boat hasn't moved while the lead is taut, or the lead is nearly at the guard distance.
-      const jammed = d > lo + 0.5 && system.currentTick - lastBoatMoveTick > patience;
-      if (jammed || d >= guard - 0.2) {
+      if (stuck) {
         try { sim.stopMoving(); } catch { /* */ }
         const rise = this.riseAhead(boat, pos);
         const here = `${Math.round(boat.location.x)},${Math.round(boat.location.z)}`;
@@ -145,12 +178,14 @@ export class LeadTow {
           m.slings++;
           const r = await this.sling(gen, boat, { ride, target: stretchFor(rise) + (stuckCount - 1) * 1.0, guard });
           trace(`tow: sling at rise ${rise}: stretch ${r.stretch}, ${r.ok ? 'it came' : r.snapped ? 'LEAD BROKE' : 'it did not come'}, boat peaked ${r.peak} b/s, climbed ${r.climbed}`);
+          note(`sling at rise ${rise}: ${r.ok ? 'it came' : r.snapped ? 'LEAD BROKE' : 'did not come'}`);
           if (r.ok) { m.slingOk++; stuckCount = 0; }
           if (r.snapped) { m.snapped = true; m.why = 'the lead broke in a sling'; break; }
           lastBoatMoveTick = system.currentTick;
           continue;
         }
         m.tugs++;
+        note(`unstick ${stuckCount} at ${here}`);
         // Something between us rather than a step below: back to the boat, round to a side with a clear line, on.
         await this.goTo(gen, { x: boat.location.x + 1.2, y: pos.y, z: boat.location.z + 1.2 }, ride, 3.5);
         const flank = this.flank(boat, wp, stuckCount, L?.flank ?? null);

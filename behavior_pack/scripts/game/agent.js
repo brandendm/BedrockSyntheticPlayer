@@ -809,7 +809,7 @@ export class Agent {
     const mobs = this.task?.kind === 'follow' ? this.escortMobs(seen, t) : seen;
     const inWater = this.sim.isInWater;
     if (!this.armor || t - (this.armorAt ?? -1e9) >= 100) { this.armor = armorTotal(this.worn()); this.armorAt = t; } // (worn out, taken off)
-    const d = decide({ health: this.health(), damage: this.damage, isNight: this.isNight(), prevMode: this.mode, mobs, inWater, shield: this.shield, slot: this.slotHolds(), witches: this.toggles().witches, armor: this.armor?.points ?? 0, toughness: this.armor?.toughness ?? 0 });
+    const d = decide({ health: this.health(), damage: this.damage, isNight: this.isNight(), prevMode: this.mode, mobs, inWater, shield: this.shield, slot: this.slotHolds(), witches: this.toggles().witches, armor: this.armor?.points ?? 0, toughness: this.armor?.toughness ?? 0, bow: (() => { const iv = invCounts(this.sim); return !!iv.bow && (iv.arrow ?? 0) >= 3; })() });
     this.threatsNow = d.threats;
     // Cornered with nowhere better to run: fight the nearest thing that can be fought.
     // (Or squeezed and the creeper walled off behind us, out of sight and not hissing: the rest.)

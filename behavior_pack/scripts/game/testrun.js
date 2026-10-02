@@ -53,6 +53,9 @@ export class TestRecorder {
   /** Start the record again from now (the reading time before a turn is not part of it). */
   reset() { this.samples = []; this.events = []; this.counts = { placed: 0, broken: 0 }; this.inv0 = this.pack(); this.sample(); }
 
+  /** The summary so far, the recording going on (one leg of a longer test). */
+  snapshot() { this.sample(); return summarise(this.samples, { ...this.counts, inv: { gained: {}, spent: {} } }, this.events); }
+
   pack() { try { return invCounts(/** @type {any} */ (this.subject)); } catch { return {}; } }
 
   start() {
