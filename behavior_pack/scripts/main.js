@@ -449,7 +449,10 @@ function handle(text, player) {
   if (lower === 'arena' || lower.startsWith('arena ')) {
     // Head-to-head test arenas (game/arenas.js): !bot arena <name> [seconds|solo], stop, leave.
     if (!agent?.sim.isValid) return reply(player, 'spawn first');
-    arenaCommand(agent, player, lower.split(/\s+/).slice(1));
+    const aw = lower.split(/\s+/).slice(1);
+    // The forest is turn-taking (the bot's minute, then yours): it is a test of the test framework, not a side-by-side arena.
+    if (aw[0] === 'forest') { runTests(agent, player, ['forest', aw[1] === 'solo' || !player ? 'bot' : 'both']).catch((e) => console.error(`[test] ${e}\n${e.stack}`)); return; }
+    arenaCommand(agent, player, aw);
     return;
   }
   if (lower === 'despawn') {

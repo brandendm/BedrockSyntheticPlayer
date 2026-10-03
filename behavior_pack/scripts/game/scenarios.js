@@ -59,8 +59,7 @@ import { TestRecorder } from './testrun.js';
 import { runDuel } from './duel.js';
 import { shootAt } from './aim.js';
 import { flyElytra } from './elytra.js';
-import { locate } from './locate.js';
-import { Tracker, isVillager } from '../core/village.js';
+import { forestPlan, treeFills } from '../core/arena.js';
 import { isTamed, saddledOf } from './horse.js';
 import { solvePitch } from '../core/ballistics.js';
 import { getPlan } from '../core/learnhouse.js';
@@ -71,32 +70,32 @@ import { ARENAS, testArena, arenaCommand } from './arenas.js';
 /** How far the slab reaches round the site (west, east, to each side) for a test; the backed-up box is the same (a structure is 64 across at most). */
 function extFor(name) {
   return name === 'farm' || name === 'farmrace' ? { w: 22, e: 36, r: 24 } : name === 'horserace' || name === 'elytra' || name === 'boatcross' ? { w: 8, e: 54, r: 10 } : name === 'bow' ? { w: 14, e: 34, r: 14 }
-    : name === 'leadboat' || name === 'villagerhaul' ? { w: 12, e: 44, r: 12 } : { w: 14, e: 18, r: 12 };
+    : name === 'leadboat' || name === 'villagerhaul' ? { w: 12, e: 44, r: 12 } : name === 'forest' ? { w: 6, e: 34, r: 20 } : { w: 14, e: 18, r: 12 };
 }
-const NAMES = ['roof', 'tower', 'hole', 'pit', 'trap', 'climb', 'ledge', 'ladder', 'husk', 'creeper', 'sheep', 'pen', 'smelt', 'smeltlogs', 'shelter', 'house', 'resume', 'ghostlog', 'quarry', 'dark', 'replant', 'litter', 'trader', 'iron', 'farm', 'equip', 'water', 'bucketfarm', 'treetop', 'corner', 'leap', 'bridge', 'fall', 'vines', 'stairgap', 'loot', 'shield', 'skel', 'rest', 'nights', 'calibrate', 'portal', 'horse', 'leadboat', 'leadsling', 'bow', 'duel', 'horserace', 'pillarrace', 'woodrace', 'lavacross', 'obsidian', 'mineore', 'enderman', 'blaze', 'ghast', 'witherskeleton', 'placerate', 'farmrace', 'creepers', 'ravine', 'elytra', 'villagerhaul', 'forest', 'village', 'vineclimb', 'boatcross'];
+const NAMES = ['roof', 'tower', 'hole', 'pit', 'trap', 'climb', 'ledge', 'ladder', 'husk', 'creeper', 'sheep', 'pen', 'smelt', 'smeltlogs', 'shelter', 'house', 'resume', 'ghostlog', 'quarry', 'dark', 'replant', 'litter', 'trader', 'iron', 'farm', 'equip', 'water', 'bucketfarm', 'treetop', 'corner', 'leap', 'bridge', 'fall', 'vines', 'stairgap', 'loot', 'shield', 'skel', 'rest', 'nights', 'calibrate', 'portal', 'horse', 'leadboat', 'leadsling', 'bow', 'duel', 'horserace', 'pillarrace', 'woodrace', 'lavacross', 'obsidian', 'mineore', 'enderman', 'blaze', 'ghast', 'witherskeleton', 'placerate', 'farmrace', 'creepers', 'ravine', 'elytra', 'villagerhaul', 'forest', 'vineclimb', 'boatcross'];
 let running = false;
+/** The bot's last forest turn (its logs and trees), for your turn to be compared with. @type {{logs: number, trees: number, cut: number, build: string} | null} */
+let forestBot = null;
 /** How many sky sites have been used this session (each test gets a new one, 120 blocks further). */
 let siteCounter = 0;
 
 // Tests that wait out real time (a 5 minute despawn, a night, a furnace, a long walk): left out of
 // `!bot test all quick`. Their real durations are in the batch report (`secs`), so this list can be
 // corrected from data: anything over QUICK_S in the last report belongs here.
-const SLOW = new Set(['villagerhaul', 'forest', 'village', 'loot', 'nights', 'rest', 'shelter', 'house', 'resume', 'quarry', 'farm', 'bucketfarm', 'iron', 'sheep', 'pen', 'smelt', 'smeltlogs', 'trader', 'ghostlog', 'stairgap', 'portal', 'horse', 'leadboat', 'leadsling', 'duel', 'horserace']);
+const SLOW = new Set(['villagerhaul', 'forest', 'loot', 'nights', 'rest', 'shelter', 'house', 'resume', 'quarry', 'farm', 'bucketfarm', 'iron', 'sheep', 'pen', 'smelt', 'smeltlogs', 'trader', 'ghostlog', 'stairgap', 'portal', 'horse', 'leadboat', 'leadsling', 'duel', 'horserace']);
 /** Tests that need you there (you are the opponent). */
 const PLAYER_ONLY = new Set(['duel', 'horserace', 'pillarrace', 'woodrace', 'farmrace']);
 const QUICK_S = 60;
 // The ones that need monsters about (and the world's own difficulty); the rest run peaceful with monsters cleared.
 /** Tests that stay on the real ground (trees, water, ores, the night, long walks); everything else is built in the sky. */
-const GROUND = new Set(['forest', 'village', 'water', 'bucketfarm', 'treetop', 'vines', 'ghostlog', 'nights', 'calibrate', 'quarry', 'dark', 'iron', 'loot', 'rest', 'house', 'resume', 'shelter']);
+const GROUND = new Set(['water', 'bucketfarm', 'treetop', 'vines', 'ghostlog', 'nights', 'calibrate', 'quarry', 'dark', 'iron', 'loot', 'rest', 'house', 'resume', 'shelter']);
 /** Tests that need the day and night going round (the rest are kept at day while the tests run). */
 const NIGHT = new Set(['shelter', 'house', 'resume', 'nights', 'rest', 'dark', 'loot']);
 /** Tests that need the natural terrain or water as it is: no floor is laid for them. */
-/** Tests run out in the real world, at a site found for them (a forest, the way to a village): no slab, no grass floor laid. */
-const WORLDT = new Set(['forest', 'village']);
-const NATURAL = new Set(['forest', 'village', 'water', 'bucketfarm', 'treetop', 'vines', 'ghostlog', 'nights', 'calibrate']);
+const NATURAL = new Set(['water', 'bucketfarm', 'treetop', 'vines', 'ghostlog', 'nights', 'calibrate']);
 const COMBAT = new Set(['husk', 'creeper', 'skel', 'shield', 'dark', 'duel', 'enderman', 'blaze', 'ghast', 'witherskeleton', 'creepers']);
 // The ones a player can do too (`!bot test <name> me`): a goal the player can reach and the test can see.
-const HUMAN_OK = new Set(['tower', 'hole', 'pit', 'climb', 'ladder', 'corner', 'leap', 'bridge', 'ledge', 'bow', 'husk', 'sheep', 'pen', 'replant', 'litter', 'house', 'lavacross', 'obsidian', 'mineore', 'enderman', 'blaze', 'ghast', 'witherskeleton', 'creepers', 'ravine', 'leadboat', 'elytra', 'villagerhaul', 'forest', 'village', 'vineclimb', 'boatcross']);
+const HUMAN_OK = new Set(['tower', 'hole', 'pit', 'climb', 'ladder', 'corner', 'leap', 'bridge', 'ledge', 'bow', 'husk', 'sheep', 'pen', 'replant', 'litter', 'house', 'lavacross', 'obsidian', 'mineore', 'enderman', 'blaze', 'ghast', 'witherskeleton', 'creepers', 'ravine', 'leadboat', 'elytra', 'villagerhaul', 'forest', 'vineclimb', 'boatcross']);
 // No single test runs longer than this (the task is ended and the test left to report what it has).
 const CAP_S = 240;
 
@@ -136,9 +135,8 @@ HUMAN_HELP.villagerhaul = { kit: [['lead', 2]], text: 'Two villagers stand near 
 HUMAN_HELP.elytra = { kit: [['firework_rocket', 6]], text: 'You stand on a 22-high tower with elytra on, 44 blocks west of a gold block, and have 6 firework rockets. Jump off, jump again in the air to open the wings, aim with the view (nose down for speed, up to slow), use a rocket for a boost, and land on the gold block (within 4 blocks, 5 hearts lost at most).' };
 HUMAN_HELP.boatcross = { kit: [['oak_boat', 1]], text: 'A lake 40 blocks across spans the whole width, with the gold block on the far shore. You have a boat: put it on the water (use it on the water), get in, row across (W to go, A and D to turn), get out and walk to the gold block. The bot does it too and takes the boat back into its pack afterwards; picking yours up again (hit it) is not needed.' };
 HUMAN_HELP.vineclimb = { kit: [], text: 'A shaft one block wide cut into a stone tower 12 high, open at the bottom on the south side, with vines in it on alternating sides (one hangs on the east wall, the next on the west, and so on up). Climb the vines to the top of the tower, the gold block.' };
-HUMAN_HELP.forest = { kit: [], text: 'You and the bot are dropped, one after the other, at the same spot in a forest (the trees are put back between turns). Get 15 logs as fast as you can; the stone axe is in your kit.' };
-HUMAN_HELP.village = { kit: [], text: 'You are dropped about 170 blocks from a village, with no idea which way. Find it as fast as you can: the clock stops when you are within 24 blocks of its middle. The bot starts from the same spot.' };
-const SHORT = { boatcross: 'Cross the lake', vineclimb: 'Climb the vines to the top', forest: 'Get 15 logs', village: 'Find the village', leadboat: 'Lead villagers into the pit', villagerhaul: 'Villagers in a boat to the gold block', elytra: 'Glide to the gold block', creepers: 'Beat 4 creepers, shield up', ravine: 'Get out of the ravine', lavacross: 'Cross the lava', obsidian: 'Make and mine obsidian', mineore: 'One of each ore', enderman: 'Kill the enderman', blaze: 'Kill the blaze', ghast: 'Kill the ghast', witherskeleton: 'Kill the wither skeleton', tower: 'Get down, no fall damage', hole: 'Get out, reach the gold block', pit: 'Get out, reach the gold block', climb: 'Get out of the pit', ladder: 'Reach the gold block', corner: 'Reach the gold block', leap: 'Cross the gap, gold block', bridge: 'Bridge to the gold block', ledge: 'Get near the table', bow: 'Hit the 6 targets', husk: 'Kill the husk', sheep: 'Collect 3 wool', pen: 'Collect 2 raw beef', replant: 'Cut tree, replant sapling', litter: 'Collect 4 leaf litter', house: 'Build a house, then test done' };
+HUMAN_HELP.forest = { only: true, kit: [['iron_axe', 1]], text: 'A small forest, built for the test: 54 oak trees on a flat field. You get an iron axe and nothing else, and one minute to cut down as many trees as you can and pick up the logs (a tree counts when its logs are in your pack). The bot gets the same forest, rebuilt, and the same minute, one after the other, never together. Most logs wins.' };
+const SHORT = { boatcross: 'Cross the lake', vineclimb: 'Climb the vines to the top', forest: 'Most logs in one minute', leadboat: 'Lead villagers into the pit', villagerhaul: 'Villagers in a boat to the gold block', elytra: 'Glide to the gold block', creepers: 'Beat 4 creepers, shield up', ravine: 'Get out of the ravine', lavacross: 'Cross the lava', obsidian: 'Make and mine obsidian', mineore: 'One of each ore', enderman: 'Kill the enderman', blaze: 'Kill the blaze', ghast: 'Kill the ghast', witherskeleton: 'Kill the wither skeleton', tower: 'Get down, no fall damage', hole: 'Get out, reach the gold block', pit: 'Get out, reach the gold block', climb: 'Get out of the pit', ladder: 'Reach the gold block', corner: 'Reach the gold block', leap: 'Cross the gap, gold block', bridge: 'Bridge to the gold block', ledge: 'Get near the table', bow: 'Hit the 6 targets', husk: 'Kill the husk', sheep: 'Collect 3 wool', pen: 'Collect 2 raw beef', replant: 'Cut tree, replant sapling', litter: 'Collect 4 leaf litter', house: 'Build a house, then test done' };
 const humanHelp = (name) => HUMAN_HELP[name] ?? null;
 /** What you are handed in every test you do: tools, blocks and food; the test's own extras on top. `climb` has no tools, like the bot's run. */
 const STD_KIT = [['stone_pickaxe', 1], ['stone_axe', 1], ['stone_shovel', 1], ['stone_sword', 1], ['cobblestone', 32], ['dirt', 16], ['bread', 8]];
@@ -146,6 +144,7 @@ const STD_KIT = [['stone_pickaxe', 1], ['stone_axe', 1], ['stone_shovel', 1], ['
 const kitFor = (name) => {
   if (humanHelp(name)?.noKit) return [];
   const extra = humanHelp(name)?.kit ?? [];
+  if (humanHelp(name)?.only) return /** @type {Array<[string, number]>} */ ([...extra]); // (just this: the forest test is an iron axe and nothing else)
   const base = name === 'climb' ? [] : STD_KIT.filter(([id]) => !extra.some(([e]) => e === id));
   return /** @type {Array<[string, number]>} */ ([...base, ...extra]);
 };
@@ -246,6 +245,7 @@ export async function runTests(agent, player, args) {
   if (name === 'arena') {
     const rest = args.filter((a) => !MODE_WORDS.includes(a));
     const arenaName = rest[1], secs = rest[2] === undefined ? undefined : Number(rest[2]);
+    if (arenaName === 'forest') return runTests(agent, player, ['forest', human ? 'both' : 'bot']); // (turn-taking: the forest test)
     if (!arenaName || !(arenaName in ARENAS)) return agent.say(`Arenas: ${Object.keys(ARENAS).join(', ')}. \`!bot test arena <name> [seconds]\` (the bot alone), \`!bot test arena <name> me\` (you against the bot).`);
     if (human) {
       if (!player) return agent.say('Say it in chat yourself: `!bot test arena <name> me`.');
@@ -311,7 +311,7 @@ export async function runTests(agent, player, args) {
       try { player?.removeEffect('slow_falling'); } catch { /* */ }
       // The cap: at the deadline the task ends, so waits on it return and the test reports.
       let capped = false;
-      const capS = ['leadboat', 'leadsling', 'forest', 'village', 'villagerhaul'].includes(n) ? 480 : CAP_S;
+      const capS = ['leadboat', 'leadsling', 'villagerhaul'].includes(n) ? 480 : CAP_S;
       agent.testProgress.deadline = Date.now() + capS * 1000;
       agent.testProgress.limitS = capS;
       const cap = system.runTimeout(() => { capped = true; agent.newTask(null); agent.motor.stop(); }, capS * 20);
@@ -349,8 +349,6 @@ async function runOne(agent, player, name, arg, human = false) {
   const sky = !GROUND.has(name);
   const from = player ?? sim;
   let x, z, gy;
-  /** What the world-site finder found (a village's middle). @type {any} */
-  let worldInfo = null;
   /** The ticking area that keeps a far-off site loaded (removed at the end). */
   let tickName = '';
   if (sky) {
@@ -374,11 +372,6 @@ async function runOne(agent, player, name, arg, human = false) {
       if (!loaded) await system.waitTicks(5);
     }
     if (!loaded) { try { dim.runCommand(`tickingarea remove ${tickName}`); } catch { /* */ } return report(agent, name, false, 'the test site did not load (a corner of the slab had no chunk after 30 s)'); }
-  } else if (WORLDT.has(name)) {
-    // A site out in the real world, found for the test (the same one for you and the bot, kept for this build).
-    const found = name === 'forest' ? await findForestSite(agent, from) : await findVillageSite(agent, from);
-    if (found.error) return report(agent, name, false, found.error);
-    x = found.x; z = found.z; gy = found.gy; tickName = found.tickName; worldInfo = found;
   } else {
     // Site: 10 blocks in front of whoever asked (or of the bot), on natural ground.
     const v = from.getViewDirection();
@@ -392,7 +385,7 @@ async function runOne(agent, player, name, arg, human = false) {
   const ext = extFor(name);
   // The rim wall is only low (to keep walkers on the slab) where things fly: a ghast or blaze hovering out over the edge, the arrows at it.
   const wallH = ['ghast', 'blaze', 'bow'].includes(name) ? 2 : 8;
-  const box = name === 'forest' ? { x1: x - 32, y1: gy - 6, z1: z - 32, x2: x + 31, y2: gy + 26, z2: z + 31 } : sky ? { x1: x - ext.w, y1: gy - 10, z1: z - ext.r, x2: x + ext.e, y2: gy + (name === 'elytra' ? 36 : 20), z2: z + ext.r } : { x1: x - 8, y1: gy - 8, z1: z - 8, x2: x + 14, y2: gy + 18, z2: z + 8 };
+  const box = sky ? { x1: x - ext.w, y1: gy - 10, z1: z - ext.r, x2: x + ext.e, y2: gy + (name === 'elytra' ? 36 : 20), z2: z + ext.r } : { x1: x - 8, y1: gy - 8, z1: z - 8, x2: x + 14, y2: gy + 18, z2: z + 8 };
   const pHome = player ? { x: player.location.x, y: player.location.y, z: player.location.z } : null;
   const cmd = (c) => { try { dim.runCommand(c); return true; } catch (e) { console.warn(`[test] ${c}: ${e}`); return false; } };
   if (!cmd(`structure save agent_test_backup ${box.x1} ${box.y1} ${box.z1} ${box.x2} ${box.y2} ${box.z2} false memory true`)) {
@@ -2625,45 +2618,72 @@ async function runOne(agent, player, name, arg, human = false) {
         break;
       }
       case 'forest': {
-        // Dropped in a forest (the same spot for you and the bot; the trees are put back between): 15 logs as fast as you can.
-        const logsOf = (e) => Object.entries(invCountsOf(e)).filter(([id]) => /_log$/.test(id)).reduce((a, [, n]) => a + n, 0);
+        // An artificial forest on the slab (54 oaks, built afresh for each turn, so it is the same forest for the bot and for you), an iron axe,
+        // and one minute each, one after the other (never together): the most logs in the pack wins. A tree counts when its logs are picked up.
+        const SIZE = 32, TURN_S = 60;
+        const plan = forestPlan({ size: SIZE, seed: Number.isFinite(arg) ? arg : 11, want: 54 });
+        const ox = x, oz = z - 16;
+        const startAt = { x: ox + plan.starts[0].x + 0.5, y: gy + 1, z: oz + plan.starts[0].z + 0.5 };
+        cmd(`fill ${ox - 1} ${gy + 1} ${oz - 1} ${ox + SIZE} ${gy + 14} ${oz + SIZE} air`);
+        let n = 0;
+        for (const t of plan.trees) {
+          for (const f of treeFills(t, gy)) {
+            const [a, b, c, d, e, g] = f.box;
+            cmd(`fill ${ox + a} ${b} ${oz + c} ${ox + d} ${e} ${oz + g} ${f.kind === 'log' ? 'oak_log' : 'oak_leaves replace air'}`);
+            if (++n % 40 === 0) await system.waitTicks(1);
+          }
+        }
+        const logsOf = (e) => Object.entries(invCountsOf(e)).filter(([id]) => /_log$/.test(id)).reduce((a, [, k]) => a + k, 0);
+        const trunkLeft = (t) => { let k = 0; for (let h = 1; h <= t.h; h++) { try { if (/_log$/.test(dim.getBlock({ x: ox + t.x, y: gy + h, z: oz + t.z })?.typeId ?? '')) k++; } catch { /* */ } } return k; };
+        const felled = () => plan.trees.filter((t) => trunkLeft(t) === 0).length;
+        const cut = () => plan.trees.reduce((a, t) => a + (t.h - trunkLeft(t)), 0);
+        const trunkAll = plan.trees.reduce((a, t) => a + t.h, 0);
+        // The same axe for both: any other axe in the pack is put aside for the turn (the iron one is the kit).
+        const stash = {}, before = { ...invCountsOf(who) };
+        for (const [id, k] of Object.entries(before)) if (/_axe$/.test(id) && id !== 'iron_axe') { try { take(who, id, k); stash[id] = k; } catch { /* */ } }
         cleanup.push(() => {
-          try { for (const [id, n] of Object.entries(invCountsOf(who))) if (/_(log|planks)$|_sapling$|^stick$/.test(id)) take(who, id, n); } catch { /* */ }
-          try { dim.runCommand(`kill @e[type=item,x=${x},y=${gy},z=${z},r=70]`); } catch { /* */ }
+          try { for (const [id, k] of Object.entries(invCountsOf(who))) if (/_(log|planks)$|_sapling$|^(stick|apple)$/.test(id)) { const extra = k - (before[id] ?? 0); if (extra > 0) take(who, id, extra); } } catch { /* */ }
+          try { for (const [id, k] of Object.entries(stash)) packOf(who)?.addItem(new ItemStack(`minecraft:${id}`, k)); } catch { /* */ }
+          try { dim.runCommand(`kill @e[type=item,x=${x + 16},y=${gy},z=${z},r=45]`); } catch { /* */ }
         });
-        try { who.teleport({ x: x + 0.5, y: gy + 1, z: z + 0.5 }); } catch { /* */ }
+        const logs0 = logsOf(who);
+        const got = () => Math.max(0, logsOf(who) - logs0);
+        // A platform over the west edge, high enough to see the whole forest; the other of you waits in the far corner.
+        const seat = { x: x - 3, y: gy + 12, z };
+        if (!human && player) {
+          cmd(`fill ${seat.x - 1} ${seat.y} ${seat.z - 1} ${seat.x + 1} ${seat.y} ${seat.z + 1} stone_bricks`);
+          try { player.addEffect('slow_falling', 20 * 150, { showParticles: false }); player.teleport({ x: seat.x + 0.5, y: seat.y + 1, z: seat.z + 0.5 }, { facingLocation: { x: ox + 16, y: gy + 2, z: oz + 16 } }); } catch { /* */ }
+          cleanup.push(() => { try { player.removeEffect('slow_falling'); } catch { /* */ } });
+        }
+        if (human) { try { sim.teleport({ x: ox + SIZE - 3, y: gy + 1, z: oz + SIZE - 3 }); } catch { /* */ } }
+        try { who.teleport(startAt, { facingLocation: { x: ox + 16, y: gy + 2, z: oz + 16 } }); } catch { /* */ }
         await system.waitTicks(20);
-        if (human) { pass = await humanTry(() => logsOf(who) >= 15, 240); detail = `you had ${logsOf(who)}/15 logs in ${secs()}s (${worldInfo.what})`; break; }
+        const pack = `${plan.trees.length} trees, ${trunkAll} logs in all`;
+        if (human) {
+          const bar = system.runInterval(() => {
+            try { if (agent.testProgress?.reading) return; player.onScreenDisplay.setActionBar(`Logs: ${got()}   ${Math.max(0, TURN_S - Math.floor((system.currentTick - t0) / 20))} s left`); } catch { /* */ }
+          }, 10);
+          cleanup.push(() => { try { system.clearRun(bar); } catch { /* */ } });
+          await humanTry(() => false, TURN_S);   // (the minute runs out: that is the end of your turn)
+          const mine = { logs: got(), trees: felled(), cut: cut() };
+          const bot = forestBot && forestBot.build === CONFIG.build ? forestBot : null;
+          pass = !agent.testSkipped && mine.logs > 0;
+          detail = `you: ${mine.logs} logs, ${mine.trees} trees felled in ${TURN_S} s${bot ? `; the bot got ${bot.logs} logs, ${bot.trees} trees: ${mine.logs > bot.logs ? 'you win' : mine.logs < bot.logs ? 'the bot wins' : 'a tie'}` : ''} (${pack})`;
+          break;
+        }
         for (let r = 0; r < 4; r++) agent.memory.forgetNear('log', dim.id, { x, y: gy, z }, 400);
         const gen = agent.newTask({ kind: 'test' });
         try { agent.equipBestWeapon(); } catch { /* */ }
-        const job = S.gatherLogs(gen, 15).catch(() => {});
-        for (let i = 0; i < 240 * 4 && logsOf(sim) < 15 && !agent.testSkipped; i++) await system.waitTicks(5);
+        agent.say(`Forest, the bot's minute: ${pack}, iron axe.`);
+        const tStart = system.currentTick;
+        const job = S.gatherLogs(gen, 99999, 0, { replant: false }).catch(() => {});
+        while (system.currentTick - tStart < TURN_S * 20 && !agent.testSkipped) await system.waitTicks(2);
         agent.newTask(null); agent.motor.stop();
         await Promise.race([job, system.waitTicks(20)]);
-        pass = logsOf(sim) >= 15;
-        detail = `${logsOf(sim)}/15 logs in ${secs()}s (${worldInfo.what})`;
-        break;
-      }
-      case 'village': {
-        // Dropped about 170 blocks from a village, nothing known: find it (within 24 blocks of its middle) as fast as you can.
-        const V = worldInfo.village;
-        const near = (e) => { try { return Math.hypot(e.location.x - V.x, e.location.z - V.z) <= 24; } catch { return false; } };
-        const mem = agent.memory.data, savedV = mem.villages;
-        mem.villages = [];
-        cleanup.push(() => { mem.villages = savedV; agent.memory.save(); });
-        try { who.teleport({ x: x + 0.5, y: gy + 1, z: z + 0.5 }); } catch { /* */ }
-        await system.waitTicks(30);
-        const d0 = Math.round(Math.hypot(x - V.x, z - V.z));
-        if (human) { pass = await humanTry(() => near(player), 420); detail = `you ${pass ? 'found it' : 'did not find it'} in ${secs()}s (start ${d0} away; ${worldInfo.what})`; break; }
-        const gen = agent.newTask({ kind: 'test' });
-        agent.villageHoldUntil = 0; agent.villageBase = null; agent.villageRing = 0;
-        const job = (async () => { for (;;) await agent.seekVillage(gen); })().catch(() => {});
-        for (let i = 0; i < 420 * 4 && !near(sim) && !agent.testSkipped; i++) await system.waitTicks(5);
-        agent.newTask(null); agent.motor.stop();
-        await Promise.race([job, system.waitTicks(20)]);
-        pass = near(sim);
-        detail = `${pass ? 'found it' : `did not find it (${Math.round(Math.hypot(sim.location.x - V.x, sim.location.z - V.z))} blocks off)`} in ${secs()}s (start ${d0} away; ${worldInfo.what})`;
+        const mineB = { logs: got(), trees: felled(), cut: cut() };
+        forestBot = { ...mineB, build: CONFIG.build };
+        pass = mineB.logs >= 10;
+        detail = `bot: ${mineB.logs} logs, ${mineB.trees} of ${plan.trees.length} trees felled (${mineB.cut}/${trunkAll} trunk blocks cut) in ${TURN_S} s${pass ? '' : ' (10 logs passes)'}`;
         break;
       }
       case 'boatcross': {
@@ -2806,7 +2826,7 @@ async function runOne(agent, player, name, arg, human = false) {
     agent.motor.stop();
     // Everyone down from the sky before the slab goes.
     // (The player goes back to where they stood at the start of this test, so the next site is in the same place, not wherever the seat was.)
-    if (sky || WORLDT.has(name)) { try { sim.teleport(home); } catch { /* */ } }
+    if (sky) { try { sim.teleport(home); } catch { /* */ } }
     try { if (player && pHome) player.teleport(pHome); } catch { /* */ }
     await system.waitTicks(5);
     // Lava does not vanish when the structure is put back (what flowed stays for a while): turned to air first, in the whole box.
@@ -3008,152 +3028,4 @@ async function spawnAdult(dim, type, loc) {
     try { h.remove(); } catch { /* */ }
   }
   return null;
-}
-
-// ---------- sites out in the real world (the forest and village tests) ----------
-
-/** Keep a circle of chunks loaded at (x, z) and wait until a column there answers. */
-async function loadCircle(dim, name, x, z, r = 4) {
-  try { dim.runCommand(`tickingarea remove ${name}`); } catch { /* none */ }
-  try { dim.runCommand(`tickingarea add circle ${x} 64 ${z} ${r} ${name} true`); } catch { return false; }
-  for (let i = 0; i < 160; i++) {
-    try { const b = dim.getTopmostBlock({ x, z }); if (b && typeof b.typeId === 'string' && b.location.y < 300) return true; } catch { /* not loaded yet */ }
-    await system.waitTicks(5);
-  }
-  return false;
-}
-
-/** The first solid ground under a column, through leaves, logs and air: { y (the ground block), canopy (the top was leaves) } or null. */
-function groundUnder(dim, x, z) {
-  try {
-    const top = dim.getTopmostBlock({ x, z });
-    if (!top) return null;
-    let y = top.location.y;
-    const canopy = /leaves/.test(top.typeId);
-    for (let k = 0; k < 40; k++, y--) {
-      const id = String(dim.getBlock({ x, y, z })?.typeId ?? '');
-      if (!id || /air|leaves|_log|vine|grass$|fern|flower|snow_layer|bush|petals|sapling|mushroom|bamboo|sugar|kelp/.test(id) && !/grass_block/.test(id)) continue;
-      if (/water|lava|ice/.test(id)) return null;
-      return { y, canopy };
-    }
-  } catch { /* not loaded */ }
-  return null;
-}
-
-/** A forest: the world seed's nearest forest biome, then the densest canopy within 40 blocks of it; the spot is kept for this build. */
-async function findForestSite(agent, from) {
-  const dim = agent.dim, mem = agent.memory.data;
-  const sites = (mem.testSites ??= {});
-  const kept = sites.forest;
-  if (kept && kept.build === CONFIG.build && await loadCircle(dim, 'agent_test_world', kept.x, kept.z)) return { ...kept, tickName: 'agent_test_world' };
-  let spot = null, what = '';
-  const lcF = await locate('biome', 'forest', { x: from.location.x, z: from.location.z });
-  for (const size of lcF ? [0, 384, 768] : [384, 768]) {
-    for (const id of ['minecraft:forest', 'minecraft:birch_forest', 'minecraft:flower_forest', 'minecraft:taiga']) {
-      let pos = null;
-      if (size === 0) { if (id !== 'minecraft:forest') continue; pos = { x: lcF.x, z: lcF.z }; } else {
-        try { pos = dim.calculateClosestBiomeFromSeed(from.location, id, { boundingSize: { x: size, y: 128, z: size } }); } catch { continue; }
-      }
-      if (!pos) continue;
-      if (!(await loadCircle(dim, 'agent_test_world', Math.floor(pos.x), Math.floor(pos.z)))) continue;
-      // The densest canopy: columns on a 6-block grid whose top is leaves, counted within 14 blocks.
-      const cells = [];
-      for (let dx = -42; dx <= 42; dx += 6) for (let dz = -42; dz <= 42; dz += 6) {
-        const cx = Math.floor(pos.x) + dx, cz = Math.floor(pos.z) + dz;
-        let leaf = false; try { leaf = /leaves/.test(dim.getTopmostBlock({ x: cx, z: cz })?.typeId ?? ''); } catch { /* */ }
-        cells.push({ cx, cz, leaf });
-      }
-      let best = null;
-      for (const c of cells) {
-        const score = cells.filter((o) => o.leaf && Math.hypot(o.cx - c.cx, o.cz - c.cz) <= 14).length;
-        if (!best || score > best.score) best = { ...c, score };
-      }
-      if (!best || best.score < 8) continue;
-      // A standing place near it: ground, two clear blocks above, nothing wet.
-      for (let dx = -4; dx <= 4 && !spot; dx++) for (let dz = -4; dz <= 4 && !spot; dz++) {
-        const sx = best.cx + dx, sz = best.cz + dz, g = groundUnder(dim, sx, sz);
-        if (!g) continue;
-        let clear = true; try { clear = ['air', 'short_grass'].some((a) => dim.getBlock({ x: sx, y: g.y + 1, z: sz })?.typeId === `minecraft:${a}`) && dim.getBlock({ x: sx, y: g.y + 2, z: sz })?.typeId === 'minecraft:air'; } catch { clear = false; }
-        if (clear) { spot = { x: sx, z: sz, gy: g.y }; what = `${id.replace('minecraft:', '').replace(/_/g, ' ')}, canopy ${best.score}/25`; }
-      }
-      if (spot) break;
-    }
-    if (spot) break;
-  }
-  if (!spot) return { error: 'no forest found: the seed search found none within reach, or none with a dense canopy' };
-  const found = { ...spot, what, build: CONFIG.build };
-  sites.forest = found; agent.memory.save();
-  return { ...found, tickName: 'agent_test_world' };
-}
-
-/** What a village looks like from a ring of columns round (x0, z0): { x, y, z } of a confirmed one, or null. */
-async function scanVillageAt(agent, x0, z0) {
-  const dim = agent.dim, V = agent.villages;
-  if (!(await loadCircle(dim, 'agent_test_scan', x0, z0))) return null;
-  const items = [];
-  for (let rr = 8; rr <= 64; rr += 8) {
-    const n = Math.max(8, Math.round(2 * Math.PI * rr / 8));
-    for (let i = 0; i < n; i++) {
-      const ang = (i / n) * Math.PI * 2;
-      const e = V.topEvidence(dim, Math.floor(x0 + Math.cos(ang) * rr), Math.floor(z0 + Math.sin(ang) * rr));
-      if (e) items.push(e);
-    }
-  }
-  try {
-    for (const e of dim.getEntities({ location: { x: x0, y: 64, z: z0 }, maxDistance: 72 })) {
-      let t; try { t = String(e.typeId).replace(/^minecraft:/, ''); } catch { continue; }
-      if (isVillager(t)) items.push({ kind: 'villager', x: Math.floor(e.location.x), y: Math.floor(e.location.y), z: Math.floor(e.location.z) });
-    }
-  } catch { /* */ }
-  const tr = new Tracker();
-  const now = Date.now();
-  tr.add(items, now);
-  const found = tr.villages(now);
-  return found.length ? found[0] : null;
-}
-
-/**
- * A village for the race: the nearest one the world has (the seed's village biome as the place to look, ringed scans round it), and a
- * start about 170 blocks from its middle on ground. Kept for this build, so you and the bot start from the same spot.
- */
-async function findVillageSite(agent, from) {
-  const dim = agent.dim, mem = agent.memory.data;
-  const sites = (mem.testSites ??= {});
-  const pickStart = async (V) => {
-    const order = [0, 3, 6, 1, 4, 7, 2, 5].map((k) => (k * Math.PI) / 4 + 0.3);
-    for (const dist of [170, 150, 200]) for (const ang of order) {
-      const sx = Math.floor(V.x + Math.cos(ang) * dist), sz = Math.floor(V.z + Math.sin(ang) * dist);
-      if (!(await loadCircle(dim, 'agent_test_world', sx, sz, 2))) continue;
-      const g = groundUnder(dim, sx, sz);
-      if (!g || g.canopy || g.y < 60) continue;
-      let clear = false; try { clear = dim.getBlock({ x: sx, y: g.y + 1, z: sz })?.typeId === 'minecraft:air' && dim.getBlock({ x: sx, y: g.y + 2, z: sz })?.typeId === 'minecraft:air'; } catch { /* */ }
-      if (!clear) continue;
-      if (await scanVillageAt(agent, sx, sz)) continue; // a village right here too: another direction
-      await loadCircle(dim, 'agent_test_world', sx, sz, 2);
-      return { x: sx, z: sz, gy: g.y };
-    }
-    return null;
-  };
-  const kept = sites.village;
-  if (kept && kept.build === CONFIG.build) {
-    if (await loadCircle(dim, 'agent_test_world', kept.x, kept.z, 2)) return { ...kept, tickName: 'agent_test_world' };
-  }
-  const lc = await locate('structure', 'village', { x: from.location.x, z: from.location.z });
-  const hint = lc ? { pos: { x: lc.x, z: lc.z }, id: 'village (the game\'s own answer)', dist: Math.hypot(lc.x - from.location.x, lc.z - from.location.z) } : (agent.lookout?.seedSearch?.('village') ?? null);
-  const base = hint ? { x: Math.floor(hint.pos.x), z: Math.floor(hint.pos.z) } : { x: Math.floor(from.location.x), z: Math.floor(from.location.z) };
-  let V = null, scanned = 0;
-  const pts = [[0, 0]];
-  for (let ring = 1; ring <= 3 && true; ring++) for (let k = 0; k < 6; k++) { const a = (k * Math.PI) / 3 + (ring % 2 ? 0 : Math.PI / 6); pts.push([Math.cos(a) * 96 * ring, Math.sin(a) * 96 * ring]); }
-  for (const [dx, dz] of pts) {
-    scanned++;
-    V = await scanVillageAt(agent, Math.floor(base.x + dx), Math.floor(base.z + dz));
-    if (V) break;
-  }
-  try { dim.runCommand('tickingarea remove agent_test_scan'); } catch { /* */ }
-  if (!V) return { error: `no village found: ${scanned} places scanned round ${hint ? `the ${hint.id.replace('minecraft:', '')} ${Math.round(hint.dist)} blocks off` : 'here'}` };
-  const start = await pickStart(V);
-  if (!start) return { error: `a village at ${V.x} ${V.z}, but no ground to start from 150-200 blocks off it` };
-  const found = { ...start, village: { x: V.x, y: V.y, z: V.z }, what: `village at ${V.x} ${V.z}, score ${V.score}`, build: CONFIG.build };
-  sites.village = found; agent.memory.save();
-  return { ...found, tickName: 'agent_test_world' };
 }

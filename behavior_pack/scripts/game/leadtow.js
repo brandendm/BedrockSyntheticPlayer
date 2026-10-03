@@ -16,6 +16,7 @@ import { system } from '@minecraft/server';
 import { trace } from './bridge.js';
 import { hold } from './inventory.js';
 import { isWalkMove } from '../core/pathfinder.js';
+import { slingCame, stuckTrack } from '../core/towlearn.js';
 
 const flat = (p, q) => Math.hypot(p.x - q.x, p.z - q.z);
 const WALK_BPS = 4.3, RIDE_BPS = 9; // blocks per second at full speed, on foot and on a horse (for the "ideal" time)
@@ -71,7 +72,7 @@ export class LeadTow {
     }
     try { sim.stopMoving(); } catch { /* */ }
     await S.wait(gen, 3);
-    const stretch = flat(subj().location, boat.location), y0 = boat.location.y;
+    const stretch = flat(subj().location, boat.location), y0 = boat.location.y, start = { ...boat.location };
     try { sim.jump(); } catch { /* */ }
     let peak = 0, last = { ...boat.location }, snapped = false, best = y0;
     for (let i = 0; i < 40; i++) {
@@ -82,8 +83,8 @@ export class LeadTow {
       best = Math.max(best, boat.location.y);
       last = { ...boat.location };
     }
-    const here = subj().location;
-    const ok = !snapped && boat.isValid && (boat.location.y >= here.y - 0.7 || flat(here, boat.location) < Math.max(2.5, stretch - 4));
+    // It came if it travelled toward us, or went up (see slingCame): not "it is level with us / near", which a boat that never moved can be.
+    const ok = slingCame({ snapped, valid: boat.isValid, moved: boat.isValid ? flat(boat.location, start) : 0, closer: boat.isValid ? stretch - flat(subj().location, boat.location) : 0, climbed: best - y0 });
     return { ok, snapped, stretch: Math.round(stretch * 10) / 10, peak: Math.round(peak * 10) / 10, climbed: Math.round((best - y0) * 10) / 10 };
   }
 
@@ -233,8 +234,10 @@ export class LeadTow {
       }
       // No progress: the boat no nearer the goal by 1.5 blocks in 25 s. The first time, a new route; the second, give up (said why).
       { const bd = flat(boat.location, goal); if (bd < bestGoal - 1.5) { bestGoal = bd; bestAt = system.currentTick; } else if (system.currentTick - bestAt > 500) {
-        if (noProg++ >= 1) { m.why = `no progress for 25 s (boat ${bd.toFixed(0)} from the goal, ${d.toFixed(1)} from me)`; break; }
-        note(`no progress: new route`); route = null; bestAt = system.currentTick; continue; } }
+        // (What it was doing, so the next report says why: where we are, the waypoint, how far along the route, whether the boat counts as jammed.)
+        const wpn = route?.[wi], dbg = `me ${pos.x.toFixed(0)},${pos.z.toFixed(0)} y${pos.y.toFixed(1)}, waypoint ${route ? `${wi}/${route.length}` : 'none'}${wpn ? ` at ${wpn.x.toFixed(0)},${wpn.z.toFixed(0)} y${wpn.y.toFixed(1)}` : ''}, jam over ${(lo + 0.5).toFixed(1)} apart, boat still ${Math.round((system.currentTick - lastBoatMoveTick) / 20)}s`;
+        if (noProg++ >= 1) { m.why = `no progress for 25 s (boat ${bd.toFixed(0)} from the goal, ${d.toFixed(1)} from me; ${dbg})`; break; }
+        note(`no progress: new route (${dbg})`); route = null; bestAt = system.currentTick; continue; } }
       const wp = route[wi];
       const jammed = d > lo + 0.5 && system.currentTick - lastBoatMoveTick > patience;
       const boatMoving = system.currentTick - lastBoatMoveTick <= 10;
@@ -260,7 +263,8 @@ export class LeadTow {
         try { sim.stopMoving(); } catch { /* */ }
         const rise = this.riseAhead(boat, pos);
         const here = `${Math.round(boat.location.x)},${Math.round(boat.location.z)}`;
-        stuckCount = stuckAt === here ? stuckCount + 1 : 1; stuckAt = here;
+        // The same place = within 1.5 of where the count began (a boat that rocks a little is still stuck).
+        const tr = stuckTrack(stuckAt ? { anchor: stuckAt, count: stuckCount } : null, boat.location); stuckCount = tr.count; stuckAt = tr.anchor;
         if (rise >= 0.4 && pos.y - boat.location.y >= 0.4 && stuckCount <= 4) {
           // Below us against a step: the sling, a little further stretched each time it fails.
           m.slings++;

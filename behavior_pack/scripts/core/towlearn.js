@@ -109,3 +109,26 @@ export function mergeLearned(old, fresh) {
     maxSep: Math.max(old.maxSep ?? 0, fresh.maxSep ?? 0),
   };
 }
+
+/**
+ * Did a sling bring the boat? Read from what the boat did, not from where it ended: a boat that never moved looked like it
+ * had come (it was "level with us" or "close enough" from the start), 16 slings in a row in the u202 leadboat run, each
+ * counted as a success so the stuck count started over and the unstick/reroute never came.
+ * m: { snapped, valid (the boat still exists), moved (how far it travelled, blocks), closer (how much nearer to us it ended
+ * than the stretch we jumped at), climbed (how much higher it ended than it began) }.
+ * It came if it really travelled toward us (at least 1.5 blocks and 1 nearer), or went up the step (0.5 or more).
+ */
+export function slingCame(m) {
+  if (!m || m.snapped || !m.valid) return false;
+  return (m.moved >= 1.5 && m.closer >= 1) || m.climbed >= 0.5;
+}
+
+/**
+ * The stuck counter's key: the same spot if the boat is within `tol` blocks of where the count started (a boat that rocks
+ * or creeps a fraction is still stuck; rounding its position to a whole block started the count over whenever it crossed
+ * a .5). Returns { anchor, count }.
+ */
+export function stuckTrack(prev, p, tol = 1.5) {
+  if (prev?.anchor && Math.hypot(prev.anchor.x - p.x, prev.anchor.z - p.z) < tol) return { anchor: prev.anchor, count: prev.count + 1 };
+  return { anchor: { x: p.x, z: p.z }, count: 1 };
+}

@@ -262,7 +262,7 @@ export function clockLeft(ticks) {
 
 /** Every arena the commands know, with a one-line description. */
 export const ARENA_INFO = {
-  forest: 'Log race: a walled forest, iron axe each, most logs in 2 minutes',
+  forest: 'Log race: an artificial forest, an iron axe, one minute each (the bot, then you, never together); most logs wins',
   golem: 'Iron golem duel: sword, spear and blocks; a pen each, fastest kill wins',
   ender: 'Enderman duel: sword, spear and blocks; a pen each, fastest kill wins',
   dive: 'Underwater mining: a flooded tank each, aqua affinity, drowned about; most ore wins',

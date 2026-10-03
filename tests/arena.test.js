@@ -244,3 +244,19 @@ test('boat: the line round the canal has room for a boat all the way and never t
   assert.ok(Math.max(...zs.slice(0, 14)) >= 50 && zs.at(-1) > zs.at(-5), 'goes up the last leg');
   assert.ok(line.filter((q) => q.slow).length >= 12, 'the bends are marked');
 });
+
+test('the turn-taking forest test: 54 oaks in a 32 x 32 field, every leaf inside it, the start clear, the same every time', () => {
+  const plan = forestPlan({ size: 32, seed: 11, want: 54 });
+  assert.equal(plan.trees.length, 54);
+  assert.deepEqual(forestPlan({ size: 32, seed: 11, want: 54 }), plan); // (the bot's turn and yours are built from this twice)
+  const st = plan.starts[0];
+  for (const t of plan.trees) {
+    assert.ok(cheb(t, st) >= 5, 'start kept clear');
+    for (const f of treeFills(t, 0)) {
+      const [x1, , z1, x2, , z2] = f.box;
+      assert.ok(x1 >= 0 && x2 <= 31 && z1 >= 0 && z2 <= 31, `tree at ${t.x},${t.z} reaches outside the field`);
+    }
+    assert.ok(t.h >= 4 && t.h <= 6);
+  }
+  assert.ok(plan.trees.reduce((a, t) => a + t.h, 0) >= 200); // (a minute's worth of logs is nowhere near running out)
+});

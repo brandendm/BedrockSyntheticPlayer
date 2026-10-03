@@ -70,3 +70,24 @@ test('a sling is read from a jump with the lead stretched and the boat still', (
   assert.ok(r.sling.stretch >= 8 && r.sling.stretch <= 9.1, `stretch ${r.sling.stretch}`);
   assert.ok(r.sling.boatPeak > 3, `peak ${r.sling.boatPeak}`);
 });
+
+import { slingCame, stuckTrack } from '../behavior_pack/scripts/core/towlearn.js';
+
+test('a sling where the boat never moved is not "it came" (u202 counted 16 of them)', () => {
+  assert.equal(slingCame({ snapped: false, valid: true, moved: 0.1, closer: 0, climbed: 0 }), false);
+  assert.equal(slingCame({ snapped: false, valid: true, moved: 0.4, closer: 0.4, climbed: 0.1 }), false);
+  assert.equal(slingCame({ snapped: false, valid: true, moved: 6, closer: 5, climbed: 1.4 }), true);
+  assert.equal(slingCame({ snapped: false, valid: true, moved: 1, closer: 0.8, climbed: 0.6 }), true); // went up the step
+  assert.equal(slingCame({ snapped: true, valid: true, moved: 6, closer: 5, climbed: 1.4 }), false);   // the lead broke
+  assert.equal(slingCame({ snapped: false, valid: false, moved: 0, closer: 0, climbed: 0 }), false);
+});
+
+test('the stuck counter counts a boat that rocks a little as the same place', () => {
+  let t = null;
+  for (const [x, z] of [[46.4, -29.4], [46.6, -29.6], [46.5, -29.5], [47.2, -29.9], [46.6, -29.0]]) t = stuckTrack(t, { x, z });
+  assert.equal(t.count, 5);
+  // (rounded to whole blocks, 46.4 / 46.6 straddle .5 and the old key changed every time)
+  const moved = stuckTrack(t, { x: 52, z: -29.5 });
+  assert.equal(moved.count, 1);
+  assert.deepEqual(moved.anchor, { x: 52, z: -29.5 });
+});

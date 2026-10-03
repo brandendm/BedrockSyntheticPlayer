@@ -5,12 +5,11 @@
 //   bot(s, p, gen)  the bot's routine  value/text   the score, and how it reads
 //   better    'high' or 'low' wins     verdict(s, bot)  PASS/FAIL for `!bot test <name>`
 import { system, world, ItemStack, EquipmentSlot } from '@minecraft/server';
-import { forestPlan, treeFills, oreLayout, ORE_POINTS, parkourPlan, boatPlan, boatDrive, clock, ARENA_INFO, ARENA_NAMES } from '../core/arena.js';
+import { treeFills, oreLayout, ORE_POINTS, parkourPlan, boatPlan, boatDrive, clock, ARENA_INFO, ARENA_NAMES } from '../core/arena.js';
 import { runSession, stopArena, recoverPlayer, kit, countOf, tell, Builder } from './arena.js';
 import { CONFIG } from '../config.js';
 
 const wait = (n) => system.waitTicks(n);
-const isLogId = /_log$/;
 
 /** Gates open at GO: each is a command (the cage around a start comes down). */
 function cage(s, B, cx, cz, { r = 2, h = 4, y0 = s.G, base = 'grass_block' } = {}) {
@@ -20,43 +19,6 @@ function cage(s, B, cx, cz, { r = 2, h = 4, y0 = s.G, base = 'grass_block' } = {
 }
 
 const SWORD_KIT = [[0, 'iron_sword'], [1, 'iron_spear'], [2, 'cobblestone', 64], [3, 'cobblestone', 64]];
-
-// ---------- the forest: most logs in two minutes ----------
-const FOREST = {
-  name: 'forest', title: 'Log Race', secs: 120, better: 'high',
-  rules: 'Most logs in your pack when the time runs out. Same forest, same iron axe.',
-  dims: () => ({ w: 38, d: 38, h: 26 }),
-  build(s, B) {
-    const { O, G } = s, size = 36;
-    const plan = s.x.plan = forestPlan({ size, seed: s.opts.seed ?? 11 });
-    B.fill(O.x, O.y, O.z, O.x + 37, G - 1, O.z + 37, 'dirt');
-    B.fill(O.x + 1, G, O.z + 1, O.x + 36, G, O.z + 36, 'grass_block');
-    B.fill(O.x, G, O.z, O.x + 37, G + 14, O.z, 'stone_bricks');
-    B.fill(O.x, G, O.z + 37, O.x + 37, G + 14, O.z + 37, 'stone_bricks');
-    B.fill(O.x, G, O.z, O.x, G + 14, O.z + 37, 'stone_bricks');
-    B.fill(O.x + 37, G, O.z, O.x + 37, G + 14, O.z + 37, 'stone_bricks');
-    const ox = O.x + 1, oz = O.z + 1;
-    for (const t of plan.trees) {
-      for (const f of treeFills(t, G)) {
-        const [a, b, c, d, e, g] = f.box;
-        B.fill(ox + a, b, oz + c, ox + d, e, oz + g, f.kind === 'log' ? 'oak_log' : 'oak_leaves', f.kind === 'log' ? '' : 'replace air');
-      }
-    }
-    for (const st of plan.starts) cage(s, B, ox + st.x, oz + st.z);
-  },
-  layout(s) {
-    const ox = s.O.x + 1, oz = s.O.z + 1;
-    return { starts: s.x.plan.starts.map((st) => ({ x: ox + st.x + 0.5, y: s.G + 1, z: oz + st.z + 0.5, fx: st.x < 18 ? 1 : -1, fz: st.z < 18 ? 1 : -1 })) };
-  },
-  kit: () => kit([[0, 'iron_axe']]),
-  bot: async (s, p, gen) => { await s.agent.skills.gatherLogs(gen, 99999, 0, { replant: false }); },
-  value: (s, p) => countOf(p.ent, isLogId),
-  text: (s, p) => `${countOf(p.ent, isLogId)} logs`,
-  verdict: (s, bot) => {
-    const n = countOf(bot.ent, isLogId);
-    return { pass: n >= 10, detail: `${n} logs in ${(s.elapsed / 20).toFixed(0)} s${bot.deaths ? `, died ${bot.deaths}x` : ''}` };
-  },
-};
 
 // ---------- the duels: a golem or an enderman, a pen each, fastest kill wins ----------
 // Same pen, same mob, same kit; each side fights its own. The mob is made angry at its own fighter at GO
@@ -603,7 +565,7 @@ const BOAT = {
   },
 };
 
-export const ARENAS = { forest: FOREST, golem: GOLEM, ender: ENDER, dive: DIVE, parkour: PARKOUR, boat: BOAT };
+export const ARENAS = { golem: GOLEM, ender: ENDER, dive: DIVE, parkour: PARKOUR, boat: BOAT };
 
 // ---------- commands ----------
 
@@ -612,7 +574,7 @@ export function arenaCommand(agent, player, args) {
   const [name, arg] = args;
   const say = (m) => (player ? player.sendMessage(`§e[Arena]§r ${m}`) : tell(m));
   if (!name || name === 'list') {
-    return say(`Arenas: ${Object.keys(ARENA_INFO).map((n) => `${n}${ARENAS[n] ? '' : ' (not built yet)'} - ${ARENA_INFO[n]}`).join(' | ')}. Run: !bot arena <name> [seconds]  (or "solo": the bot alone). !bot arena stop ends one; !bot arena leave gives your things back if one went wrong.`);
+    return say(`Arenas: ${Object.keys(ARENA_INFO).map((n) => `${n}${ARENAS[n] ? '' : n === 'forest' ? ' (turn-taking: !bot arena forest)' : ' (not built yet)'} - ${ARENA_INFO[n]}`).join(' | ')}. Run: !bot arena <name> [seconds]  (or "solo": the bot alone). !bot arena stop ends one; !bot arena leave gives your things back if one went wrong.`);
   }
   if (name === 'stop') return say(stopArena() ? 'Stopping the arena.' : 'No arena is running.');
   if (name === 'leave') {
