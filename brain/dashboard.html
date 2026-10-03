@@ -417,7 +417,7 @@ function render(d) {
   $('airv').textContent = `${s.air}%`; bar($('air'), s.air, 100, 'var(--accent)');
   $('pos').textContent = `${s.pos.x}, ${s.pos.y}, ${s.pos.z}`;
   $('dim').textContent = pretty(s.dim);
-  $('under').textContent = (s.underground ? 'underground' : s.ravine ? `in a ravine (walls ${s.ravine})` : 'surface') + (s.biome ? ` · ${s.biome}` : '');
+  $('under').textContent = (s.underground ? 'underground' : s.ravine ? `in a ravine (walls ${s.ravine})` : 'surface') + (s.underwater ? ' · underwater' : s.inWater ? ' · in water' : '') + (s.biome ? ` · ${s.biome}` : '');
   $('home').textContent = s.house ? `${s.house.x}, ${s.house.y}, ${s.house.z}${s.house.bed ? ' (bed)' : ''}`
     : s.project ? `building at ${s.project.x}, ${s.project.y}, ${s.project.z}: ${s.project.placed}/${s.project.total} blocks${s.project.needs && (s.project.needs.stone || s.project.needs.planks) ? ` (needs ${[s.project.needs.stone ? s.project.needs.stone + ' cobblestone' : '', s.project.needs.planks ? s.project.needs.planks + ' planks' : ''].filter(Boolean).join(', ')})` : ''}` : 'none yet';
   // players
@@ -622,7 +622,7 @@ async function fullReport() {
     `bot online: ${s.online}  status age: ${st?.age_s ?? '?'} s  game: ${j(dg.game)}`,
   ].join('\n')));
   out.push(section('NOW', [
-    `pos ${s.pos ? `${s.pos.x} ${s.pos.y} ${s.pos.z}` : '?'} (${s.dim})  biome ${s.biome ?? '?'}  underground ${s.underground}  ravine ${s.ravine ? `yes, walls ${s.ravine} high` : 'no'}  day ${s.day} time ${s.time} ${s.night ? '(night)' : ''}`,
+    `pos ${s.pos ? `${s.pos.x} ${s.pos.y} ${s.pos.z}` : '?'} (${s.dim})  biome ${s.biome ?? '?'}  underground ${s.underground}  ravine ${s.ravine ? `yes, walls ${s.ravine} high` : 'no'}  water ${s.underwater ? 'head under' : s.inWater ? 'in it' : 'no'}  day ${s.day} time ${s.time} ${s.night ? '(night)' : ''}`,
     `health ${s.health}  food ${s.hunger}  air ${s.air}%  held ${s.held ?? 'nothing'}  mode ${s.mode}  task ${s.task}  step ${s.step ?? '-'}  (${s.stepLabel ?? ''})`,
     `auto ${s.auto} done ${s.autoDone}  opportunity ${s.opportunity ?? '-'}  set aside: ${(s.setAside || []).join(', ') || 'none'}  deaths ${s.deaths}`,
     `goals: ${(s.goals || []).map((g) => `${g.goal}: ${g.status}${(g.tasks || []).length ? ` (${g.tasks.map((t) => `${t.label ?? t.name ?? ''} ${t.have ?? ''}${t.need != null ? '/' + t.need : ''}`.trim()).join(', ')})` : ''}`).join(' | ')}`,

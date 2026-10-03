@@ -405,7 +405,7 @@ export class Agent {
       this.followTick = t;
       this.updateFollow();
     }
-    if (t % 200 === 100 && this.mode === 'none' && !this.task && !this.checkingTrap && !this.arenaHook) this.checkIdleTrapped();
+    if (t % 200 === 100 && this.mode === 'none' && !this.task && !this.checkingTrap && !this.arenaHook && !this.sim.isInWater) this.checkIdleTrapped(); // (not in water: a pool or a tank is not a hole to climb out of)
     if (t % 40 === 20 && this.mode === 'none') this.checkStillNeeded();
     // Dusk: drop whatever daytime job is running so the plan can send us home.
     if (t % 100 === 50) {
@@ -607,7 +607,7 @@ export class Agent {
     const gen = this.taskGen, S = this.skills;
     (async () => {
       if (this.homestead.isHome() || S.coverAbove() > 0 || !(await S.isTrapped(gen))) return;
-      if (this.task || gen !== this.taskGen) return;
+      if (this.task || gen !== this.taskGen || this.sim.isInWater) return;
       this.say("I'm stuck in a hole; climbing out.");
       this.apply([{ type: 'surface' }]);
     })().catch(() => {}).finally(() => { this.checkingTrap = false; });
@@ -1800,6 +1800,8 @@ export class Agent {
       testStats: this.memory.data.testStats ?? {},
       pos: { x: Math.floor(p.x), y: Math.floor(p.y), z: Math.floor(p.z) }, dim: this.dim.id.replace('minecraft:', ''),
       health: Math.round(this.health()), hunger: Math.round(hunger), air: Math.round(air * 100),
+      inWater: (() => { try { return !!this.sim.isInWater; } catch { return false; } })(),
+      underwater: (() => { try { return this.body.headUnderwater(); } catch { return false; } })(),
       mode: this.mode, task: this.task?.kind ?? 'idle', step: this.task?.kind === 'auto' ? this.autoStep ?? null : null,
       auto: this.autoEnabled, autoDone: this.autoDone, underground,
       ravine: (() => { try { const r = this.skills.rimClimb(); return !underground && r >= 4 ? r : 0; } catch { return 0; } })(),
