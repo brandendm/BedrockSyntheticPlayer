@@ -296,13 +296,16 @@ export function avoidCreepers(classify, creepers, r = 3.5, except = null) {
  * with anything that shoots, climbs (spiders) or blows up in sight, and only with the blocks.
  */
 export const TOWER_H = 3;
-const CANT_CLIMB = new Set(['zombie', 'husk', 'drowned', 'zombie_villager', 'zombie_villager_v2', 'wither_skeleton', 'hoglin']);
+const CANT_CLIMB = new Set(['zombie', 'husk', 'drowned', 'zombie_villager', 'zombie_villager_v2', 'wither_skeleton', 'hoglin', 'iron_golem']);
 export function towerWorth({ threats, health = 20, blocks = 0, headroom = true }) {
   if (blocks < TOWER_H || !headroom) return false; // (headroom: open sky, or at least TOWER_H + 2 clear over us: no leaves in the way)
   // (Something that shoots within 24: up a pillar is where its arrows find us.)
   if (threats.some((m) => m.dist <= 24 && MOBS[m.type]?.kind === 'ranged')) return false;
   const near = threats.filter((m) => m.dist <= 12);
   if (!near.length || near.some((m) => !CANT_CLIMB.has(m.type))) return false;
+  // An iron golem after us (8 to 21 a hit, 2.7 blocks a second): up a 3-high pillar it can't reach us (measured in the
+  // game: nothing landed on a player 3 up, while a sword from the top killed it in ten seconds). At once, not as a last resort.
+  if (near.some((m) => m.type === 'iron_golem')) return true;
   const close = near.filter((m) => m.dist <= 6).length;
   return close >= 2 || (close >= 1 && health <= 10);
 }

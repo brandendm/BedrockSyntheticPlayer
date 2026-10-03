@@ -181,6 +181,7 @@ export class Agent {
     this.autoEnabled = true;
     this.autoDone = false;
     this.nextAutoTry = 0;
+    this.arenaHook = null;       // a test arena is running (game/arena.js): its rules for deaths, kit and who to fight
     this.knownSurfaceStone = null;
     this.waterIdle = 0;
   }
@@ -241,6 +242,14 @@ export class Agent {
 
   onDeath() {
     this.deathCount = (this.deathCount ?? 0) + 1;
+    // In a test arena: the arena decides (back to the start with the kit); no loot run, no kit forgotten.
+    if (this.arenaHook) {
+      this.fallFrom = null; this.mlg = null;
+      this.arenaHook.onDeath?.();
+      this.newTask(null); this.suspended = null; this.endCombat();
+      this.emit('died');
+      return;
+    }
     try { this.flight.dump(`died (mode ${this.mode}, step ${this.autoStep ?? '-'})`); } catch { /* a report never stops the respawn */ }
     // Everything we carried is on the ground here for 5 minutes: go back for it after respawning.
     const p = this.body.getPos();
@@ -520,6 +529,7 @@ export class Agent {
    * world and comes back empty-handed, so a server restart or a rejoin used to cost it everything.
    */
   saveKit() {
+    if (this.arenaHook) return; // (the arena's kit is not ours: what we owned was saved before it began)
     try { this.memory.data.kit = { ...kitOf(this.sim), at: Date.now() }; this.memory.save(); } catch (e) { console.warn(`[agent] save kit: ${e}`); }
   }
 
@@ -709,6 +719,10 @@ export class Agent {
       ents = this.dim.getEntities({ location: pos, maxDistance: radius, families: ['monster'] });
       // A ghast shoots from 30 and more blocks: seen out to 48 (the scan is 16, and one was fired at from 14-21 blocks and never noticed).
       if (radius < 48) { const ids = new Set(ents.map((e) => e.id)); for (const g of this.dim.getEntities({ location: pos, maxDistance: 48, type: 'minecraft:ghast' })) if (!ids.has(g.id)) ents.push(g); }
+      // (In a test arena, what it names as the fight: an iron golem isn't a 'monster'.)
+      for (const ty of this.arenaHook?.mobTypes ?? []) {
+        for (const e of this.dim.getEntities({ location: pos, maxDistance: radius, type: `minecraft:${ty}` })) if (!ents.some((x) => x.id === e.id)) ents.push(e);
+      }
     } catch { /* unloading */ }
     const out = [];
     for (const e of ents) {
@@ -869,6 +883,16 @@ export class Agent {
       else { d.mode = 'none'; d.reason = 'cornered, nothing close enough to fight: carry on'; }
     }
 
+    // A test arena can name the fight (a golem duel: it is why we are here): take that one on, whatever the race says.
+    const arenaFight = this.arenaHook?.fightId?.();
+    if (arenaFight) {
+      const tgt = mobs.find((m) => m.id === arenaFight);
+      if (tgt && !(d.mode === 'fight' && d.target === arenaFight)) {
+        d.mode = 'fight'; d.target = arenaFight; d.reason = 'arena: this is the fight';
+        if (!d.threats.some((m) => m.id === arenaFight)) { d.threats = [tgt, ...d.threats]; this.threatsNow = d.threats; }
+      }
+    }
+
     // In bed: nobody swings a sword lying down (the game let the bot hit things from its bed). A mob
     // that's got to us (hit us, or right by the bed; a creeper close) gets us up first, and the fight
     // starts once we're on our feet; anything further off is the walls' business.
@@ -920,7 +944,8 @@ export class Agent {
           if (d.mode === 'fight' && this.weaponId) { hold(this.sim, this.weaponId); this.heldWeapon = this.weaponId; }
           if (t - this.lastShout > 200) {
             this.lastShout = t;
-            this.say(d.mode === 'fight' ? `Fighting a ${d.threats[0].type}.` : `Running from a ${d.threats[0].type}.`);
+            const nm = String(d.threats[0].type).replace(/_/g, ' '), an = `${/^[aeiou]/.test(nm) ? 'an' : 'a'} ${nm}`;
+            this.say(d.mode === 'fight' ? `Fighting ${an}.` : `Running from ${an}.`);
           }
         } else {
           this.newTask({ kind: d.mode });
@@ -933,7 +958,7 @@ export class Agent {
       this.nextRoute = 0;
     }
 
-    if (d.mode !== 'none' && this.body.headUnderwater() && this.body.airRatio() < 0.5) {
+    if (d.mode !== 'none' && this.body.headUnderwater() && this.body.airRatio() < (this.arenaHook?.swims ? 0.25 : 0.5)) {
       this.checkWater(t, inWater); // air first, fight later
     } else if (d.mode === 'fight') {
       this.calmSince = t;
@@ -1005,7 +1030,8 @@ export class Agent {
     if (this.boatUnder?.(this.sim)) { this.waterIdle = 0; return false; } // sitting in a boat on the water: nothing to swim out of
     // Running out of air, whatever we're doing (climbing a flooded shaft, a path through water):
     // drop it and get our head into air now.
-    if (this.task?.kind !== 'swim_out' && this.body.headUnderwater() && this.body.airRatio() < 0.5) {
+    const swims = !!this.arenaHook?.swims; // (an arena job under water: the routine comes up for air itself; this is the last resort)
+    if (this.task?.kind !== 'swim_out' && this.body.headUnderwater() && this.body.airRatio() < (swims ? 0.25 : 0.5)) {
       if (!['fight', 'flee'].includes(this.task?.kind)) this.suspended = this.task ?? this.suspended;
       const gen = this.newTask({ kind: 'swim_out' });
       this.motor.stop();
@@ -1015,7 +1041,7 @@ export class Agent {
         .catch((e) => console.error(`[agent] swim for air: ${e}`));
       return true;
     }
-    if (!inWater || this.motor.busy || this.task?.kind === 'swim_out') {
+    if (!inWater || swims || this.motor.busy || this.task?.kind === 'swim_out') {
       this.waterIdle = 0;
       return this.task?.kind === 'swim_out';
     }
@@ -2240,6 +2266,7 @@ export class Agent {
 
   resume(task) {
     if (!task) return;
+    if (task.kind === 'arena') { this.arenaHook?.resume?.(); return; }
     if (task.kind === 'auto') { if (this.autoEnabled) this.startAuto(); return; }
     if (task.kind === 'surface' || task.kind === 'dig') { this.apply([{ type: task.kind }]); return; }
     if (task.kind === 'goto') this.startGoto(task.target, task.tolerance);
@@ -2514,6 +2541,8 @@ export class Agent {
     if (!this.jabbing) this.motor.setFocus(null); // (turned to jab something catching up: leave the head on it)
     if (this.walling || this.digging) return;
     if (this.pinch(threats, t)) return;
+    // An iron golem: no race to run, a pillar it cannot reach (core/tactics.js towerWorth). First thing, not the last resort.
+    if (!this.towered && threats.some((m) => m.type === 'iron_golem' && m.dist <= 12) && this.towerUp(threats)) return;
     if ((t < this.nextRoute && this.motor.busy) || this.findingRefuge) return;
     // On a height with a long drop beside us (a pillar, a tree, a cliff top) and hurt: running is how it fell to its death in two of the
     // reports (a knock, a leap, a ledge in the dark). Stand and fight from there instead (the same switch as when cornered).

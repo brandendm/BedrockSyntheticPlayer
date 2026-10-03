@@ -66,6 +66,7 @@ import { solvePitch } from '../core/ballistics.js';
 import { getPlan } from '../core/learnhouse.js';
 import { passRates, addStat } from '../core/testrun.js';
 import { compare } from '../core/testrun.js';
+import { ARENAS, testArena } from './arenas.js';
 
 /** How far the slab reaches round the site (west, east, to each side) for a test; the backed-up box is the same (a structure is 64 across at most). */
 function extFor(name) {
@@ -241,6 +242,15 @@ export async function runTests(agent, player, args) {
   const keepCycle = args.includes('daycycle');
   const human = who !== 'bot';
   const [name = 'all', arg] = args.filter((a) => !MODE_WORDS.includes(a));
+  // The arenas (game/arenas.js) are tests too, the bot alone in each: `!bot test forest [seconds]`.
+  if (name in ARENAS) {
+    running = true;
+    try {
+      const r = await testArena(agent, name, arg === undefined ? undefined : Number(arg));
+      report(agent, name, r.pass, r.detail);
+    } finally { running = false; }
+    return;
+  }
   const mode = name === 'all' && ['quick', 'slow'].includes(String(arg)) ? String(arg) : null;
   const named = String(name).includes(',') ? String(name).split(',').map((n) => n.trim()) : null;
   const list = named && named.every((n) => NAMES.includes(n)) ? named
@@ -248,7 +258,7 @@ export async function runTests(agent, player, args) {
     : NAMES.includes(name) ? [name] : null;
   // When you take part, `test all` leaves out the tests that have no turn for you (`alsobot` brings them back).
   if (who !== 'bot' && name === 'all' && !args.includes('alsobot') && list) { const keep = list.filter((n) => HUMAN_OK.has(n) || PLAYER_ONLY.has(n)); list.length = 0; list.push(...keep); }
-  if (!list) return agent.say(`Tests: ${NAMES.join(', ')}, all [quick|slow], or a,b,c.`);
+  if (!list) return agent.say(`Tests: ${NAMES.join(', ')}, all [quick|slow], or a,b,c; arenas: ${Object.keys(ARENAS).join(', ')}.`);
   if (!list.length) return agent.say('Every test is omitted.');
   if (human && !player) return agent.say('Say it in chat yourself: `!bot test <name> me` (or both / youfirst).');
   if (who === 'you' && !list.some((n) => HUMAN_OK.has(n))) agent.say(`None of those can be done by you yet (${[...HUMAN_OK].join(', ')}); the bot does them.`);

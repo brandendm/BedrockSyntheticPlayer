@@ -90,6 +90,18 @@ export class WorldMemory {
     return before - this.data.res.length;
   }
 
+  /** Forget everything remembered inside a box (an arena that has been taken down). */
+  forgetBox(dimId, b) {
+    const before = this.data.res.length;
+    this.data.res = this.data.res.filter((e) => !(e.d === dimId && e.x >= b.x1 && e.x <= b.x2 && e.y >= b.y1 && e.y <= b.y2 && e.z >= b.z1 && e.z <= b.z2));
+    for (const k of [...this.unreachable.keys()]) {
+      const [x, y, z] = k.split(',').map(Number);
+      if (x >= b.x1 && x <= b.x2 && y >= b.y1 && y <= b.y2 && z >= b.z1 && z <= b.z2) this.unreachable.delete(k);
+    }
+    if (this.data.res.length !== before) this.save();
+    return before - this.data.res.length;
+  }
+
   /** Entries of a category (or categories matching a predicate), nearest first, with distance and age. */
   list(catOrPred, dimId, from) {
     const match = typeof catOrPred === 'function' ? catOrPred : (c) => c === catOrPred;

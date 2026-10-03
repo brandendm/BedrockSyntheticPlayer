@@ -1707,7 +1707,7 @@ export class Skills {
   // ---------- trees ----------
 
   /** Get `target` logs: chop what's in sight, pick up dropped logs, or go back to remembered trees. */
-  async gatherLogs(gen, target, extra = 0) {
+  async gatherLogs(gen, target, extra = 0, { replant = true } = {}) {
     let fails = 0;
     const have = () => count(invCounts(this.sim), isLog);
     while (have() < target) {
@@ -1746,7 +1746,7 @@ export class Skills {
         continue;
       }
       // Chop the nearest trunk bottom-up while it lasts.
-      const r = await this.chopTree(gen, best.target, { stop: () => have() >= target + extra, bonus: () => have() >= target });
+      const r = await this.chopTree(gen, best.target, { stop: () => have() >= target + extra, bonus: () => have() >= target, replant });
       if (r.unreachable) { fails++; continue; }
       const chopped = r.chopped;
       if (!chopped && ++fails >= 3) { await this.explore(gen, 'reachable trees'); fails = 0; }

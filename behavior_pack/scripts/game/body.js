@@ -113,6 +113,13 @@ export class SimBodyAdapter {
     try { this.sim.applyKnockback({ x: d.x * 0.15, z: d.z * 0.15 }, 0.12); } catch {}
   }
 
+  /** The other way: push down through water (a sim can't hold shift any more than it can hold space). */
+  swimDown() {
+    this.sinkTick = (this.sinkTick ?? 0) + 1;
+    if (this.sinkTick % 2) return;
+    try { this.sim.applyKnockback({ x: 0, z: 0 }, -0.25); } catch {}
+  }
+
   jump() {
     if (this.sim.isInWater) {
       // Hop out onto a bank: forward + up, enough to clear one block from floating.

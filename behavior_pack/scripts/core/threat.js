@@ -43,6 +43,7 @@ export const MOBS = {
   evoker: { hp: 24, dps: 6, kind: 'ranged', never: true },
   ravager: { hp: 100, dps: 12, kind: 'melee', never: true },
   enderman: { hp: 40, dps: 7, kind: 'melee', neutral: true },
+  iron_golem: { hp: 100, dps: 14, kind: 'melee', neutral: true }, // (7.5 to 21 a hit, a hit a second; only after it has been hit)
   zombie_pigman: { hp: 20, dps: 5, kind: 'melee', neutral: true },
   piglin: { hp: 16, dps: 5, kind: 'melee', neutral: true },
   hoglin: { hp: 40, dps: 6, kind: 'melee' },

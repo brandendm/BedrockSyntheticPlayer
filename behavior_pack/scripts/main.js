@@ -7,6 +7,7 @@ import { system, world, GameMode, EquipmentSlot } from '@minecraft/server';
 import { spawnSimulatedPlayer } from '@minecraft/server-gametest';
 import { Agent } from './game/agent.js';
 import { runTests } from './game/scenarios.js';
+import { arenaCommand } from './game/arenas.js';
 import { poll, sendEvent } from './game/bridge.js';
 import { CONFIG } from './config.js';
 import { orderOf } from './core/toggles.js';
@@ -445,6 +446,12 @@ function handle(text, player) {
     runTests(agent, tester, lower.split(/\s+/).slice(1)).catch((e) => console.error(`[test] ${e}\n${e.stack}`));
     return;
   }
+  if (lower === 'arena' || lower.startsWith('arena ')) {
+    // Head-to-head test arenas (game/arenas.js): !bot arena <name> [seconds|solo], stop, leave.
+    if (!agent?.sim.isValid) return reply(player, 'spawn first');
+    arenaCommand(agent, player, lower.split(/\s+/).slice(1));
+    return;
+  }
   if (lower === 'despawn') {
     if (agent?.sim.isValid) { try { agent.saveKit(); } catch {} agent.sim.disconnect(); } // its things come back with it on the next spawn
     agent = null;
@@ -500,6 +507,7 @@ world.afterEvents.entityDie.subscribe((ev) => {
     try {
       agent?.sim.respawn();
       agent?.say('Respawned.');
+      agent?.arenaHook?.onRespawn?.();
     } catch (e) {
       console.error(`[agent] respawn failed: ${e}`);
     }

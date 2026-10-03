@@ -461,6 +461,21 @@ Defaults are in `brain/config.example.json`. Copy it to `brain/config.json` to o
 - Snapshots are compact (about 100 tokens). At $0.042 per million tokens that's roughly $0.000004 per call.
 - `GET http://127.0.0.1:8765/stats` shows decisions made by each layer and today's spend.
 
+## Arenas: you against the bot
+
+`!bot arena` lists them. `!bot arena <name>` builds one in the sky about 24 blocks east of you, puts you and the bot in identical lanes with the same kit, counts down 5-4-3-2-1 with cages that open at GO, and shows the time and both scores on the action bar and a sidebar scoreboard. At the end it says who won, then takes everything down. `!bot arena <name> 90` sets the time (seconds), `!bot arena <name> solo` is the bot alone, `!bot arena stop` ends one early. `!bot test <name>` is the bot-only run with PASS/FAIL.
+
+| Arena | What it is | Tested in the real game |
+|---|---|---|
+| `forest` | A walled 36x36 forest (the same trees for both corners). Iron axe each, most logs in 2 minutes. | bot: 80 logs in 120 s |
+| `golem` | An iron golem each in its own pen. Iron sword, iron spear, 128 cobblestone. Fastest kill wins (90 s). | bot kills it in about 13 s without taking damage (builds a pillar and fights from the top) |
+| `ender` | The same with an enderman (it blinks about; the pen sits low so the game doesn't despawn it). | bot wins about 5 times in 6 |
+| `dive` | Two flooded tanks, 8 blocks deep, ore in the floor (coal 1, iron 2, gold and lapis 3, diamond 5 points; a second layer shows when the first is mined), 3 drowned in each. Iron helmet with aqua affinity, iron pickaxe, sword. 100 s. | bot: 8-14 ores (30-46 points) in 100 s |
+| `parkour` | A hill climbed in 1-high steps, a 7-high wall climbed by its vines, a stepped descent (drops of 1 to 3), a dense tree field with husks, two cave holes (a 5-deep trench with a ramp out, zombies in them, a way round beside each), a lava pit crossed by two islands (2-block gaps) and a gold pad. First to the gold wins (150 s). Lava or a death sends you back to the start with your kit; the clock keeps running. | the course plan is unit-tested for passability and the built blocks were walked on paper, but it has **not** been run in the game |
+| `boat` | A winding canal (about 200 blocks a lap) with posts to steer round. You are in a boat; behind you a second boat with two villagers sits on a lead. Both boats have to be on the gold line. 20 s are added for each villager lost and 5 s each time the lead snaps (it is tied back on). `!bot arena boat race` leaves the villagers out. Only you can do this one: a simulated player cannot steer a boat, so the bot watches from the wall. | the setup (boats, villagers aboard, lead on, you seated) is checked in the game; steering needs a person |
+
+Your things are safe: your inventory, game mode and position are saved first (in the world, so a crash is recoverable) and put back when it ends, and if anything goes wrong `!bot arena leave` gives them back. The bot's own kit is saved and restored the same way. The pure parts (the seeded forest, ore and course layouts, ranking, clocks) are in `core/arena.js` with tests in `tests/arena.test.js`; the engine is `game/arena.js` and the arenas themselves `game/arenas.js`.
+
 ## Tests
 
 **Learning from your own play** (`game/demo.js`, `brain/learn.py`, `core/profile.js`). This is not neural-network training. The bot records you, works out your habits, and takes up the numbers it's confident about. It stays measured: a bot that copied you wholesale would copy your mistakes too.

@@ -75,6 +75,7 @@ export class MotorController {
     this.lastOutput = { yaw: this.yaw, pitch: this.pitch, moveYaw: null };
     this.focus = null;     // point to keep looking at while moving (combat): feet may strafe/backpedal freely
     this.avoid = [];       // points never to look straight at (enderman heads)
+    this.submerge = false; // true: stay down in water instead of floating up (the arena's diver steers itself)
   }
 
   /** Keep the head on this point (e.g. a mob's chest) regardless of walking direction. null to clear. */
@@ -181,7 +182,7 @@ export class MotorController {
     const inWater = !!this.body.isInWater?.();
     const wp = this.intent?.kind === 'path' ? this.intent.wps[this.intent.idx] : null;
     const diving = !!wp?.dive && wp.y <= this.body.getPos().y + 0.3;
-    if (inWater && !diving) this.body.swimUp?.();
+    if (inWater && !diving && !this.submerge) this.body.swimUp?.(); // (submerge: a job under water on purpose, an arena's diver)
 
     const pos = this.body.getPos();
     const eye = { x: pos.x, y: pos.y + EYE_HEIGHT, z: pos.z };
