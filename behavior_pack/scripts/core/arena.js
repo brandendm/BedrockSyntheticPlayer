@@ -197,6 +197,39 @@ export function boatPlan({ legLen = 61, cw = 5 } = {}) {
   };
 }
 
+/**
+ * The line a boat takes round the canal (cell coordinates; the middle of cell x is x + 0.5): down the middle of
+ * each leg, swung to the free side of every post, round the basins in half ellipses. `slow` marks the bends.
+ * A boat is 1.4 across, so every point is checked to have room (see tests).
+ * @returns {Array<{x:number,z:number,slow?:boolean}>}
+ */
+export function boatDrive(plan = boatPlan()) {
+  const cw = plan.cw;
+  const legs = plan.rects.filter((r) => /^leg/.test(r.name));
+  const mid = legs.map((r) => r.x0 + cw / 2);
+  /** @type {Array<{x:number,z:number,slow?:boolean}>} */
+  const pts = [];
+  const leg = (i, from, to) => {
+    const r = legs[i], dir = Math.sign(to - from);
+    const ps = plan.posts.filter((o) => o.x >= r.x0 && o.x <= r.x1).sort((a, b) => dir * (a.z - b.z));
+    pts.push({ x: mid[i], z: from });
+    for (const q of ps) {
+      const x = mid[i] + (q.x + 0.5 < mid[i] ? 1.4 : -1.4); // the free side of the post
+      pts.push({ x, z: q.z - dir * 4.5 }, { x, z: q.z + dir * 4.5 });
+    }
+    pts.push({ x: mid[i], z: to });
+  };
+  const half = (cx, cz, a, b, dz, n) => { const o = []; for (let k = 1; k < n; k++) { const th = Math.PI - Math.PI * k / n; o.push({ x: cx + a * Math.cos(th), z: cz + dz * b * Math.sin(th), slow: true }); } return o; };
+  const zT = plan.rects[0].z1;                                  // far end of the legs
+  const zFar = zT - 9, zNear = 1 + 6;                           // where the turns begin
+  leg(0, plan.start.z + 0.5, zFar);
+  pts.push(...half((mid[0] + mid[1]) / 2, zFar + 2.8, (mid[1] - mid[0]) / 2, 3.4, 1, 10));
+  leg(1, zFar, zNear);
+  pts.push(...half((mid[1] + mid[2]) / 2, zNear - 0.4, (mid[2] - mid[1]) / 2, 3.4, -1, 10));
+  leg(2, zNear, plan.finish.z0 + 5);
+  return pts.map((p) => ({ x: +p.x.toFixed(2), z: +p.z.toFixed(2), ...(p.slow ? { slow: true } : {}) }));
+}
+
 /** Which of `entries` ({ name, value, ... }) is ahead: highest value ('high') or lowest ('low'; null = never finished = last). */
 export function rank(entries, better = 'high') {
   const v = (e) => (e.value === null || e.value === undefined || Number.isNaN(e.value) ? (better === 'high' ? -Infinity : Infinity) : e.value);
@@ -234,6 +267,6 @@ export const ARENA_INFO = {
   ender: 'Enderman duel: sword, spear and blocks; a pen each, fastest kill wins',
   dive: 'Underwater mining: a flooded tank each, aqua affinity, drowned about; most ore wins',
   parkour: 'Parkour: hills, vines, dense trees, cave holes, lava pits and zombies; first to the gold wins',
-  boat: 'Boat race (you drive; the bot cannot): a water course, then tow the villagers\' boat on a lead',
+  boat: 'Boat race: a canal each with posts to steer round, towing the villagers\' boat on a lead; first on the gold with both boats wins',
 };
 export const ARENA_NAMES = Object.keys(ARENA_INFO);

@@ -5,7 +5,7 @@
 //   bot(s, p, gen)  the bot's routine  value/text   the score, and how it reads
 //   better    'high' or 'low' wins     verdict(s, bot)  PASS/FAIL for `!bot test <name>`
 import { system, world, ItemStack, EquipmentSlot } from '@minecraft/server';
-import { forestPlan, treeFills, oreLayout, ORE_POINTS, parkourPlan, boatPlan, clock, ARENA_INFO, ARENA_NAMES } from '../core/arena.js';
+import { forestPlan, treeFills, oreLayout, ORE_POINTS, parkourPlan, boatPlan, boatDrive, clock, ARENA_INFO, ARENA_NAMES } from '../core/arena.js';
 import { runSession, stopArena, recoverPlayer, kit, countOf, tell, Builder } from './arena.js';
 import { CONFIG } from '../config.js';
 
@@ -391,122 +391,214 @@ const PARKOUR = {
   },
 };
 
-// ---------- boats: a canal race, then the villagers' boat on a lead ----------
-// Only you can run this one (a simulated player cannot steer a boat): the bot watches from the wall.
+// ---------- boats: a canal race, towing the villagers' boat on a lead ----------
+// A canal each, side by side and identical. In each: a boat with its rider, behind it a second boat with two villagers
+// on a lead held by the rider. The bot drives by pushing its boat along the racing line (a simulated player's movement
+// does not steer a boat); you steer your own.
 const BOAT_KIT = kit([[0, 'lead', 2]]);
+const boatO = (s, lane) => ({ x: s.O.x + lane * (s.x.plan.w - 1), z: s.O.z });
+const flatD = (a, b) => Math.hypot(a.x - b.x, a.z - b.z);
 const BOAT = {
-  name: 'boat', title: 'Boat Race', secs: 240, better: 'low', humanOnly: true, floor: 2,
+  name: 'boat', title: 'Boat Race', secs: 240, better: 'low', floor: 2, swims: false,
   rules: 'Race your boat round the canal to the gold line, towing the villagers\' boat behind you on the lead. Both boats have to be on the gold, and keep the villagers in (20 s for each one lost, 5 s for a snapped lead). "race" instead of a time: no tow.',
-  dims: () => { const p = boatPlan(); return { w: p.w, d: p.d, h: 12 }; },
+  dims: () => { const p = boatPlan(); return { w: 2 * (p.w - 1) + 1, d: p.d, h: 12 }; },
   build(s, B) {
     const p = s.x.plan = boatPlan(); const { O, G } = s;
-    const X = (x) => O.x + x, Z = (z) => O.z + z, top = G + p.depth;
-    B.fill(O.x, O.y, O.z, O.x + p.w - 1, G, O.z + p.d - 1, 'stone');
-    B.fill(O.x, G + 1, O.z, O.x + p.w - 1, G + 7, O.z + p.d - 1, 'stone_bricks');
-    for (const r of p.rects) {
-      B.fill(X(r.x0), G + 1, Z(r.z0), X(r.x1), top, Z(r.z1), 'water');
-      B.fill(X(r.x0), top + 1, Z(r.z0), X(r.x1), G + 7, Z(r.z1), 'air');
+    const top = G + p.depth;
+    B.fill(O.x, O.y, O.z, O.x + 2 * (p.w - 1), G, O.z + p.d - 1, 'stone');
+    B.fill(O.x, G + 1, O.z, O.x + 2 * (p.w - 1), G + 7, O.z + p.d - 1, 'stone_bricks');
+    for (const lane of [0, 1]) {
+      const o = boatO(s, lane), X = (x) => o.x + x, Z = (z) => o.z + z;
+      for (const r of p.rects) {
+        B.fill(X(r.x0), G + 1, Z(r.z0), X(r.x1), top, Z(r.z1), 'water');
+        B.fill(X(r.x0), top + 1, Z(r.z0), X(r.x1), G + 7, Z(r.z1), 'air');
+      }
+      for (const q of p.posts) { B.fill(X(q.x), G + 1, Z(q.z), X(q.x), top + 1, Z(q.z), 'stone_bricks'); B.set(X(q.x), top + 2, Z(q.z), 'sea_lantern'); }
+      // The gold line on the floor and a lantern each side of it; the start gate (glass) comes down at GO.
+      B.fill(X(p.finish.x0), G, Z(p.finish.z0), X(p.finish.x1), G, Z(p.finish.z0), 'gold_block');
+      B.set(X(p.finish.x0 - 1), G + 7, Z(p.finish.z0), 'sea_lantern'); B.set(X(p.finish.x1 + 1), G + 7, Z(p.finish.z0), 'sea_lantern');
+      const g = p.rects[0];
+      B.fill(X(g.x0), G + 1, Z(p.gateZ), X(g.x1), G + 6, Z(p.gateZ), 'glass');
+      s.gates.push(`fill ${X(g.x0)} ${G + 1} ${Z(p.gateZ)} ${X(g.x1)} ${top} ${Z(p.gateZ)} water`);
+      s.gates.push(`fill ${X(g.x0)} ${top + 1} ${Z(p.gateZ)} ${X(g.x1)} ${G + 6} ${Z(p.gateZ)} air`);
     }
-    for (const q of p.posts) { B.fill(X(q.x), G + 1, Z(q.z), X(q.x), top + 1, Z(q.z), 'stone_bricks'); B.set(X(q.x), top + 2, Z(q.z), 'sea_lantern'); }
-    // The gold line on the floor and a lantern each side of it; the start gate (glass) comes down at GO.
-    B.fill(X(p.finish.x0), G, Z(p.finish.z0), X(p.finish.x1), G, Z(p.finish.z0), 'gold_block');
-    B.set(X(p.finish.x0 - 1), G + 7, Z(p.finish.z0), 'sea_lantern'); B.set(X(p.finish.x1 + 1), G + 7, Z(p.finish.z0), 'sea_lantern');
-    const g = p.rects[0];
-    B.fill(X(g.x0), G + 1, Z(p.gateZ), X(g.x1), G + 6, Z(p.gateZ), 'glass');
-    s.gates.push(`fill ${X(g.x0)} ${G + 1} ${Z(p.gateZ)} ${X(g.x1)} ${top} ${Z(p.gateZ)} water`);
-    s.gates.push(`fill ${X(g.x0)} ${top + 1} ${Z(p.gateZ)} ${X(g.x1)} ${G + 6} ${Z(p.gateZ)} air`);
   },
   layout(s) {
-    const p = s.x.plan, { O, G } = s;
-    return { starts: [
-      { x: O.x + p.start.x + 0.5, y: G + p.depth + 1.4, z: O.z + p.start.z + 0.5, fx: 0, fz: 1 },
-      { x: O.x + p.watch.x + 0.5, y: G + 8, z: O.z + p.watch.z + 0.5, fx: 1, fz: -1 },
-    ] };
+    const p = s.x.plan, { G } = s;
+    return { starts: [0, 1].map((lane) => { const o = boatO(s, lane); return { x: o.x + p.start.x + 0.5, y: G + p.depth + 1.4, z: o.z + p.start.z + 0.5, fx: 0, fz: 1 }; }) };
   },
   kit: (s, p) => (p.bot ? kit([]) : BOAT_KIT),
   mobTypes: [],
   async ready(s) {
-    const p = s.x.plan, { O, G } = s;
-    const at = (c) => ({ x: O.x + c.x + 0.5, y: G + p.depth + 1.15, z: O.z + c.z + 0.5 });
+    const p = s.x.plan, { G } = s;
     const sit = (ent, boat) => { const l = boat.location; try { ent.runCommand(`ride @s start_riding @e[type=boat,x=${l.x},y=${l.y},z=${l.z},c=1] teleport_rider`); return true; } catch (e) { console.warn(`[arena] sit: ${e}`); return false; } };
-    const boat = s.x.boat = s.dim.spawnEntity('minecraft:boat', at(p.start));
-    try { boat.setRotation({ x: 0, y: 0 }); } catch {}
-    await wait(8);
-    if (s.human) sit(s.human, boat);
-    s.x.tow = null; s.x.villagers = [];
-    if (s.opts.tow === false) return;
-    const tow = s.x.tow = s.dim.spawnEntity('minecraft:boat', at(p.tow));
-    try { tow.setRotation({ x: 0, y: 0 }); } catch {}
-    await wait(8);
-    for (let i = 0; i < 2; i++) {
+    s.x.sit = sit;
+    for (const part of s.parts) {
+      const o = boatO(s, part.lane);
+      const at = (c) => ({ x: o.x + c.x + 0.5, y: G + p.depth + 1.15, z: o.z + c.z + 0.5 });
+      const boat = part.x.boat = s.dim.spawnEntity('minecraft:boat', at(p.start));
+      try { boat.setRotation({ x: 0, y: 0 }); } catch {}
+      await wait(8);
+      sit(part.ent, boat);
+      part.x.tow = null; part.x.villagers = []; part.x.riders = 0; part.x.snaps = 0; part.x.lost = 0; part.x.best = 0;
+      if (s.opts.tow === false) continue;
+      const tow = part.x.tow = s.dim.spawnEntity('minecraft:boat', at(p.tow));
+      try { tow.setRotation({ x: 0, y: 0 }); } catch {}
+      await wait(8);
+      for (let i = 0; i < 2; i++) {
+        try {
+          const v = s.dim.spawnEntity('minecraft:villager_v2', { x: tow.location.x, y: tow.location.y + 1, z: tow.location.z });
+          part.x.villagers.push(v);
+          await wait(2);
+          sit(v, tow);
+        } catch (e) { console.warn(`[arena] villager: ${e}`); }
+      }
+      part.x.riders = 2;
+      try { tow.getComponent('minecraft:leashable').leashTo(part.ent); } catch (e) { console.warn(`[arena] lead: ${e}`); }
       try {
-        const v = s.dim.spawnEntity('minecraft:villager_v2', { x: tow.location.x, y: tow.location.y + 1, z: tow.location.z });
-        s.x.villagers.push(v);
-        await wait(2);
-        sit(v, tow);
-      } catch (e) { console.warn(`[arena] villager: ${e}`); }
+        const n = (b) => b.getComponent('minecraft:rideable').getRiders().length;
+        console.warn(`[arena] boats (${part.name}): its own has ${n(boat)} aboard, the villagers' has ${n(tow)}; lead ${tow.getComponent('minecraft:leashable').isLeashed ? 'on' : 'OFF'}`);
+      } catch (e) { console.warn(`[arena] boats check: ${e}`); }
     }
-    s.x.riders = 2;
-    try { tow.getComponent('minecraft:leashable').leashTo(s.human); } catch (e) { console.warn(`[arena] lead: ${e}`); }
-    try {
-      const n = (b) => b.getComponent('minecraft:rideable').getRiders().length;
-      console.warn(`[arena] boats: yours has ${n(boat)} aboard, the villagers' has ${n(tow)}; lead ${tow.getComponent('minecraft:leashable').isLeashed ? 'on' : 'OFF'}`);
-    } catch (e) { console.warn(`[arena] boats check: ${e}`); }
   },
-  go(s) { const p = s.you; if (p) { p.x.snaps = 0; p.x.lost = 0; p.x.best = 0; } },
+  go(s) { for (const p of s.parts) { p.x.snaps = 0; p.x.lost = 0; p.x.best = 0; } },
   tick(s, now) {
-    const p = s.you; if (!p || !s.human?.isValid) return;
-    const plan = s.x.plan, { O } = s;
+    const plan = s.x.plan;
     const fin = plan.finish;
-    const inFin = (l) => l.x >= O.x + fin.x0 && l.x <= O.x + fin.x1 + 1 && l.z >= O.z + fin.z0 && l.z <= O.z + fin.z1 + 1;
-    const where = (l) => { const lx = l.x - O.x, lz = l.z - O.z; return lx < 8.5 ? lz : lx < 16.5 ? 2 * 61 - lz : 122 + lz; };
-    const loc = s.human.location;
-    // Your boat gone (broken, or you got out and it drifted): a new one under you.
-    if (s.x.boat && !s.x.boat.isValid && !p.done) {
-      try { const b = s.x.boat = s.dim.spawnEntity('minecraft:boat', { x: loc.x, y: loc.y + 0.3, z: loc.z }); b.setRotation({ x: 0, y: 0 }); tell('Your boat was lost: here is another one.'); } catch {}
+    for (const p of s.parts) {
+      if (!p.ent?.isValid) continue;
+      const o = boatO(s, p.lane);
+      const inFin = (l) => l.x >= o.x + fin.x0 && l.x <= o.x + fin.x1 + 1 && l.z >= o.z + fin.z0 && l.z <= o.z + fin.z1 + 1;
+      const where = (l) => { const lx = l.x - o.x; return lx < 8.5 ? l.z - o.z : lx < 16.5 ? 2 * 61 - (l.z - o.z) : 122 + (l.z - o.z); };
+      const loc = p.ent.location;
+      // A boat gone (broken, or got out and it drifted): a new one under a person.
+      if (!p.bot && p.x.boat && !p.x.boat.isValid && !p.done) {
+        try { const b = p.x.boat = s.dim.spawnEntity('minecraft:boat', { x: loc.x, y: loc.y + 0.3, z: loc.z }); b.setRotation({ x: 0, y: 0 }); tell('Your boat was lost: here is another one.'); } catch {}
+      }
+      const tow = p.x.tow;
+      if (tow) {
+        if (tow.isValid) {
+          let riders = 0; try { riders = tow.getComponent('minecraft:rideable').getRiders().length; } catch {}
+          if (riders < (p.x.riders ?? 2)) { tell(`§c${p.bot ? p.name + ': a' : 'A'} villager fell out of the boat!§r (${riders} left, +20 s each)`); p.x.riders = riders; }
+          p.x.lost = 2 - riders;
+          let leashed = true; try { leashed = tow.getComponent('minecraft:leashable').isLeashed; } catch {}
+          if (!leashed && !p.done) {
+            // Snapped (or the villagers' boat got wedged): tie it back on, and when it is far off or stuck put it behind the main boat first.
+            const lead = tow.getComponent('minecraft:leashable');
+            try {
+              if (flatD(tow.location, loc) > 7) {
+                const h = p.x.boat?.isValid ? p.x.boat.location : loc, fwd = p.x.heading ?? { x: 0, z: 1 };
+                const water = (x, z) => { try { return s.dim.getBlock({ x: Math.floor(x), y: Math.floor(h.y - 0.6), z: Math.floor(z) })?.typeId === 'minecraft:water'; } catch { return false; } };
+                const at = [4, 3, 2].map((k) => ({ x: h.x - fwd.x * k, z: h.z - fwd.z * k })).find((c) => water(c.x, c.z)) ?? { x: h.x, z: h.z };
+                tow.teleport({ x: at.x, y: h.y, z: at.z }, { dimension: s.dim });
+                try { tow.clearVelocity(); } catch {}
+              }
+              lead.leashTo(p.ent); p.x.snaps++;
+              tell(`§e${p.bot ? p.name + ': the' : 'The'} lead snapped: tied it back on (+5 s).§r`);
+            } catch (e) { if (!p.x.leashWarned) { p.x.leashWarned = true; console.warn(`[arena] re-leash failed: ${e}`); } }
+          }
+        } else p.x.lost = 2;
+      }
+      if (CONFIG.debug && now % 40 < 4) { try { console.warn(`[arena] dbg boat ${p.name} ${loc.x.toFixed(1)},${loc.y.toFixed(1)},${loc.z.toFixed(1)} riding ${p.ent.getComponent('minecraft:riding')?.entityRidingOn?.typeId ?? '-'} tow ${tow?.isValid ? `${tow.location.x.toFixed(1)},${tow.location.z.toFixed(1)} riders ${tow.getComponent('minecraft:rideable').getRiders().length} leashed ${tow.getComponent('minecraft:leashable').isLeashed}` : '-'}`); } catch {} }
+      try { const bv = (p.x.boat?.isValid ? p.x.boat : p.ent).getVelocity(), sp = Math.hypot(bv.x, bv.z); if (sp > 0.12) p.x.heading = { x: bv.x / sp, z: bv.z / sp }; } catch {}
+      const pr = where(loc);
+      if (pr > p.x.best) p.x.best = pr;
+      const towIn = !tow || !tow.isValid || inFin(tow.location);
+      if (!p.done && inFin(loc) && towIn) { p.done = true; p.x.finished = true; p.doneAt = now; tell(`${p.name} is on the gold!`); }
     }
-    const tow = s.x.tow;
-    if (tow) {
-      if (tow.isValid) {
-        let riders = 0; try { riders = tow.getComponent('minecraft:rideable').getRiders().length; } catch {}
-        if (riders < (s.x.riders ?? 2)) { tell(`§cA villager fell out of the boat!§r (${riders} left, +20 s each)`); s.x.riders = riders; }
-        p.x.lost = 2 - riders;
-        let leashed = true; try { leashed = tow.getComponent('minecraft:leashable').isLeashed; } catch {}
-        if (!leashed && !p.done) {
-          try { tow.getComponent('minecraft:leashable').leashTo(s.human); p.x.snaps++; tell('§eThe lead snapped: tied it back on (+5 s).§r'); } catch {}
-        }
-      } else p.x.lost = 2;
-    }
-    const pr = where(loc);
-    if (CONFIG.debug && now % 40 < 4) { try { console.warn(`[arena] dbg boat you ${loc.x.toFixed(1)},${loc.y.toFixed(1)},${loc.z.toFixed(1)} riding ${s.human.getComponent('minecraft:riding')?.entityRidingOn?.typeId ?? '-'} tow ${tow?.isValid ? `${tow.location.x.toFixed(1)},${tow.location.z.toFixed(1)} riders ${tow.getComponent('minecraft:rideable').getRiders().length} leashed ${tow.getComponent('minecraft:leashable').isLeashed}` : '-'}`); } catch {} }
-    if (pr > p.x.best) p.x.best = pr;
-    const towIn = !tow || !tow.isValid || inFin(tow.location);
-    if (!p.done && inFin(loc) && towIn) { p.done = true; p.x.finished = true; p.doneAt = now; tell(`${p.name} is on the gold!`); }
   },
-  over: (s) => !!s.you?.x.finished,
+  // Over when everyone is across, or 30 s after the first (the penalties can turn a race round).
+  over(s, now) {
+    const done = s.parts.filter((p) => p.x.finished);
+    if (done.length === s.parts.length) return true;
+    if (done.length) { s.x.firstDone ??= now; return now - s.x.firstDone > 600; }
+    return false;
+  },
   hudLine(s) {
-    const p = s.you; if (!p) return '';
-    const leg = (() => { try { const lx = s.human.location.x - s.O.x; return lx < 8.5 ? 1 : lx < 16.5 ? 2 : 3; } catch { return 1; } })();
-    return `Leg ${leg}/3${s.x.tow ? `  Villagers ${2 - (p.x.lost ?? 0)}/2` : ''}${p.x.snaps ? `  Lead snaps ${p.x.snaps}` : ''}`;
+    return s.parts.map((p) => {
+      const leg = (() => { try { const lx = p.ent.location.x - boatO(s, p.lane).x; return lx < 8.5 ? 1 : lx < 16.5 ? 2 : 3; } catch { return 1; } })();
+      return `${p.bot ? p.name : 'You'}: ${p.x.finished ? '§aon the gold§r' : `leg ${leg}/3`}${s.x.tow !== false && p.x.tow ? ` villagers ${2 - (p.x.lost ?? 0)}/2` : ''}`;
+    }).join('  §7|§r  ');
   },
   value(s, p) {
-    if (p.bot) return null;
     if (p.x.finished) return p.doneAt - s.tick0 + 100 * (p.x.snaps ?? 0) + 400 * (p.x.lost ?? 0);
-    return 1e6 + Math.max(0, Math.round((183 - (p.x.best ?? 0)) * 100));
+    return 1e6 + Math.max(0, Math.round((183 - (p.x.best ?? 0)) * 100)) + 400 * (p.x.lost ?? 0);
   },
   text(s, p) {
-    if (p.bot) return 'watched from the wall (a simulated player cannot steer a boat)';
     const notes = `${p.x.lost ? `, lost ${p.x.lost} villager${p.x.lost > 1 ? 's' : ''}` : ''}${p.x.snaps ? `, lead snapped ${p.x.snaps}x` : ''}`;
-    if (p.x.finished) return `${clock(p.doneAt - s.tick0)} on the gold, ${clock(100 * (p.x.snaps ?? 0) + 400 * (p.x.lost ?? 0))} of penalties${notes}`;
+    if (p.x.finished) return `${clock(p.doneAt - s.tick0 + 100 * (p.x.snaps ?? 0) + 400 * (p.x.lost ?? 0))} (${clock(p.doneAt - s.tick0)} on the water)${notes}`;
     return `${Math.round(100 * Math.min(1, (p.x.best ?? 0) / 183))}% round the canal${notes}`;
   },
-  verdict: () => ({ pass: true, detail: 'a course for you: the bot only watches' }),
+  verdict: (s, bot) => ({ pass: !!bot.x.finished && (bot.x.lost ?? 0) === 0, detail: bot.x.finished ? `across in ${clock(bot.doneAt - s.tick0)}${bot.x.lost ? `, lost ${bot.x.lost} villager(s)` : ', both villagers aboard'}${bot.x.snaps ? `, lead snapped ${bot.x.snaps}x` : ''}` : `${Math.round(100 * Math.min(1, (bot.x.best ?? 0) / 183))}% round the canal` }),
+  // The bot: a boat's controls don't answer a simulated player, so it pushes the boat along the racing line, steering the boat's
+  // velocity toward where it should be going (the same push for every bend), at about the speed a boat does under oars.
+  // The villagers' boat gets the same kind of push toward the spot on the line 4.5 blocks behind the main one: a lead pulls the
+  // boat straight at its holder, so round the end of an island it cuts the corner and sticks (tried: it never got round).
+  // The lead stays on (and a snap still costs 5 s), but it is not what tows.
   bot: async (s, p, gen) => {
-    const A = s.agent, S = A.skills;
-    while (s.phase === 'run' && gen === A.taskGen) {
-      const b = s.x.boat;
-      try { if (b?.isValid) A.motor.setFocus({ x: b.location.x, y: b.location.y + 1, z: b.location.z }); } catch {}
-      await S.wait(gen, 10);
+    const A = s.agent, S = A.skills, plan = s.x.plan;
+    const boat = p.x.boat;
+    if (!boat?.isValid) return;
+    const o = boatO(s, p.lane);
+    const line = boatDrive(plan).map((q) => ({ x: o.x + q.x, z: o.z + q.z, slow: !!q.slow }));
+    const cum = [0]; for (let k = 1; k < line.length; k++) cum.push(cum[k - 1] + flatD(line[k], line[k - 1]));
+    // Arc length of the nearest point on the line, and the point at a given arc length (before the start: straight back from it).
+    const arc = (l) => {
+      let best = 1e9, at = 0;
+      for (let k = 1; k < line.length; k++) {
+        const a = line[k - 1], b = line[k], vx = b.x - a.x, vz = b.z - a.z, L2 = vx * vx + vz * vz || 1;
+        const t = Math.max(0, Math.min(1, ((l.x - a.x) * vx + (l.z - a.z) * vz) / L2));
+        const d = Math.hypot(l.x - (a.x + vx * t), l.z - (a.z + vz * t));
+        if (d < best) { best = d; at = cum[k - 1] + Math.sqrt(L2) * t; }
+      }
+      return at;
+    };
+    const pointAt = (sv) => {
+      if (sv <= 0) { const a = line[0], b = line[1], L = flatD(a, b) || 1; return { x: a.x + (b.x - a.x) / L * sv, z: a.z + (b.z - a.z) / L * sv }; }
+      let k = 1; while (k < line.length - 1 && cum[k] < sv) k++;
+      const a = line[k - 1], b = line[k], t = Math.max(0, Math.min(1, (sv - cum[k - 1]) / ((cum[k] - cum[k - 1]) || 1)));
+      return { x: a.x + (b.x - a.x) * t, z: a.z + (b.z - a.z) * t };
+    };
+    // Push `ent` toward `want` blocks per tick along (ux,uz): at most 0.09 a tick (a boat shoved harder skips along the water).
+    const push = (ent, ux, uz, want) => {
+      const v = ent.getVelocity();
+      let ix = ux * want - v.x, iz = uz * want - v.z;
+      const m = Math.hypot(ix, iz), cap = 0.09;
+      if (m > cap) { ix = ix / m * cap; iz = iz / m * cap; }
+      try { ent.applyImpulse({ x: ix * 0.6, y: 0, z: iz * 0.6 }); } catch {}
+      return v;
+    };
+    let i = 1, still = 0, last = { ...boat.location };
+    const vmax = 7.2;
+    while (s.phase === 'run' && !p.done) {
+      S.check(gen);
+      if (!boat.isValid) return;
+      try { if (!A.sim.getComponent('minecraft:riding')?.entityRidingOn) s.x.sit?.(A.sim, boat); } catch {}
+      const bl = boat.location;
+      const tow = p.x.tow?.isValid ? p.x.tow : null;
+      const sb = arc(bl), lag = tow ? sb - arc(tow.location) : 0;
+      while (i < line.length - 1 && flatD(bl, line[i]) < 1.8) i++;
+      const wp = line[i], dx = wp.x - bl.x, dz = wp.z - bl.z, d = Math.hypot(dx, dz) || 1;
+      // Slower where the next stretch bends (the boat keeps its way): the speed it can carry into this waypoint and the one after.
+      const next = line[Math.min(i + 1, line.length - 1)];
+      const bend = wp.slow || next.slow ? 4.2 : vmax;
+      let want = Math.min(bend, vmax, 2 + d * 1.6) / 20; // blocks per tick
+      if (tow && lag > 9) want *= Math.max(0.05, (12 - lag) / 3); // the villagers are left far behind: wait for them
+      const v = push(boat, dx / d, dz / d, want);
+      try { boat.setRotation({ x: 0, y: Math.atan2(-dx, dz) * 180 / Math.PI }); } catch {}
+      if (tow) {
+        const tg = pointAt(sb - 4.5), tl = tow.location, tx = tg.x - tl.x, tz = tg.z - tl.z, td = Math.hypot(tx, tz) || 1;
+        // Toward the spot behind us, at our speed plus a little for every block it is out (never faster than the main boat can go).
+        const sp = Math.hypot(v.x, v.z) + Math.min(0.2, td * 0.04);
+        push(tow, tx / td, tz / td, td < 0.35 ? 0 : Math.min(sp, vmax / 20));
+        try { tow.setRotation({ x: 0, y: Math.atan2(-dx, dz) * 180 / Math.PI }); } catch {}
+      }
+      // Stuck against a wall or a post for 3 s: a push back toward the middle of the leg.
+      still = want > 0.01 && flatD(bl, last) < 0.015 ? still + 1 : 0;
+      if (still > 60) { try { boat.applyImpulse({ x: -dx / d * 0.25, y: 0.02, z: -dz / d * 0.25 }); } catch {} still = 0; p.x.nudges = (p.x.nudges ?? 0) + 1; }
+      last = { ...bl };
+      if (CONFIG.debug && system.currentTick % 20 === 0) console.warn(`[arena] dbg bot boat at ${bl.x.toFixed(1)},${bl.z.toFixed(1)} -> wp ${i}/${line.length - 1} (${wp.x.toFixed(1)},${wp.z.toFixed(1)}) speed ${(Math.hypot(v.x, v.z) * 20).toFixed(1)} b/s lag ${lag.toFixed(1)}`);
+      await S.wait(gen, 1);
     }
   },
 };
@@ -531,14 +623,12 @@ export function arenaCommand(agent, player, args) {
   if (!def) return say(`No arena called ${name}. ${ARENA_NAMES.join(', ')}.`);
   const solo = arg === 'solo' || !player;
   const secs = Number(arg) > 0 ? Number(arg) : undefined;
-  if (def.humanOnly && solo) return say(`The ${def.title} needs you at the helm: ${CONFIG.botName} can't steer a boat (it will watch from the wall). Run: !bot arena ${name}`);
-  runSession(agent, player, def, { solo, secs, tow: !(def.humanOnly && arg === 'race') }).catch((e) => console.warn(`[arena] ${e}\n${e.stack ?? ''}`));
+  runSession(agent, player, def, { solo, secs, tow: !(name === 'boat' && arg === 'race') }).catch((e) => console.warn(`[arena] ${e}\n${e.stack ?? ''}`));
 }
 
 /** `!bot test <arena>`: the bot alone, PASS/FAIL. */
 export async function testArena(agent, name, arg) {
   const def = ARENAS[name];
   if (!def) return { pass: false, detail: 'not built yet' };
-  if (def.humanOnly) return { pass: true, detail: `${def.title} is a course for a human (the bot cannot steer a boat): run it with !bot arena ${name}` };
   return runSession(agent, null, def, { solo: true, secs: arg > 0 ? arg : undefined, linger: 0 });
 }

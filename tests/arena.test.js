@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { rng, forestPlan, treeFills, oreLayout, ORE_POINTS, rank, winnerOf, clock, clockLeft, parkourPlan, boatPlan, ARENA_INFO, ARENA_NAMES } from '../behavior_pack/scripts/core/arena.js';
+import { rng, forestPlan, treeFills, oreLayout, ORE_POINTS, rank, winnerOf, clock, clockLeft, parkourPlan, boatPlan, boatDrive, ARENA_INFO, ARENA_NAMES } from '../behavior_pack/scripts/core/arena.js';
 
 const cheb = (a, b) => Math.max(Math.abs(a.x - b.x), Math.abs(a.z - b.z));
 
@@ -217,4 +217,30 @@ test('boat: the lap is long enough to be a race', () => {
   let len = 0; let prev = p.start;
   for (const c of p.route) { len += Math.abs(c.x - prev.x) + Math.abs(c.z - prev.z); prev = c; }
   assert.ok(len >= 150, `${len} blocks`);
+});
+
+test('boat: the line round the canal has room for a boat all the way and never touches a post', () => {
+  const p = boatPlan();
+  const line = boatDrive(p);
+  const post = new Set(p.posts.map((q) => `${q.x},${q.z}`));
+  const water = (x, z) => p.rects.some((r) => x >= r.x0 && x <= r.x1 && z >= r.z0 && z <= r.z1) && !post.has(`${x},${z}`);
+  // A boat is a disc of radius 0.7: eight points round it and its middle must all be over water.
+  const room = (x, z, r = 0.72) => {
+    for (const [a, b] of [[0, 0], [r, 0], [-r, 0], [0, r], [0, -r], [r * 0.7, r * 0.7], [-r * 0.7, r * 0.7], [r * 0.7, -r * 0.7], [-r * 0.7, -r * 0.7]]) if (!water(Math.floor(x + a), Math.floor(z + b))) return false;
+    return true;
+  };
+  assert.ok(line.length >= 30);
+  assert.ok(line[0].z > p.start.z - 1 && line[0].z < p.gateZ, 'starts behind the gate');
+  assert.ok(line.at(-1).z >= p.finish.z0 + 3 && line.at(-1).x >= p.finish.x0 && line.at(-1).x <= p.finish.x1 + 1, 'ends on the gold');
+  for (let i = 1; i < line.length; i++) {
+    const a = line[i - 1], b = line[i], n = Math.ceil(Math.hypot(b.x - a.x, b.z - a.z) / 0.25);
+    for (let k = 0; k <= n; k++) {
+      const x = a.x + (b.x - a.x) * k / n, z = a.z + (b.z - a.z) * k / n;
+      assert.ok(room(x, z), `no room at ${x.toFixed(2)},${z.toFixed(2)} between waypoints ${i - 1} and ${i}`);
+    }
+  }
+  // It goes up leg 1, down leg 2, up leg 3, and passes the gold only at the end.
+  const zs = line.map((q) => q.z);
+  assert.ok(Math.max(...zs.slice(0, 14)) >= 50 && zs.at(-1) > zs.at(-5), 'goes up the last leg');
+  assert.ok(line.filter((q) => q.slow).length >= 12, 'the bends are marked');
 });

@@ -405,7 +405,7 @@ export class Agent {
       this.followTick = t;
       this.updateFollow();
     }
-    if (t % 200 === 100 && this.mode === 'none' && !this.task && !this.checkingTrap) this.checkIdleTrapped();
+    if (t % 200 === 100 && this.mode === 'none' && !this.task && !this.checkingTrap && !this.arenaHook) this.checkIdleTrapped();
     if (t % 40 === 20 && this.mode === 'none') this.checkStillNeeded();
     // Dusk: drop whatever daytime job is running so the plan can send us home.
     if (t % 100 === 50) {

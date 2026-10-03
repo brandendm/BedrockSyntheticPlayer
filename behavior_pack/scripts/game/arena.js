@@ -433,8 +433,7 @@ function board(s, first) {
 function announce(s) {
   const def = s.def;
   const entries = s.parts.map((p) => ({ name: p.bot ? p.name : p.name, who: p.bot ? 'bot' : 'you', value: def.value(s, p), text: def.text(s, p), p }));
-  // (A course only the human can run, like the boats: no winner, just their time.)
-  const alone = !!def.humanOnly;
+  const alone = false;
   const win = alone ? null : winnerOf(entries.map((e) => ({ name: e.name, value: e.value })), def.better);
   const lines = rank(alone ? entries.filter((e) => e.who === 'you') : entries, def.better).map((e) => `${e.name}: ${e.text}`);
   tell(`§6${def.title} over.§r ${lines.join('  |  ')}${!alone && s.parts.length > 1 ? `  ->  ${win ? `§a${win} wins§r` : 'a tie'}` : ''}`);
