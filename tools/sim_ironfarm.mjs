@@ -18,7 +18,8 @@ const cellsPlan = ref.cells;
 function reset(knobs = {}) {
   G.grid.clear(); G.log.length = 0; G.tick = 0; G.entities.length = 0; G.awake.clear(); G.knobs = knobs;
 }
-const player = { location: { x: 100.5, y: 70, z: 100.5 }, dimension: MC.dimension, teleport() {} };
+const tele = [];
+const player = { location: { x: 100.5, y: 70, z: 100.5 }, dimension: MC.dimension, teleport(l) { tele.push(l); } };
 G.players = [player];
 const settle = async (until, max = 400) => { for (let i = 0; i < max; i++) { await new Promise((r) => setImmediate(r)); if (G.log.some((l) => until.test(l))) { await new Promise((r) => setImmediate(r)); return true; } } return false; };
 const chat = () => G.log.filter((l) => l.startsWith('CHAT ')).map((l) => l.slice(5));
@@ -135,6 +136,20 @@ t('something in the way: it refuses, and "build force" builds anyway', async () 
   ironFarmCommand(player, ['build', 'force']);
   await settle(/viewing room/);
   ok(waterCells(o) === 16 && at(o, LAVA.x, LAVA.y, LAVA.z)?.id === 'lava', 'forced build is not whole');
+});
+
+t('view top / pod / the viewing room put you on the platform wall, among the villagers, behind the glass', async () => {
+  const o = await built();
+  tele.length = 0;
+  ironFarmCommand(player, ['view', 'top']);
+  ironFarmCommand(player, ['view', 'pod']);
+  ironFarmCommand(player, ['view']);
+  await settle(/viewing room\.$/);
+  ok(tele.length === 3, `${tele.length} teleports`);
+  const [top, pod, room] = tele;
+  ok(top.x === o.x + 2.5 && top.y === o.y + 7.5 && top.z === o.z + 8.5, 'top view is not on the wall');
+  ok(at(o, 2, 6, 8)?.id === 'cobblestone' && at(o, 2, 7, 8)?.id === 'cobblestone_slab', 'nothing to stand on at the top view');
+  ok(pod.y === o.y + 1 && room.y === o.y + 4, 'pod / room heights');
 });
 
 t('clear takes the lava and water first and then the whole box, leaving nothing', async () => {

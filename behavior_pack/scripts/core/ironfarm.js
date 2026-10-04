@@ -4,22 +4,25 @@
 //
 // u207: made to be something a survival player could build before the Nether. A hollow shell of cobblestone round three rooms (not a solid
 // block with rooms carved out of it), nothing but overworld materials (cobblestone, glass, composters, beds, hoppers, a chest, signs, torches,
-// a water bucket and a lava bucket), and the lava held by wall signs the way the Bedrock guides do it. The shell has to leave exactly one
-// place in the spawn volume where a golem can stand (a free spot is a full solid block with three free blocks above it): every room but the
-// platform is two high, and every upward face left bare outside (the roofs) is covered with a slab, which golems do not spawn on.
-// Coordinates are the plan's own (x east, y up, z south); the builder shifts them to wherever the farm goes. The farm hangs in the air, so
-// there must be no ground within 6 blocks below it either (the builder looks).
+// a water bucket and a lava bucket), and the lava held by wall signs the way the Bedrock guides do it. u208: the platform is open to the sky,
+// like the simple farms people build (a walled pool, a lava block on signs in a corner): water, lava and signs can be placed from above, and
+// there is no roof to pay for. The shell has to leave exactly one place in the spawn volume where a golem can stand (a free spot is a full
+// solid block with three free blocks above it): every room but the platform is two high, and every upward face left bare outside (the roofs
+// and the tops of the platform's walls) is covered with a slab, which golems do not spawn on. Coordinates are the plan's own (x east, y up,
+// z south); the builder shifts them to wherever the farm goes. The farm hangs in the air, so there must be no ground within 6 blocks below it
+// either (the builder looks).
 //
-//   y 7        platform roof
+//   y 6        top of the platform's walls (3 high from the floor: a golem cannot climb out), open above
 //   y 4-6      the platform (4 x 3 x 4): water from one source in its north-west corner flows to the south-east corner, where the golems end
-//              up against the walls; a lava source above that corner, held by three wall signs (they stop lava running and stop nothing
-//              walking), burns them there; what they drop falls on a hopper, along another, into a chest in the viewing room
+//              up against the walls; a lava source in the top layer of that corner, held by three wall signs (they stop lava running and
+//              stop nothing walking), burns them there; what they drop falls on a hopper, along another, into a chest in the viewing room
 //   y 1-2      the pod (10 x 6 x 2): 20 beds (two rows of ten, the aisle between), 10 composters in the south wall, 10 villagers, torches
 //   y 4-5 z12+ the viewing room: a glass window onto the platform, the chest at your feet
 //
-// Where it is most likely to be wrong (in the order I would look): golems may not spawn on flowing water; the signs may not hold the lava;
-// command-placed water may not start flowing (the builder checks and repairs that); the village may want a day or two before it counts the
-// villagers as working; the centre may not be where this works it out to be; a slab may not be what stops a spawn.
+// Confirmed by the player (u208): wall signs hold lava and do not burn; golems do spawn on flowing water.
+// Where it is most likely to be wrong (in the order I would look): command-placed water may not start flowing (the builder checks and repairs
+// that); the golem's body in the corner may not reach the lava; the village may want a day or two before it counts the villagers as
+// working; the centre may not be where this works it out to be; a slab may not be what stops a spawn.
 
 export const SPAWN_VOLUME = Object.freeze({ rx: 8, ry: 6, rz: 8 });
 
@@ -28,7 +31,7 @@ export const POD = box(0, 1, 0, 9, 2, 5);
 export const PLATFORM = box(3, 4, 7, 6, 6, 10);
 export const ROOM = box(3, 4, 12, 7, 5, 13);
 /** The outsides of the three rooms: the shell is these boxes with the rooms carved out. They share their touching walls. */
-export const SHELLS = Object.freeze([box(-1, 0, -1, 10, 3, 6), box(2, 3, 6, 7, 7, 11), box(2, 3, 11, 8, 6, 14)]);
+export const SHELLS = Object.freeze([box(-1, 0, -1, 10, 3, 6), box(2, 3, 6, 7, 6, 11), box(2, 3, 11, 8, 6, 14)]);
 export const KILL = { x: 6, y: 4, z: 10 };          // the corner the water ends in
 export const SOURCE = { x: 3, y: 4, z: 7 };         // the one water source
 export const CHEST = { x: 6, y: 3, z: 12 };
@@ -159,6 +162,8 @@ export function exposedTops(grid, b) {
   for (const [k, v] of grid.cells) {
     if (!solid(v.id)) continue;
     const [x, y, z] = k.split(',').map(Number);
+    // (The platform's own floor is open to the sky, and is meant to be the one place a golem can stand.)
+    if (y + 1 === PLATFORM.y1 && x >= PLATFORM.x1 && x <= PLATFORM.x2 && z >= PLATFORM.z1 && z <= PLATFORM.z2) continue;
     if (out.has(`${x},${y + 1},${z}`)) tops.push({ x, y: y + 1, z });
   }
   return tops;
@@ -281,11 +286,21 @@ export function checkPlan(plan) {
   }
   // Sealed: no air inside the shell is reachable from outside (a hole would let the water, the villagers or the lava out, and mobs in).
   const out = outsideAir(g, bb);
-  for (const r of [POD, PLATFORM, ROOM]) {
+  for (const r of [POD, ROOM]) {
     for (let x = r.x1; x <= r.x2; x++) for (let y = r.y1; y <= r.y2; y++) for (let z = r.z1; z <= r.z2; z++) {
       if (out.has(`${x},${y},${z}`)) bad.push(`the shell has a hole: ${x},${y},${z} is open to the outside`);
     }
   }
+  // The platform is open to the sky, so what keeps the water, the golems and the villagers' view in is its walls: solid all round, to the top
+  // of the platform, with the floor under it, and three high from the floor (a golem climbs one block, not three).
+  for (let x = PLATFORM.x1 - 1; x <= PLATFORM.x2 + 1; x++) for (let z = PLATFORM.z1 - 1; z <= PLATFORM.z2 + 1; z++) {
+    const inside = x >= PLATFORM.x1 && x <= PLATFORM.x2 && z >= PLATFORM.z1 && z <= PLATFORM.z2;
+    for (let y = PLATFORM.y1; y <= PLATFORM.y2; y++) {
+      if (!inside && !solid(id(x, y, z))) bad.push(`the platform wall has a gap at ${x},${y},${z}`);
+    }
+    if (inside && !solid(id(x, PLATFORM.y1 - 1, z)) && !(x === KILL.x && z === KILL.z)) bad.push(`the platform floor has a gap at ${x},${z}`);
+  }
+  if (PLATFORM.y2 - PLATFORM.y1 + 1 < 3) bad.push('the platform walls are less than three high: a golem could climb out');
   // Hollow, not a block: how much of the farm's box is solid.
   const boxCells = (bb.x2 - bb.x1 + 1) * (bb.y2 - bb.y1 + 1) * (bb.z2 - bb.z1 + 1);
   const blocks = [...g.cells.values()].filter((v) => v.id === 'cobblestone').length;
@@ -319,7 +334,7 @@ export function checkPlan(plan) {
   for (const [dx, dy, dz] of [[1, 0, 0], [-1, 0, 0], [0, 0, 1], [0, 0, -1], [0, 1, 0], [0, -1, 0]]) {
     const q = { x: LAVA.x + dx, y: LAVA.y + dy, z: LAVA.z + dz };
     const n = g.at(q.x, q.y, q.z);
-    let ok = n?.id === 'cobblestone';
+    let ok = n?.id === 'cobblestone' || (dy === 1 && !n);   // (nothing above it is fine: a lava source does not run upwards)
     if (n?.id === 'wall_sign') {
       const off = signSupport(n.states?.facing_direction);
       ok = !!off && solid(id(q.x + off[0], q.y, q.z + off[1]));

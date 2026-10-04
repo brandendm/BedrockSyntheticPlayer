@@ -8,8 +8,8 @@
 //   !bot ironfarm clear        take it away again
 //   !bot ironfarm status       what is there and what has happened (blocks, water, lava, villagers, golems, chest)
 //   !bot ironfarm bill         what it would take to build it by hand in survival
-//   !bot ironfarm view [pod]   back to the viewing room (or in among the villagers)
-//   !bot ironfarm water on|off|kick   the platform's water source: off drains the platform (do golems spawn on dry floor?); on / kick put it
+//   !bot ironfarm view [pod|top]  back to the viewing room (or in among the villagers, or on the platform's west wall looking in from above)
+//   !bot ironfarm water on|off|kick   the platform's water source: off drains the platform; on / kick put it
 //                              back and make sure it flows (see below)
 //   !bot ironfarm lava on|off  the lava over the kill corner (off if something goes wrong with it)
 //   !bot ironfarm villagers    new villagers (adults only, nitwits removed)
@@ -61,11 +61,11 @@ export function ironFarmCommand(player, args) {
     if (sub === 'clear' || sub === 'remove') return clear(true);
     if (sub === 'status') return status();
     if (sub === 'bill' || sub === 'materials') return say(`Materials for a survival build: ${materials(ironFarmPlan()).text}.`);
-    if (sub === 'view') return view(p, args[1] === 'pod');
+    if (sub === 'view') return view(p, args[1]);
     if (sub === 'water') return water(args[1]);
     if (sub === 'lava') return lava(args[1]);
     if (sub === 'villagers') return villagers();
-    say('Commands: build, clear, status, bill, view [pod], water on|off|kick, lava on|off, villagers.');
+    say('Commands: build, clear, status, bill, view [pod|top], water on|off|kick, lava on|off, villagers.');
   };
   go().catch((e) => say(`failed: ${e}\n${e?.stack ?? ''}`));
 }
@@ -152,7 +152,7 @@ async function build(p, force) {
   if (notes.length) say(notes.join(' '));
   say(w.note);
   say(vil.note);
-  say('You are in the viewing room: the platform is through the glass ahead, the chest at your feet. A day or two of waiting may be needed: villagers count as working only after a day of it. "!bot ironfarm status" says how it is going, "!bot ironfarm bill" what it would cost in survival.');
+  say('You are in the viewing room: the platform (open to the sky) is through the glass ahead, the chest at your feet; "!bot ironfarm view top" puts you on its wall to look down into it. A day or two of waiting may be needed: villagers count as working only after a day of it. "!bot ironfarm status" says how it is going, "!bot ironfarm bill" what it would cost in survival.');
 }
 
 /** Find a spelling of the cobblestone slab the game accepts: the first slab run is tried with each, and read back. */
@@ -384,9 +384,17 @@ async function clear(announce) {
   if (announce) say(`Cleared${why ? ` (the fill said: ${why})` : ''}.`);
 }
 
-function view(p, pod) {
+/** On the platform's west wall (its top is a slab: 7.5), looking east and down into the pool. */
+const TOP_VIEW = { x: 2.5, y: 7.5, z: 8.5 };
+
+function view(p, mode) {
   if (!farm) return say('No farm.');
   const { off } = farm;
+  if (mode === 'top') {
+    p.teleport(W(off, TOP_VIEW), { facingLocation: W(off, { x: 6.5, y: 5, z: 9.5 }), dimension: farm.dim });
+    return say('You are on the west wall of the platform, looking down into it.');
+  }
+  const pod = mode === 'pod';
   const to = pod ? POD_VIEW : STAND;
   p.teleport(W(off, to), { facingLocation: W(off, pod ? { x: 4.5, y: 1.5, z: 6 } : { x: STAND.x, y: STAND.y + 1.5, z: STAND.z - 6 }), dimension: farm.dim });
   say(pod ? 'You are in the pod, in the aisle among the villagers.' : 'You are in the viewing room.');
@@ -399,7 +407,7 @@ async function water(arg) {
     const q = W(off, SOURCE);
     const why = run(dim, `setblock ${q.x} ${q.y} ${q.z} air`);
     farm.waterOn = false;
-    return say(`Water source removed${why ? ` (${why})` : ''}: the platform drains in a few seconds. If golems spawn only now, they do not spawn on flowing water.`);
+    return say(`Water source removed${why ? ` (${why})` : ''}: the platform drains in a few seconds.`);
   }
   farm.waterOn = true;
   const w = await ensureWater(dim, off, plan);

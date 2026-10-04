@@ -107,7 +107,7 @@ test('without the slabs the roofs are places to spawn (the check does see them):
   const p = without(ironFarmPlan(), (o) => o.tag === 'slab');
   const g = render(p);
   const bare = exposedTops(g, p.bounds);
-  assert.ok(bare.length > 100, `${bare.length} bare roof cells`);
+  assert.ok(bare.length > 100 && bare.length < 200, `${bare.length} bare roof cells`);
   const bad = checkPlan(p);
   assert.ok(bad.some((x) => /golems could also spawn/.test(x)), bad.join('; '));
   assert.ok(bad.some((x) => /bare roof/.test(x)));
@@ -125,16 +125,40 @@ test('a pod with a three-high ceiling would be a leak (the check does see one)',
   assert.ok(bad.some((b) => /spawn at/.test(b) || /roof missing/.test(b) || /golems could also spawn/.test(b)), bad.join('; '));
 });
 
-test('the shell is sealed: a hole in a wall is caught, and the outside air does not get in', () => {
+test('the pod and the viewing room are sealed (a hole in a wall is caught); the platform is open to the sky, and its walls are what hold it', () => {
   const p = ironFarmPlan();
   const g = render(p);
   const out = outsideAir(g, p.bounds);
-  assert.ok(out.has('-1,0,-2') || out.has('-2,0,-2'));
-  assert.ok(!out.has('3,4,8'));
-  assert.ok(!out.has('4,1,3'));
-  p.ops.push({ op: 'set', x: -1, y: 1, z: 3, id: 'air', note: 'knocked out' });
-  p.ops.push({ op: 'fill', box: { x1: -1, y1: 1, z1: 3, x2: -1, y2: 1, z2: 3 }, id: 'air', note: 'knocked out' });
-  assert.ok(checkPlan(p).some((b) => /the shell has a hole/.test(b)), checkPlan(p).join('; '));
+  assert.ok(out.has('-2,0,-2'));
+  assert.ok(!out.has('4,1,3'), 'the pod is open to the outside');
+  assert.ok(!out.has('5,4,13'), 'the viewing room is open to the outside');
+  assert.ok(out.has('3,6,8') && out.has('3,4,8'), 'the platform is not open from above');
+  const hole = ironFarmPlan();
+  hole.ops.push({ op: 'fill', box: { x1: -1, y1: 1, z1: 3, x2: -1, y2: 1, z2: 3 }, id: 'air', note: 'knocked out' });
+  assert.ok(checkPlan(hole).some((b) => /the shell has a hole/.test(b)), checkPlan(hole).join('; '));
+  // A gap in the platform's wall, or a floor cell missing, lets the water and the golems out.
+  const wall = ironFarmPlan();
+  wall.ops.push({ op: 'fill', box: { x1: 2, y1: 5, z1: 8, x2: 2, y2: 5, z2: 8 }, id: 'air', note: 'knocked out' });
+  assert.ok(checkPlan(wall).some((b) => /the platform wall has a gap at 2,5,8/.test(b)), checkPlan(wall).join('; '));
+  const floor = ironFarmPlan();
+  floor.ops.push({ op: 'fill', box: { x1: 4, y1: 3, z1: 8, x2: 4, y2: 3, z2: 8 }, id: 'air', note: 'knocked out' });
+  assert.ok(checkPlan(floor).some((b) => /the platform floor has a gap at 4,8/.test(b)), checkPlan(floor).join('; '));
+  // Three high from the floor to the top of the wall: the walls come up to the top of the platform, which is 3 layers.
+  assert.equal(PLATFORM.y2 - PLATFORM.y1 + 1, 3);
+  assert.equal(SHELLS[1].y2, PLATFORM.y2);
+  // The tops of those walls are bare roof like any other, and slabbed; the platform's own floor is not.
+  const slabAt = (x, y, z) => g.id(x, y, z) === SLAB;
+  assert.ok(slabAt(2, PLATFORM.y2 + 1, 8) && slabAt(7, PLATFORM.y2 + 1, 8) && slabAt(4, PLATFORM.y2 + 1, 6) && slabAt(4, PLATFORM.y2 + 1, 11));
+  assert.ok(!slabAt(4, PLATFORM.y1, 8) && g.id(4, PLATFORM.y1, 8) === 'air');
+});
+
+test('the lava has open sky above it and that is fine (a source does not run up); but air at its side is not', () => {
+  const p = ironFarmPlan();
+  const g = render(p);
+  assert.equal(g.id(LAVA.x, LAVA.y + 1, LAVA.z), 'air');
+  assert.deepEqual(checkPlan(p), []);
+  const side = without(ironFarmPlan(), (o) => o.id === 'wall_sign' && o.x === LAVA.x - 1);
+  assert.ok(checkPlan(side).some((b) => /lava has air beside it at -1,0,0/.test(b)), checkPlan(side).join('; '));
 });
 
 test('water from the one source reaches every cell of the platform floor, flowing on toward the south-east corner, which is the furthest and level 6 of 7', () => {
