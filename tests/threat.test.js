@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { decide, fleePoint, weaponDamage } from '../behavior_pack/scripts/core/threat.js';
+import { decide, fleePoint, weaponDamage, crowdOf, BOW_MIN, CROWD_RANGE } from '../behavior_pack/scripts/core/threat.js';
 import { villageStep } from '../behavior_pack/scripts/core/advance.js';
 
 const mob = (type, dist, extra = {}) => ({ id: `${type}${dist}`, type, dist, visible: true, targetingMe: false, attackedMe: false, pos: { x: dist, y: 64, z: 0 }, ...extra });
@@ -156,14 +156,16 @@ test('armor counts: what a hit leaves, and the fight-or-run race on health throu
   assert.equal(decide({ health: 5, damage: 7, mobs: [mob('zombie', 3)], armor: 15 }).mode, 'fight');
 });
 
-test('with a bow: creepers 6+ off are shot even in a crowd of them; nothing lit or close', () => {
-  const crowd = [mob('creeper', 6.5), mob('creeper', 7.5), mob('creeper', 11)];
-  assert.equal(decide({ health: 20, damage: 6, mobs: crowd }).mode, 'flee', 'no bow: run from a crowd');
+test('with a bow: creepers 9+ off are shot even in a crowd of them; nothing lit or close', () => {
+  const crowd = [mob('creeper', 9.5), mob('creeper', 11), mob('creeper', 12)];
+  assert.equal(decide({ health: 20, damage: 6, mobs: [mob('creeper', 6.5), mob('creeper', 7.5), mob('creeper', 11)] }).mode, 'flee', 'no bow: run from a crowd');
+  assert.equal(decide({ health: 20, damage: 6, bow: true, mobs: [mob('creeper', 6.5), mob('creeper', 7.5), mob('creeper', 11)] }).mode, 'flee', 'a bow does not shoot into blast reach');
   const d = decide({ health: 20, damage: 6, bow: true, mobs: crowd });
   assert.equal(d.mode, 'fight');
-  assert.equal(d.target, 'creeper6.5');
+  assert.equal(d.target, 'creeper9.5');
   assert.equal(decide({ health: 20, damage: 6, bow: true, mobs: [mob('creeper', 4), mob('creeper', 7)] }).mode, 'flee', 'one close: not the bow');
-  assert.equal(decide({ health: 20, damage: 6, bow: true, mobs: [mob('creeper', 7, { lit: true }), mob('creeper', 7.5)] }).mode, 'flee', 'one lit');
+  assert.ok(!/shoot/.test(decide({ health: 20, damage: 6, bow: true, mobs: [mob('creeper', 8), mob('creeper', 9.5)] }).reason), 'one inside BOW_MIN (blast reach): not the bow');
+  assert.equal(decide({ health: 20, damage: 6, bow: true, mobs: [mob('creeper', 7, { lit: true }), mob('creeper', 11)] }).reason.includes('shoot'), false, 'one lit: not the bow');
 });
 
 test('a ghast: shot with a bow and arrows from as far as it is seen, run from without', () => {
@@ -178,4 +180,21 @@ test('the village hunt starts at 11 hearts when the hunger bar is too low to hea
   const f = { goals: {}, armed: true, health: 12, food: 16, villageReady: true };
   assert.equal(villageStep(f)?.step, 'seek_village');
   assert.equal(villageStep({ ...f, food: 20 }), null, 'with a full bar it waits to heal to 14');
+});
+
+test('crowdOf: seen creepers within range (and any within 6); company is a zombie within 14 or a shooter within 24', () => {
+  const c = crowdOf([mob('creeper', 5), mob('creeper', 13), mob('creeper', 16), mob('creeper', 9, { visible: false }), mob('creeper', 5, { visible: false })]);
+  assert.equal(c.creepers.length, 3, 'one within 14 seen, one within 6 unseen, the first; the far and the unseen-at-9 are not');
+  assert.equal(c.company, false);
+  assert.equal(crowdOf([mob('creeper', 5), mob('zombie', 12)]).company, true);
+  assert.equal(crowdOf([mob('creeper', 5), mob('zombie', 16)]).company, false);
+  assert.equal(crowdOf([mob('creeper', 5), mob('skeleton', 20)]).company, true);
+  assert.equal(crowdOf([mob('creeper', 5, { canReach: false })]).creepers.length, 0, 'one we have walled off is not coming');
+  assert.ok(BOW_MIN > 6 && CROWD_RANGE >= BOW_MIN);
+});
+
+test('with a bow and a shield and two creepers about: the crowd plan takes them, the bow does not draw', () => {
+  const far = [mob('creeper', 10), mob('creeper', 11)];
+  assert.equal(decide({ health: 20, damage: 6, bow: true, shield: false, mobs: far }).mode, 'fight', 'no shield: shoot them');
+  assert.notEqual(decide({ health: 20, damage: 6, bow: true, shield: true, mobs: far }).reason, 'creeper: shoot it from afar', 'a shield: the crowd plan has them');
 });
