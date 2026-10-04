@@ -53,7 +53,7 @@ const WANT_WET = FIELD.field.size;
 /** Source blocks (depth 0) on the platform layer of a built farm. */
 const sourceCells = (o) => [...G.grid].filter(([k, c]) => { const y = Number(k.split(',')[1]); return y === o.y + WATER_Y && (c.id === 'water' || c.id === 'flowing_water') && (c.states?.liquid_depth ?? 0) === 0; }).length;
 
-t('everything is where the plan says: water over the whole platform (48 sources, none made by the game, the hole itself dry), four open gates over the hole, the hallway with its one water source, ONE campfire, the lava held by its signs, nothing extra', async () => {
+t('everything is where the plan says: water over the whole platform (48 sources, none made by the game, the hole itself dry), four open gates over the hole, the hallway with its one water source, TWO campfires, the lava held by its signs, nothing extra', async () => {
   const o = await built();
   ok(o, 'it did not build');
   ok(o.y + BASE_Y === 70, `the tower's floor is at y ${o.y + BASE_Y}, the ground top was 69`);
@@ -71,14 +71,15 @@ t('everything is where the plan says: water over the whole platform (48 sources,
   ok([...G.grid.values()].filter((c) => c.id === 'lava').length === 1 && at(o, LAVA.x, LAVA.y, LAVA.z)?.id === 'lava', 'the lava is not the one block');
   ok(GATES.every((q) => at(o, q.x, q.y, q.z)?.id === 'fence_gate' && at(o, q.x, q.y, q.z).states.open_bit === true), 'a gate is missing or shut');
   ok(!(x4 = [7, 8].flatMap((x) => [7, 8].map((z) => at(o, x, WATER_Y, z)))).some((c) => c && /water/.test(c.id)), 'water over the hole');
-  ok(hallWet(o) === 3 && wetNow(o, CHAMBER_WATER), `${hallWet(o)} wet hallway cells`);
-  ok(!wetNow(o, CAMPFIRES[0]) && !wetNow(o, { x: 8, y: -6, z: 7 }) && !wetNow(o, { x: 9, y: -6, z: 8 }), 'water on the campfire side');
-  ok(CAMPFIRES.length === 1, `${CAMPFIRES.length} campfires`);
+  ok(hallWet(o) === 4 && wetNow(o, CHAMBER_WATER), `${hallWet(o)} wet hallway cells`);
+  ok(CAMPFIRES.every((c) => !wetNow(o, c)), 'water in a campfire\'s cell');
+  ok(CAMPFIRES.length === 2, `${CAMPFIRES.length} campfires`);
+  ok(CAMPFIRES.every((c) => at(o, c.x, c.y - 1, c.z)?.id === 'hopper'), 'a campfire without a hopper under it');
   ok(SIGNS.every((s) => at(o, s.x, s.y, s.z)?.id === 'wall_sign'), 'a sign is missing');
   ok(CAMPFIRES.every((c) => at(o, c.x, c.y, c.z)?.id === 'campfire'), 'a campfire is missing');
   ok(at(o, DOOR.x, DOOR.y, DOOR.z)?.id === 'wooden_door' && at(o, DOOR.x, DOOR.y + 1, DOOR.z)?.id === 'wooden_door', 'no door');
   ok(chat().some((l) => /Water: flowing over the whole platform.*the hole itself dry/.test(l)), `the water report is wrong: ${chat().filter((l) => /Water:/.test(l))}`);
-  ok(chat().some((l) => /Hallway water: running \(north and east of its source\) \(3 of 3 cells wet\)/.test(l)), `the hallway report: ${chat().filter((l) => /Hallway/.test(l))}`);
+  ok(chat().some((l) => /Hallway water: running \(north and east of its source, along the north wall\) \(4 of 4 cells wet\)/.test(l)), `the hallway report: ${chat().filter((l) => /Hallway/.test(l))}`);
   ok(chat().some((l) => /a double chest \(54 slots\)/.test(l)), `no word of the double chest: ${chat().filter((l) => /Chest/.test(l))}`);
   ok(chat().some((l) => /Golem spawn spots.*centre 7,1,7: 205 on the platform, 0 elsewhere.*centre 8,1,8: 205 on the platform, 0 elsewhere/.test(l)), `the spawn scan: ${chat().filter((l) => /Golem spawn spots/.test(l))}`);
   ok(chat().some((l) => new RegExp(`Slabs: ${SLABS} placed`).test(l)), `the slab count: ${chat().filter((l) => /Slabs/.test(l))}`);
@@ -100,8 +101,8 @@ t('signs that will not be placed (no spelling accepted): no water is put in, and
   ok(chat().some((l) => /signs over the hole did not stay/i.test(l)), 'no word about the water');
   ok(wetCells(o) === 0, 'water was put in with nothing to stop it going down the shaft');
   ok(![...G.grid.values()].some((c) => c.id === 'lava'), 'lava was put in with nothing to hold it');
-  ok(hallWet(o) === 0, 'the hallway water was put in with nothing to keep it off the campfire');
-  ok(chat().some((l) => /lava was NOT placed/i.test(l)) && chat().some((l) => /Hallway water: not placed/.test(l)), `no word about the lava and the hallway water: ${chat().filter((l) => /lava|Hallway/i.test(l))}`);
+  ok(hallWet(o) === 4, `${hallWet(o)} hallway cells wet: the campfires, not signs, hold the hallway water, so it goes in`);
+  ok(chat().some((l) => /lava was NOT placed/i.test(l)) && !chat().some((l) => /Hallway water: not placed/.test(l)), `no word about the lava, or the hallway water was held back: ${chat().filter((l) => /lava|Hallway/i.test(l))}`);
 });
 
 t('water that only spreads after a block update: the nudge from a neighbour does it', async () => {
@@ -266,7 +267,7 @@ t('fence gates the game does not know: the farm is built without them, says the 
   ok(GATES.every((q) => /water/.test(at(o, q.x, q.y, q.z)?.id ?? '')), 'without the gates the water should run over the hole in the model');
   ok(chat().some((l) => /4 of the 4 cells over the hole wet: THE GATES DO NOT KEEP THE WATER OUT/.test(l)), `no word about the wet hole: ${chat().filter((l) => /Water:/.test(l))}`);
   ok(chat().some((l) => /Only 0 of 4 gates over the hole are in and open/.test(l)), `no word about the gates: ${chat().filter((l) => /gate/i.test(l))}`);
-  ok(wetCells(o) >= 236 && hallWet(o) === 3, 'the rest did not get built');
+  ok(wetCells(o) >= 236 && hallWet(o) === 4, 'the rest did not get built');
 });
 
 t('a game with no "direction" state on fence gates: the next way of saying "open" is found, and all four gates are in and open', async () => {
@@ -303,30 +304,30 @@ t('the lava: put in only with its signs; a sign gone (burned) and the watcher ta
   ok(!at(o, LAVA.x, LAVA.y, LAVA.z), 'lava not removed');
 });
 
-t('the watcher notices a gate gone and a hallway sign gone (the water would put the campfire out), once each', async () => {
+t('the watcher notices a gate gone and a hallway campfire gone, once each', async () => {
   const o = await built();
   const gate = GATES[0];
   G.grid.delete(`${o.x + gate.x},${o.y + gate.y},${o.z + gate.z}`);
-  const cs = SIGNS.find((s) => s.group === 'chamber');
+  const cs = CAMPFIRES[1];
   G.grid.delete(`${o.x + cs.x},${o.y + cs.y},${o.z + cs.z}`);
   await MC.system.waitTicks(400);
   ok(chat().filter((l) => /gates over the hole is gone or shut/.test(l)).length === 1, `gate warnings: ${chat().filter((l) => /gate/.test(l))}`);
-  ok(chat().filter((l) => /keep the hallway water off the campfire is gone/.test(l)).length === 1, `sign warnings: ${chat().filter((l) => /hallway water off/.test(l))}`);
+  ok(chat().filter((l) => /1 of the 2 campfires in the hallway is gone or out/.test(l)).length === 1, `campfire warnings: ${chat().filter((l) => /campfire/.test(l))}`);
 });
 
-t('hallway water that never spreads: the two flowing cells are laid by hand and the report says so', async () => {
+t('hallway water that never spreads: the three flowing cells are laid by hand and the report says so', async () => {
   const o = await built({ water: 'never' });
-  ok(hallWet(o) === 3, `${hallWet(o)} wet hallway cells`);
+  ok(hallWet(o) === 4, `${hallWet(o)} wet hallway cells`);
   for (const c of CHAMBER_WET) ok((at(o, c.x, c.y, c.z).states?.liquid_depth ?? 0) === c.level, `hallway cell ${c.x},${c.z}: depth ${at(o, c.x, c.y, c.z).states?.liquid_depth}, wanted ${c.level}`);
   ok(chat().some((l) => /Hallway water: running.*placed by hand/.test(l)), chat().filter((l) => /Hallway/.test(l)).join(' | '));
 });
 
-t('status says how the gates, the hallway, the lava and the campfire are', async () => {
+t('status says how the gates, the hallway, the lava and the campfires are', async () => {
   await built();
   ironFarmCommand(player, ['status']);
   await settle(/Built .* min ago/);
   const l = chat().find((q) => /Built .* min ago/.test(q));
-  ok(/0 of the 4 cells over the hole wet \(0 is right\)/.test(l) && /Gates over the hole: 4 in, 4 open/.test(l) && /Hallway: 3 of 3 cells wet/.test(l) && /Lava on/.test(l) && /Campfire lit\./.test(l), l);
+  ok(/0 of the 4 cells over the hole wet \(0 is right\)/.test(l) && /Gates over the hole: 4 in, 4 open/.test(l) && /Hallway: 4 of 4 cells wet/.test(l) && /Lava on/.test(l) && /Campfires lit\/lit\./.test(l), l);
   ok(!/Not as planned/.test(l), l);
 });
 

@@ -31,9 +31,9 @@ export async function findSlab(dim, a, b, notes) {
 }
 
 /**
- * The wall signs: the four that cap the hole in the platform's floor, the two that keep the hallway's water off the campfire and the three that
- * hold the lava. Each is placed facing the way the plan says, given a block update from a neighbour (a sign with nothing to hang on stays until it
- * gets one), and read back; if it is gone the other way round is tried, then the next spelling of the name. Returns { ok, holeOk, chamberOk, lavaOk, id }.
+ * The wall signs: the four that cap the hole in the platform's floor and the three that hold the lava. Each is placed facing the way the plan says,
+ * given a block update from a neighbour (a sign with nothing to hang on stays until it gets one), and read back; if it is gone the other way round
+ * is tried, then the next spelling of the name. Returns { ok, holeOk, lavaOk, id }.
  */
 export async function placeSigns(dim, off, notes) {
   let id = null, flip = false, first = true;
@@ -58,9 +58,9 @@ export async function placeSigns(dim, off, notes) {
     if (!ok) notes.push(`The sign at ${s.x},${s.y},${s.z} (plan coordinates; ${s.group}) would not stay on its wall.`);
   }
   const group = (g) => SIGNS.filter((s) => s.group === g).every((s) => done.get(s));
-  const holeOk = group('hole'), chamberOk = group('chamber'), lavaOk = group('lava');
-  if (flip && holeOk && chamberOk && lavaOk) notes.push('(The signs hold the other way round to the plan: facing_direction names the side the sign hangs on here.)');
-  return { ok: holeOk && chamberOk && lavaOk, holeOk, chamberOk, lavaOk, id };
+  const holeOk = group('hole'), lavaOk = group('lava');
+  if (flip && holeOk && lavaOk) notes.push('(The signs hold the other way round to the plan: facing_direction names the side the sign hangs on here.)');
+  return { ok: holeOk && lavaOk, holeOk, lavaOk, id };
 }
 
 /**
@@ -168,9 +168,8 @@ export function shaftWater(dim, off) {
 }
 
 /**
- * The hallway's one water source: put in, given time to run (it should wet its two neighbours and nothing else: the signs keep it off the
- * campfire's cell), a block update if it does not, the two flowing cells laid by hand if that does not work either. Says what it found.
- * Returns { ok, note }.
+ * The hallway's one water source: put in, given time to run (it should wet its three neighbours and nothing else: the campfires in the east column stop
+ * it), a block update if it does not, the flowing cells laid by hand if that does not work either. Says what it found. Returns { ok, note }.
  */
 export async function chamberWater(dim, off) {
   const src = W(off, CHAMBER_WATER);
@@ -205,7 +204,7 @@ export async function chamberWater(dim, off) {
   }
   const bad = stray();
   const ok = wet() === CHAMBER_WET.length && !bad.length;
-  const note = `Hallway water: ${ok ? 'running (north and east of its source)' : 'NOT right'} (${wet()} of ${CHAMBER_WET.length} cells wet). ${tried.join('; ')}.${bad.length ? ` WATER OR A PUT-OUT CAMPFIRE WHERE IT SHOULD BE DRY at ${bad.join(' ')}: the signs did not keep the water off the campfire.` : ''}${ok && hand ? ' It would not spread by itself, so the two flowing cells are placed by hand.' : ''}`;
+  const note = `Hallway water: ${ok ? 'running (north and east of its source, along the north wall)' : 'NOT right'} (${wet()} of ${CHAMBER_WET.length} cells wet). ${tried.join('; ')}.${bad.length ? ` WATER OR A PUT-OUT CAMPFIRE WHERE IT SHOULD BE DRY at ${bad.join(' ')}: the water got into a campfire's cell or put one out.` : ''}${ok && hand ? ' It would not spread by itself, so the flowing cells are placed by hand.' : ''}`;
   return { ok, note, wet: wet(), stray: bad };
 }
 

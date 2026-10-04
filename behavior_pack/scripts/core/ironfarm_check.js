@@ -180,8 +180,8 @@ export function checkPlan(plan, { deep = true } = {}) {
     if (y !== WATER_Y && !(x === CHAMBER_WATER.x && y === CHAMBER_WATER.y && z === CHAMBER_WATER.z)) bad.push(`water at ${k}: only the platform and the hallway's one source have water`);
   }
 
-  // The hallway's water: one source, nothing it makes turns into a source, and it wets exactly the cells it should (the signs keep it out of the
-  // campfire's cell and out of the rest of the hallway).
+  // The hallway's water: one source, nothing it makes turns into a source, and it wets exactly the cells it should (the campfires in the east column
+  // stop it there, so it runs along the north wall to the cell beside the first campfire and nowhere else).
   const csrc = [...g.cells].filter(([k, v]) => v.id === 'water' && Number(k.split(',')[1]) === CHAMBER_FLOOR_Y).map(([k]) => { const [x, , z] = k.split(',').map(Number); return { x, z }; });
   if (csrc.length !== 1 || csrc[0].x !== CHAMBER_WATER.x || csrc[0].z !== CHAMBER_WATER.z) bad.push(`the hallway has ${csrc.length} water sources, 1 wanted at ${CHAMBER_WATER.x},${CHAMBER_WATER.z}`);
   const cset = settleWater(g, csrc, CHAMBER_FLOOR_Y);
@@ -190,19 +190,23 @@ export function checkPlan(plan, { deep = true } = {}) {
   const want = new Map(CHAMBER_WET.map((q) => [`${q.x},${q.z}`, q.level]));
   for (const [k, l] of want) if (clv.get(k) !== l) bad.push(`the hallway cell ${k} is ${clv.has(k) ? `level ${clv.get(k)}` : 'dry'}, wanted level ${l}`);
   for (const [k] of clv) if (!want.has(k)) bad.push(`the hallway water reaches ${k}, which should stay dry`);
-  for (const c of CAMPFIRES) if (clv.has(`${c.x},${c.z}`)) bad.push(`water reaches the campfire at ${c.x},${c.z}`);
+  for (const c of CAMPFIRES) if (id(c.x, CHAMBER_FLOOR_Y, c.z) !== 'campfire') bad.push(`water reaches the campfire's cell at ${c.x},${c.z} (there is no campfire in it to stop it)`);
 
   // The golem in the hallway: it lands anywhere inside the shaft's foot (its box is 1.4 wide in a 2-wide shaft, so its middle is between 7.7 and 8.3),
-  // is pushed by that water, and must end up held against the north-east corner with its middle over the campfire, its box over the lava.
+  // is pushed by that water, and must end up held against the north-east corner with its middle over the first campfire, its box over the lava and
+  // over the second campfire as well.
   const fire = CAMPFIRES[0];
-  let off = 0, noLava = 0;
+  const overlap = (r, c) => Math.max(0, Math.min(r.x + 0.7, c.x + 1) - Math.max(r.x - 0.7, c.x)) * Math.max(0, Math.min(r.z + 0.7, c.z + 1) - Math.max(r.z - 0.7, c.z));
+  let off = 0, noLava = 0, oneFire = 0;
   for (let a = 0; a <= (deep ? 6 : -1); a++) for (let b = 0; b <= 6; b++) {
     const r = pushBox(g, clv, CHAMBER_FLOOR_Y, HOLE.x1 + 0.7 + a * 0.1, HOLE.z1 + 0.7 + b * 0.1, { tall: 4 });
-    if (Math.floor(r.x) !== fire.x || Math.floor(r.z) !== fire.z) { if (off++ < 3) bad.push(`a golem landing at ${(HOLE.x1 + 0.7 + a * 0.1).toFixed(1)},${(HOLE.z1 + 0.7 + b * 0.1).toFixed(1)} ends at ${r.x.toFixed(2)},${r.z.toFixed(2)}, not in the campfire's cell (${r.why})`); }
+    if (Math.floor(r.x) !== fire.x || Math.floor(r.z) !== fire.z) { if (off++ < 3) bad.push(`a golem landing at ${(HOLE.x1 + 0.7 + a * 0.1).toFixed(1)},${(HOLE.z1 + 0.7 + b * 0.1).toFixed(1)} ends at ${r.x.toFixed(2)},${r.z.toFixed(2)}, not in the first campfire's cell (${r.why})`); }
     if (Math.floor(r.x - 0.7 + 1e-6) > LAVA.x || Math.floor(r.x + 0.7 - 1e-6) < LAVA.x || Math.floor(r.z - 0.7 + 1e-6) > LAVA.z || Math.floor(r.z + 0.7 - 1e-6) < LAVA.z) noLava++;
+    if (CAMPFIRES.some((c) => overlap(r, c) < 0.2)) oneFire++;
   }
-  if (off > 3) bad.push(`${off} of 49 landing spots end outside the campfire's cell`);
+  if (off > 3) bad.push(`${off} of 49 landing spots end outside the first campfire's cell`);
   if (noLava) bad.push(`${noLava} of 49 landing spots leave the golem's box beside the lava`);
+  if (oneFire) bad.push(`${oneFire} of 49 landing spots leave the golem's box off one of the two campfires`);
   // Drops (an item is a 0.25 box, dropped at the golem's feet and pushed the same way) end over a hopper wherever in the hallway they start.
   let lostItems = 0;
   for (let x = CHAMBER.x1; x <= CHAMBER.x2; x++) for (let z = CHAMBER.z1; z <= CHAMBER.z2; z++) for (const [ox, oz] of deep ? [[0.5, 0.5], [0.2, 0.2], [0.8, 0.2], [0.2, 0.8], [0.8, 0.8]] : []) {
@@ -213,12 +217,12 @@ export function checkPlan(plan, { deep = true } = {}) {
   }
   if (lostItems > 3) bad.push(`${lostItems} dropped items in all would not reach a hopper`);
 
-  // The lava: at the head height of what stands on the floor (its box is 2.9 high: lava from two blocks up is in its head), directly over the campfire,
+  // The lava: at the head height of what stands on the floor (its box is 2.9 high: lava from two blocks up is in its head), directly over the first campfire,
   // every side cobblestone, glass or a wall sign that hangs on something (above it is the open hallway: a source does not run up).
   if (id(LAVA.x, LAVA.y, LAVA.z) !== 'lava') bad.push('no lava');
   if (LAVA.y - CHAMBER_FLOOR_Y < 2) bad.push('the lava is below the golem\'s head');
   if (LAVA.y - CHAMBER_FLOOR_Y > 2) bad.push('the lava is above the golem\'s head');
-  if (LAVA.x !== fire.x || LAVA.z !== fire.z) bad.push('the lava is not over the campfire');
+  if (LAVA.x !== fire.x || LAVA.z !== fire.z) bad.push('the lava is not over the first campfire');
   if ([...g.cells.values()].filter((v) => v.id === 'lava').length !== 1) bad.push('more than one lava block');
   for (const [dx, dy, dz] of [[1, 0, 0], [-1, 0, 0], [0, 0, 1], [0, 0, -1], [0, -1, 0]]) {
     const q = { x: LAVA.x + dx, y: LAVA.y + dy, z: LAVA.z + dz };
@@ -231,17 +235,18 @@ export function checkPlan(plan, { deep = true } = {}) {
   const above = id(LAVA.x, LAVA.y + 1, LAVA.z);
   if (above === 'water') bad.push('water over the lava');
   for (const s of SIGNS.filter((q) => q.group === 'lava')) if (g.at(s.x, s.y, s.z)?.id !== 'wall_sign') bad.push(`no sign at ${s.x},${s.y},${s.z} to hold the lava`);
-  for (const s of SIGNS.filter((q) => q.group === 'chamber')) if (g.at(s.x, s.y, s.z)?.id !== 'wall_sign') bad.push(`no sign at ${s.x},${s.y},${s.z} to keep the water off the campfire`);
   // Headroom: a golem standing on the campfire (7/16 up) is 3.3 high: the four layers over every cell of the hallway's east half are clear (but for the lava and its signs).
   for (let x = HALL.x1; x <= HALL.x2; x++) for (let y = HALL.y1; y <= HALL.y2; y++) for (let z = HALL.z1; z <= HALL.z2; z++) {
     const here = id(x, y, z);
     if (here === 'cobblestone' || here === 'glass' || here === 'hopper') bad.push(`the hallway is blocked at ${x},${y},${z} (${here})`);
   }
 
-  // The campfire: ONE, lit, in the hallway's north-east corner over a hopper; none anywhere else (a second one on the floor would also be in the water's way).
+  // The campfires: TWO, lit, side by side in the hallway's east column (the first in the north-east corner, under the lava), each over a hopper; none
+  // anywhere else (one on the floor of the rest of the hallway would be in the water's way).
   const fireCells = [...g.cells].filter(([, v]) => v.id === 'campfire').map(([k, v]) => ({ k, v }));
-  if (fireCells.length !== 1) bad.push(`${fireCells.length} campfires in the plan, 1 wanted`);
-  if (CAMPFIRES.length !== 1) bad.push(`${CAMPFIRES.length} campfires listed, 1 wanted`);
+  if (fireCells.length !== 2) bad.push(`${fireCells.length} campfires in the plan, 2 wanted`);
+  if (CAMPFIRES.length !== 2) bad.push(`${CAMPFIRES.length} campfires listed, 2 wanted`);
+  if (CAMPFIRES.length === 2 && (CAMPFIRES[0].x !== CAMPFIRES[1].x || Math.abs(CAMPFIRES[0].z - CAMPFIRES[1].z) !== 1)) bad.push('the two campfires are not side by side');
   for (const c of CAMPFIRES) {
     if (id(c.x, c.y, c.z) !== 'campfire') bad.push(`no campfire at ${c.x},${c.y},${c.z}`);
     if (id(c.x, c.y - 1, c.z) !== 'hopper') bad.push(`the campfire at ${c.x},${c.z} is not over a hopper`);
@@ -254,9 +259,11 @@ export function checkPlan(plan, { deep = true } = {}) {
     if (id(x, y, z) !== 'air' && !(listed && id(x, y, z) === 'wall_sign')) bad.push(`the shaft is not clear at ${x},${y},${z} (${id(x, y, z)})`);
   }
 
-  // The collection: a hopper under each cell of the hallway, every hopper leading on to a chest, the chests side by side and facing the same way,
-  // with room over them to open, in reach of the viewer.
-  for (let x = CHAMBER.x1; x <= CHAMBER.x2; x++) for (let z = CHAMBER.z1; z <= CHAMBER.z2; z++) if (id(x, CHAMBER.y1 - 1, z) !== 'hopper') bad.push(`no hopper under the hallway at ${x},${z}`);
+  // The collection: a hopper under each campfire (the drops reach the others by the water: the item sim above), every hopper leading on to a chest, no
+  // other hopper, the chests side by side and facing the same way, with room over them to open, in reach of the viewer.
+  const hopperCells = [...g.cells].filter(([, v]) => v.id === 'hopper').length;
+  if (hopperCells !== HOPPERS.length) bad.push(`${hopperCells} hoppers in the plan, ${HOPPERS.length} listed`);
+  if (HOPPERS.length !== 3) bad.push(`${HOPPERS.length} hoppers listed, 3 wanted`);
   const FACE = { 2: [0, -1], 3: [0, 1], 4: [-1, 0], 5: [1, 0] };
   for (const h of HOPPERS) {
     const here = g.at(h.x, h.y, h.z);

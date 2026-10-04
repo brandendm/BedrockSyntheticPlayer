@@ -23,10 +23,13 @@ export function render(plan) {
 
 /** What a golem (and anything else) walks through: no collision. Lava, slabs, doors, campfires are not. (An open fence gate has none.) */
 const FREE = new Set(['air', 'water', 'wall_sign', 'torch', 'fence_gate']);
-/** What stops water going sideways but not a golem: a wall sign, an open fence gate. */
+/** What stops water going sideways but not a golem: a wall sign, an open fence gate. (A campfire stops it too, but a golem can only step over that.) */
 const STOPS_WATER = new Set(['wall_sign', 'fence_gate']);
-/** What water would flow into: the free cells and a campfire's (so a check can see water reaching the campfire, which would put it out). */
-const WATER_FLOWS_IN = new Set([...FREE, 'campfire']);
+/**
+ * What water flows into: the free cells. Not a campfire's: Bedrock's campfire cannot be waterlogged, and the player's own u214 hallway has lit campfires
+ * standing right beside flowing water (u212 assumed water would flow into one and put it out, and kept it off with signs it did not need).
+ */
+const WATER_FLOWS_IN = new Set(FREE);
 /** What a golem's body may overlap while it stands in the hallway: free cells, a campfire (it steps onto it) and lava (it is burning in it). */
 const BODY_FREE = new Set([...FREE, 'campfire', 'lava']);
 /** Full blocks (and near enough): what a golem could be spawned on. Slabs and stairs are not: that is what the slabs are for. */
@@ -110,7 +113,7 @@ export function golemSpots(grid, centre) {
 
 /**
  * How water spreads from the sources over one layer: Map "x,z" -> level (0 = a source, up to 7), one level more with each step, through free
- * cells (a wall sign or an open fence gate stops it: that is what holds the water out of the shaft, and out of the campfire's cell).
+ * cells (a wall sign or an open fence gate stops it, and so does a campfire: that is what holds the water out of the shaft and keeps the hallway's current to the north wall).
  */
 export function waterField(grid, sources, y) {
   const lv = new Map();

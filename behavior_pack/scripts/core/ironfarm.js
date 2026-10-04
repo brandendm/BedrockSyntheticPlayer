@@ -15,6 +15,14 @@
 // hallway at the bottom with one water source that presses the golem into a corner, where ONE lit campfire stands over a hopper (kept dry by two
 // signs) with lava over it at the golem's head height, held by signs; the golem is in the lava, not above it, so what it drops (at its feet) is not.
 //
+// u214: the player rebuilt the hallway himself and I took his layout (his words: a second campfire next to the first, over the second hopper; the sign
+// at the bottom taken out; four hoppers gone, three kept; the second campfire "helped redirect the water current towards the campfire with the
+// lava above it"). Read as: the second campfire south of the first (9,-6,8) in place of the south floor sign, the west floor sign (8,-6,7) removed so
+// the hallway water runs on into that cell, hoppers under the two campfires and the one under the window into the chest. The model agrees with him:
+// every golem ends against the north-east corner standing on both campfires, and nothing it drops is lost with those three hoppers (with the second
+// campfire's taken away, what lands on it stays there). Lit campfires standing beside flowing water is his observation, so the check no longer
+// assumes water puts a campfire out.
+//
 // Confirmed by the player: wall signs hold lava and do not burn; golems do spawn on flowing water; the u211 water flows and the farm works; open
 // fence gates keep water out (his word, u212).
 // Where it is most likely to be wrong (in the order I would look): where the golem really comes to rest in the hallway (it is modelled as a 1.4-wide
@@ -95,11 +103,11 @@ export function ironFarmPlan() {
   for (const run of runs(bare)) fill(box(run.x1, run.y, run.z, run.x2, run.y, run.z), SLAB, 'slab on a bare top (no spawns on it)', 'slab');
   set(STEP.x, STEP.y, STEP.z, SLAB, undefined, 'step up to the door (a slab: walk up it)', 'slab');
 
-  // The kill hallway: the lava the signs hold (at the golem's head height, over the campfire), the one campfire, the hallway's one water source, then the
-  // water on the platform (sources only: the rest flows from them).
+  // The kill hallway: the lava the signs hold (at the golem's head height, over the first campfire), the two campfires, the hallway's one water source,
+  // then the water on the platform (sources only: the rest flows from them).
   set(LAVA.x, LAVA.y, LAVA.z, 'lava', undefined, "the lava source, at the head height of a golem standing in the corner", 'lava');
-  for (const c of CAMPFIRES) set(c.x, c.y, c.z, 'campfire', undefined, 'campfire (lit) in the hallway corner, over a hopper', 'campfire');
-  set(CHAMBER_WATER.x, CHAMBER_WATER.y, CHAMBER_WATER.z, 'water', undefined, "the hallway's one water source (it flows north and east, which presses the golem into the north-east corner)", 'cwater');
+  for (const c of CAMPFIRES) set(c.x, c.y, c.z, 'campfire', undefined, 'campfire (lit) in the hallway\'s east column, over a hopper', 'campfire');
+  set(CHAMBER_WATER.x, CHAMBER_WATER.y, CHAMBER_WATER.z, 'water', undefined, "the hallway's one water source (it flows north and east, along the north wall, which presses the golem into the north-east corner)", 'cwater');
   fill(box(2, WATER_Y, 0, 13, WATER_Y, 0), 'water', 'water sources, north edge', 'water');
   fill(box(2, WATER_Y, 15, 13, WATER_Y, 15), 'water', 'water sources, south edge', 'water');
   fill(box(0, WATER_Y, 2, 0, WATER_Y, 13), 'water', 'water sources, west edge', 'water');

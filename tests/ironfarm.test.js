@@ -45,11 +45,11 @@ test('the shopping list is something a survival player can meet: counted from th
   const m = materials(ironFarmPlan());
   assert.equal(m.counts.bed, 20);
   assert.equal(m.counts.composter, 10);
-  assert.equal(m.counts.hopper, 7);
+  assert.equal(m.counts.hopper, 3);
   assert.equal(m.counts.chest, 2);
-  assert.equal(m.counts.campfire, 1);
+  assert.equal(m.counts.campfire, 2);
   assert.equal(m.counts.wooden_door, 1);
-  assert.equal(m.counts.wall_sign, 9);
+  assert.equal(m.counts.wall_sign, 7);
   assert.equal(m.counts.fence_gate, 4);
   assert.equal(m.counts.lava, 1);
   assert.equal(m.counts.water, waterSources().length + 1);
@@ -57,9 +57,10 @@ test('the shopping list is something a survival player can meet: counted from th
   assert.match(m.text, /20 beds/);
   assert.match(m.text, /a lava bucket \(one source\) and a water bucket \(48 water sources/);
   assert.match(m.text, /double chest/);
-  assert.match(m.text, /1 campfires/);
+  assert.match(m.text, /2 campfires/);
+  assert.match(m.text, /3 hoppers \(5 iron each = 15 iron\)/);
   assert.match(m.text, /4 fence gates/);
-  assert.match(m.text, /9 signs/);
+  assert.match(m.text, /7 signs/);
 });
 
 test('the village: 20 whole beds in two rows, 10 composters, 10 villagers with room, all able to walk to a bed and a workstation', () => {
@@ -324,7 +325,7 @@ test('sources on two walls only would leave the far side dry (why there are sour
   assert.equal(r.arrived, false);
 });
 
-test('the lava: one source over the campfire at the golem\'s head height, held by three signs, glass to the east and the wall to the north; one that is not held is caught; water is only on the platform and the hallway\'s one source', () => {
+test('the lava: one source over the first campfire at the golem\'s head height, held by three signs, glass to the east and the wall to the north; one that is not held is caught; water is only on the platform and the hallway\'s one source', () => {
   const p = ironFarmPlan();
   const g = render(p);
   assert.equal([...g.cells.values()].filter((v) => v.id === 'lava').length, 1);
@@ -332,7 +333,7 @@ test('the lava: one source over the campfire at the golem\'s head height, held b
   assert.equal(LAVA.y - CHAMBER_FLOOR_Y, 2, 'two up from the floor: the head of something 2.9 tall');
   assert.deepEqual([LAVA.x, LAVA.z], [CAMPFIRES[0].x, CAMPFIRES[0].z]);
   assert.ok(ALLOWED.includes('lava'));
-  assert.deepEqual(SIGNS.map((s) => s.group).sort(), ['chamber', 'chamber', 'hole', 'hole', 'hole', 'hole', 'lava', 'lava', 'lava']);
+  assert.deepEqual(SIGNS.map((s) => s.group).sort(), ['hole', 'hole', 'hole', 'hole', 'lava', 'lava', 'lava']);
   const around = [[1, 0, 0, 'glass'], [0, 0, -1, 'cobblestone'], [0, 0, 1, 'wall_sign'], [-1, 0, 0, 'wall_sign'], [0, -1, 0, 'wall_sign']];
   for (const [dx, dy, dz, want] of around) assert.equal(g.id(LAVA.x + dx, LAVA.y + dy, LAVA.z + dz), want, `${dx},${dy},${dz} from the lava`);
   for (const s of SIGNS) { const off = signSupport(s.facing); assert.equal(g.id(s.x + off[0], s.y, s.z + off[1]) !== 'air', true, `behind ${s.group} sign ${s.x},${s.y},${s.z}`); }
@@ -345,7 +346,7 @@ test('the lava: one source over the campfire at the golem\'s head height, held b
   const low = ironFarmPlan(); low.ops.find((o) => o.tag === 'lava').y = -5;
   caught(low, /below the golem's head|lava has/);
   const gone = ironFarmPlan(); gone.ops.find((o) => o.tag === 'lava').x = 8;
-  caught(gone, /not over the campfire|lava has/);
+  caught(gone, /not over the first campfire|lava has/);
   caught(put(ironFarmPlan(), 7, -5, 8, 'water'), /only the platform and the hallway's one source/);
   // Lava gives light: the pod-side and hallway cells are lit even without the campfire.
   const lit = lightField(g, [{ ...LAVA, level: 15 }]);
@@ -357,7 +358,7 @@ test('the order of building: signs, then gates and slabs, then lava, campfire an
   const at = (tag) => p.ops.findIndex((o) => o.tag === tag);
   assert.ok(at('sign') >= 0 && at('sign') < at('gate') && at('gate') < at('slab') && at('lava') > at('slab') && at('campfire') > at('slab'));
   assert.ok(at('cwater') > at('campfire') && at('water') > at('cwater'));
-  assert.equal(p.ops.filter((o) => o.tag === 'sign').length, 9);
+  assert.equal(p.ops.filter((o) => o.tag === 'sign').length, 7);
   assert.equal(p.ops.filter((o) => o.tag === 'lava').length, 1);
   assert.equal(p.ops.filter((o) => o.tag === 'gate').length, 4);
   assert.equal(p.ops.filter((o) => o.tag === 'water').length, 4);
@@ -365,7 +366,7 @@ test('the order of building: signs, then gates and slabs, then lava, campfire an
   assert.deepEqual(p.ops.filter((o) => o.tag === 'sign').map((o) => o.states.facing_direction), SIGNS.map((s) => s.facing));
 });
 
-test('the hallway: one water source in the south-west corner wets exactly two more cells (the signs keep it off the rest and off the campfire), and a golem landing anywhere in the shaft is pressed into the north-east corner, in the campfire\'s cell, with its box in the lava', () => {
+test('the hallway: one water source in the south-west corner wets three more cells (the two campfires in the east column stop it), and a golem landing anywhere in the shaft is pressed into the north-east corner, in the first campfire\'s cell, with its box in the lava and over the second campfire', () => {
   const p = ironFarmPlan();
   const g = render(p);
   assert.deepEqual(CHAMBER_WATER, { x: 7, y: -6, z: 8 });
@@ -373,13 +374,11 @@ test('the hallway: one water source in the south-west corner wets exactly two mo
   const set = settleWater(g, [CHAMBER_WATER], CHAMBER_FLOOR_Y);
   assert.deepEqual(set.converted, []);
   assert.deepEqual([...set.field].sort(), CHAMBER_WET.map((c) => [`${c.x},${c.z}`, c.level]).sort());
-  assert.equal(set.field.has('9,7'), false, 'the campfire\'s cell is dry');
-  assert.equal(set.field.has('8,7') || set.field.has('9,8'), false, 'and so are the two cells beside it (signs)');
+  assert.equal(set.field.has('9,7') || set.field.has('9,8'), false, 'the campfires\' cells are dry');
+  assert.equal(set.field.get('8,7'), 2, 'the current ends in the cell west of the first campfire');
   const lv = set.field;
-  // Flows: the source runs north-east, the cell north of it north, the cell east of it east; together north-east.
-  assert.ok(flowAt(lv, 7, 8).x > 0 && flowAt(lv, 7, 8).z < 0);
-  assert.ok(flowAt(lv, 7, 7).z < 0 && Math.abs(flowAt(lv, 7, 7).x) < 1e-9);
-  assert.ok(flowAt(lv, 8, 8).x > 0 && Math.abs(flowAt(lv, 8, 8).z) < 1e-9);
+  // Flows: every wet cell runs north-east (the source toward the two it feeds, those toward the cell they both feed, which toward the campfire).
+  for (const [x, z] of [[7, 8], [7, 7], [8, 8], [8, 7]]) { const f = flowAt(lv, x, z); assert.ok(f.x > 0 && f.z < 0, `flow at ${x},${z}: ${f.x.toFixed(3)} ${f.z.toFixed(3)}`); }
   // Landing anywhere a 1.4-wide box can land in the 2 x 2 shaft (centre between 7.7 and 8.3 each way).
   const ends = [];
   for (let a = 0; a <= 12; a++) for (let b = 0; b <= 12; b++) {
@@ -389,32 +388,63 @@ test('the hallway: one water source in the south-west corner wets exactly two mo
     assert.equal(Math.floor(r.x), 9, `from ${sx.toFixed(2)},${sz.toFixed(2)} ends at x ${r.x.toFixed(2)}`);
     assert.equal(Math.floor(r.z), 7, `from ${sx.toFixed(2)},${sz.toFixed(2)} ends at z ${r.z.toFixed(2)}`);
     assert.ok(Math.floor(r.x + 0.7 - 1e-6) >= LAVA.x && Math.floor(r.z - 0.7 + 1e-6) <= LAVA.z && Math.floor(r.z + 0.7 - 1e-6) >= LAVA.z, 'its box is over the lava');
+    const second = CAMPFIRES[1];
+    const over = Math.max(0, Math.min(r.z + 0.7, second.z + 1) - Math.max(r.z - 0.7, second.z)) * Math.max(0, Math.min(r.x + 0.7, second.x + 1) - Math.max(r.x - 0.7, second.x));
+    assert.ok(over > 0.3, `its box is over the second campfire by ${over.toFixed(2)}`);
   }
-  assert.ok(Math.max(...ends.map((r) => r.z)) < 7.95, `the south-most it rests is ${Math.max(...ends.map((r) => r.z)).toFixed(2)}: 7.88 in my model, the margin is thin`);
+  assert.ok(Math.max(...ends.map((r) => r.z)) < 7.95, `the south-most it rests is ${Math.max(...ends.map((r) => r.z)).toFixed(2)}: 7.73 in my model`);
   assert.ok(Math.min(...ends.map((r) => r.x)) > 9.2);
   // Drops (0.25 boxes) from anywhere in the hallway end over a hopper.
+  const overHopper = (r) => { for (let i = Math.floor(r.x - 0.125 + 1e-6); i <= Math.floor(r.x + 0.125 - 1e-6); i++) for (let j = Math.floor(r.z - 0.125 + 1e-6); j <= Math.floor(r.z + 0.125 - 1e-6); j++) if (g.id(i, -7, j) === 'hopper') return true; return false; };
   for (let x = CHAMBER.x1; x <= CHAMBER.x2; x++) for (let z = CHAMBER.z1; z <= CHAMBER.z2; z++) for (const [ox, oz] of [[0.5, 0.5], [0.15, 0.15], [0.85, 0.15], [0.15, 0.85], [0.85, 0.85]]) {
     const r = pushBox(g, lv, CHAMBER_FLOOR_Y, x + ox, z + oz, { half: 0.125, tall: 1 });
-    let on = false;
-    for (let i = Math.floor(r.x - 0.125 + 1e-6); i <= Math.floor(r.x + 0.125 - 1e-6); i++) for (let j = Math.floor(r.z - 0.125 + 1e-6); j <= Math.floor(r.z + 0.125 - 1e-6); j++) if (g.id(i, -7, j) === 'hopper') on = true;
-    assert.ok(on, `drop at ${x + ox},${z + oz} ends at ${r.x.toFixed(2)},${r.z.toFixed(2)}`);
+    assert.ok(overHopper(r), `drop at ${x + ox},${z + oz} ends at ${r.x.toFixed(2)},${r.z.toFixed(2)}`);
   }
+  // And what is dropped within 0.6 of where the golem stands (items fly a little when they come out) reaches a hopper too.
+  let scattered = 0;
+  for (const e of ends.filter((_, i) => i % 7 === 0)) for (let dx = -0.6; dx <= 0.601; dx += 0.15) for (let dz = -0.6; dz <= 0.601; dz += 0.15) {
+    const sx = e.x + dx, sz = e.z + dz;
+    if (sx < 7 || sx >= 10 || sz < 7 || sz >= 9) continue;
+    const r = pushBox(g, lv, CHAMBER_FLOOR_Y, sx, sz, { half: 0.125, tall: 1 });
+    scattered++;
+    assert.ok(overHopper(r), `a drop at ${sx.toFixed(2)},${sz.toFixed(2)} ends at ${r.x.toFixed(2)},${r.z.toFixed(2)}`);
+  }
+  assert.ok(scattered > 100, `${scattered} scattered drops tried`);
   // Break it each way and the check says so.
-  caught(without(ironFarmPlan(), (o) => o.tag === 'sign' && o.x === 8 && o.y === -6 && o.z === 7), /water reaches the campfire|hallway water reaches/);
-  caught(without(ironFarmPlan(), (o) => o.tag === 'sign' && o.x === 9 && o.y === -6 && o.z === 8), /water reaches the campfire|hallway water reaches/);
+  caught(without(ironFarmPlan(), (o) => o.id === 'campfire' && o.x === 9 && o.z === 8), /the hallway water reaches 9,8/);
+  caught(put(ironFarmPlan(), 8, -6, 7, 'wall_sign'), /the hallway cell 8,7 is dry/);
   caught(without(ironFarmPlan(), (o) => o.tag === 'cwater'), /hallway has 0 water sources/);
   caught(put(ironFarmPlan(), 8, -6, 8, 'water'), /hallway has 2 water sources|turn into more sources/);
   const moved = ironFarmPlan(); const w = moved.ops.find((o) => o.tag === 'cwater'); w.x = 7; w.z = 7;
-  caught(moved, /hallway has 1 water sources, 1 wanted at 7,8|not in the campfire's cell|wanted level/);
+  caught(moved, /hallway has 1 water sources, 1 wanted at 7,8|not in the first campfire's cell|wanted level/);
   caught(put(ironFarmPlan(), 9, -5, 8, 'cobblestone'), /the hallway is blocked at 9,-5,8/);
   caught(put(ironFarmPlan(), 9, -3, 7, 'cobblestone'), /the hallway is blocked at 9,-3,7/);
 });
 
-test('campfire: ONE, lit, in the hallway\'s north-east corner over a hopper, nothing else on the floor there, the shaft above clear but for the sign that holds the lava', () => {
+test('without the second campfire\'s hopper what lands on it stays there (the model\'s reading of the three hoppers), and the check says so', () => {
+  const q = without(ironFarmPlan(), (o) => o.id === 'hopper' && o.x === 9 && o.z === 8);
+  const bad = checkPlan(q);
+  assert.ok(bad.some((b) => /hopper/.test(b)), bad.join(' | '));
+  assert.ok(bad.some((b) => /not over a hopper|not reach a hopper/.test(b)), bad.join(' | '));
+  const g = render(q);
+  const lv = settleWater(g, [CHAMBER_WATER], CHAMBER_FLOOR_Y).field;
+  let lost = 0;
+  for (let dx = -0.6; dx <= 0.601; dx += 0.15) for (let dz = -0.6; dz <= 0.601; dz += 0.15) {
+    const sx = 9.28 + dx, sz = 7.72 + dz;
+    if (sx >= 10 || sz >= 9) continue;
+    const r = pushBox(g, lv, CHAMBER_FLOOR_Y, sx, sz, { half: 0.125, tall: 1 });
+    let on = false;
+    for (let i = Math.floor(r.x - 0.125 + 1e-6); i <= Math.floor(r.x + 0.125 - 1e-6); i++) for (let j = Math.floor(r.z - 0.125 + 1e-6); j <= Math.floor(r.z + 0.125 - 1e-6); j++) if (g.id(i, -7, j) === 'hopper') on = true;
+    if (!on) lost++;
+  }
+  assert.ok(lost > 0, 'some drops are lost on the second campfire with no hopper under it');
+});
+
+test('campfires: TWO, lit, side by side in the hallway\'s east column (the first in the north-east corner), each over a hopper, nothing else on the floor there, the shaft above clear but for the sign that holds the lava', () => {
   const p = ironFarmPlan();
   const g = render(p);
-  assert.equal(CAMPFIRES.length, 1);
-  assert.deepEqual(CAMPFIRES.map((c) => `${c.x},${c.z}`), ['9,7']);
+  assert.equal(CAMPFIRES.length, 2);
+  assert.deepEqual(CAMPFIRES.map((c) => `${c.x},${c.z}`), ['9,7', '9,8']);
   for (const c of CAMPFIRES) { assert.equal(c.y, -6); assert.equal(g.id(c.x, c.y, c.z), 'campfire'); assert.equal(g.id(c.x, c.y - 1, c.z), 'hopper'); assert.equal(g.at(c.x, c.y, c.z).states?.extinguished, undefined); }
   for (let y = -5; y <= 2; y++) for (const [x, z] of [[7, 7], [8, 7], [7, 8], [8, 8]]) {
     const id = g.id(x, y, z);
@@ -422,31 +452,38 @@ test('campfire: ONE, lit, in the hallway\'s north-east corner over a hopper, not
   }
   for (let y = -6; y <= -3; y++) for (const z of [7, 8]) assert.notEqual(g.id(9, y, z), 'cobblestone', `hall cell 9,${y},${z}`);
   caught(without(ironFarmPlan(), (o) => o.id === 'campfire'), /no campfire|0 campfires/);
-  caught(put(ironFarmPlan(), 7, -6, 7, 'campfire'), /2 campfires in the plan/);
+  caught(without(ironFarmPlan(), (o) => o.id === 'campfire' && o.z === 8), /1 campfires in the plan|no campfire/);
+  caught(put(ironFarmPlan(), 7, -6, 7, 'campfire'), /3 campfires in the plan/);
   caught(put(ironFarmPlan(), 7, -3, 8, 'cobblestone'), /the shaft is not clear/);
   const off = ironFarmPlan();
-  off.ops.find((o) => o.id === 'campfire').states = { extinguished: true };
+  off.ops.find((o) => o.id === 'campfire' && o.z === 8).states = { extinguished: true };
   caught(off, /put out/);
-  // Lit, it lights the hallway (15), and the light gets into the room through the glass.
+  // Lit, they light the hallway (15), and the light gets into the room through the glass.
   const lit = lightField(g, [...CAMPFIRES.map((c) => ({ ...c, level: 15 }))]);
   assert.equal(lit.get('9,-6,7'), 15);
+  assert.equal(lit.get('9,-6,8'), 15);
   assert.ok(lit.get('9,-5,7') === 14 && (lit.get('11,-6,7') ?? 0) > 8);
 });
 
-test('the hoppers run under every cell of the hallway and east into the chests, which are a double chest: side by side, the same way round, room to open, in reach', () => {
+test('three hoppers (the player\'s count): one under each campfire, the south one feeding the north one, which feeds one under the window that runs east into the chests, which are a double chest: side by side, the same way round, room to open, in reach', () => {
   const p = ironFarmPlan();
   const g = render(p);
-  assert.equal(HOPPERS.length, 7);
+  assert.equal(HOPPERS.length, 3);
+  assert.equal([...g.cells.values()].filter((v) => v.id === 'hopper').length, 3);
   for (const h of HOPPERS) assert.equal(g.at(h.x, h.y, h.z).states.facing_direction, h.facing);
-  for (let x = 7; x <= 9; x++) for (let z = 7; z <= 8; z++) assert.equal(g.id(x, -7, z), 'hopper', `under ${x},${z}`);
+  for (const c of CAMPFIRES) assert.equal(g.id(c.x, -7, c.z), 'hopper', `under the campfire at ${c.x},${c.z}`);
+  assert.deepEqual(HOPPERS.map((h) => `${h.x},${h.z},${h.facing}`), ['9,7,5', '9,8,2', '10,7,5']);
+  // Under the four cells of the shaft's foot there is only floor: what lands there is carried to the campfires by the water.
+  for (const [x, z] of [[7, 7], [8, 7], [7, 8], [8, 8]]) assert.equal(g.id(x, -7, z), 'cobblestone', `under ${x},${z}`);
   assert.equal(CHESTS.length, 2);
   assert.equal(CHESTS[1].x, CHESTS[0].x + 1);
   const dirs = CHESTS.map((c) => g.at(c.x, c.y, c.z).states['minecraft:cardinal_direction']);
   assert.equal(dirs[0], dirs[1]);
   caught((() => { const q = ironFarmPlan(); q.ops.find((o) => o.id === 'chest' && o.x === 11).states = { 'minecraft:cardinal_direction': 'north' }; return q; })(), /would not make a double chest/);
-  caught((() => { const q = ironFarmPlan(); q.ops.find((o) => o.id === 'hopper' && o.x === 8 && o.z === 7).states = { facing_direction: 4 }; return q; })(), /does not lead to a chest/);
+  caught((() => { const q = ironFarmPlan(); q.ops.find((o) => o.id === 'hopper' && o.x === 9 && o.z === 8).states = { facing_direction: 4 }; return q; })(), /points the wrong way|does not lead to a chest/);
   caught(put(ironFarmPlan(), 11, -6, 7, 'cobblestone'), /something is on top of the chest/);
-  caught(without(ironFarmPlan(), (o) => o.id === 'hopper' && o.x === 7 && o.z === 8), /no hopper under the hallway|hopper at 7,8/);
+  caught(without(ironFarmPlan(), (o) => o.id === 'hopper' && o.x === 9 && o.z === 8), /hopper at 9,8|not over a hopper/);
+  caught(put(ironFarmPlan(), 8, -7, 7, 'hopper'), /4 hoppers in the plan, 3 listed/);
 });
 
 test('a way in: a door in the room\'s outer wall (both halves), a step up to it, a window onto the hallway; without the door the check says so', () => {
@@ -495,7 +532,7 @@ test('the game builds with the quick check only: the deep one (golems and drops 
   assert.doesNotMatch(src, /checkPlan\(plan\)/);
   // The quick form still catches what is structural, and leaves out only the moving.
   assert.ok(checkPlan(without(ironFarmPlan(), (o) => o.tag === 'gate'), { deep: false }).some((b) => /no fence gate over the hole/.test(b)));
-  assert.ok(checkPlan(without(ironFarmPlan(), (o) => o.tag === 'sign' && o.x === 8 && o.y === -6 && o.z === 7), { deep: false }).some((b) => /water reaches the campfire/.test(b)));
+  assert.ok(checkPlan(without(ironFarmPlan(), (o) => o.id === 'campfire' && o.x === 9 && o.z === 8), { deep: false }).some((b) => /the hallway water reaches 9,8/.test(b)));
   // Nothing else in the game's code walks the water with pushBox or drift.
   for (const f of ['ironfarm.js', 'ironfarm_parts.js', 'ironfarm_aids.js', 'ironfarm_world.js']) {
     const g = readFileSync(new URL(`../behavior_pack/scripts/game/${f}`, import.meta.url), 'utf8');

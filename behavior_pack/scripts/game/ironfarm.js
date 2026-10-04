@@ -1,9 +1,9 @@
 // `!bot ironfarm`: puts the iron golem farm of core/ironfarm.js into the world in one go with game commands. The bot is not involved (it works
 // with no bot spawned): this is for looking at the design and testing the mechanics. The farm is a tower on the ground where you stand (u209):
 // a 16 x 16 open platform up top where the golems spawn, the water running them to a hole in its middle (four open fence gates over it keep the
-// water out, so every current ends in it), a shaft down to a short hallway (one water source presses the golem into a corner, where one lit
-// campfire stands over a hopper with lava on signs over it at the golem's head height) and a small room at the bottom with a window onto it, a
-// door, and a double chest. You stand at the bottom, not up in the sky. Slabs cover every bare
+// water out, so every current ends in it), a shaft down to a short hallway (one water source presses the golem into a corner, where two lit
+// campfires stand side by side over hoppers, with lava on signs over one of them at the golem's head height; u214, the player's redesign) and a
+// small room at the bottom with a window onto it, a door, and a double chest. You stand at the bottom, not up in the sky. Slabs cover every bare
 // top so the platform is the only place golems can spawn; the builder then READS the real blocks with the game's spawn rule and says how many
 // spots there are on the platform and anywhere else. Nothing of the world is overwritten but air up there (`force` replaces whatever is in the way).
 //
@@ -14,7 +14,7 @@
 //   !bot ironfarm scan         read the real blocks round the village centre: where could a golem spawn?
 //   !bot ironfarm view [pod|top|out]  back to the room (or in among the villagers, on the platform's west wall, outside the door)
 //   !bot ironfarm water on|off|kick   the platform's water sources: off drains the platform; on / kick put them back and make sure they flow
-//   !bot ironfarm lava on|off  the lava over the campfire (off if something goes wrong with it)
+//   !bot ironfarm lava on|off  the lava over the first campfire (off if something goes wrong with it)
 //   !bot ironfarm villagers    new villagers (adults only, nitwits removed)
 //   !bot ironfarm build force  build even if something is in the way (or the ground is uneven)
 // Test aids (game/ironfarm_aids.js):
@@ -169,7 +169,9 @@ async function build(p, force) {
   if (signs && !signs.holeOk) notes.push('The signs over the hole did not stay: water will run down the shaft. Not putting the water in.');
   const chests = await pairChests(dim, off);
   farm.chestNote = chests.note;
-  const cw = signs?.chamberOk ? await chamberWater(dim, off) : { ok: false, note: "Hallway water: not placed (the signs that keep it off the campfire are missing)." };
+  // (The campfires are what keeps the hallway's water in its four cells, so it goes in only when both are there.)
+  const campsIn = CAMPFIRES.every((c) => idAt(dim, W(off, c)) === 'campfire');
+  const cw = campsIn ? await chamberWater(dim, off) : { ok: false, note: 'Hallway water: not placed (a campfire is missing: the water would run where they should stand).' };
   farm.chamberNote = cw.note;
   const w = signs?.holeOk ? await ensureWater(dim, off, plan) : { ok: false, note: 'Water: not placed (the signs over the hole are missing).' };
   farm.waterOn = !!signs?.holeOk;
@@ -280,7 +282,6 @@ async function water(arg) {
 
 const holeSigns = () => SIGNS.filter((s) => s.group === 'hole');
 const lavaSigns = () => SIGNS.filter((s) => s.group === 'lava');
-const chamberSigns = () => SIGNS.filter((s) => s.group === 'chamber');
 const signGone = (s) => !idAt(farm.dim, W(farm.off, s)).endsWith('wall_sign');
 
 function lava(arg) {
@@ -334,10 +335,10 @@ function watch() {
       say(`${gone.length} of the ${lavaSigns().length} signs holding the lava is gone (${gone.map((s) => `${s.x},${s.y},${s.z}`).join(' ')}): burned by the lava or popped off? I have taken the lava out. "!bot ironfarm lava on" puts it back if the signs are back.`);
     }
   }
-  // The two signs beside the campfire keep the hallway's water off it: if one goes, the water puts the campfire out.
-  if (farm.ticks % 5 === 0 && !farm.warned.has('chambersign')) {
-    const gone = chamberSigns().filter(signGone);
-    if (gone.length) { farm.warned.add('chambersign'); say(`${gone.length} of the ${chamberSigns().length} signs that keep the hallway water off the campfire is gone (${gone.map((s) => `${s.x},${s.y},${s.z}`).join(' ')}): the water will put it out.`); }
+  // The campfires are what kill (with the lava) and what keep the hallway's water to its four cells: if one is gone or out, say so once.
+  if (farm.ticks % 5 === 0 && !farm.warned.has('campfire')) {
+    const bad = CAMPFIRES.filter((c) => idAt(dim, W(off, c)) !== 'campfire' || stateAt(dim, W(off, c), 'extinguished') === true);
+    if (bad.length) { farm.warned.add('campfire'); say(`${bad.length} of the ${CAMPFIRES.length} campfires in the hallway is gone or out (${bad.map((c) => `${c.x},${c.y},${c.z}`).join(' ')}): the hallway water may have reached it, or something put it out.`); }
   }
   // The gates over the hole keep the platform water off it: gone or shut, the currents meet over the hole again and the golems go down slowly.
   if (farm.ticks % 5 === 0 && !farm.warned.has('gates')) {
@@ -349,7 +350,7 @@ function watch() {
     const gone = holeSigns().filter(signGone);
     if (gone.length) {
       farm.warned.add('holesign');
-      say(`${gone.length} of the ${holeSigns().length} signs over the hole is gone (${gone.map((s) => `${s.x},${s.y},${s.z}`).join(' ')}). Water would run down the shaft onto the lava and the campfire. Taking the water off: "!bot ironfarm water off" did it; put the sign back and "water on".`);
+      say(`${gone.length} of the ${holeSigns().length} signs over the hole is gone (${gone.map((s) => `${s.x},${s.y},${s.z}`).join(' ')}). Water would run down the shaft onto the lava and the campfires. Taking the water off: "!bot ironfarm water off" did it; put the sign back and "water on".`);
       void water('off');
     }
   }
@@ -360,7 +361,7 @@ function watch() {
   }
   if (farm.waterOn && farm.ticks % 5 === 0 && !farm.warned.has('shaft')) {
     const n = shaftWater(dim, off);
-    if (n) { farm.warned.add('shaft'); say(`Water in the shaft: ${n} wet cells below the platform floor. The signs over the hole did not hold it; the campfire will be out. "!bot ironfarm status" for the rest.`); }
+    if (n) { farm.warned.add('shaft'); say(`Water in the shaft: ${n} wet cells below the platform floor. The signs over the hole did not hold it; the campfires will be out. "!bot ironfarm status" for the rest.`); }
   }
   const golems = entities(dim, off, plan, 'minecraft:iron_golem');
   const now = new Set();
@@ -413,6 +414,6 @@ function status() {
   const gatesOpen = gateIds.filter((q) => stateAt(dim, W(off, q), 'open_bit') === true).length;
   const hallWet = CHAMBER_WET.filter((c) => idAt(dim, W(off, c)).includes('water')).length;
   const size = chestSize(dim, W(off, CHESTS[0]));
-  say(`Built ${((system.currentTick - farm.builtAt) / 1200).toFixed(1)} min ago at ${off.x + b.x1} ${off.y + b.y1} ${off.z + b.z1} (the corner of its box);${time}. Villagers in it: ${vs.length} (${babies} babies). Golems alive: ${golems.length}; seen so far: ${farm.seen.size}. Chest (${size === 54 ? 'double' : `${size} slots`}): ${Object.keys(inv).length ? Object.entries(inv).map(([k, v]) => `${v} ${k}`).join(', ') : 'empty'}. Water ${farm.waterOn ? 'on' : 'off'}: ${w.have} of ${w.want} platform cells wet, ${w.sources} of them sources (${w.planned} planned${w.pooled ? ': POOLING, some cells turned into sources' : ''}), ${w.holeWet} of the 4 cells over the hole wet (0 is right); ${shaftWater(dim, off)} wet cells in the shaft. Gates over the hole: ${gateIds.length} in, ${gatesOpen} open. Hallway: ${hallWet} of ${CHAMBER_WET.length} cells wet. Lava ${farm.lavaOn ? 'on' : 'off'}. Campfire ${camp}. Door: ${farm.door?.ok ? 'in' : 'NOT in (open doorway)'}. Slabs: ${farm.slabCells} placed (${farm.slab ?? 'none'}). ${checks.length ? `Not as planned: ${checks.join('; ')}.` : 'Blocks as planned.'} Village centre by my reckoning: ${plan.centre.x} ${plan.centre.y} ${plan.centre.z} plan, ${plan.centre.x + off.x} ${plan.centre.y + off.y} ${plan.centre.z + off.z} in the world. ${farm.scanNote} ${farm.villagerNote}`);
+  say(`Built ${((system.currentTick - farm.builtAt) / 1200).toFixed(1)} min ago at ${off.x + b.x1} ${off.y + b.y1} ${off.z + b.z1} (the corner of its box);${time}. Villagers in it: ${vs.length} (${babies} babies). Golems alive: ${golems.length}; seen so far: ${farm.seen.size}. Chest (${size === 54 ? 'double' : `${size} slots`}): ${Object.keys(inv).length ? Object.entries(inv).map(([k, v]) => `${v} ${k}`).join(', ') : 'empty'}. Water ${farm.waterOn ? 'on' : 'off'}: ${w.have} of ${w.want} platform cells wet, ${w.sources} of them sources (${w.planned} planned${w.pooled ? ': POOLING, some cells turned into sources' : ''}), ${w.holeWet} of the 4 cells over the hole wet (0 is right); ${shaftWater(dim, off)} wet cells in the shaft. Gates over the hole: ${gateIds.length} in, ${gatesOpen} open. Hallway: ${hallWet} of ${CHAMBER_WET.length} cells wet. Lava ${farm.lavaOn ? 'on' : 'off'}. Campfires ${camp}. Door: ${farm.door?.ok ? 'in' : 'NOT in (open doorway)'}. Slabs: ${farm.slabCells} placed (${farm.slab ?? 'none'}). ${checks.length ? `Not as planned: ${checks.join('; ')}.` : 'Blocks as planned.'} Village centre by my reckoning: ${plan.centre.x} ${plan.centre.y} ${plan.centre.z} plan, ${plan.centre.x + off.x} ${plan.centre.y + off.y} ${plan.centre.z + off.z} in the world. ${farm.scanNote} ${farm.villagerNote}`);
 }
 
