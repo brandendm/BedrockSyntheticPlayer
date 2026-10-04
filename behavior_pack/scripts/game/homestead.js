@@ -559,7 +559,7 @@ export class Homestead {
    * Put `itemId` into cell: click a solid neighbour's face toward the cell (below first, then the
    * sides, then above), like a player placing against whatever's there.
    */
-  async placeAt(gen, cell, itemId, via = null, next = null, { liquid = false, lenient = true } = {}) {
+  async placeAt(gen, cell, itemId, via = null, next = null, { liquid = false, lenient = true, stay = false } = {}) {
     const S = this.S;
     // (A bed, chest, door or sign never goes down by a click from the simulated player: those
     // are set with a command after this fails, no point trying them again here.)
@@ -577,7 +577,8 @@ export class Homestead {
     this.placeWhy = '';
     if (!faces.some(([o]) => solidAt(nOf(o)))) { this.placeWhy = 'nothing solid beside it'; return false; }
     if (!S.inReach(cell) || !clickable(S.eye())) {
-      if (!(await S.goSee(gen, cell, clickable))) {
+      // (stay: the caller has put us where it wants us, on a spot it chose, and does not want us walking off it: the iron farm's build, on a 1-wide wall top)
+      if (stay ? !S.inReach(cell) : !(await S.goSee(gen, cell, clickable))) {
         this.placeWhy = 'no place to stand where the crosshair gets onto a face';
         return lenient && await this.placeAnyway(gen, cell, itemId, faces, solidAt, nOf, open, next);
       }

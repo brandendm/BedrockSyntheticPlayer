@@ -7,10 +7,10 @@
 // top so the platform is the only place golems can spawn; the builder then READS the real blocks with the game's spawn rule and says how many
 // spots there are on the platform and anywhere else. Nothing of the world is overwritten but air up there (`force` replaces whatever is in the way).
 //
-//   !bot ironfarm              build it (and teleport you into the room at the bottom)
+//   !bot ironfarm              build it (and teleport you into the room at the bottom); the walls are dirt (u215), "ironfarm cobble" for cobblestone
+//   !bot ironfarm bill [cobble]  what it would take to build it by hand in survival
 //   !bot ironfarm clear        take it away again
 //   !bot ironfarm status       what is there and what has happened (blocks, water, lava, campfire, villagers, golems, chests)
-//   !bot ironfarm bill         what it would take to build it by hand in survival
 //   !bot ironfarm scan         read the real blocks round the village centre: where could a golem spawn?
 //   !bot ironfarm view [pod|top|out]  back to the room (or in among the villagers, on the platform's west wall, outside the door)
 //   !bot ironfarm water on|off|kick   the platform's water sources: off drains the platform; on / kick put them back and make sure they flow
@@ -42,15 +42,18 @@ import { timeCommand, speedCommand, golemCommand, fastTime } from './ironfarm_ai
 /** @type {null | { dim: any, off: {x:number,y:number,z:number}, plan: any, builtAt: number, waterOn: boolean, lavaOn: boolean, gates: any, chamberNote: string, seen: Map<string, any>, ironSeen: number, watcher: number, villagerNote: string, buildNote: string, waterNote: string, announced: Set<number>, slab: string|null, slabCells: number, signId: string|null, ticks: number, warned: Set<string>, test: Set<string>, auto: number, foundation: any[], door: any, chestNote: string, scanNote: string }} */
 let farm = null;
 
+/** The shell material asked for: dirt unless the command says `cobble` (undefined = the plan's own default). */
+export const shellArg = (args) => (args.some((a) => /^(cobble|cobblestone|stone)$/i.test(a)) ? 'cobblestone' : undefined);
+
 export function ironFarmCommand(player, args) {
   const sub = (args[0] ?? 'build').toLowerCase();
   const p = player ?? world.getPlayers()[0];
   if (!p) return say('No player to build it for.');
   const go = async () => {
-    if (sub === 'build' || sub === 'force' || sub === 'here') return build(p, args.includes('force') || sub === 'force');
+    if (sub === 'build' || sub === 'force' || sub === 'here') return build(p, args.includes('force') || sub === 'force', shellArg(args));
     if (sub === 'clear' || sub === 'remove') return clear(true);
     if (sub === 'status') return status();
-    if (sub === 'bill' || sub === 'materials') return say(`Materials for a survival build: ${materials(ironFarmPlan()).text}.`);
+    if (sub === 'bill' || sub === 'materials') return say(`Materials for a survival build: ${materials(ironFarmPlan({ shell: shellArg(args) })).text}.`);
     if (sub === 'view') return view(p, args[1]);
     if (sub === 'water') return water(args[1]);
     if (sub === 'lava') return lava(args[1]);
@@ -59,7 +62,7 @@ export function ironFarmCommand(player, args) {
     if (sub === 'time') return timeCommand(p.dimension, args.slice(1));
     if (sub === 'speed' || sub === 'tick') return speedCommand(p.dimension, args.slice(1));
     if (sub === 'golem' || sub === 'golems') return golemCommand(farm, args.slice(1));
-    say('Commands: build [force], clear, status, bill, scan, view [pod|top|out], water on|off|kick, lava on|off, villagers; test aids: time day|night|noon|midnight|set N|fast N|normal, speed N|normal, golem [n]|auto [s]|off.');
+    say('Commands: build [force] [cobble], clear, status, bill, scan, view [pod|top|out], water on|off|kick, lava on|off, villagers; test aids: time day|night|noon|midnight|set N|fast N|normal, speed N|normal, golem [n]|auto [s]|off.');
   };
   go().catch((e) => say(`failed: ${e}\n${e?.stack ?? ''}`));
 }
@@ -89,9 +92,9 @@ function foundationColumns(tops, baseY, off) {
   return { cols: out, gap };
 }
 
-async function build(p, force) {
+async function build(p, force, shell) {
   if (farm) await clear(false);
-  const plan = ironFarmPlan();
+  const plan = ironFarmPlan({ shell });
   // (Not the deep check: it moves a golem through the water from thousands of points, which the game's script engine takes more than ten seconds over, and
   // the watchdog kills the script; u212 died of it. The tests and the sim run all of it.)
   const problems = checkPlan(plan, { deep: false });
@@ -112,7 +115,7 @@ async function build(p, force) {
   const rise = baseY - stood;
   if (!force && (found.gap > 12 || rise > 6)) return say(`The ground here is uneven: the tower's floor would be ${rise} blocks above where you stand and ${found.gap} above the lowest ground under the room. Stand somewhere flatter, or "ironfarm build force".`);
   let uneven = '';
-  if (rise > 1) uneven = ` The ground rises ${rise} blocks round here, so the tower's floor is ${rise} above where you stood: the door is up there${found.cols.length ? ` (${found.cols.length} columns of cobblestone put under the room)` : ''}.`;
+  if (rise > 1) uneven = ` The ground rises ${rise} blocks round here, so the tower's floor is ${rise} above where you stood: the door is up there${found.cols.length ? ` (${found.cols.length} columns of ${plan.shell} put under the room)` : ''}.`;
   // Something in the way? A grid of samples through the box (plants do not count: the floor goes where they are).
   if (!force) {
     const hits = [];
@@ -128,7 +131,7 @@ async function build(p, force) {
   /** @type {string[]} */
   const fails = [];
   const notes = [];
-  for (const c of found.cols) run(dim, `fill ${c.x} ${c.y1} ${c.z} ${c.x} ${c.y2} ${c.z} cobblestone`);
+  for (const c of found.cols) run(dim, `fill ${c.x} ${c.y1} ${c.z} ${c.x} ${c.y2} ${c.z} ${plan.shell}`);
   let slab = null, slabTried = false, slabCells = 0, signs = null, door = null, gates = null;
   for (const o of plan.ops) {
     if (o.tag === 'water' || o.tag === 'cwater') continue;   // below, with the checks
@@ -162,8 +165,17 @@ async function build(p, force) {
     else cmd = `setblock ${a.x} ${a.y} ${a.z} ${blockArg(o.id, o.states)}`;
     const why = run(dim, cmd);
     if (why) fails.push(`${o.note || o.id}: ${why} (${cmd})`);
-    if (o.op === 'fill' && o.id === 'cobblestone') await wait(2);
+    if (o.op === 'fill' && o.id === plan.shell) await wait(2);
   }
+  await finishBuild({ p, dim, off, plan, found, fails, notes, slab, slabCells, signs, door, gates });
+}
+
+/**
+ * Everything after the blocks are down, shared by the instant build above and the bot's own (game/farmbuild.js): the farm's state, the chests paired,
+ * the hallway water and the platform water (only once the campfires and the signs are seen to be there), the read-back checks, the spawn-spot scan, the
+ * villagers, you put in the room, the watcher. `lead` goes at the head of the "Built." line, `extra` after the slab line.
+ */
+export async function finishBuild({ p, dim, off, plan, found, fails, notes, slab, slabCells, signs, door, gates, lead = '', extra = '' }) {
   await wait(5);
   farm = { dim, off, plan, builtAt: system.currentTick, waterOn: true, lavaOn: !!signs?.lavaOk, gates, chamberNote: '', seen: new Map(), ironSeen: 0, watcher: -1, villagerNote: '', buildNote: '', waterNote: '', announced: new Set(), slab, slabCells, signId: signs?.id ?? null, ticks: 0, warned: new Set(), test: new Set(), auto: -1, foundation: found.cols, door, chestNote: '', scanNote: '' };
   if (signs && !signs.holeOk) notes.push('The signs over the hole did not stay: water will run down the shaft. Not putting the water in.');
@@ -184,12 +196,13 @@ async function build(p, force) {
   try { p.teleport(W(off, STAND), { facingLocation: W(off, { x: 9, y: STAND.y + 1.2, z: 7.5 }), dimension: dim }); } catch (e) { say(`Could not teleport you: ${e}`); }
   farm.watcher = system.runInterval(() => watch(), 40);
   farm.buildNote = notes.join(' ');
-  say(`Built. ${fails.length ? `${fails.length} commands failed: ${fails.slice(0, 4).join(' | ')}` : 'Every command went through.'} ${checks.length ? `Not as planned: ${checks.join('; ')}.` : 'Everything checked out when read back.'}`);
+  say(`Built. ${lead}${fails.length ? `${fails.length} commands failed: ${fails.slice(0, 4).join(' | ')}` : 'Every command went through.'} ${checks.length ? `Not as planned: ${checks.join('; ')}.` : 'Everything checked out when read back.'}`);
   if (notes.length) say(notes.join(' '));
   say(w.note);
   say(cw.note);
   say(`${chests.note} ${door?.ok ? `Door in (direction ${door.direction}): if it stands across the doorway instead of in it, tell me.` : ''}`);
   say(`Slabs: ${slabCells} placed on bare tops (${slab ?? 'none'}), none on the platform floor. ${sc.text}`);
+  if (extra) say(extra);
   say(vil.note);
   say('You are in the room at the bottom: the kill hallway is through the glass ahead, the double chest at your feet, the door behind you (east). "!bot ironfarm view top" puts you on the platform wall, "view out" outside the door. Villagers count as working only after a day of it: "!bot ironfarm time fast 20" runs the clock, "!bot ironfarm golem" puts a golem on the platform now to watch the rest working. "!bot ironfarm status" says how it is going, "!bot ironfarm bill" what it would cost in survival.');
 }
@@ -252,6 +265,9 @@ async function clear(announce) {
   farm = null;
   if (announce) say(`Cleared${why ? ` (the fill said: ${why})` : ''}.`);
 }
+/** For the bot's build (game/farmbuild.js): take down a farm that stands (or say there was none), and ask whether one does. */
+export const clearFarm = clear;
+export const farmStands = () => !!farm;
 
 function view(p, mode) {
   if (!farm) return say('No farm.');

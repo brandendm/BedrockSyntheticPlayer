@@ -160,14 +160,14 @@ t('ground that rises a little: the tower stands on it, higher, and says so', asy
   ok(chat().some((l) => /ground rises 6 blocks/.test(l)), 'no word about the rise');
 });
 
-t('a hill nearby: refused as uneven, and "build force" builds with cobblestone under the room', async () => {
+t('a hill nearby: refused as uneven, and "build force" builds with dirt under the room', async () => {
   const hill = (x) => (x >= 105 ? 99 : 69);
   const o = await built({ groundAt: hill });
   ok(!o && chat().some((l) => /uneven/.test(l)), chat().join(' | '));
   const f = await built({ groundAt: hill }, ['build', 'force']);
   ok(f, 'forced build did not build');
   ok(f.y + BASE_Y === 100, `floor at ${f.y + BASE_Y}`);
-  ok(at(f, 10, -30, 7)?.id === 'cobblestone' && at(f, 10, -8, 7)?.id === 'cobblestone', 'no foundation under the room');
+  ok(at(f, 10, -30, 7)?.id === 'dirt' && at(f, 10, -8, 7)?.id === 'dirt', 'no foundation under the room');
   ironFarmCommand(player, ['clear']);
   await settle(/Cleared/);
   ok(G.grid.size === 0, `${G.grid.size} blocks left (foundation not cleared?)`);
@@ -204,10 +204,10 @@ t('view top / pod / out / the room put you on the platform wall, among the villa
   ok(tele.length === 4, `${tele.length} teleports`);
   const [top, pod, out, room] = tele;
   ok(top.x === o.x - 0.5 && top.y === o.y + 7.5 && top.z === o.z + 7.5, 'top view is not on the wall');
-  ok(at(o, -1, 6, 7)?.id === 'cobblestone' && at(o, -1, 7, 7)?.id === 'cobblestone_slab', 'nothing to stand on at the top view');
-  ok(pod.y === o.y + 1 && pod.x === o.x + 2.5 && pod.z === o.z + 8.5 && !at(o, 2, 1, 8) && at(o, 2, 0, 8)?.id === 'cobblestone', 'pod view');
+  ok(at(o, -1, 6, 7)?.id === 'dirt' && at(o, -1, 7, 7)?.id === 'cobblestone_slab', 'nothing to stand on at the top view');
+  ok(pod.y === o.y + 1 && pod.x === o.x + 2.5 && pod.z === o.z + 8.5 && !at(o, 2, 1, 8) && at(o, 2, 0, 8)?.id === 'dirt', 'pod view');
   ok(out.x === o.x + 17.5 && out.y === o.y - 7 && !at(o, 17, -7, 7), 'out view is not on open ground');
-  ok(room.y === o.y - 6 && !at(o, 11, -6, 8) && at(o, 11, -7, 8)?.id === 'cobblestone', 'room view');
+  ok(room.y === o.y - 6 && !at(o, 11, -6, 8) && at(o, 11, -7, 8)?.id === 'dirt', 'room view');
 });
 
 t('clear takes the water first and then the whole box, leaving nothing', async () => {

@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 import {
   ironFarmPlan, checkPlan, render, golemSpots, waterField, settleWater, waterSources, flowAt, drift, pushBox, supported, lightField, blockArg, villageCentre,
   materials, exposedTops, outsideAir, signSupport, SIGNS, PLATFORM, POD, SPAWN_VOLUME, ALLOWED, SLAB, HOPPERS, CHESTS, CAMPFIRES, DOOR, STEP, HOLE,
-  HOLE_CENTRE, WATER_Y, FLOOR_Y, CORNERS, GATES, GATE_ID, LAVA, CHAMBER_WATER, CHAMBER_WET, CHAMBER, HALL, CHAMBER_FLOOR_Y,
+  HOLE_CENTRE, SHELL, SHELLS, WATER_Y, FLOOR_Y, CORNERS, GATES, GATE_ID, LAVA, CHAMBER_WATER, CHAMBER_WET, CHAMBER, HALL, CHAMBER_FLOOR_Y,
 } from '../behavior_pack/scripts/core/ironfarm.js';
 import { MAX_COBBLE as MAX, MIN_SPOTS } from '../behavior_pack/scripts/core/ironfarm_check.js';
 
@@ -19,16 +19,30 @@ test('the plan holds together: nothing for checkPlan to complain about (all of i
   assert.ok(MAX >= 1200 && MAX <= 2000);
 });
 
-test('it is a hollow tower, not a lump: about a thousand cobblestone, nothing like the 13,000-block cube it was', () => {
+test('it is a hollow tower, not a lump: about a thousand blocks of shell, nothing like the 13,000-block cube it was; dirt by default (u215), cobblestone if asked', () => {
   const p = ironFarmPlan();
+  assert.equal(p.shell, 'dirt');
+  assert.equal(SHELL, 'dirt');
   const m = materials(p);
-  assert.ok(m.counts.cobblestone > 700 && m.counts.cobblestone < MAX, `${m.counts.cobblestone} cobblestone`);
+  assert.ok(m.counts.dirt > 700 && m.counts.dirt < MAX, `${m.counts.dirt} dirt`);
+  assert.equal(m.counts.cobblestone, undefined, 'no cobblestone block left in the shell');
+  assert.ok(m.counts.cobblestone_slab > 0, 'the slabs are still cobblestone slabs');
+  assert.match(m.text, /^dirt \d+ \(dig it/);
   const b = p.bounds;
   const cells = (b.x2 - b.x1 + 1) * (b.y2 - b.y1 + 1) * (b.z2 - b.z1 + 1);
-  assert.ok(m.counts.cobblestone < cells * 0.4);
+  assert.ok(m.counts.dirt < cells * 0.4);
   const lump = ironFarmPlan();
-  lump.ops.unshift({ op: 'fill', box: b, id: 'cobblestone', note: 'solid' });
+  lump.ops.unshift({ op: 'fill', box: b, id: 'dirt', note: 'solid' });
   assert.ok(checkPlan(lump).some((x) => /lump|more than a survival player/.test(x)));
+  // the old look, same layout: only the shell's block changes, and it passes every check too
+  const c = ironFarmPlan({ shell: 'cobblestone' });
+  assert.deepEqual(checkPlan(c), []);
+  const mc = materials(c);
+  assert.equal(mc.counts.cobblestone, m.counts.dirt);
+  assert.match(mc.text, /^cobblestone \d+ \+ \d+ cobblestone slabs/);
+  assert.equal(c.ops.length, p.ops.length);
+  assert.deepEqual(c.ops.map((o) => (o.id === 'cobblestone' ? 'dirt' : o.id)), p.ops.map((o) => o.id));
+  assert.ok(checkPlan(ironFarmPlan({ shell: 'glowstone' })).some((x) => /glowstone is not/.test(x)));
 });
 
 test('it is made of overworld things only: nothing from the Nether, and a Nether block put in is caught', () => {
@@ -90,7 +104,7 @@ test('the pod, the room and the shaft are lit (torches on blocks; the campfire a
   const g = render(p);
   const torches = [...g.cells].filter(([, v]) => v.id === 'torch').map(([k]) => k.split(',').map(Number));
   assert.ok(torches.filter(([, y]) => y === 1).length >= 6 && torches.some(([, y]) => y === -6));
-  for (const [x, y, z] of torches) assert.equal(g.id(x, y - 1, z), 'cobblestone');
+  for (const [x, y, z] of torches) assert.equal(g.id(x, y - 1, z), SHELL);
   for (const v of p.villagers) assert.ok(!torches.some(([x, , z]) => x === Math.floor(v.x) && z === Math.floor(v.z)));
   const lv = lightField(g, torches.map(([x, y, z]) => ({ x, y, z })));
   assert.equal(lv.get(`${torches[0][0]},${torches[0][1]},${torches[0][2]}`), 14);
@@ -180,7 +194,7 @@ test('the pod, the room and the shaft are sealed (a hole in a wall is caught); t
   caught(carve(ironFarmPlan(), -1, 6, -1, 16, 6, -1), /the platform wall has a gap at -1,6,-1/);
   assert.equal(PLATFORM.y2 - PLATFORM.y1 + 1, 3);
   assert.equal(CORNERS.length, 16);
-  for (const [x, z] of CORNERS) for (let y = 4; y <= 6; y++) assert.equal(g.id(x, y, z), 'cobblestone', `corner ${x},${z}`);
+  for (const [x, z] of CORNERS) for (let y = 4; y <= 6; y++) assert.equal(g.id(x, y, z), SHELL, `corner ${x},${z}`);
 });
 
 test('the hole in the floor is 2 x 2 over the shaft, capped by four wall signs hanging on the floor beside it (water cannot go through a sign)', () => {
@@ -192,7 +206,7 @@ test('the hole in the floor is 2 x 2 over the shaft, capped by four wall signs h
     assert.equal(g.id(s.x, s.y, s.z), 'wall_sign');
     assert.ok(s.x >= HOLE.x1 && s.x <= HOLE.x2 && s.z >= HOLE.z1 && s.z <= HOLE.z2 && s.y === FLOOR_Y);
     const off = signSupport(s.facing);
-    assert.equal(g.id(s.x + off[0], s.y, s.z + off[1]), 'cobblestone', `behind the sign at ${s.x},${s.z}`);
+    assert.equal(g.id(s.x + off[0], s.y, s.z + off[1]), SHELL, `behind the sign at ${s.x},${s.z}`);
   }
   caught(without(ironFarmPlan(), (o) => o.id === 'wall_sign' && o.y === FLOOR_Y && o.x === 7 && o.z === 7), /no sign over the shaft|the shell has a hole/);
 });
@@ -334,7 +348,7 @@ test('the lava: one source over the first campfire at the golem\'s head height, 
   assert.deepEqual([LAVA.x, LAVA.z], [CAMPFIRES[0].x, CAMPFIRES[0].z]);
   assert.ok(ALLOWED.includes('lava'));
   assert.deepEqual(SIGNS.map((s) => s.group).sort(), ['hole', 'hole', 'hole', 'hole', 'lava', 'lava', 'lava']);
-  const around = [[1, 0, 0, 'glass'], [0, 0, -1, 'cobblestone'], [0, 0, 1, 'wall_sign'], [-1, 0, 0, 'wall_sign'], [0, -1, 0, 'wall_sign']];
+  const around = [[1, 0, 0, 'glass'], [0, 0, -1, SHELL], [0, 0, 1, 'wall_sign'], [-1, 0, 0, 'wall_sign'], [0, -1, 0, 'wall_sign']];
   for (const [dx, dy, dz, want] of around) assert.equal(g.id(LAVA.x + dx, LAVA.y + dy, LAVA.z + dz), want, `${dx},${dy},${dz} from the lava`);
   for (const s of SIGNS) { const off = signSupport(s.facing); assert.equal(g.id(s.x + off[0], s.y, s.z + off[1]) !== 'air', true, `behind ${s.group} sign ${s.x},${s.y},${s.z}`); }
   // Not held: a missing sign, lava elsewhere, a second lava, water over it, lava too low or too high.
@@ -450,7 +464,7 @@ test('campfires: TWO, lit, side by side in the hallway\'s east column (the first
     const id = g.id(x, y, z);
     assert.ok(id === 'air' || (id === 'wall_sign' && SIGNS.some((s) => s.x === x && s.y === y && s.z === z)), `${x},${y},${z} is ${id}`);
   }
-  for (let y = -6; y <= -3; y++) for (const z of [7, 8]) assert.notEqual(g.id(9, y, z), 'cobblestone', `hall cell 9,${y},${z}`);
+  for (let y = -6; y <= -3; y++) for (const z of [7, 8]) assert.ok(!SHELLS.includes(g.id(9, y, z)), `hall cell 9,${y},${z}`);
   caught(without(ironFarmPlan(), (o) => o.id === 'campfire'), /no campfire|0 campfires/);
   caught(without(ironFarmPlan(), (o) => o.id === 'campfire' && o.z === 8), /1 campfires in the plan|no campfire/);
   caught(put(ironFarmPlan(), 7, -6, 7, 'campfire'), /3 campfires in the plan/);
@@ -474,7 +488,7 @@ test('three hoppers (the player\'s count): one under each campfire, the south on
   for (const c of CAMPFIRES) assert.equal(g.id(c.x, -7, c.z), 'hopper', `under the campfire at ${c.x},${c.z}`);
   assert.deepEqual(HOPPERS.map((h) => `${h.x},${h.z},${h.facing}`), ['9,7,5', '9,8,2', '10,7,5']);
   // Under the four cells of the shaft's foot there is only floor: what lands there is carried to the campfires by the water.
-  for (const [x, z] of [[7, 7], [8, 7], [7, 8], [8, 8]]) assert.equal(g.id(x, -7, z), 'cobblestone', `under ${x},${z}`);
+  for (const [x, z] of [[7, 7], [8, 7], [7, 8], [8, 8]]) assert.equal(g.id(x, -7, z), SHELL, `under ${x},${z}`);
   assert.equal(CHESTS.length, 2);
   assert.equal(CHESTS[1].x, CHESTS[0].x + 1);
   const dirs = CHESTS.map((c) => g.at(c.x, c.y, c.z).states['minecraft:cardinal_direction']);

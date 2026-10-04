@@ -184,6 +184,7 @@ export class Agent {
     this.autoDone = false;
     this.nextAutoTry = 0;
     this.arenaHook = null;       // a test arena is running (game/arena.js): its rules for deaths, kit and who to fight
+    this.kitHeld = false;        // the iron farm build (game/farmbuild.js) has its own things in the pack: do not save them as ours
     this.knownSurfaceStone = null;
     this.waterIdle = 0;
     this.ownWaterSince = null; this.ownWaterSaid = false; // (core/water.js: when a job of its own first got wet)
@@ -532,7 +533,7 @@ export class Agent {
    * world and comes back empty-handed, so a server restart or a rejoin used to cost it everything.
    */
   saveKit() {
-    if (this.arenaHook) return; // (the arena's kit is not ours: what we owned was saved before it began)
+    if (this.arenaHook || this.kitHeld) return; // (the arena's kit is not ours, nor is the iron farm build's (game/farmbuild.js): what we owned was saved before it began)
     try { this.memory.data.kit = { ...kitOf(this.sim), at: Date.now() }; this.memory.save(); } catch (e) { console.warn(`[agent] save kit: ${e}`); }
   }
 

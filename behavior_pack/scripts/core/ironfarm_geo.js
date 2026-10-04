@@ -94,10 +94,19 @@ export const SIGNS = Object.freeze([
   { x: LAVA.x - 1, y: LAVA.y, z: LAVA.z, facing: 3, group: 'lava', note: 'sign west of the lava, hung on the north wall' },
 ]);
 export const SLAB = 'cobblestone_slab';
+/**
+ * What the shell (walls, floors, roofs, foundation) is made of. u215: dirt, not cobblestone (the player's call: cheaper in survival, appearance be damned;
+ * the slabs stay cobblestone). Mechanically the same here: a full opaque block a golem can spawn on, a wall sign hangs on it, lava does not burn it, water
+ * does not wash it away. What it gives up: blast resistance, and an Enderman can pick a dirt block up (rare, and only at night/in the dark).
+ * `ironFarmPlan({ shell: 'cobblestone' })` is the old look.
+ */
+export const SHELL = 'dirt';
+/** Every full block the checks accept as a wall of the farm. */
+export const SHELLS = Object.freeze(['cobblestone', 'dirt']);
 export const DOOR_ID = 'wooden_door';
 
 /** Everything the plan may be made of: all of it is there before the Nether. */
-export const ALLOWED = Object.freeze(['air', 'cobblestone', SLAB, 'glass', 'composter', 'bed', 'hopper', 'chest', 'wall_sign', 'torch', 'lava', 'water', 'campfire', GATE_ID, DOOR_ID]);
+export const ALLOWED = Object.freeze(['air', 'cobblestone', 'dirt', SLAB, 'glass', 'composter', 'bed', 'hopper', 'chest', 'wall_sign', 'torch', 'lava', 'water', 'campfire', GATE_ID, DOOR_ID]);
 
 /** Where a wall sign hangs: the offset from the sign to the block it is attached to, by the way it faces. */
 export const signSupport = (facing) => ({ 2: [0, 1], 3: [0, -1], 4: [1, 0], 5: [-1, 0] })[facing] ?? null;

@@ -5,7 +5,7 @@
 const G = (globalThis.__ifw ??= { grid: new Map(), log: [], tick: 0, knobs: {}, entities: [], players: [], intervals: new Map(), nextInterval: 1, awake: new Set(), time: 0 });
 const key = (x, y, z) => `${x},${y},${z}`;
 const SUPPORT = { 2: [0, 1], 3: [0, -1], 4: [1, 0], 5: [-1, 0] };
-const KNOWN = new Set(['air', 'cobblestone', 'glass', 'composter', 'bed', 'hopper', 'chest', 'wall_sign', 'oak_wall_sign', 'spruce_wall_sign', 'torch', 'lava', 'water', 'flowing_water', 'cobblestone_slab', 'stone_block_slab', 'oak_slab', 'wooden_slab', 'campfire', 'wooden_door', 'oak_door', 'fence_gate', 'oak_fence_gate']);
+const KNOWN = new Set(['air', 'cobblestone', 'dirt', 'stone', 'glass', 'composter', 'bed', 'hopper', 'chest', 'wall_sign', 'oak_wall_sign', 'spruce_wall_sign', 'torch', 'lava', 'water', 'flowing_water', 'cobblestone_slab', 'stone_block_slab', 'oak_slab', 'wooden_slab', 'campfire', 'wooden_door', 'oak_door', 'fence_gate', 'oak_fence_gate']);
 
 function parseBlock(text) {
   const m = /^(?:minecraft:)?([a-z_]+)\s*(?:\[(.*)\])?$/.exec(text.trim());
@@ -26,7 +26,7 @@ function pairedChest(x, y, z) {
   return [[1, 0], [-1, 0], [0, 1], [0, -1]].some(([dx, dz]) => { const o = G.grid.get(key(x + dx, y, z + dz)); return o?.id === 'chest' && o.states?.['minecraft:cardinal_direction'] === me.states?.['minecraft:cardinal_direction']; });
 }
 
-const solidId = (id) => ['cobblestone', 'glass', 'composter', 'hopper', 'chest', 'bed'].includes(id) || id.endsWith('slab');
+const solidId = (id) => ['cobblestone', 'dirt', 'stone', 'glass', 'composter', 'hopper', 'chest', 'bed'].includes(id) || id.endsWith('slab');
 export const idAtCell = (x, y, z) => G.grid.get(key(x, y, z))?.id ?? 'air';
 
 function neighbourChanged(x, y, z, changed = '') {
@@ -64,6 +64,8 @@ function acceptable(b) {
 }
 
 class Dimension {
+  id = 'minecraft:overworld';
+  heightRange = { min: -64, max: 320 };
   runCommand(cmd) {
     G.log.push(cmd.length > 100 ? `${cmd.slice(0, 100)}...` : cmd);
     let m = /^setblock (-?\d+) (-?\d+) (-?\d+) (.+)$/.exec(cmd);
@@ -87,6 +89,7 @@ class Dimension {
       }
       return { successCount: n };
     }
+    if (/^tickingarea (add|remove) /.test(cmd)) return { successCount: 1 };
     m = /^time (set|add) (-?\d+)$/.exec(cmd);
     if (m) { G.time = m[1] === 'set' ? Number(m[2]) : G.time + Number(m[2]); return { successCount: 1 }; }
     m = /^gamerule randomtickspeed (\d+)$/.exec(cmd);
@@ -104,7 +107,7 @@ class Dimension {
       getComponent: (n) => (n === 'minecraft:inventory' && c?.id === 'chest' ? { container: { size: pairedChest(x, y, z) ? 54 : 27, getItem: () => undefined } } : undefined),
     };
   }
-  getTopmostBlock({ x, z }) { const y = G.knobs.groundAt ? G.knobs.groundAt(x, z) : 69; return y === undefined ? undefined : { y }; }
+  getTopmostBlock({ x, z }) { const y = G.knobs.groundAt ? G.knobs.groundAt(x, z) : 69; return y === undefined ? undefined : { y, location: { x, y, z } }; }
   spawnEntity(type, loc) {
     if (type === 'minecraft:iron_golem') {
       const e = { typeId: type, id: String(G.entities.length + 1), location: { ...loc }, isValid: true, isInWater: false, kill() { this.isValid = false; }, remove() { this.isValid = false; } };
@@ -188,3 +191,26 @@ export const world = {
   getTimeOfDay: () => G.time % 24000,
 };
 export const dimension = new Dimension();
+
+// ---- what game/inventory.js needs of the module (the bot's pack), for tools/sim_farmbuild.mjs ----
+export class ItemStack {
+  constructor(typeId, amount = 1) { this.typeId = typeId.startsWith('minecraft:') ? typeId : `minecraft:${typeId}`; this.amount = amount; this.maxAmount = this.typeId.endsWith('bucket') ? 1 : 64; }
+  getComponent() { return undefined; }
+  clone() { return new ItemStack(this.typeId, this.amount); }
+}
+export class Container {
+  constructor(size) { this.size = size; this.slots = new Array(size).fill(undefined); }
+  getItem(i) { const it = this.slots[i]; return it ? it.clone() : undefined; }
+  setItem(i, it) { this.slots[i] = it ? it.clone() : undefined; }
+  clearAll() { this.slots.fill(undefined); }
+  swapItems(a, b) { const t = this.slots[a]; this.slots[a] = this.slots[b]; this.slots[b] = t; }
+  addItem(it) {
+    let left = it.amount;
+    for (let i = 0; i < this.size && left > 0; i++) { const s = this.slots[i]; if (s && s.typeId === it.typeId && s.amount < s.maxAmount) { const k = Math.min(s.maxAmount - s.amount, left); s.amount += k; left -= k; } }
+    for (let i = 0; i < this.size && left > 0; i++) if (!this.slots[i]) { const k = Math.min(it.maxAmount, left); this.slots[i] = new ItemStack(it.typeId, k); left -= k; }
+    return left > 0 ? new ItemStack(it.typeId, left) : undefined;
+  }
+}
+export const EntityComponentTypes = { Inventory: 'minecraft:inventory', Equippable: 'minecraft:equippable' };
+export const EquipmentSlot = { Head: 'Head', Chest: 'Chest', Legs: 'Legs', Feet: 'Feet', Offhand: 'Offhand', Mainhand: 'Mainhand' };
+export const EnchantmentTypes = { get: () => undefined };

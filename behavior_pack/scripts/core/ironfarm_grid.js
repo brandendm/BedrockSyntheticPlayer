@@ -33,9 +33,9 @@ const WATER_FLOWS_IN = new Set(FREE);
 /** What a golem's body may overlap while it stands in the hallway: free cells, a campfire (it steps onto it) and lava (it is burning in it). */
 const BODY_FREE = new Set([...FREE, 'campfire', 'lava']);
 /** Full blocks (and near enough): what a golem could be spawned on. Slabs and stairs are not: that is what the slabs are for. */
-const SUPPORT = new Set(['cobblestone', 'glass', 'composter', 'hopper', 'chest', 'bed']);
+const SUPPORT = new Set(['cobblestone', 'dirt', 'glass', 'composter', 'hopper', 'chest', 'bed']);
 /** Blocks that stop light (the torches' glow goes through glass, signs and air). */
-const OPAQUE = new Set(['cobblestone', 'composter']);
+const OPAQUE = new Set(['cobblestone', 'dirt', 'composter']);
 export const passable = (id) => FREE.has(id);
 export const solid = (id) => SUPPORT.has(id);
 export const opaque = (id) => OPAQUE.has(id);

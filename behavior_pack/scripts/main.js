@@ -9,6 +9,7 @@ import { Agent } from './game/agent.js';
 import { runTests } from './game/scenarios.js';
 import { arenaCommand } from './game/arenas.js';
 import { ironFarmCommand } from './game/ironfarm.js';
+import { farmBuildCommand } from './game/farmbuild.js';
 import { poll, sendEvent } from './game/bridge.js';
 import { CONFIG } from './config.js';
 import { orderOf } from './core/toggles.js';
@@ -445,6 +446,13 @@ function handle(text, player) {
     // From the dashboard there is no sender: the first real player is the one who takes part.
     const tester = player ?? world.getPlayers().find((pl) => pl.name !== agent.sim.name);
     runTests(agent, tester, lower.split(/\s+/).slice(1)).catch((e) => console.error(`[test] ${e}\n${e.stack}`));
+    return;
+  }
+  if (lower === 'buildfarm' || lower.startsWith('buildfarm ') || lower.startsWith('ironfarm bot')) {
+    // The same farm, built by the bot with its own hands on a pad in the sky (game/farmbuild.js).
+    if (!agent?.sim.isValid) return reply(player, 'spawn first');
+    const fw = lower.split(/\s+/).slice(1);
+    farmBuildCommand(agent, player, lower.startsWith('ironfarm') ? fw.slice(1) : fw);
     return;
   }
   if (lower === 'ironfarm' || lower.startsWith('ironfarm ')) {

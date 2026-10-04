@@ -32,7 +32,7 @@
 // to be (the platform is symmetrical about the average); the village may want a day or two before it counts the villagers as working.
 import {
   box, PLATFORM, CORNER_BOXES, POD, POD_SHELL, SHAFT_SHELL, ROOM, ROOM_SHELL, WINDOW, DOOR, STEP, HALL, LAVA, CAMPFIRES, CHAMBER_WATER, GATES,
-  GATE_ID, HOPPERS, CHESTS, CHEST_FACING, SIGNS, SLAB, DOOR_ID, FLOOR_Y, WATER_Y, waterSources, villageCentre, hull, opBox,
+  GATE_ID, HOPPERS, CHESTS, CHEST_FACING, SIGNS, SLAB, SHELL, DOOR_ID, FLOOR_Y, WATER_Y, waterSources, villageCentre, hull, opBox,
 } from './ironfarm_geo.js';
 import { render, exposedTops, runs } from './ironfarm_grid.js';
 
@@ -46,8 +46,12 @@ export const SOUTH_STATIONS = Object.freeze([4, 6, 8, 10, 12]);  // composters i
 export const POD_TORCHES = Object.freeze([[3, 3], [8, 3], [12, 3], [3, 12], [8, 12], [12, 12], [2, 7], [13, 8]]);
 export const ROOM_TORCH = Object.freeze({ x: 13, y: -6, z: 9 });
 
-/** The plan: { ops (in order; tag 'sign' | 'gate' | 'lava' | 'campfire' | 'chest' | 'door' | 'water' | 'cwater' | 'slab' marks the ones the builder treats with care), beds, stations, villagers, bounds, centre, centres }. */
-export function ironFarmPlan() {
+/**
+ * The plan: { ops (in order; tag 'sign' | 'gate' | 'lava' | 'campfire' | 'chest' | 'door' | 'water' | 'cwater' | 'slab' marks the ones the builder treats with care),
+ * beds, stations, villagers, bounds, centre, centres, shell (what the walls are made of) }. `shell` is SHELL (dirt) unless asked otherwise.
+ * @param {{ shell?: string }} [opts]
+ */
+export function ironFarmPlan({ shell = SHELL } = {}) {
   const ops = [];
   const fill = (b, id, note = '', tag = '') => ops.push({ op: 'fill', box: b, id, note, tag });
   const set = (x, y, z, id, states = undefined, note = '', tag = '') => ops.push({ op: 'set', x, y, z, id, states, note, tag });
@@ -63,19 +67,19 @@ export function ironFarmPlan() {
   const centre = { x: Math.floor((c1.x + c2.x) / 2), y: Math.floor((c1.y + c2.y) / 2), z: Math.floor((c1.z + c2.z) / 2) };
 
   // The platform: floor (which is also the pod's roof), walls three high all round, the four 2 x 2 inside corners solid, then the hole in the floor.
-  fill(box(-1, FLOOR_Y, -1, 16, FLOOR_Y, 16), 'cobblestone', 'platform floor / pod roof');
-  fill(box(-1, 4, -1, 16, 6, -1), 'cobblestone', 'platform wall, north');
-  fill(box(-1, 4, 16, 16, 6, 16), 'cobblestone', 'platform wall, south');
-  fill(box(-1, 4, 0, -1, 6, 15), 'cobblestone', 'platform wall, west');
-  fill(box(16, 4, 0, 16, 6, 15), 'cobblestone', 'platform wall, east');
-  for (const c of CORNER_BOXES) fill(c, 'cobblestone', 'solid 2 x 2 corner (the water makes a dead pocket in a corner, and a golem pushed into one would stay there)');
+  fill(box(-1, FLOOR_Y, -1, 16, FLOOR_Y, 16), shell, 'platform floor / pod roof');
+  fill(box(-1, 4, -1, 16, 6, -1), shell, 'platform wall, north');
+  fill(box(-1, 4, 16, 16, 6, 16), shell, 'platform wall, south');
+  fill(box(-1, 4, 0, -1, 6, 15), shell, 'platform wall, west');
+  fill(box(16, 4, 0, 16, 6, 15), shell, 'platform wall, east');
+  for (const c of CORNER_BOXES) fill(c, shell, 'solid 2 x 2 corner (the water makes a dead pocket in a corner, and a golem pushed into one would stay there)');
   // The pod, the shaft through it and down to the chamber, the room beside the chamber.
-  fill(POD_SHELL, 'cobblestone', 'pod shell');
+  fill(POD_SHELL, shell, 'pod shell');
   fill(POD, 'air', 'pod');
-  fill(SHAFT_SHELL, 'cobblestone', 'shaft, chamber and the base under them');
+  fill(SHAFT_SHELL, shell, 'shaft, chamber and the base under them');
   fill(box(7, -6, 7, 8, FLOOR_Y, 8), 'air', 'shaft, hallway and the hole in the platform floor');
   fill(HALL, 'air', 'the east half of the hallway (4 high: a golem standing on the campfire is 3.3), cut out of the shaft wall');
-  fill(ROOM_SHELL, 'cobblestone', 'room shell');
+  fill(ROOM_SHELL, shell, 'room shell');
   fill(ROOM, 'air', 'room');
   fill(WINDOW, 'glass', 'window between the room and the hallway');
   set(DOOR.x, DOOR.y, DOOR.z, DOOR_ID, { direction: 0, door_hinge_bit: false, open_bit: false, upper_block_bit: false }, 'door, lower half', 'door');
@@ -114,7 +118,7 @@ export function ironFarmPlan() {
   fill(box(15, WATER_Y, 2, 15, WATER_Y, 13), 'water', 'water sources, east edge', 'water');
 
   const bounds = hull(ops.map(opBox));
-  return { ops, beds, stations, villagers, bounds, centre, centres: [c1, c2] };
+  return { ops, beds, stations, villagers, bounds, centre, centres: [c1, c2], shell };
 }
 
 /** What it takes to build it, counted from the plan: blocks by kind, and the survival shopping list as text. */
@@ -124,11 +128,14 @@ export function materials(plan) {
   for (const v of g.cells.values()) n[v.id] = (n[v.id] ?? 0) + 1;
   n.bed = (n.bed ?? 0) / 2;
   n[DOOR_ID] = (n[DOOR_ID] ?? 0) / 2;
-  const slabs = n[SLAB] ?? 0, cobble = n.cobblestone ?? 0;
+  const shell = plan.shell ?? 'cobblestone';
+  const slabs = n[SLAB] ?? 0, walls = n[shell] ?? 0;
   const cobbleForSlabs = Math.ceil(slabs / 6) * 3;
   const sources = waterSources().length;
   const lines = [
-    `cobblestone ${cobble} + ${slabs} cobblestone slabs (${cobbleForSlabs} more cobblestone: 3 make 6 slabs) = ${cobble + cobbleForSlabs}`,
+    shell === 'cobblestone'
+      ? `cobblestone ${walls} + ${slabs} cobblestone slabs (${cobbleForSlabs} more cobblestone: 3 make 6 slabs) = ${walls + cobbleForSlabs}`
+      : `${shell} ${walls} (dig it, no pickaxe needed) + ${slabs} cobblestone slabs (${cobbleForSlabs} cobblestone: 3 make 6 slabs)`,
     `${n.glass ?? 0} glass`,
     `${n.composter ?? 0} composters (7 wood slabs each)`,
     `${n.bed ?? 0} beds (3 wool + 3 planks each)`,
@@ -141,5 +148,5 @@ export function materials(plan) {
     `a lava bucket (one source) and a water bucket (${sources} water sources on the platform, the middle twelve cells of each edge, none at the corners and none in the second row: a cell that touches two sources becomes one; one more in the hallway)`,
     `${plan.villagers.length} adult villagers`,
   ];
-  return { counts: n, cobble: cobble + cobbleForSlabs, text: lines.join('; ') };
+  return { counts: n, shell, walls, cobble: (shell === 'cobblestone' ? walls : 0) + cobbleForSlabs, text: lines.join('; ') };
 }

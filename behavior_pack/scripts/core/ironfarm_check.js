@@ -2,7 +2,7 @@
 // it on the plan and then breaks the plan in each way to see that the check notices.
 import {
   PLATFORM, CORNERS, HOLE, POD, SHAFT, HALL, CHAMBER, ROOM, DOOR, STEP, CAMPFIRES, LAVA, CHAMBER_WATER, CHAMBER_WET, CHAMBER_FLOOR_Y, GATES, GATE_ID,
-  HOPPERS, CHESTS, CHEST_FACING, STAND, SIGNS, SLAB, DOOR_ID, ALLOWED, WATER_Y, FLOOR_Y, ROOM_SHELL, signSupport, waterSources, opBox, inBox,
+  HOPPERS, CHESTS, CHEST_FACING, STAND, SIGNS, SLAB, SHELLS, DOOR_ID, ALLOWED, WATER_Y, FLOOR_Y, ROOM_SHELL, signSupport, waterSources, opBox, inBox,
 } from './ironfarm_geo.js';
 import {
   SPAWN_VOLUME, render, passable, solid, outsideAir, exposedTops, golemSpots, settleWater, pushBox, supported, lightField, walkable,
@@ -125,9 +125,10 @@ export function checkPlan(plan, { deep = true } = {}) {
 
   // Hollow, not a block: how much of the farm's box is solid.
   const boxCells = (bb.x2 - bb.x1 + 1) * (bb.y2 - bb.y1 + 1) * (bb.z2 - bb.z1 + 1);
-  const blocks = [...g.cells.values()].filter((v) => v.id === 'cobblestone').length;
-  if (blocks > boxCells * 0.4) bad.push(`${blocks} cobblestone in a box of ${boxCells}: that is a lump, not a shell`);
-  if (blocks > MAX_COBBLE) bad.push(`${blocks} cobblestone is more than a survival player wants to place`);
+  const blocks = [...g.cells.values()].filter((v) => SHELLS.includes(v.id)).length;
+  if (blocks > boxCells * 0.4) bad.push(`${blocks} blocks of shell in a box of ${boxCells}: that is a lump, not a shell`);
+  if (blocks > MAX_COBBLE) bad.push(`${blocks} blocks of shell is more than a survival player wants to place`);
+  if (plan.shell && !SHELLS.includes(plan.shell)) bad.push(`${plan.shell} is not a shell material`);
 
   // The only place a golem can spawn is the platform (and plenty of it).
   for (const c of plan.centres) for (const k of centreBlocks(c)) {
@@ -218,7 +219,7 @@ export function checkPlan(plan, { deep = true } = {}) {
   if (lostItems > 3) bad.push(`${lostItems} dropped items in all would not reach a hopper`);
 
   // The lava: at the head height of what stands on the floor (its box is 2.9 high: lava from two blocks up is in its head), directly over the first campfire,
-  // every side cobblestone, glass or a wall sign that hangs on something (above it is the open hallway: a source does not run up).
+  // every side shell, glass or a wall sign that hangs on something (above it is the open hallway: a source does not run up).
   if (id(LAVA.x, LAVA.y, LAVA.z) !== 'lava') bad.push('no lava');
   if (LAVA.y - CHAMBER_FLOOR_Y < 2) bad.push('the lava is below the golem\'s head');
   if (LAVA.y - CHAMBER_FLOOR_Y > 2) bad.push('the lava is above the golem\'s head');
@@ -230,7 +231,7 @@ export function checkPlan(plan, { deep = true } = {}) {
     if (n?.id === 'wall_sign') {
       const off = signSupport(n.states?.facing_direction);
       if (!off || !solid(id(q.x + off[0], q.y, q.z + off[1]))) bad.push(`the sign at ${dx},${dy},${dz} from the lava has nothing behind it to hang on`);
-    } else if (!(n && (n.id === 'cobblestone' || n.id === 'glass'))) bad.push(`lava has ${n?.id ?? 'air'} beside it at ${dx},${dy},${dz}`);
+    } else if (!(n && (SHELLS.includes(n.id) || n.id === 'glass'))) bad.push(`lava has ${n?.id ?? 'air'} beside it at ${dx},${dy},${dz}`);
   }
   const above = id(LAVA.x, LAVA.y + 1, LAVA.z);
   if (above === 'water') bad.push('water over the lava');
@@ -238,7 +239,7 @@ export function checkPlan(plan, { deep = true } = {}) {
   // Headroom: a golem standing on the campfire (7/16 up) is 3.3 high: the four layers over every cell of the hallway's east half are clear (but for the lava and its signs).
   for (let x = HALL.x1; x <= HALL.x2; x++) for (let y = HALL.y1; y <= HALL.y2; y++) for (let z = HALL.z1; z <= HALL.z2; z++) {
     const here = id(x, y, z);
-    if (here === 'cobblestone' || here === 'glass' || here === 'hopper') bad.push(`the hallway is blocked at ${x},${y},${z} (${here})`);
+    if (SHELLS.includes(here) || here === 'glass' || here === 'hopper') bad.push(`the hallway is blocked at ${x},${y},${z} (${here})`);
   }
 
   // The campfires: TWO, lit, side by side in the hallway's east column (the first in the north-east corner, under the lava), each over a hopper; none
