@@ -1,9 +1,54 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { ironFarmPlan, checkPlan, render, golemSpots, waterField, blockArg, villageCentre, SOURCE, KILL, PLATFORM, POD, SPAWN_VOLUME } from '../behavior_pack/scripts/core/ironfarm.js';
+import {
+  ironFarmPlan, checkPlan, render, golemSpots, waterField, blockArg, villageCentre, materials, exposedTops, outsideAir, signSupport,
+  SOURCE, KILL, LAVA, SIGNS, PLATFORM, POD, SPAWN_VOLUME, ALLOWED, SLAB, SHELLS,
+} from '../behavior_pack/scripts/core/ironfarm.js';
+
+const without = (p, pred) => { p.ops = p.ops.filter((o) => !pred(o)); return p; };
 
 test('the plan holds together: nothing for checkPlan to complain about', () => {
   assert.deepEqual(checkPlan(ironFarmPlan()), []);
+});
+
+test('it is a hollow shell, not a lump: a few hundred cobblestone round the rooms, nothing like the 13,000-block cube it was', () => {
+  const p = ironFarmPlan();
+  const m = materials(p);
+  assert.ok(m.counts.cobblestone > 300 && m.counts.cobblestone < 600, `${m.counts.cobblestone} cobblestone`);
+  assert.ok(m.cobble < 700, `${m.cobble} cobblestone with the slabs`);
+  const b = p.bounds;
+  const cells = (b.x2 - b.x1 + 1) * (b.y2 - b.y1 + 1) * (b.z2 - b.z1 + 1);
+  assert.ok(m.counts.cobblestone < cells * 0.4);
+  // The old way of doing it (everything solid first, rooms carved out) is what checkPlan calls a lump.
+  const lump = ironFarmPlan();
+  lump.ops.unshift({ op: 'fill', box: b, id: 'cobblestone', note: 'solid' });
+  assert.ok(checkPlan(lump).some((x) => /lump|more than a survival player/.test(x)), checkPlan(lump).join('; '));
+});
+
+test('it is made of overworld things only: no crimson, no glowstone, nothing from the Nether, and a Nether block put in is caught', () => {
+  const p = ironFarmPlan();
+  const g = render(p);
+  const used = new Set([...g.cells.values()].map((v) => v.id));
+  for (const id of used) assert.ok(ALLOWED.includes(id), id);
+  for (const o of p.ops) assert.ok(!/crimson|warped|nether|glowstone|blackstone|basalt|soul|shroom|quartz|magma|ancient|netherite/.test(o.id), o.id);
+  const bad = ironFarmPlan();
+  bad.ops.push({ op: 'set', x: 4, y: 1, z: 2, id: 'glowstone', note: 'light' });
+  assert.ok(checkPlan(bad).some((x) => /glowstone is not an overworld/.test(x)));
+  const gate = ironFarmPlan();
+  gate.ops.push({ op: 'set', x: 5, y: 6, z: 10, id: 'crimson_fence_gate', states: { open_bit: true }, note: 'gate' });
+  assert.ok(checkPlan(gate).some((x) => /crimson_fence_gate is not an overworld/.test(x)));
+});
+
+test('the shopping list is something a survival player can meet: what is needed is counted from the plan', () => {
+  const m = materials(ironFarmPlan());
+  assert.equal(m.counts.bed, 20);
+  assert.equal(m.counts.composter, 10);
+  assert.equal(m.counts.hopper, 2);
+  assert.equal(m.counts.wall_sign, 3);
+  assert.equal(m.counts.chest, 1);
+  assert.ok(m.counts.cobblestone_slab > 50 && m.counts.cobblestone_slab < 250, `${m.counts.cobblestone_slab} slabs`);
+  assert.match(m.text, /20 beds/);
+  assert.match(m.text, /lava bucket/);
 });
 
 test('the village: 20 whole beds in two rows, 10 composters each beside a bed, 10 villagers with room', () => {
@@ -24,6 +69,17 @@ test('a bed is set at its head with direction 0: the foot is one block north of 
   assert.equal(b.foot.z, b.head.z - 1);
 });
 
+test('the pod is lit so nothing spawns among the villagers, and so is the viewing room; the torches stand on blocks', () => {
+  const p = ironFarmPlan();
+  const g = render(p);
+  const torches = [...g.cells].filter(([, v]) => v.id === 'torch').map(([k]) => k.split(',').map(Number));
+  assert.ok(torches.filter(([, y]) => y === 1).length >= 4);
+  assert.ok(torches.some(([, y]) => y === 4));
+  for (const [x, y, z] of torches) assert.equal(g.id(x, y - 1, z), 'cobblestone');
+  // None of them is where a villager is put.
+  for (const v of p.villagers) assert.ok(!torches.some(([x, , z]) => x === Math.floor(v.x) && z === Math.floor(v.z)));
+});
+
 test('the centre is the average of the beds and workstations, and the platform is well inside the spawn volume round it', () => {
   const p = ironFarmPlan();
   const c = villageCentre(p.beds, p.stations);
@@ -36,7 +92,7 @@ test('the centre is the average of the beds and workstations, and the platform i
   }
 });
 
-test('the only free spots in the spawn volume are on the platform: the pod and the viewing room are two high, the rest is stone', () => {
+test('the only free spots in the spawn volume are on the platform: the pod and the room are two high, and every bare roof is slabbed', () => {
   const p = ironFarmPlan();
   const g = render(p);
   for (const k of p.centres) {
@@ -44,13 +100,41 @@ test('the only free spots in the spawn volume are on the platform: the pod and t
     assert.ok(spots.length >= 12, `${spots.length} spots`);
     for (const s of spots) assert.ok(s.y === PLATFORM.y1 && s.x >= PLATFORM.x1 && s.x <= PLATFORM.x2 && s.z >= PLATFORM.z1 && s.z <= PLATFORM.z2, `stray spot ${s.x},${s.y},${s.z}`);
   }
+  assert.deepEqual(exposedTops(g, p.bounds), []);
+});
+
+test('without the slabs the roofs are places to spawn (the check does see them): this is what the slabs are for', () => {
+  const p = without(ironFarmPlan(), (o) => o.tag === 'slab');
+  const g = render(p);
+  const bare = exposedTops(g, p.bounds);
+  assert.ok(bare.length > 100, `${bare.length} bare roof cells`);
+  const bad = checkPlan(p);
+  assert.ok(bad.some((x) => /golems could also spawn/.test(x)), bad.join('; '));
+  assert.ok(bad.some((x) => /bare roof/.test(x)));
+  // And they are slabs of the one kind, one per bare cell, no more.
+  const slabbed = ironFarmPlan();
+  const n = slabbed.ops.filter((o) => o.tag === 'slab').reduce((a, o) => a + (o.box.x2 - o.box.x1 + 1), 0);
+  assert.equal(n, bare.length);
+  assert.ok(slabbed.ops.filter((o) => o.tag === 'slab').every((o) => o.id === SLAB));
 });
 
 test('a pod with a three-high ceiling would be a leak (the check does see one)', () => {
   const p = ironFarmPlan();
   p.ops.push({ op: 'fill', box: { x1: 0, y1: 3, z1: 0, x2: 9, y2: 3, z2: 5 }, id: 'air', note: 'raise the roof' });
   const bad = checkPlan(p);
-  assert.ok(bad.some((b) => /spawn at/.test(b) || /roof missing/.test(b)), bad.join('; '));
+  assert.ok(bad.some((b) => /spawn at/.test(b) || /roof missing/.test(b) || /golems could also spawn/.test(b)), bad.join('; '));
+});
+
+test('the shell is sealed: a hole in a wall is caught, and the outside air does not get in', () => {
+  const p = ironFarmPlan();
+  const g = render(p);
+  const out = outsideAir(g, p.bounds);
+  assert.ok(out.has('-1,0,-2') || out.has('-2,0,-2'));
+  assert.ok(!out.has('3,4,8'));
+  assert.ok(!out.has('4,1,3'));
+  p.ops.push({ op: 'set', x: -1, y: 1, z: 3, id: 'air', note: 'knocked out' });
+  p.ops.push({ op: 'fill', box: { x1: -1, y1: 1, z1: 3, x2: -1, y2: 1, z2: 3 }, id: 'air', note: 'knocked out' });
+  assert.ok(checkPlan(p).some((b) => /the shell has a hole/.test(b)), checkPlan(p).join('; '));
 });
 
 test('water from the one source reaches every cell of the platform floor, flowing on toward the south-east corner, which is the furthest and level 6 of 7', () => {
@@ -84,18 +168,33 @@ test('two sources along two walls would not do: the water would pile up on the d
   assert.ok(ends.length > 1, `ends ${ends.join(' ')}`);
 });
 
-test('the lava is held on every side by stone or an open crimson gate, and touches no water; a closed gate or a missing one is caught', () => {
+test('the lava is held on every side by cobblestone or a wall sign hanging on a block, two blocks above the water; a missing sign or one with nothing behind it is caught', () => {
   const p = ironFarmPlan();
   const g = render(p);
-  assert.equal(g.id(KILL.x, KILL.y + 2, KILL.z), 'lava');
-  assert.equal(g.at(KILL.x, KILL.y + 1, KILL.z).id, 'crimson_fence_gate');
-  assert.equal(g.at(KILL.x, KILL.y + 1, KILL.z).states.open_bit, true);
-  const shut = ironFarmPlan();
-  shut.ops.find((o) => o.id === 'crimson_fence_gate').states = { open_bit: false };
-  assert.ok(checkPlan(shut).some((b) => /lava has/.test(b)));
-  const gone = ironFarmPlan();
-  gone.ops = gone.ops.filter((o) => !(o.id === 'crimson_fence_gate' && o.y === KILL.y + 1));
-  assert.ok(checkPlan(gone).some((b) => /lava has air/.test(b)));
+  assert.equal(g.id(LAVA.x, LAVA.y, LAVA.z), 'lava');
+  assert.equal(LAVA.y - KILL.y, 2);
+  for (const s of SIGNS) {
+    assert.equal(g.id(s.x, s.y, s.z), 'wall_sign');
+    const off = signSupport(s.facing);
+    assert.equal(g.id(s.x + off[0], s.y, s.z + off[1]), 'cobblestone', `behind the sign at ${s.x},${s.y},${s.z}`);
+  }
+  // Three signs: west, north and under the lava; east, south and the roof are cobblestone.
+  assert.equal(SIGNS.length, 3);
+  const turned = ironFarmPlan();
+  turned.ops.find((o) => o.id === 'wall_sign').states = { facing_direction: 3 };
+  assert.ok(checkPlan(turned).some((b) => /nothing behind it/.test(b)), checkPlan(turned).join('; '));
+  const gone = without(ironFarmPlan(), (o) => o.id === 'wall_sign' && o.y === LAVA.y - 1);
+  assert.ok(checkPlan(gone).some((b) => /lava has air/.test(b)), checkPlan(gone).join('; '));
+});
+
+test('the signs are placed before the lava and the lava before the water, so a sign that will not stay can stop the lava going in', () => {
+  const p = ironFarmPlan();
+  const at = (tag) => p.ops.findIndex((o) => o.tag === tag);
+  assert.ok(at('sign') >= 0 && at('sign') < at('lava') && at('lava') < at('water'));
+  assert.equal(p.ops.filter((o) => o.tag === 'sign').length, 3);
+  assert.equal(p.ops.filter((o) => o.tag === 'lava').length, 1);
+  assert.equal(p.ops.filter((o) => o.tag === 'water').length, 1);
+  assert.deepEqual(p.ops.filter((o) => o.tag === 'sign').map((o) => o.states.facing_direction), SIGNS.map((s) => s.facing));
 });
 
 test('the hoppers run south from under the corner into the chest in the viewing room, and the viewer can reach it', () => {
@@ -106,19 +205,22 @@ test('the hoppers run south from under the corner into the chest in the viewing 
   assert.equal(g.id(KILL.x, KILL.y - 1, KILL.z + 2), 'chest');
 });
 
-test('every placement is inside the solid block, so the carved rooms are the whole of what is open', () => {
+test('every placement is inside the farm box, which is just the three shells and the slabs on them', () => {
   const p = ironFarmPlan();
-  const c = p.cube;
-  for (const o of p.ops.slice(1)) {
+  const c = p.bounds;
+  for (const o of p.ops) {
     const pts = o.op === 'set' ? [[o.x, o.y, o.z]] : [[o.box.x1, o.box.y1, o.box.z1], [o.box.x2, o.box.y2, o.box.z2]];
     for (const [x, y, z] of pts) assert.ok(x >= c.x1 && x <= c.x2 && y >= c.y1 && y <= c.y2 && z >= c.z1 && z <= c.z2);
   }
   assert.equal(POD.x2 - POD.x1 + 1, 10);
+  assert.equal(c.x1, Math.min(...SHELLS.map((s) => s.x1)));
+  assert.equal(c.y2, Math.max(...SHELLS.map((s) => s.y2)) + 1);
 });
 
 test('setblock arguments: states quoted the way the game wants them', () => {
-  assert.equal(blockArg('stone'), 'stone');
+  assert.equal(blockArg('cobblestone'), 'cobblestone');
   assert.equal(blockArg('bed', { direction: 0, head_piece_bit: true }), 'bed ["direction"=0,"head_piece_bit"=true]');
   assert.equal(blockArg('hopper', { facing_direction: 3 }), 'hopper ["facing_direction"=3]');
+  assert.equal(blockArg('wall_sign', { facing_direction: 4 }), 'wall_sign ["facing_direction"=4]');
   assert.equal(blockArg('x', { a: 'b' }), 'x ["a"="b"]');
 });
