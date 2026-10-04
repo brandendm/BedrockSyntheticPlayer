@@ -22,7 +22,13 @@ const centreBlocks = (c) => {
 export const MAX_COBBLE = 1400;
 export const MIN_SPOTS = 200;
 
-export function checkPlan(plan) {
+/**
+ * Every problem with the plan, as a list of sentences ([] when there is none). `deep` (the default) also moves a golem and drops through the water from
+ * thousands of starting points (pushBox): that takes half a second in Node and far longer in the game's own script engine, which kills a script that
+ * runs ten seconds (u212 hung on it in the game), so game/ironfarm.js asks for `{ deep: false }` and the tests and tools/sim_ironfarm.mjs ask for all of it.
+ * @param {any} plan @param {{ deep?: boolean }} [opts]
+ */
+export function checkPlan(plan, { deep = true } = {}) {
   const bad = [];
   const g = render(plan);
   const id = g.id;
@@ -160,7 +166,7 @@ export function checkPlan(plan) {
     if (l === undefined) bad.push(`no water at ${x},${z}`);
   }
   let lost = 0;
-  for (const [k] of lv) {
+  for (const [k] of deep ? lv : []) {
     const [x, z] = k.split(',').map(Number);
     for (const [ox, oz] of [[0.5, 0.5], [0.2, 0.2], [0.8, 0.2], [0.2, 0.8], [0.8, 0.8]]) {
       const r = pushBox(g, lv, WATER_Y, x + ox, z + oz);
@@ -190,7 +196,7 @@ export function checkPlan(plan) {
   // is pushed by that water, and must end up held against the north-east corner with its middle over the campfire, its box over the lava.
   const fire = CAMPFIRES[0];
   let off = 0, noLava = 0;
-  for (let a = 0; a <= 6; a++) for (let b = 0; b <= 6; b++) {
+  for (let a = 0; a <= (deep ? 6 : -1); a++) for (let b = 0; b <= 6; b++) {
     const r = pushBox(g, clv, CHAMBER_FLOOR_Y, HOLE.x1 + 0.7 + a * 0.1, HOLE.z1 + 0.7 + b * 0.1, { tall: 4 });
     if (Math.floor(r.x) !== fire.x || Math.floor(r.z) !== fire.z) { if (off++ < 3) bad.push(`a golem landing at ${(HOLE.x1 + 0.7 + a * 0.1).toFixed(1)},${(HOLE.z1 + 0.7 + b * 0.1).toFixed(1)} ends at ${r.x.toFixed(2)},${r.z.toFixed(2)}, not in the campfire's cell (${r.why})`); }
     if (Math.floor(r.x - 0.7 + 1e-6) > LAVA.x || Math.floor(r.x + 0.7 - 1e-6) < LAVA.x || Math.floor(r.z - 0.7 + 1e-6) > LAVA.z || Math.floor(r.z + 0.7 - 1e-6) < LAVA.z) noLava++;
@@ -199,7 +205,7 @@ export function checkPlan(plan) {
   if (noLava) bad.push(`${noLava} of 49 landing spots leave the golem's box beside the lava`);
   // Drops (an item is a 0.25 box, dropped at the golem's feet and pushed the same way) end over a hopper wherever in the hallway they start.
   let lostItems = 0;
-  for (let x = CHAMBER.x1; x <= CHAMBER.x2; x++) for (let z = CHAMBER.z1; z <= CHAMBER.z2; z++) for (const [ox, oz] of [[0.5, 0.5], [0.2, 0.2], [0.8, 0.2], [0.2, 0.8], [0.8, 0.8]]) {
+  for (let x = CHAMBER.x1; x <= CHAMBER.x2; x++) for (let z = CHAMBER.z1; z <= CHAMBER.z2; z++) for (const [ox, oz] of deep ? [[0.5, 0.5], [0.2, 0.2], [0.8, 0.2], [0.2, 0.8], [0.8, 0.8]] : []) {
     const r = pushBox(g, clv, CHAMBER_FLOOR_Y, x + ox, z + oz, { half: 0.125, tall: 1 });
     let on = false;
     for (let i = Math.floor(r.x - 0.125 + 1e-6); i <= Math.floor(r.x + 0.125 - 1e-6); i++) for (let j = Math.floor(r.z - 0.125 + 1e-6); j <= Math.floor(r.z + 0.125 - 1e-6); j++) if (id(i, CHAMBER_FLOOR_Y - 1, j) === 'hopper') on = true;

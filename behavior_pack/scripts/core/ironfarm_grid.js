@@ -196,6 +196,8 @@ export function drift(lv, sx, sz, hx, hz, tol = 0.3, maxSteps = 3000) {
   return { arrived: false, x, z, steps: maxSteps, why: 'going round in circles' };
 }
 
+const FLOW_CACHE = new WeakMap();
+
 /**
  * Something with a box, pushed by the water the way the game does it (u212): each tick it takes the push of the wet cells its box overlaps (their
  * flows averaged, dry cells count for nothing), moves along it (0.05 a step, sliding along walls), and stops where it overlaps no water, where the
@@ -208,6 +210,15 @@ export function drift(lv, sx, sz, hx, hz, tol = 0.3, maxSteps = 3000) {
  */
 export function pushBox(grid, lv, y, sx, sz, { half = 0.7, tall = 3, step = 0.05, maxSteps = 4000 } = {}) {
   const e = 1e-6;
+  // (The flow of a cell is the same every time it is asked for: worked out once per field, which is most of the time this takes.)
+  let cache = FLOW_CACHE.get(lv);
+  if (!cache) { cache = new Map(); FLOW_CACHE.set(lv, cache); }
+  const flowOf = (i, j) => {
+    const k = (i + 512) * 1024 + (j + 512);
+    let f = cache.get(k);
+    if (f === undefined) { f = flowAt(lv, i, j); cache.set(k, f); }
+    return f;
+  };
   const cellsOf = (x, z) => {
     const out = [];
     for (let i = Math.floor(x - half + e); i <= Math.floor(x + half - e); i++) for (let j = Math.floor(z - half + e); j <= Math.floor(z + half - e); j++) out.push([i, j]);
@@ -231,7 +242,7 @@ export function pushBox(grid, lv, y, sx, sz, { half = 0.7, tall = 3, step = 0.05
   for (let n = 0; n < maxSteps; n++) {
     let vx = 0, vz = 0, wet = 0;
     for (const [i, j] of cellsOf(x, z)) {
-      const f = flowAt(lv, i, j);
+      const f = flowOf(i, j);
       if (f) { vx += f.x; vz += f.z; wet++; }
     }
     if (!wet) return { x, z, wet: false, rested: false, steps: n, why: 'out of the water' };

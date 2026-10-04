@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import {
   ironFarmPlan, checkPlan, render, golemSpots, waterField, settleWater, waterSources, flowAt, drift, pushBox, supported, lightField, blockArg, villageCentre,
   materials, exposedTops, outsideAir, signSupport, SIGNS, PLATFORM, POD, SPAWN_VOLUME, ALLOWED, SLAB, HOPPERS, CHESTS, CAMPFIRES, DOOR, STEP, HOLE,
@@ -12,8 +13,9 @@ const put = (p, x, y, z, id, states) => { p.ops.push({ op: 'set', x, y, z, id, s
 const carve = (p, x1, y1, z1, x2, y2, z2, id = 'air') => { p.ops.push({ op: 'fill', box: { x1, y1, z1, x2, y2, z2 }, id, note: 'test' }); return p; };
 const caught = (p, re) => { const bad = checkPlan(p); assert.ok(bad.some((x) => re.test(x)), `${re} not in: ${bad.slice(0, 4).join('; ')}`); };
 
-test('the plan holds together: nothing for checkPlan to complain about', () => {
+test('the plan holds together: nothing for checkPlan to complain about (all of it, and the quick form the game runs)', () => {
   assert.deepEqual(checkPlan(ironFarmPlan()), []);
+  assert.deepEqual(checkPlan(ironFarmPlan(), { deep: false }), []);
   assert.ok(MAX >= 1200 && MAX <= 2000);
 });
 
@@ -485,4 +487,18 @@ test('setblock arguments: states quoted the way the game wants them', () => {
   assert.equal(blockArg('wall_sign', { facing_direction: 4 }), 'wall_sign ["facing_direction"=4]');
   assert.equal(blockArg('chest', { 'minecraft:cardinal_direction': 'south' }), 'chest ["minecraft:cardinal_direction"="south"]');
   assert.equal(blockArg('x', { a: 'b' }), 'x ["a"="b"]');
+});
+
+test('the game builds with the quick check only: the deep one (golems and drops moved through the water from thousands of points) hung the game\'s script engine for 10 s in u212 and the watchdog killed the build', () => {
+  const src = readFileSync(new URL('../behavior_pack/scripts/game/ironfarm.js', import.meta.url), 'utf8');
+  assert.match(src, /checkPlan\(plan, \{ deep: false \}\)/);
+  assert.doesNotMatch(src, /checkPlan\(plan\)/);
+  // The quick form still catches what is structural, and leaves out only the moving.
+  assert.ok(checkPlan(without(ironFarmPlan(), (o) => o.tag === 'gate'), { deep: false }).some((b) => /no fence gate over the hole/.test(b)));
+  assert.ok(checkPlan(without(ironFarmPlan(), (o) => o.tag === 'sign' && o.x === 8 && o.y === -6 && o.z === 7), { deep: false }).some((b) => /water reaches the campfire/.test(b)));
+  // Nothing else in the game's code walks the water with pushBox or drift.
+  for (const f of ['ironfarm.js', 'ironfarm_parts.js', 'ironfarm_aids.js', 'ironfarm_world.js']) {
+    const g = readFileSync(new URL(`../behavior_pack/scripts/game/${f}`, import.meta.url), 'utf8');
+    assert.doesNotMatch(g, /pushBox|drift\(/, f);
+  }
 });

@@ -92,7 +92,9 @@ function foundationColumns(tops, baseY, off) {
 async function build(p, force) {
   if (farm) await clear(false);
   const plan = ironFarmPlan();
-  const problems = checkPlan(plan);
+  // (Not the deep check: it moves a golem through the water from thousands of points, which the game's script engine takes more than ten seconds over, and
+  // the watchdog kills the script; u212 died of it. The tests and the sim run all of it.)
+  const problems = checkPlan(plan, { deep: false });
   if (problems.length) return say(`The plan fails its own checks (${problems.slice(0, 3).join('; ')}): not building.`);
   const bd = plan.bounds;
   const mid = { x: Math.round((bd.x1 + bd.x2) / 2), z: Math.round((bd.z1 + bd.z2) / 2) };
