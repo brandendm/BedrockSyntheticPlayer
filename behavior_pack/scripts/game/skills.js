@@ -533,6 +533,7 @@ export class Skills {
   heldSweep() {
     const c = container(this.sim);
     if (!c) return;
+    if (this._restAt && system.currentTick >= this._restAt) this.restHands();
     const slot = this.sim.selectedSlotIndex, id = c.getItem(slot)?.typeId ?? null, prev = this._held;
     this._held = { slot, id };
     if (prev && prev.slot === slot && prev.id && !id) this.afterUse(slot);
@@ -540,8 +541,16 @@ export class Skills {
 
   /** Put the weapon back in hand (or an empty hand) after building or crafting. */
   restHands() {
+    this._restAt = 0;
     hold(this.sim, this.a.weaponId && findSlot(this.sim, this.a.weaponId) >= 0 ? this.a.weaponId : null);
   }
+
+  /**
+   * The same, a moment from now: a player puts blocks down one after another with the block in hand the whole time. The u204 ravine run
+   * flipped the sword in after every block and the dirt out again for the next (9 blocks, 18 swaps; the owner held dirt throughout, 0 swaps).
+   * Whoever builds again within the time keeps the block in hand; the agent's tick puts the weapon back once it has been quiet.
+   */
+  restHandsSoon(ticks = 30) { this._restAt = system.currentTick + ticks; }
 
   /** How far (degrees) our view is off point c: the larger of the yaw and pitch errors. */
   aimError(c) {
@@ -677,7 +686,7 @@ export class Skills {
         }
       }
       this.markPlaced(cell);
-      this.restHands();
+      this.restHandsSoon();
     }
     const r = await this.a.motor.followPath([{ x: from.x + 0.5, y: from.y, z: from.z + 0.5 }, { x: to.x + 0.5, y: to.y, z: to.z + 0.5 }]);
     this.check(gen);
@@ -707,7 +716,7 @@ export class Skills {
     await this.wait(gen, 3); // (a player jumps again about 11 ticks after the last jump: the old 6-tick settle made it 14+)
     this.a.cellChanged?.();
     if (placed) { this.markPlaced(f); this.markScaffold(f); }
-    this.restHands();
+    if (placed) this.restHandsSoon(); else this.restHands();
     return placed && this.feet().y > f.y;
   }
 
@@ -801,7 +810,9 @@ export class Skills {
     for (let dx = -3; dx <= 3; dx++) for (let dz = -3; dz <= 3; dz++) for (let dy = 0; dy <= 3; dy++) {
       if (dx === 0 && dz === 0) continue;
       const c = { x: f.x + dx, y: f.y + dy, z: f.z + dz };
-      if (SOFT.test(this.blockAt(c) ?? 'air')) cells.push({ c, d: dx * dx + dz * dz + dy * dy });
+      // (Head height and below first: a block broken higher up drops onto a ledge out of reach and a dig through to it follows. The u204 climb
+      // test broke 10 blocks for the 4 it needed, 12 of its 17 s; the owner broke 7 and placed 3 in 13.8.)
+      if (SOFT.test(this.blockAt(c) ?? 'air')) cells.push({ c, d: dx * dx + dz * dz + dy * dy + (dy > 1 ? 40 : 0) });
     }
     cells.sort((a, b) => a.d - b.d);
     let got = 0;
@@ -813,8 +824,13 @@ export class Skills {
       this.check(gen);
       const c = todo[i].c, nxt = todo[i + 1]?.c ?? null;
       const last = got + 1 >= want || !nxt;
-      const ok = await this.mine(gen, c, { collect: last || (got + 1) % 3 === 0, next: last ? null : nxt }).catch((e) => { if (e instanceof Aborted) throw e; return false; });
+      const ok = await this.mine(gen, c, { collect: false, next: last ? null : nxt }).catch((e) => { if (e instanceof Aborted) throw e; return false; });
       if (ok) got++;
+    }
+    // The drops, once, walking only (no digging through to one: it was more breaking, for blocks we were already breaking to have enough).
+    if (got) {
+      this.noBreakThrough = true;
+      try { await this.wait(gen, 4); await this.sweep(gen, this.sim.location, 4, null, 4); } finally { this.noBreakThrough = false; }
     }
     if (got) this.log(`escape: broke ${got} soft blocks out of the walls to build up with (${this.blockCount()} placeable now)`);
     return got;
@@ -823,7 +839,8 @@ export class Skills {
   async actionEscape(gen) {
     const cache = new Map();
     // Nothing to build with and a climb ahead: collect some from the walls first, as a player does.
-    if (this.blockCount() < 3 && this.rimClimb() >= 3) await this.gatherScaffold(gen, 6);
+    // (As many as the climb needs, not a stock of 6: the owner placed 3 in the u204 climb test.)
+    if (this.blockCount() < 3 && this.rimClimb() >= 3) await this.gatherScaffold(gen, Math.min(6, Math.max(3, this.rimClimb())));
     const f0 = this.feet();
     // Somewhere out in the open and away from here (not just "the spot we're stuck on": on top of a
     // pillar in a tree, that spot passes every other test).
@@ -1150,7 +1167,7 @@ export class Skills {
       if (!res.complete) {
         // Wedged between leaves and dirt, up a step: break the way to it (leaves and dirt are
         // near-free by hand) rather than leave logs behind after chopping a tree.
-        if (dist3D(here, loc) <= 16) {
+        if (dist3D(here, loc) <= 16 && !this.noBreakThrough) {
           const ar = await this.a.plan(here, loc, 0.9, 4000, null, { actions: { ...this.actionOpts({ force: false }), budget: Math.min(3, this.blockCount()) } });
           this.check(gen);
           if (gone()) continue;
@@ -4781,17 +4798,26 @@ export class Skills {
       // blocks), so it creeps at a fifth of walking speed and stops with its centre 0.66 from the middle of the block along each way it is going:
       // hanging 0.16 over, still standing on it, with the side of the pillar in view.
       const base = { x: fx + 0.5, z: fz + 0.5 };
-      for (let i = 0; i < 50; i++) {
+      // (Landed from the last step with the push still on it: let it die away before creeping, or the creep starts at a run.)
+      if (ctx.d) { this.a.body.stop(); for (let i = 0; i < 8 && Math.hypot(this.sim.getVelocity().x, this.sim.getVelocity().z) > 0.02; i++) await this.wait(gen, 1); }
+      // The push is cut early by what the body will carry on for (the u204 run: the creep at "0.22" went at a walk, 4 b/s, and the second stage
+      // coasted off the ledge's edge 0.9 beyond it and fell 7 blocks for 4 hp; the first had only worked by falling past the lip while it placed):
+      // the along-edge speed measured each tick, times what a stop coasts on (about 1.2 of a tick's travel, ground friction .546), and the stop
+      // goes in when position plus coast reaches the lip.
+      let prevOff = null;
+      for (let i = 0; i < 60; i++) {
         const l = this.sim.location;
         const offX = edgeV[0] ? (l.x - base.x) * Math.sign(edgeV[0]) : 0, offZ = edgeV[1] ? (l.z - base.z) * Math.sign(edgeV[1]) : 0;
-        const doneX = !edgeV[0] || offX >= 0.66, doneZ = !edgeV[1] || offZ >= 0.66;
-        if (doneX && doneZ) break;
-        this.a.body.move(doneX ? 0 : Math.sign(edgeV[0]), doneZ ? 0 : Math.sign(edgeV[1]), 0.22);
+        const off = Math.min(edgeV[0] ? offX : Infinity, edgeV[1] ? offZ : Infinity), v = prevOff === null || !isFinite(off) ? 0 : Math.max(0, off - prevOff);
+        prevOff = off;
+        if (off + v * 1.2 >= 0.66) break;
+        this.a.body.move(edgeV[0] ? Math.sign(edgeV[0]) : 0, edgeV[1] ? Math.sign(edgeV[1]) : 0, 0.22);
         await this.wait(gen, 1);
         if (i > 2 && !this.a.body.isOnGround()) break; // over the edge already: no further push
       }
       this.a.body.stop();
       await this.wait(gen, 2);
+      { const l = this.sim.location; this.log(`staged descent: at the lip of ${fx} ${fy} ${fz}: ${((edgeV[0] ? (l.x - base.x) * Math.sign(edgeV[0]) : (l.z - base.z) * Math.sign(edgeV[1]))).toFixed(2)} out (aiming for 0.66), ${this.a.body.isOnGround() ? 'on the ground' : 'ALREADY FALLING'}`); }
       // 2. Look down the side and put the block against it.
       try { this.sim.lookAtBlock(S); } catch { /* */ }
       await this.wait(gen, 4);
@@ -4854,8 +4880,10 @@ export class Skills {
       const digCost = dmg(best) === 0 ? 0 : dmg(best) * perLevel;
       this.log(`getting down: drop ${best.drop} onto ${best.landing}, hop ${hopOk ? dmg(best) * HP_S : 'unsafe'}s vs dig ${digCost.toFixed(1)}s`);
       // With blocks, and a long way down: ledges against the pillar's side (stagedStep), before a hop that costs health (the u180 run
-      // put one ledge, then hopped the other 7 blocks for 3 hp) and before cutting the pillar out from under us.
-      if (!staged.failed && this.blockCount({ all: true }) > 1 && best.drop >= 5 && (await this.stagedStep(gen, staged))) {
+      // put one ledge, then hopped the other 7 blocks for 3 hp) and before cutting the pillar out from under us. (From a drop of 4, not 5: that
+      // is a hop that costs a half heart, 6 s of healing by this file's own count, against a ledge that takes about a second. The owner came down
+      // the u204 tower on ledges all the way, 0 hp.)
+      if (!staged.failed && this.blockCount({ all: true }) > 1 && best.drop >= 4 && (await this.stagedStep(gen, staged))) {
         this.getDownStats.staged = (this.getDownStats.staged ?? 0) + 1;
         continue;
       }

@@ -10,6 +10,7 @@ import { dist3D } from '../core/mathutil.js';
 import { trace } from './bridge.js';
 import { isLog } from '../core/recipes.js';
 import { PLANT } from './homestead.js';
+import { GapTuner } from '../core/usegap.js';
 
 const strip = (id) => id.replace('minecraft:', '');
 const TILLABLE = /^(grass_block|dirt|coarse_dirt|dirt_with_roots)$/;
@@ -22,6 +23,7 @@ const unkey = (k) => { const [x, y, z] = k.split(',').map(Number); return { x, y
 export class Farm {
   constructor(agent) {
     this.a = agent;
+    this.tuner = new GapTuner();   // how soon after one hoe or seed use the game takes the next (core/usegap.js)
   }
 
   get S() { return this.a.skills; }
@@ -512,15 +514,21 @@ export class Farm {
     if (this.needsUpkeep()) await this.upkeep(gen);
     // Tile to tile, nearest next from where we are: in the order they were found (by distance from
     // the water) it zig-zagged across the field.
-    const left = f.tiles.map(unkey), tiles = [];
-    let at = S.feet();
-    while (left.length) {
-      let bi = 0;
-      for (let i = 1; i < left.length; i++) if (Math.hypot(left[i].x - at.x, left[i].z - at.z) < Math.hypot(left[bi].x - at.x, left[bi].z - at.z)) bi = i;
-      at = left.splice(bi, 1)[0];
-      tiles.push(at);
-    }
+    const nearestFirst = (list, from) => {
+      const left = list.slice(), out = [];
+      let at = from;
+      while (left.length) {
+        let bi = 0;
+        for (let i = 1; i < left.length; i++) if (Math.hypot(left[i].x - at.x, left[i].z - at.z) < Math.hypot(left[bi].x - at.x, left[bi].z - at.z)) bi = i;
+        at = left.splice(bi, 1)[0];
+        out.push(at);
+      }
+      return out;
+    };
+    const tiles = nearestFirst(f.tiles.map(unkey), S.feet());
     let harvested = 0, tilled = 0, planted = 0;
+    // The hoe first, over the whole field; then the seeds, over the whole field (the owner's way in the u204 farm race: 17 tills in 4.1 s, then 12
+    // seeds in 3.2 s; the bot went tile by tile, hoe, seed, hoe, seed, a hotbar change and a 10 tick wait for every use: 24 uses in 12 s).
     for (let ti = 0; ti < tiles.length; ti++) {
       const t = tiles[ti];
       S.check(gen);
@@ -536,19 +544,27 @@ export class Farm {
         try { g = b.permutation.getState('growth') ?? 0; } catch {}
         if (g < 7) continue;
         if (!S.inReach(crop)) await S.goNear(gen, crop, 2.5, 2);
-        if (await S.mine(gen, crop, { collect: false, next: crop })) harvested++; // (replant right here next)
+        if (await S.mine(gen, crop, { collect: false, next: crop })) harvested++; // (replanted in the second pass)
       }
       const ground = S.blockAt(t) ?? '';
       if (TILLABLE.test(ground) && CLEAR.test(S.blockAt(crop) ?? 'stone')) {
         if (!S.inReach(t)) await S.goNear(gen, crop, 2.5, 2);
         // A hoe only tills with air on top: grass or a flower goes first (and may drop a seed).
         if ((S.blockAt(crop) ?? 'air') !== 'air') await S.mine(gen, crop, { collect: false });
-        if (await this.useOn(gen, this.hoe(), t, crop)) tilled++;
+        if (await this.useOn(gen, this.hoe(), t, nextTop)) tilled++;
       }
-      if (S.blockAt(t) === 'farmland' && (S.blockAt(crop) ?? '') === 'air' && invCounts(this.sim).wheat_seeds) {
-        if (!S.inReach(t)) await S.goNear(gen, crop, 2.5, 2);
-        if (await this.useOn(gen, 'wheat_seeds', t, nextTop)) planted++;
-      }
+    }
+    // The seeds: every tile that is farmland and bare, from where the hoe ended.
+    const bare = (t) => S.blockAt(t) === 'farmland' && (S.blockAt({ ...t, y: t.y + 1 }) ?? '') === 'air';
+    const sow = nearestFirst(tiles.filter(bare), S.feet());
+    for (let ti = 0; ti < sow.length && invCounts(this.sim).wheat_seeds; ti++) {
+      const t = sow[ti];
+      S.check(gen);
+      if (!bare(t)) continue;
+      const crop = { ...t, y: t.y + 1 };
+      const nextTile = sow[ti + 1] ?? null;
+      if (!S.inReach(t)) await S.goNear(gen, crop, 2.5, 2);
+      if (await this.useOn(gen, 'wheat_seeds', t, nextTile ? { ...nextTile, y: nextTile.y + 1 } : null)) planted++;
     }
     this.a.motor.setFocus(null);
     await S.sweep(gen, { x: f.water.x, y: f.water.y + 1, z: f.water.z }, 7, null, 10);
@@ -580,13 +596,30 @@ export class Farm {
     const changed = () => this.S.blockAt(block) !== before || this.S.blockAt({ ...block, y: block.y + 1 }) !== above;
     // Crosshair near the top of it (no stop and settle), use, and on toward the next as it takes.
     await this.S.aim(gen, { x: block.x + 0.5, y: block.y + 1, z: block.z + 0.5 }, 15, 6);
-    for (let attempt = 0; attempt < 4; attempt++) {
-      await this.S.useGap(gen);
+    for (let attempt = 0; attempt < 6; attempt++) {
+      // (The gap is what the game has been taking, core/usegap.js: 5 to begin with, as the owner used the hoe and the seeds, up when one is refused.)
+      const gap = this.tuner.gap;
+      await this.S.useGap(gen, gap);
+      const since = system.currentTick - (this.S.lastUseTick ?? -100);
       let used = false;
       try { used = this.sim.useItemInSlotOnBlock(slot, block, Direction.Up, { x: 0.5, y: 1, z: 0.5 }); } catch (e) { this.S.log(`farm: use ${itemId} on ${before} at ${block.x} ${block.y} ${block.z} threw ${e}`); return false; }
       this.S.lastUseTick = system.currentTick;
       if (attempt === 0 && next) this.a.motor.setFocus({ x: next.x + 0.5, y: next.y + 0.1, z: next.z + 0.5 });
-      for (let k = 0; k < 3; k++) { await this.S.wait(gen, 1); if (changed()) { this.S.afterUse(slot); return true; } }
+      for (let k = 0; k < 3; k++) {
+        await this.S.wait(gen, 1);
+        if (changed()) {
+          if (since < 10 && this.tuner.ok()) this.S.log(`farm: uses taken every ${since} ticks, trying ${this.tuner.gap}`);
+          this.S.afterUse(slot);
+          return true;
+        }
+      }
+      // Not taken. Too soon after the last use (the call said false, or it said true and nothing happened): wait longer, and again.
+      if (since < 10) {
+        const was = this.tuner.gap;
+        this.tuner.refused();
+        this.S.log(`farm: ${itemId} ${used ? 'ignored' : 'refused'} ${since} ticks after the last use: gap ${was} -> ${this.tuner.gap}`);
+        continue;
+      }
       if (used) return false; // (it went through and did nothing: not something to repeat)
     }
     return false;
