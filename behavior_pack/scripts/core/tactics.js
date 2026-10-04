@@ -6,7 +6,7 @@
 //               get a path to, an arrow line that never reaches us): give it up, don't stare at it
 //   pickRefuge  where to run: far from the threats, and out of a shooter's sight if one's hitting us
 //   bestWeapon  what to hold: most damage per hit (Bedrock has no attack cooldown), worn-out last
-import { HOLD_AT, REACH_HIT, BACK_OFF, STOP_AT, standOff, MOBS, weaponDamage, SLOT_SAFE } from './threat.js';
+import { HOLD_AT, REACH_HIT, BACK_OFF, STOP_AT, standOff, MOBS, weaponDamage, SLOT_SAFE, CROWD_RANGE } from './threat.js';
 
 const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z);
 
@@ -324,6 +324,100 @@ export function creeperWorthFighting({ damage, health, others }) {
 export function creeperMove({ me, creeper, shield, lit = true }) {
   const d = dist(me, creeper);
   return shield && lit && d <= 4 ? 'block' : 'run';
+}
+
+// ---------- several creepers at once ----------
+// What the owner did in the creepers test (u204 report: 7.3 s, 0 hp lost, no sword, no bow): ran a loose arc so the four came on
+// in a line behind him, then turned, crouched (the shield: his last 2.3 s were sneaking, facing them, the axe in hand) and let them
+// come and go off on it. An explosion is "completely blocked" by a shield facing it (minecraft.wiki, Creeper), and four blasts in
+// a line from the one side are all in front. The bot's answer was to run from the crowd and shoot between runs: 31.9 s.
+export const CREEPER_BLAST = 6;    // a blast hurts out to 2 x its power
+export const CREEPER_SAFE = 7.5;   // past this from a hissing creeper its fuse is cancelled (6 measured, 7 on the wiki) and it is out of the blast
+export const SHIELD_TAKE = 50;     // degrees either side of where we face that a crowd may spread over (the shield turns a blast away within 90; the arena takes 60)
+export const SHIELD_MIN_HP = 14;   // under this a blast that got round the shield (17 at 2.9 blocks) would end it: run instead
+export const CROWD_TAKE_AT = 12;   // a crowd this close (or an encounter already on, CROWD_RANGE) is taken on
+const deg = (r) => r * 180 / Math.PI;
+
+/** The angle in degrees (-180..180) from the heading (hx, hz) round to the vector (vx, vz), on the x/z plane (positive: from +x toward +z). */
+export function turnTo(hx, hz, vx, vz) {
+  return deg(Math.atan2(hx * vz - hz * vx, hx * vx + hz * vz));
+}
+
+/**
+ * Several creepers coming at once (two or more seen within CROWD_RANGE, nothing else about: core/threat.js crowdOf). One
+ * creeper is the arm's-length dance (creeperFight); a crowd was run from, and four of them took 31.9 s of running and drawing a bow.
+ *  - 'receive': with a shield and health: stand, face the middle of them with the shield up (a crouch, 0.25 s to take), and let them come
+ *    and go off on it. They walk straight at us, so how far they spread to either side now is how they will stand when they light; all
+ *    within SHIELD_TAKE of the line we face is a blast the shield takes. Nothing is run into, nothing swung: the blasts do the rest
+ *    (a blast kills the creepers bunched against it too: 24 damage at 2 blocks). Hissing ones within 6 are the ones that count: they go
+ *    off in 1.5 s, so it is their angles that must be in front, whatever else is coming.
+ *  - 'lead': with a shield, but they come from too many sides: run straight away so they string out in a line behind (sprint: they walk
+ *    2.7 b/s to our 5.6), then receive. At most twice, and only with 5+ to spare.
+ *  - 'outrun': a creeper hissing and the shield not an option (none, hurt, nowhere safe to stand, or too many sides): straight away from
+ *    every hissing one (and 5 from the others) until past CREEPER_SAFE, where the fuse stops. Not toward anything else: company rules
+ *    the whole plan out.
+ * Returns null (the old rules: hold one off, run to a refuge) or { act, face?, from?, away, nearest, spread, why }.
+ * creepers: [{ pos, d (distance now), lit }]; safe: a place to stand (no drop or water beside us for a blast to throw us into);
+ * active: already on it (a wider range, so it doesn't flip at the edge); leads: how many 'lead's this encounter.
+ */
+export function creeperPlan({ me, creepers, shield = false, health = 20, company = false, safe = true, active = false, leads = 0 }) {
+  if (company) return null;
+  const live = creepers.filter((c) => c.d <= CROWD_RANGE + (active ? 2 : 0));
+  // (One left of a crowd we were taking on, and hissing: the shield it is facing stays up. An unlit one is the arm's-length dance's.)
+  if (live.length < (active ? 1 : 2)) return null;
+  if (live.length === 1 && !(live[0].lit && live[0].d <= 6)) return null;
+  const nearest = Math.min(...live.map((c) => c.d));
+  const hiss = live.filter((c) => c.lit && c.d <= CREEPER_SAFE);
+  // The ones that decide where we face: those about to go off, else those within the next few seconds' walk.
+  const imminent = live.filter((c) => c.lit && c.d <= 6);
+  const focus = imminent.length ? imminent : live.filter((c) => c.d <= 10);
+  const set = focus.length ? focus : live;
+  // The middle of them: toward the nearer ones (1 / d^2), then the angles either side of that.
+  let hx = 0, hz = 0;
+  for (const c of set) {
+    const dx = c.pos.x - me.x, dz = c.pos.z - me.z, l = Math.hypot(dx, dz) || 1, w = 1 / Math.max(1, c.d) ** 2;
+    hx += (dx / l) * w; hz += (dz / l) * w;
+  }
+  const hl = Math.hypot(hx, hz);
+  let mid = 0, spread = 180; // (they cancel out: all round us)
+  if (hl > 1e-6) {
+    const angles = set.map((c) => turnTo(hx, hz, c.pos.x - me.x, c.pos.z - me.z));
+    const lo = Math.min(...angles), hi = Math.max(...angles);
+    mid = (lo + hi) / 2; spread = (hi - lo) / 2;
+  }
+  const takeable = shield && health >= SHIELD_MIN_HP && safe;
+  const asked = nearest <= (active ? CROWD_RANGE : CROWD_TAKE_AT);
+  if (takeable && spread <= SHIELD_TAKE) {
+    if (!asked) return null;
+    // Look along the middle of the spread (the same room either side), at the nearest one's distance.
+    const a = Math.atan2(hz, hx) + (mid * Math.PI) / 180; // (turnTo's angles go from +x toward +z, as atan2(z, x) does)
+    const fx = Math.cos(a), fz = Math.sin(a), r = Math.max(3, nearest);
+    return { act: 'receive', face: { x: me.x + fx * r, y: me.y + 1.2, z: me.z + fz * r }, nearest, spread, why: `${live.length} creepers within ${(spread * 2).toFixed(0)} degrees: on the shield` };
+  }
+  if (hiss.length) {
+    const from = live.map((c) => ({ x: c.pos.x, y: c.pos.y, z: c.pos.z, away: c.lit ? CREEPER_SAFE : 5 }));
+    return { act: 'outrun', from, away: CREEPER_SAFE, nearest, spread, why: `${hiss.length} hissing, ${takeable ? `spread over ${(spread * 2).toFixed(0)} degrees` : 'no shield to take it on'}: out of the blast` };
+  }
+  if (takeable && asked && nearest >= 5 && leads < 2 && hl > 1e-6) {
+    const away = Math.min(13, nearest + 5);
+    return { act: 'lead', from: live.map((c) => ({ x: c.pos.x, y: c.pos.y, z: c.pos.z, away })), away, nearest, spread, why: `${live.length} creepers over ${(spread * 2).toFixed(0)} degrees: lining them up` };
+  }
+  return null;
+}
+
+/**
+ * Where to run to from several mobs at once: the nearest spot we can walk to that is `away` from every one of them (each its own
+ * away: from[i].away, feet to feet, what the fuse goes by). creeperFight's awayPath for a crowd. A breadth-first search from our
+ * feet over the real terrain, small (it runs on the spot). costs: the pathfinder's (a running route: no long drops).
+ * Returns the path (block cells) or null.
+ */
+export function awayPathFrom(findPath, classify, me, from, maxNodes = 400, costs = undefined) {
+  const r = findPath(classify, me, me, {
+    maxNodes,
+    ...(costs ? { costs } : {}),
+    goalTest: (x, y, z, w) => w.standable(x, y, z) && from.every((m) => Math.hypot(x + 0.5 - m.x, y - m.y, z + 0.5 - m.z) >= m.away),
+  });
+  return r.complete && r.path.length >= 2 ? r.path : null;
 }
 
 /**

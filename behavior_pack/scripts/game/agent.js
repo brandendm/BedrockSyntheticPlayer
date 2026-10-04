@@ -7,8 +7,8 @@ import { MotorController, EYE_HEIGHT } from '../core/motor.js';
 import { Calibration } from './calibrate.js';
 import { searchJob, smoothPath, findPath, Cell, DEFAULT_COSTS } from '../core/pathfinder.js';
 import { dist3D, makeRng } from '../core/mathutil.js';
-import { decide, fleePoint, weaponDamage, MOBS, REACH_HIT, STOP_AT } from '../core/threat.js';
-import { fleeJabOrder, avoidCreepers, towerWorth, TOWER_H, fightMove, creeperFight, creeperMove, Stalemate, pickRefuge, bestWeapon, barricadeCells, SPEAR_DAMAGE, weaponReach, pickCreeperSwing, creeperWeapon, isSpear, awayPath, knockbackRoom, blockOffCells, guardCell, fleeJab, killSlotCells, killSlotWorth, pinchWallCells, alcoveCells, dodgeArrow, CREEPER_LIGHT, CREEPER_CALM } from '../core/tactics.js';
+import { decide, fleePoint, weaponDamage, MOBS, REACH_HIT, STOP_AT, BOW_MIN, crowdOf } from '../core/threat.js';
+import { fleeJabOrder, avoidCreepers, towerWorth, TOWER_H, fightMove, creeperFight, creeperMove, Stalemate, pickRefuge, bestWeapon, barricadeCells, SPEAR_DAMAGE, weaponReach, pickCreeperSwing, creeperWeapon, isSpear, awayPath, knockbackRoom, blockOffCells, guardCell, fleeJab, killSlotCells, killSlotWorth, pinchWallCells, alcoveCells, dodgeArrow, CREEPER_LIGHT, CREEPER_CALM, creeperPlan, awayPathFrom } from '../core/tactics.js';
 import { nextStep, STONE_TARGETS, TOOL_STONE, count, isLog, isPlanks } from '../core/recipes.js';
 import { settleStep, foodCount, FOOD_GOAL, isNight, chooseFood } from '../core/settle.js';
 import { shouldRest, canHeal, REST_BELOW, REST_MAX_S } from '../core/rest.js';
@@ -58,6 +58,7 @@ const INDOOR_STEPS = new Set(['craft', 'furnish', 'store', 'smelt', 'collect_sme
 // player's build, a chest, junk) gets broken through rather than given up on.
 const ESSENTIAL_STEPS = new Set(['go_home', 'clear_house', 'fight_fire', 'repair_house', 'furnish', 'store', 'smelt', 'collect_smelt', 'wait_smelt', 'goto_table', 'light_outside', 'shelter']);
 const SURVIVE_EVERY = 4;          // ticks between threat checks (0.2 s reaction time)
+const BAD_BESIDE = /lava|magma|fire|cactus|campfire|powder_snow/; // beside where we take a creeper blast on the shield (game/agent.js crowdSafe)
 const ENDERMAN_SCAN_EVERY = 20;
 const CALM_TICKS_TO_RESUME = 40;  // threats gone this long -> resume the interrupted task
 const ATTACKER_MEMORY_TICKS = 200;
@@ -895,6 +896,11 @@ export class Agent {
       }
     }
 
+    // Several creepers at once and nothing else about (core/tactics.js creeperPlan): on the shield as they come, or out of the blast of
+    // a hissing one, not the run-and-shoot dance (u204: 31.9 s against the owner's 7.3). Takes the place of fighting or fleeing.
+    const crowd = this.creeperCrowd(d, t);
+    if (crowd) { d.mode = 'flee'; d.reason = `creepers: ${crowd.act}`; d.crowd = crowd; }
+
     // In bed: nobody swings a sword lying down (the game let the bot hit things from its bed). A mob
     // that's got to us (hit us, or right by the bed; a creeper close) gets us up first, and the fight
     // starts once we're on our feet; anything further off is the walls' business.
@@ -967,7 +973,7 @@ export class Agent {
       this.fight(mobs.find((m) => m.id === d.target), t);
     } else if (d.mode === 'flee') {
       this.calmSince = t;
-      this.flee(d.threats, t);
+      this.flee(d.threats, t, d.crowd);
     } else if (this.task?.kind === 'fight' || this.task?.kind === 'flee') {
       this.endCombat();
     } else if (this.blocking) {
@@ -2534,14 +2540,99 @@ export class Agent {
   }
 
   /**
+   * Several creepers at once (core/tactics.js creeperPlan): the plan for this tick, or null (the old rules). Keeps the state of the
+   * encounter: whether we are on it (a wider range, so it doesn't flip at the edge), the 'lead's used, and a way out when nobody is
+   * coming (a creeper over a ravine, behind glass): 8 s with none getting nearer and the old rules have it for half a minute.
+   */
+  creeperCrowd(d, t) {
+    let st = this.crowdSt;
+    const done = (why) => {
+      if (st?.active) trace(`crowd: over after ${((t - st.since) / 20).toFixed(1)} s (${why}); hp ${st.hp0} -> ${this.health()}, ${st.n} seen, ${st.acts.join('/')}`);
+      this.crowdSt = st && t < (st.offUntil ?? 0) ? { ...st, active: false } : null;
+      return null;
+    };
+    if (!d.threats.length || d.mode === 'none') return done('no threat');
+    if (t < (st?.offUntil ?? 0) || this.walling || this.digging || this.towered || this.sim.isInWater || this.testHold) return done('held off');
+    const { creepers, company } = crowdOf(d.threats);
+    const me = this.body.getPos();
+    const plan = creeperPlan({
+      me, shield: this.shield, health: this.health(), company, active: !!st?.active, leads: st?.leads ?? 0,
+      creepers: creepers.map((m) => ({ pos: m.pos, d: m.dist, lit: !!m.lit })),
+      safe: this.crowdSafe(),
+    });
+    if (!plan) return done(company ? 'company' : 'plan over');
+    if (!st?.active) {
+      st = this.crowdSt = { ...(st ?? {}), active: true, since: t, hp0: this.health(), n: creepers.length, acts: [], leads: st?.leads ?? 0, best: plan.nearest, bestAt: t, lastAct: null };
+      if (t - this.lastShout > 200) { this.lastShout = t; this.say(plan.act === 'receive' ? `${creepers.length} creepers: shield up, letting them come.` : `${creepers.length} creepers: getting clear of them.`); }
+    }
+    st.n = Math.max(st.n, creepers.length);
+    if (st.lastAct !== plan.act) {
+      st.lastAct = plan.act; st.acts.push(plan.act);
+      if (plan.act === 'lead') st.leads++;
+      trace(`crowd: ${plan.act} (${plan.why}); nearest ${plan.nearest.toFixed(1)}, hp ${this.health()}, ${creepers.filter((m) => m.lit).length} hissing, shield ${this.shield ? 1 : 0}`);
+    }
+    // Waiting on them: none any nearer for 8 s (they are not coming): the old rules for half a minute.
+    if (plan.nearest < st.best - 0.5) { st.best = plan.nearest; st.bestAt = t; }
+    if (plan.act === 'receive' && t - st.bestAt > 160) {
+      st.offUntil = t + 600;
+      trace(`crowd: none of ${creepers.length} any nearer than ${st.best.toFixed(1)} for 8 s: back to the old rules`);
+      return done('nobody coming');
+    }
+    st.last = t;
+    return plan;
+  }
+
+  /** A place to take a blast: no drop of more than 2 beside us, no lava or fire close (its knock could throw us into them). */
+  crowdSafe() {
+    try {
+      if (this.skills.dropsAround().some((e) => e.drop > 2 || BAD_BESIDE.test(e.landing ?? ''))) return false;
+      const f = this.skills.feet();
+      for (let dx = -2; dx <= 2; dx++) for (let dz = -2; dz <= 2; dz++) for (const dy of [-1, 0]) if (BAD_BESIDE.test(this.skills.blockAt({ x: f.x + dx, y: f.y + dy, z: f.z + dz }) ?? 'air')) return false;
+      return true;
+    } catch { return true; }
+  }
+
+  /**
+   * One step of the several-creepers plan. 'receive': stand where we are, shield up, facing the middle of them, nothing swung (the
+   * running jabs off too: a swing lowers the shield). 'outrun' / 'lead': sprint to the nearest spot clear of them (core/tactics.js
+   * awayPathFrom), over a running route (no long drops), never past a creeper's nose. Returns true if it took the step; false: the old rules
+   * (no way out found).
+   */
+  crowdMove(cp, threats, t) {
+    const me = this.body.getPos();
+    if (cp.act === 'receive') {
+      this.fleeThreats = null;
+      this.setBlocking(true);
+      if (this.motor.busy) this.stopWalking();
+      this.motor.setFocus(cp.face);
+      return true;
+    }
+    this.setBlocking(false);
+    // Already on the way (the route is kept for a second; a new one when it ends or a creeper starts to hiss).
+    const lit = threats.filter((m) => m.type === 'creeper' && m.lit).map((m) => m.id).sort().join();
+    if (this.motor.busy && t - (this.crowdRunAt ?? -1e9) < 20 && lit === this.crowdRunLit) return true;
+    const wrap = (c) => avoidCreepers(c, threats.filter((m) => m.type === 'creeper').map((m) => m.pos), 3.5, me);
+    const path = awayPathFrom(findPath, wrap(this.classifier()), me, cp.from, 400, this.fleeCosts());
+    if (!path) { trace(`crowd: ${cp.act}: no way clear of them found: the old rules`); return false; }
+    this.crowdRunAt = t; this.crowdRunLit = lit;
+    this.routeSeq = (this.routeSeq ?? 0) + 1;
+    this.fleeThreats = threats; // (a jab at one catching up is still fine while running)
+    if (!this.jabbing) this.motor.setFocus(null);
+    this.motor.followPath(smoothPath(this.classifier(), path), { seamless: true, urgent: true, walk: false });
+    trace(`crowd: ${cp.act}: sprinting ${path.length - 1} blocks to ${Math.floor(path[path.length - 1].x)} ${path[path.length - 1].y} ${Math.floor(path[path.length - 1].z)}`);
+    return true;
+  }
+
+  /**
    * Run (core/tactics.js pickRefuge): to a spot we can actually walk to, far from the threats, on
    * our side of them, and out of a shooter's sight if one is hitting us. Nowhere better: wall off
    * the way in, or get into the dead end nearby; failing both, we're cornered: stand and fight.
    * A creeper about to go off next to us with a shield on: face it, shield up, rather than race it.
    */
-  flee(threats, t) {
+  flee(threats, t, crowd = null) {
     this.fleeThreats = threats;
     const me = this.body.getPos();
+    if (crowd && this.crowdMove(crowd, threats, t)) return;
     const creeper = threats.find((m) => m.type === 'creeper');
     if (creeper && creeperMove({ me, creeper: creeper.pos, shield: this.shield, lit: creeper.lit }) === 'block') {
       this.setBlocking(true);

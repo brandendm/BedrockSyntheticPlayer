@@ -78,6 +78,26 @@ export function armorFactor(hit, armor = 0, toughness = 0) {
   return 1 - Math.min(20, Math.max(armor / 5, armor - hit / (2 + toughness / 4))) / 25;
 }
 
+// ---------- several creepers at once ----------
+// The bow against a creeper: only while it (and every other creeper) is this far. A draw is ~1.1 s and a creeper
+// walks 2.7 blocks a second: from 9 it is still 6 away at the release, outside its fuse range. (The u204 run: 36 draws
+// at 5.5 to 20 blocks, shoot, run, shoot, run, 31.9 s for four creepers, 12 s of it standing still drawing.)
+export const BOW_MIN = 9;
+// A crowd is looked at from this far (creepers we see or hear within it).
+export const CROWD_RANGE = 14;
+
+/**
+ * The creepers that count in a crowd, and whether anything else is about that rules a crowd tactic out
+ * (core/tactics.js creeperPlan): seen (or hissing) creepers within CROWD_RANGE, any within 6; company is
+ * a zombie and its kind within 14, anything that shoots within 24 (it is on us while we deal with the creepers).
+ * threats: decide's list ({ type, dist, visible, lit, canReach, attackedMe }).
+ */
+export function crowdOf(threats) {
+  const creepers = threats.filter((m) => m.type === 'creeper' && m.canReach !== false && ((m.dist <= CROWD_RANGE && (m.visible || m.lit)) || m.dist <= 6));
+  const company = threats.some((m) => m.type !== 'creeper' && (m.visible || m.attackedMe) && (MOBS[m.type]?.kind === 'ranged' ? m.dist <= 24 : m.dist <= 14));
+  return { creepers, company };
+}
+
 /** Is this mob actually a threat right now? */
 export function isActiveThreat(m, isNight, alert = false) {
   const info = MOBS[m.type];
@@ -123,12 +143,16 @@ export function decide({ health, damage = FIST_DAMAGE, isNight = false, prevMode
   const creeper = threats.find((m) => m.type === 'creeper' && (
     (m.dist <= 4 && !(m.canReach === false && m.visible === false && !m.lit)) || (m.lit && m.dist <= 8) ||
     ((m.canReach ?? true) && (m.visible || m.recent) && m.dist <= (alert ? 12 : m.targetingMe ? 12 : 8))));
-  // With a bow and arrows: creepers still 6+ off are shot, one after another, even in a crowd of them (running from four for ever
-  // took 10 s and 3.5 hp where a player walked at them and shot or hit them down in 4). Nothing lit or close, no melee mob near.
+  // With a bow and arrows: creepers still BOW_MIN+ off are shot, one after another, even in a crowd of them (running from four for ever
+  // took 10 s and 3.5 hp where a player walked at them and shot or hit them down in 4). Nothing lit or closer than BOW_MIN, no melee mob near.
+  // (Not with a shield and two or more creepers about: core/tactics.js creeperPlan takes those on the shield as they come, and a draw
+  // standing in the open only got in its way: u204.)
   if (bow) {
-    const shots = threats.filter((m) => m.type === 'creeper' && m.visible && m.dist >= 6 && m.dist <= 20 && !m.lit);
-    const close = threats.some((m) => (m.type === 'creeper' && (m.lit || m.dist < 5.5)) || (m.type !== 'creeper' && MOBS[m.type].kind === 'melee' && m.dist <= 8 && (m.visible || m.attackedMe)));
-    if (shots.length && !close) return { mode: 'fight', target: shots[0].id, threats, reason: 'creeper: shoot it from afar' };
+    const crowd = crowdOf(threats);
+    const takeOnShield = shield && crowd.creepers.length >= 2 && !crowd.company;
+    const shots = threats.filter((m) => m.type === 'creeper' && m.visible && m.dist >= BOW_MIN && m.dist <= 20 && !m.lit);
+    const close = threats.some((m) => (m.type === 'creeper' && (m.lit || m.dist < BOW_MIN)) || (m.type !== 'creeper' && MOBS[m.type].kind === 'melee' && m.dist <= 8 && (m.visible || m.attackedMe)));
+    if (shots.length && !close && !takeOnShield) return { mode: 'fight', target: shots[0].id, threats, reason: 'creeper: shoot it from afar' };
   }
   if (creeper) {
     // Company that rules it out: something that would be on us while we hold the creeper off (a

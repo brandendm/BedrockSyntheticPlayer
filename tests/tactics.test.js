@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { fightMove, creeperFight, creeperMove, Stalemate, pickRefuge, bestWeapon, barricadeCells, CREEPER_HOLD, CREEPER_LIGHT, CREEPER_CALM, weaponReach, pickCreeperSwing, creeperWeapon, knockbackRoom, blockOffCells, fleeJab, killSlotCells, killSlotWorth, dodgeArrow, arrowHits, aimBow, bowFight, blastDamage, fleeJabOrder, avoidCreepers, towerWorth, pinchWallCells, alcoveCells } from '../behavior_pack/scripts/core/tactics.js';
+import { fightMove, creeperFight, creeperMove, Stalemate, pickRefuge, bestWeapon, barricadeCells, CREEPER_HOLD, CREEPER_LIGHT, CREEPER_CALM, weaponReach, pickCreeperSwing, creeperWeapon, knockbackRoom, blockOffCells, fleeJab, killSlotCells, killSlotWorth, dodgeArrow, arrowHits, aimBow, bowFight, blastDamage, fleeJabOrder, avoidCreepers, towerWorth, pinchWallCells, alcoveCells, creeperPlan, turnTo, awayPathFrom, CREEPER_SAFE, SHIELD_MIN_HP } from '../behavior_pack/scripts/core/tactics.js';
 import { HOLD_AT, REACH_HIT } from '../behavior_pack/scripts/core/threat.js';
 
 const P = (x, y, z) => ({ x, y, z });
@@ -326,4 +326,93 @@ test('a flight leans toward where the bot was going, never at the cost of safety
   assert.deepEqual(pickRefuge(me, [zombie], [west, north], null, 3, { x: -80, z: 0 }), west);
   const toward = { x: 6, y: 64, z: 0, cost: 6 }; // right past the zombie
   assert.notDeepEqual(pickRefuge(me, [zombie], [toward, west], null, 3, { x: 80, z: 0 }), toward, 'never toward the mob');
+});
+
+// ---------- a crowd of creepers (u205: the owner took four on the shield in 7.3 s; the bot ran and drew a bow for 31.9) ----------
+const cr = (x, z, lit = false) => ({ pos: P(x, 64, z), d: Math.hypot(x - 0.5, z - 0.5), lit });
+const ME = P(0.5, 64, 0.5);
+
+test('turnTo: degrees from a heading round to a vector, +x toward +z', () => {
+  assert.ok(Math.abs(turnTo(1, 0, 0, 1) - 90) < 1e-9);
+  assert.ok(Math.abs(turnTo(1, 0, 0, -1) + 90) < 1e-9);
+  assert.ok(Math.abs(turnTo(0, 1, 1, 0) + 90) < 1e-9);
+  assert.equal(turnTo(1, 0, 3, 0), 0);
+  assert.ok(Math.abs(Math.abs(turnTo(1, 0, -1, 0)) - 180) < 1e-9);
+});
+
+test('creeperPlan: four in a line in front, a shield and health: receive them facing the middle', () => {
+  const p = creeperPlan({ me: ME, creepers: [cr(8, 0), cr(9, 1), cr(10, -1), cr(11, 0)], shield: true });
+  assert.equal(p.act, 'receive');
+  assert.ok(p.face.x > ME.x && Math.abs(p.face.z - ME.z) < 1.5, 'looking along the line they come in');
+  assert.ok(p.spread <= 50);
+});
+
+test('creeperPlan: receive turns toward where they are, not a fixed way', () => {
+  const p = creeperPlan({ me: ME, creepers: [cr(0, 8), cr(1, 9), cr(-1, 10)], shield: true });
+  assert.equal(p.act, 'receive');
+  assert.ok(p.face.z > ME.z + 2 && Math.abs(p.face.x - ME.x) < 2);
+});
+
+test('creeperPlan: not asked yet (the nearest is past 12): nothing, the old rules', () => {
+  assert.equal(creeperPlan({ me: ME, creepers: [cr(13, 0), cr(13.5, 1)], shield: true }), null);
+});
+
+test('creeperPlan: one unlit creeper is the arm\'s-length dance, not a crowd', () => {
+  assert.equal(creeperPlan({ me: ME, creepers: [cr(6, 0)], shield: true }), null);
+  assert.equal(creeperPlan({ me: ME, creepers: [cr(6, 0)], shield: false }), null);
+});
+
+test('creeperPlan: company (a zombie, a skeleton) rules the plan out', () => {
+  assert.equal(creeperPlan({ me: ME, creepers: [cr(8, 0), cr(9, 1)], shield: true, company: true }), null);
+});
+
+test('creeperPlan: creepers on opposite sides are not received on one shield', () => {
+  const p = creeperPlan({ me: ME, creepers: [cr(7, 0), cr(-6, 0), cr(0, 7), cr(0, -6)], shield: true });
+  assert.notEqual(p?.act, 'receive');
+});
+
+test('creeperPlan: hurt (under SHIELD_MIN_HP) with one hissing: outrun, never stand', () => {
+  const p = creeperPlan({ me: ME, creepers: [cr(5, 0, true), cr(8, 1)], shield: true, health: SHIELD_MIN_HP - 1 });
+  assert.equal(p.act, 'outrun');
+  assert.equal(p.away, CREEPER_SAFE);
+  assert.equal(p.from.length, 2);
+  assert.equal(p.from[0].away, CREEPER_SAFE, 'the hissing one: out of its blast');
+  assert.equal(p.from[1].away, 5, 'the unlit one: kept off at 5');
+});
+
+test('creeperPlan: no shield, one hissing: outrun; none hissing: line them up only with a shield', () => {
+  assert.equal(creeperPlan({ me: ME, creepers: [cr(5, 0, true), cr(8, 1)], shield: false }).act, 'outrun');
+  assert.equal(creeperPlan({ me: ME, creepers: [cr(8, 0), cr(9, 1)], shield: false }), null);
+});
+
+test('creeperPlan: a shield but nowhere safe to stand (a drop beside us): outrun the hissing', () => {
+  assert.equal(creeperPlan({ me: ME, creepers: [cr(5, 0, true), cr(8, 1)], shield: true, safe: false }).act, 'outrun');
+});
+
+test('creeperPlan: spread all round with a shield and room: lead them into a line (twice at most)', () => {
+  const ring = [cr(7, 0), cr(-6, 0), cr(0, 7), cr(0, -6)];
+  const p = creeperPlan({ me: ME, creepers: ring, shield: true });
+  assert.equal(p?.act, 'lead');
+  assert.ok(p.away > p.nearest);
+  assert.notEqual(creeperPlan({ me: ME, creepers: ring, shield: true, leads: 2 })?.act, 'lead');
+});
+
+test('creeperPlan: one left of a crowd we were taking on, hissing: the shield stays up; an unlit one: not ours', () => {
+  assert.equal(creeperPlan({ me: ME, creepers: [cr(4, 0, true)], shield: true, active: true }).act, 'receive');
+  assert.equal(creeperPlan({ me: ME, creepers: [cr(8, 0)], shield: true, active: true }), null);
+});
+
+test('awayPathFrom: asks the pathfinder for a standable cell far enough from every one, and returns its path', () => {
+  let goalTest;
+  const findPath = (classify, start, goal, opts) => { goalTest = opts.goalTest; return { complete: true, path: [P(0, 64, 0), P(-3, 64, 0)] }; };
+  const from = [{ x: 5, y: 64, z: 0, away: 7.5 }, { x: 0, y: 64, z: 6, away: 5 }];
+  const path = awayPathFrom(findPath, null, ME, from, 400, { drop: 1 });
+  assert.equal(path.length, 2);
+  const w = { standable: () => true };
+  assert.equal(goalTest(-4, 64, -3, w), true, 'past both');
+  assert.equal(goalTest(-1, 64, 0, w), false, 'still inside the first one\'s blast reach');
+  assert.equal(goalTest(1, 64, 2, w), false);
+  assert.equal(goalTest(-4, 64, -3, { standable: () => false }), false, 'must be somewhere we can stand');
+  assert.equal(awayPathFrom(() => ({ complete: false, path: [] }), null, ME, from), null);
+  assert.equal(awayPathFrom(() => ({ complete: true, path: [P(0, 64, 0)] }), null, ME, from), null, 'a one-cell path is not a way out');
 });
