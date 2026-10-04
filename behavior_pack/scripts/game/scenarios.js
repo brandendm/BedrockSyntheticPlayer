@@ -65,6 +65,7 @@ import { solvePitch } from '../core/ballistics.js';
 import { getPlan } from '../core/learnhouse.js';
 import { passRates, addStat } from '../core/testrun.js';
 import { compare } from '../core/testrun.js';
+import { boatToMob } from '../core/towline.js';
 import { ARENAS, testArena, arenaCommand } from './arenas.js';
 
 /** How far the slab reaches round the site (west, east, to each side) for a test; the backed-up box is the same (a structure is 64 across at most). */
@@ -2559,7 +2560,7 @@ async function runOne(agent, player, name, arg, human = false) {
           rec.reset(); t0 = system.currentTick;
           // (The side passes of a sweep run east into the pond and the step, or west at the glass: u204's second and third passes were 20 s of the bot
           // digging at the wall and then swimming at the step. Here each pass is along the line of the two villagers, from the other end.)
-          await sweepVillagers(agent, gen, boat, vils, gy, fns, { turns: [0, Math.PI, 0] });
+          await sweepVillagers(agent, gen, boat, vils, gy, fns);
           trace(`leadboat: sweep done at ${secs()} s: ${vils.filter((v) => fns.riding(v)).length}/2 villagers in the boat, bot at ${Math.round(sim.location.x - x)} ${Math.round(sim.location.z - z)} (course coordinates)${sim.isInWater ? ', IN WATER' : ''}`);
           const m = await agent.tow.run(gen, boat, { ...farGoal, x: farGoal.x - 0.5 }, { maxS: 150 });
           cal.legs.walk = m;
@@ -2742,7 +2743,9 @@ async function runOne(agent, player, name, arg, human = false) {
         tp(x + 3, gy + 1, z + 4);
         await system.waitTicks(15);
         if (human) { pass = await humanTry(() => who.location.y >= gy + H + 0.9 && Math.hypot(who.location.x - top.x, who.location.z - top.z) <= 3, 90, null, 'Up the vines to the top of the tower'); detail = `you ${pass ? 'got to the top' : `did not get to the top (${Math.max(0, Math.round(who.location.y - gy - 1))} up)`} in ${secs()}s`; break; }
-        agent.startGoto(top, 1.5);
+        // (The block on the tower's top beside the shaft, exactly: with the 1.5 the walk stopped at the top vine, 1 block short of the top, and was
+        // "arrived" there: the u204 run, "stuck 2 short of the top", 3.7 s of a climb that was otherwise as quick as yours.)
+        agent.startGoto({ x: x + 4.5, y: gy + H + 1, z: z + 0.5 }, 0);
         await idleOr(90, () => sim.location.y >= gy + H + 0.9 && Math.hypot(sim.location.x - top.x, sim.location.z - top.z) <= 3);
         pass = sim.location.y >= gy + H + 0.9 && Math.hypot(sim.location.x - top.x, sim.location.z - top.z) <= 3;
         detail = `${pass ? 'up the vines to the top' : `stuck ${Math.max(0, Math.round(gy + H + 1 - sim.location.y))} short of the top`} in ${secs()}s`;
@@ -2826,7 +2829,7 @@ async function runOne(agent, player, name, arg, human = false) {
         }
         const r = await flyElytra(agent, { x: padX + 0.5, y: gy, z: z + 0.5 }, { gy, cmd, hp: hpE, landed, flatD });
         pass = r.glided && landed() && flatD() <= 4 && lost() <= 5;
-        detail = `${r.glided ? `glided (${r.glideS.toFixed(1)} s, fastest ${r.peak.toFixed(1)} b/s, ${r.rockets} firework(s))` : `never started gliding (${r.why})`}; ended ${Math.round(flatD())} blocks from the gold block in ${secs()}s, lost ${lost()} hp${r.saved ? ' (slow falling given: the fall would have killed)' : ''}`;
+        detail = `${r.glided ? `glided (${r.glideS.toFixed(1)} s, wings open ${r.openedS.toFixed(1)} s after the start, fastest ${r.peak.toFixed(1)} b/s, steepest nose-down ${r.pitchMax.toFixed(0)} deg, sinking ${r.sinkAtLand.toFixed(1)} b/s at most; no rockets)` : `never started gliding (${r.why})`}; ended ${Math.round(flatD())} blocks from the gold block in ${secs()}s, lost ${lost()} hp${r.saved ? ' (slow falling given: the fall would have killed)' : ''}`;
         break;
       }
     }
@@ -2937,29 +2940,69 @@ function boardVillager(cmd, boat, v) {
 }
 
 /**
- * Villagers into a boat on a lead, the way a player did it: the boat trails the bot on its lead, so the bot walks a good way PAST the villager and the
- * boat sweeps into it. From 6 blocks short of it, a moment for the boat to come up behind, then through it and 5 on at a walk; if that did not take
- * it, again from the sides; the game is helped only after three sweeps. fns: { riding(v), ridersN(), putIn(v, how) }.
+ * Villagers into a boat on a lead, the way a player did it (u204 villagerhaul: the bot went through each villager's place three times over
+ * 37 s and put both in by command; the player was done in 10 s). The boat is pulled straight at us, so it is the boat that has to go through
+ * the villager, not us: we stand where the line from the boat runs through the villager and past it (core/towline.js boatToMob), getting
+ * there by the side of it (walking through a villager shoves it out of the boat's line, which is what the old sweeps did), and the line is
+ * worked out again every tick from where the boat and the villager are. Once the boat is against a villager the game is given 4 s to take it
+ * in, as it is for you, then it is put in. fns: { riding(v), ridersN(), putIn(v, how) }.
  */
-async function sweepVillagers(agent, gen, boat, vils, gy, fns, { turns = [0, Math.PI / 2, -Math.PI / 2] } = {}) {
+async function sweepVillagers(agent, gen, boat, vils, gy, fns) {
   const S = agent.skills, sim = agent.sim;
-  for (const v of vils) {
-    for (let pass = 0; pass < 3 && v.isValid && !fns.riding(v) && fns.ridersN() < 2; pass++) {
-      const vl = v.location, bl = boat.location;
-      const ang = Math.atan2(vl.z - bl.z, vl.x - bl.x) + turns[pass];
-      const ux = Math.cos(ang), uz = Math.sin(ang);
-      await S.goNear(gen, { x: vl.x - ux * 6, y: gy + 1, z: vl.z - uz * 6 }, 1, 1).catch(() => false);
-      await system.waitTicks(20);
-      const end = { x: v.location.x + ux * 5, y: gy + 1, z: v.location.z + uz * 5 };
-      for (let i = 0; i < 90 && v.isValid && !fns.riding(v); i++) {
-        try { sim.moveToLocation(end, { speed: 0.7 }); } catch { /* */ }
-        await system.waitTicks(2);
-        if (Math.hypot(sim.location.x - end.x, sim.location.z - end.z) < 1) break;
-      }
-      try { sim.stopMoving(); } catch { /* */ }
-      await system.waitTicks(10);
+  const OPEN = /^(air|cave_air|void_air|short_grass|tall_grass|fern|snow_layer)$/;
+  // The standing surface in a column within a block of the course floor (gy), else null: not water, not a drop, two open blocks over it.
+  const floorAt = (x, z) => {
+    for (let yy = gy + 2; yy >= gy - 1; yy--) {
+      const id = S.blockAt({ x: Math.floor(x), y: yy, z: Math.floor(z) }) ?? 'air';
+      if (OPEN.test(id)) continue;
+      if (/^(water|flowing_water|lava|flowing_lava)$/.test(id)) return null;
+      const a = S.blockAt({ x: Math.floor(x), y: yy + 1, z: Math.floor(z) }) ?? 'air', b = S.blockAt({ x: Math.floor(x), y: yy + 2, z: Math.floor(z) }) ?? 'air';
+      return OPEN.test(a) && OPEN.test(b) ? yy + 1 : null;
     }
-    if (v.isValid && !fns.riding(v) && fns.ridersN() < 2) fns.putIn(v, 'by command');
+    return null;
+  };
+  const toward = (target, speed) => {
+    const me = sim.location;
+    try { sim.moveToLocation({ x: target.x, y: me.y, z: target.z }, { speed }); } catch { /* */ }
+    // A step up on the way (the one-block rise of the villagerhaul course): a hop.
+    const dx = target.x - me.x, dz = target.z - me.z, l = Math.hypot(dx, dz) || 1;
+    const top = floorAt(me.x + (dx / l) * 0.9, me.z + (dz / l) * 0.9);
+    if (top !== null && top - me.y >= 0.4 && top - me.y <= 1.3 && sim.isOnGround) { try { agent.body.jump(); } catch { /* */ } }
+  };
+  for (const v of vils) {
+    const t0 = system.currentTick;
+    let near = 0, lastSay = -1;
+    while (v.isValid && !fns.riding(v) && fns.ridersN() < 2 && system.currentTick - t0 < 600) {
+      S.check(gen);
+      const bl = boat.location, vl = v.location, me = sim.location;
+      if (Math.hypot(vl.x - bl.x, vl.z - bl.z) <= 1.8) {
+        // Against it: still, so the boat stays there; the game is given 4 s (what you are given), then it is put in.
+        try { sim.stopMoving(); } catch { /* */ }
+        if (++near >= 40) { fns.putIn(v, 'by command (the boat was against it for 4 s)'); break; }
+        await system.waitTicks(2);
+        continue;
+      }
+      near = 0;
+      const r = boatToMob(bl, vl, me);
+      let { stand, via } = r;
+      // Somewhere we can stand: the stand point drawn in toward the boat until it is; the side point from the other side if not.
+      if (floorAt(stand.x, stand.z) === null) {
+        let k = 0.85, p = stand;
+        while (k > 0.4 && floorAt(p.x, p.z) === null) { p = { x: bl.x + (stand.x - bl.x) * k, z: bl.z + (stand.z - bl.z) * k }; k -= 0.15; }
+        stand = p;
+      }
+      if (floorAt(via.x, via.z) === null) via = { x: 2 * vl.x - via.x, z: 2 * vl.z - via.z };
+      const along = (me.x - bl.x) * r.u.x + (me.z - bl.z) * r.u.z;
+      const byTheSide = along < r.d - 0.5 && Math.hypot(me.x - vl.x, me.z - vl.z) < 7 && floorAt(via.x, via.z) !== null;
+      const target = byTheSide ? via : stand;
+      const apart = Math.hypot(me.x - bl.x, me.z - bl.z);
+      if (apart > 9.2) { try { sim.stopMoving(); } catch { /* */ } }   // (a lead snaps at about 10: let the boat come up)
+      else toward(target, Math.hypot(me.x - target.x, me.z - target.z) < 2.5 ? 0.6 : 1);
+      if (lastSay < 0 || system.currentTick - lastSay >= 100) { lastSay = system.currentTick; trace(`villagers: boat ${bl.x.toFixed(1)},${bl.z.toFixed(1)} -> villager ${vl.x.toFixed(1)},${vl.z.toFixed(1)} (${r.d.toFixed(1)}), me ${me.x.toFixed(1)},${me.z.toFixed(1)} -> ${byTheSide ? 'by the side' : 'past it'} ${target.x.toFixed(1)},${target.z.toFixed(1)}`); }
+      await system.waitTicks(2);
+    }
+    try { sim.stopMoving(); } catch { /* */ }
+    if (v.isValid && !fns.riding(v) && fns.ridersN() < 2) fns.putIn(v, 'by command (the boat never got to it)');
   }
 }
 

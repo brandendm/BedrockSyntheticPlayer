@@ -20,6 +20,7 @@ import { trace } from './bridge.js';
 import { wetRun } from '../core/boating.js';
 import { inside as houseInside } from '../core/house.js';
 import { saplingFor, needs2x2, plantProblem } from '../core/saplings.js';
+import { tunnelCheck, cutOrder, stepTicks } from '../core/trunk.js';
 import { blockValue } from '../core/wants.js';
 import { depositPlan, FULL_SLOTS } from '../core/storage.js';
 
@@ -1067,6 +1068,7 @@ export class Skills {
     // Items we couldn't get to: written off for 2 minutes (they may be reachable from elsewhere),
     // plus ones skipped just for this sweep.
     const t0 = system.currentTick, writtenOff = this.unreachableItems, local = new Set(), tours = new Map();
+    let landWaits = 0;
     if (writtenOff.size > 500) writtenOff.clear();
     const skip = { has: (id) => local.has(id) || (writtenOff.get(id) ?? 0) > system.currentTick, add: (id) => writtenOff.set(id, system.currentTick + 2400) };
     for (let i = 0; i < 12 && system.currentTick - t0 < maxS * 20; i++) {
@@ -1082,6 +1084,15 @@ export class Skills {
       // a removed entity throws (that crash restarted the whole job every half minute).
       const withPos = items.map((e) => { try { return { e, id: e.id, loc: { ...e.location } }; } catch { return null; } }).filter(Boolean);
       if (!withPos.length) break;
+      // Ones still falling are planned to in mid-air, a search that runs its whole cap and finds nothing (the u204 forest run: 13 ticks of it after every
+      // tree, 3 and then 10). Left out of this round; when nothing else is left they are waited for, where they land.
+      {
+        const falling = withPos.filter((w) => { try { const v = w.e.getVelocity(); return Math.hypot(v.x, v.y, v.z) > 0.05; } catch { return false; } });
+        if (falling.length && landWaits < 10) {
+          if (falling.length === withPos.length) { landWaits++; await this.wait(gen, 3); i--; continue; }
+          for (const w of falling) { const k = withPos.indexOf(w); if (k >= 0) withPos.splice(k, 1); }
+        }
+      }
       withPos.sort((a, b) => dist3D(here, a.loc) - dist3D(here, b.loc));
       // Several out of reach: one route through them (the next nearest from each), walked without
       // stopping, picked up as we pass: a player runs over a tree's drops or a patch of litter, he
@@ -1503,7 +1514,9 @@ export class Skills {
     for (let n = 0; n < 3; n++) {
       this.check(gen);
       const here = this.sim.location;
-      const far = this.logItemsNear(c, 4).map((e) => { try { return { loc: { ...e.location } }; } catch { return null; } }).filter(Boolean)
+      // (Only ones that have landed: a log still falling is planned to in mid-air, a search that finds nothing: the u204 forest run had three of those
+      // for every tree, and a dearer one at the end.)
+      const far = this.logItemsNear(c, 4).map((e) => { try { const v = e.getVelocity(); return Math.hypot(v.x, v.y, v.z) > 0.05 ? null : { loc: { ...e.location } }; } catch { return null; } }).filter(Boolean)
         .filter((w) => dist3D(here, w.loc) > 1.6 && dist3D(here, w.loc) <= 6)
         .sort((p, q) => dist3D(here, p.loc) - dist3D(here, q.loc));
       if (!far.length) return;
@@ -1755,6 +1768,81 @@ export class Skills {
   }
 
   /**
+   * Cut a trunk from inside it, the way the owner did in the forest test (core/trunk.js has why): beside its foot, the log at eye height, the one
+   * at the foot, a step into the cell the trunk stood in, then straight up the column with the view held on it, every drop falling at our feet
+   * (no walk to a drop, no ring of leaves in the way of the upper logs). Returns { chopped, inside }; what it cannot do (a trunk with nothing
+   * solid under it, no way to stand beside it, a top out of reach) is left for chopTree's own loop.
+   * @param {any} gen
+   * @param {Array<{x: number, y: number, z: number}>} column
+   * @param {{stop?: () => boolean, bonus?: () => boolean}} [opts]
+   */
+  async chopUp(gen, column, { stop = () => false, bonus = () => false } = {}) {
+    const out = { chopped: 0, inside: false };
+    const base = column[0];
+    const at = (x, y, z) => this.blockAt({ x, y, z });
+    if (!tunnelCheck(at, column, base.y).ok) return out; // (as if level with it: the walk beside it comes first)
+    const c = { x: base.x + 0.5, y: base.y, z: base.z + 0.5 };
+    const flatD = () => Math.hypot(this.sim.location.x - c.x, this.sim.location.z - c.z);
+    const isL = (b) => isLog(this.blockAt(b) ?? '');
+    const t0 = system.currentTick;
+    if (flatD() > 1.5 || Math.abs(this.sim.location.y - base.y) > 0.3) await this.goNear(gen, c, 1.3, 2);
+    this.check(gen);
+    const chk = tunnelCheck(at, column, this.sim.location.y);
+    if (!chk.ok || flatD() > 1.7) { this.log(`logs: not cutting the trunk at ${base.x} ${base.y} ${base.z} from inside: ${chk.ok ? `could not get beside it (${flatD().toFixed(1)} off)` : chk.why}`); return out; }
+    const { side, up } = cutOrder(column);
+    // From beside it: the log at eye height (the crosshair is level there), then the one at the foot, the view handed on to the next as each goes.
+    const first = side.filter(isL);
+    for (let i = 0; i < first.length; i++) {
+      if (stop()) return out;
+      if (bonus()) this.a.bonusUntil = system.currentTick + 100;
+      const nxt = first[i + 1] ?? up.find(isL) ?? null;
+      if (!(await this.mine(gen, first[i], { collect: false, next: nxt }))) return out;
+      out.chopped++;
+      this.noteDrops(first[i]);
+    }
+    const rest = up.filter(isL);
+    if (rest.length && !stop()) {
+      // Into the cell, the head staying on the log above (a sidestep: the feet go, the view does not).
+      const here = this.sim.location, dx = c.x - here.x, dz = c.z - here.z, dd = Math.hypot(dx, dz);
+      if (dd > 0.12 && this.a.motor.focus) {
+        await this.a.motor.strafe({ x: dx / dd, z: dz / dd }, stepTicks(dd), { reaction: 1 });
+        this.check(gen);
+      }
+      if (flatD() > 0.45) {
+        const at2 = this.sim.location;
+        await this.a.motor.followPath([{ x: at2.x, y: at2.y, z: at2.z }, { x: c.x, y: base.y, z: c.z }], { walk: true });
+        this.check(gen);
+      }
+      if (flatD() > 0.6) { this.log(`logs: could not step into the trunk's cell at ${base.x} ${base.y} ${base.z} (${flatD().toFixed(1)} off)`); return out; }
+      out.inside = true;
+      for (let i = 0; i < rest.length; i++) {
+        if (stop()) break;
+        const b = rest[i];
+        if (bonus()) this.a.bonusUntil = system.currentTick + 100;
+        if (!isL(b)) continue;
+        if (!this.inReach(b)) break; // the top of a tall trunk: chopTree's loop builds up to it, or leaves it
+        const eyeY = this.sim.location.y + EYE_HEIGHT;
+        const nxt = rest.slice(i + 1).find((q) => isL(q) && q.y + 0.5 - eyeY <= REACH - 0.3) ?? null;
+        if (!(await this.mine(gen, b, { collect: false, next: nxt }))) break;
+        out.chopped++;
+        this.noteDrops(b);
+      }
+    }
+    // The last drop is still falling, then lies out its pickup delay (it can't be taken for half a second): waited out here, a tick at a time
+    // while one is within reach of us, not a search for it.
+    if (out.inside) {
+      for (let k = 0; k < 24; k++) {
+        this.check(gen);
+        const near = this.logItemsNear({ x: this.sim.location.x, y: this.sim.location.y + 0.5, z: this.sim.location.z }, 1.4);
+        if (!near.length) break;
+        await this.wait(gen, 1);
+      }
+    }
+    this.log(`logs: cut ${out.chopped} of ${column.length} from ${out.inside ? 'inside' : 'beside'} the trunk at ${base.x} ${base.y} ${base.z} in ${((system.currentTick - t0) / 20).toFixed(1)} s`);
+    return out;
+  }
+
+  /**
    * Chop one tree: its trunk column bottom-up (building up beside it for the top logs), then pick
    * up every log that fell, and put a sapling back on the stump (unless `replant` is off).
    * stop(): enough logs, leave the rest standing; bonus(): the job's share is in (taking extra).
@@ -1778,13 +1866,18 @@ export class Skills {
     let chopped = 0;
     const before = have();
     const logId = column[0] ? this.blockAt(column[0]) : null;
+    // From inside the trunk, as the owner cut the forest test's trees (chopUp). What it leaves (a top out of reach, a trunk it cannot stand in)
+    // goes on in the loop below, the old way.
+    if (column.length && !stop()) chopped += (await this.chopUp(gen, column, { stop, bonus })).chopped;
     for (const b of column) {
       if (stop()) break; // the job's logs, plus the rest of this tree for later jobs
       if (bonus()) this.a.bonusUntil = system.currentTick + 100;
       if (!isLog(this.blockAt(b) ?? '')) continue;
       // The rest of the trunk is out of reach: build up beside it (a cheap block under us, leaves
       // above cut away) instead of leaving the top of the tree and walking off to another one.
-      if (b.y - this.feet().y > 4 && !(await this.climbForLog(gen, b))) break;
+      // (Out of reach by the eye, not by a count of blocks: the u204 run left the 6th log of every tall tree standing, "nothing to build up with",
+      // when it was 3.9 from the eye of someone stood at the foot.)
+      if (b.y - this.feet().y > 4 && !this.inReach(b) && !(await this.climbForLog(gen, b))) break;
       // The first log and we can't get to it: written off for 5 minutes, on to another tree. (It
       // stayed the nearest, so the next pass picked it again: three rounds of failed searches,
       // two walks and a dig-and-build each, before it gave up: tools/sim_think.mjs.)

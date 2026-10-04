@@ -242,7 +242,13 @@ export class MotorController {
 
   _rotate(eye, gaze, yawOverride = null) {
     const o = this.o;
-    const ty = yawOverride ?? yawTo(eye, gaze);
+    // Looking (all but) straight up or down at something: the bearing to it is whatever the last few centimetres of where we stand make it, and
+    // the spring swung the head round to follow every one (the u204 forest test, chopping up a trunk: 6705 degrees of yaw in the minute against
+    // the owner's 1332). A player's yaw does not move when he looks up a trunk: held where it is while the target is within a quarter block of
+    // the line and 4 times further up or down than across.
+    const across = Math.hypot(gaze.x - eye.x, gaze.z - eye.z);
+    const overhead = across < 0.25 && Math.abs(gaze.y - eye.y) > across * 4;
+    const ty = yawOverride ?? (overhead ? this.yaw : yawTo(eye, gaze));
     let tp = clamp(pitchTo(eye, gaze), -89, 89);
     // Never look an enderman in the eyes: if the target direction passes near one, look down instead.
     for (const a of this.avoid) {
@@ -283,7 +289,10 @@ export class MotorController {
         wps[it.idx].y >= wps[it.idx - 1].y && pos.y < wps[it.idx - 1].y - 0.5) it.idx--;
 
     const final = wps[last];
-    if (it.idx === last && dist2D(pos, final) < o.arriveRadius && Math.abs(pos.y - final.y) < 1) {
+    // (Not "arrived" part way up a vine or ladder whose top is the last waypoint: the u204 vineclimb walk ended 0.8 under the top vine, within the
+    // 1 of height, and the climb out onto the tower never happened.)
+    const climbingTo = final.y - pos.y >= 0.45 && !!this.body.onClimbable?.();
+    if (it.idx === last && dist2D(pos, final) < o.arriveRadius && Math.abs(pos.y - final.y) < 1 && !climbingTo) {
       this._finish('arrived');
       return null;
     }

@@ -17,6 +17,7 @@ import { trace } from './bridge.js';
 import { hold } from './inventory.js';
 import { isWalkMove } from '../core/pathfinder.js';
 import { slingCame, stuckTrack } from '../core/towlearn.js';
+import { pullPath, flankSpots, climbSpot, LEAD_SLACK } from '../core/towline.js';
 
 const flat = (p, q) => Math.hypot(p.x - q.x, p.z - q.z);
 const WALK_BPS = 4.3, RIDE_BPS = 9; // blocks per second at full speed, on foot and on a horse (for the "ideal" time)
@@ -47,6 +48,43 @@ export class LeadTow {
     const dx = p.x - b.x, dz = p.z - b.z, len = Math.hypot(dx, dz) || 1;
     const top = S.groundTop(Math.floor(b.x + (dx / len) * 1.6), Math.floor(b.z + (dz / len) * 1.6));
     return Number.isFinite(top) ? Math.round((top + 1 - b.y) * 10) / 10 : 0;
+  }
+
+  /**
+   * surf(x, z) for core/towline.js: the y a boat sits at in a block column near `y0` (the top of the first block that is not open going down
+   * from 4 above, water counts: it floats), -Infinity if there is none. Real blocks, not natural ground: a bridge we built is a floor. Cached
+   * for the life of the returned function (made fresh for each question: blocks get placed).
+   */
+  surface(y0) {
+    const S = this.a.skills, cache = new Map();
+    const OPEN = /^(air|cave_air|void_air|short_grass|tall_grass|fern|snow_layer|vine|torch|sapling|poppy|dandelion)$/;
+    const surf = (x, z) => {
+      const k = `${x},${z}`;
+      if (cache.has(k)) return cache.get(k);
+      let top = -Infinity;
+      for (let yy = Math.floor(y0) + 4; yy >= Math.floor(y0) - 8; yy--) {
+        const id = S.blockAt({ x, y: yy, z });
+        if (id == null) continue;
+        if (OPEN.test(id)) continue;
+        top = /^(water|flowing_water)$/.test(id) ? yy + 0.9 : yy + 1;
+        break;
+      }
+      cache.set(k, top);
+      return top;
+    };
+    return surf;
+  }
+
+  /** The surface we can stand on in a column near `y0` (a floor with two open blocks over it), else null; for core/towline.js. */
+  standableAt(y0) {
+    const S = this.a.skills, surf = this.surface(y0);
+    return (x, z) => {
+      const top = surf(x, z);
+      if (!Number.isFinite(top) || Math.abs(top - y0) > 4) return null;
+      const OPENISH = /^(air|cave_air|void_air|short_grass|tall_grass|fern|snow_layer)$/;
+      const a = S.blockAt({ x, y: Math.ceil(top), z }) ?? 'air', b = S.blockAt({ x, y: Math.ceil(top) + 1, z }) ?? 'air';
+      return OPENISH.test(a) && OPENISH.test(b) ? top : null;
+    };
   }
 
   /**
@@ -264,11 +302,43 @@ export class LeadTow {
       // Stuck: the boat hasn't moved while the lead is taut, or the lead is nearly at the guard distance.
       if (stuck) {
         try { sim.stopMoving(); } catch { /* */ }
-        const rise = this.riseAhead(boat, pos);
         const here = `${Math.round(boat.location.x)},${Math.round(boat.location.z)}`;
         // The same place = within 1.5 of where the count began (a boat that rocks a little is still stuck).
         const tr = stuckTrack(stuckAt ? { anchor: stuckAt, count: stuckCount } : null, boat.location); stuckCount = tr.count; stuckAt = tr.anchor;
-        if (rise >= 0.4 && pos.y - boat.location.y >= 0.4 && stuckCount <= 4) {
+        // Where the pull of the lead sends the boat from here (a straight line at us, stopped by a step, sliding along a face it meets
+        // at an angle: core/towline.js), so the report says what it was jammed against. The u204 villagerhaul run: the walker went round a
+        // one-block rise, the boat was pulled into its face and stayed there 54 s, and every "flank" line crossed the same rise.
+        const bl = boat.location, level = bl.y, surf = this.surface(level);
+        const pp = pullPath(surf, bl, pos, level, { stop: LEAD_SLACK });
+        const stepRise = !pp.clear && Number.isFinite(pp.rise) ? pp.rise : 0;
+        const rise = Math.max(this.riseAhead(boat, pos), stepRise);
+        const above = pos.y - bl.y >= 0.4;
+        trace(`tow: stuck #${stuckCount}: boat ${bl.x.toFixed(1)},${bl.y.toFixed(1)},${bl.z.toFixed(1)}, me ${pos.x.toFixed(1)},${pos.y.toFixed(1)},${pos.z.toFixed(1)} (${d.toFixed(1)} apart); the pull ${pp.clear ? 'is clear' : pp.at ? `stops at ${pp.at.x.toFixed(1)},${pp.at.z.toFixed(1)} against ${Number.isFinite(pp.rise) ? `a step of ${pp.rise}` : 'no floor'}` : 'is stuck'}${above ? ', we are above it' : ''}`);
+        if (!ride && !above && !pp.clear && stepRise >= 0.4 && stuckCount <= 6) {
+          // A step in the boat's way and we are level with it (we went round, or are on the far side): not a sling (that is lifted from
+          // above). Round it by standing where the pull clears it, else up onto it, and pull again.
+          const standable = this.standableAt(level);
+          const spots = stuckCount <= 3 ? flankSpots({ surf, standable, boat: bl, level, wp, me: pos }) : [];
+          if (spots.length) {
+            const sp = spots[Math.min(spots.length - 1, stuckCount - 1)];
+            m.tugs++;
+            note(`round the step: to ${sp.x.toFixed(0)},${sp.z.toFixed(0)} so the boat comes to ${sp.end.x.toFixed(0)},${sp.end.z.toFixed(0)}`);
+            await S.goNear(gen, { x: sp.x, y: sp.y, z: sp.z }, 1.2, 1).catch(() => false);
+            lastBoatMoveTick = system.currentTick;
+            if (flat(subject().location, wp) > 8) route = null;
+            continue;
+          }
+          const cs = climbSpot({ surf, standable, boat: bl, level, toward: pos });
+          if (cs) {
+            m.tugs++;
+            note(`up onto the step at ${cs.x.toFixed(0)},${cs.z.toFixed(0)} (${(cs.y - level).toFixed(1)} up)`);
+            await S.goNear(gen, { x: cs.x, y: cs.y, z: cs.z }, 1, 2).catch(() => false);
+            lastBoatMoveTick = system.currentTick;
+            continue;
+          }
+          note('a step in the way: no way round, none to climb onto');
+        }
+        if (rise >= 0.4 && above && stuckCount <= 4) {
           // Below us against a step: the sling, a little further stretched each time it fails.
           m.slings++;
           const target = stretchFor(rise) + (stuckCount - 1) * 1.0;

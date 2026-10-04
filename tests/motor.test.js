@@ -209,3 +209,40 @@ test('stress worlds that used to trip the walker: all arrive', async () => {
     assert.equal(out.replans, 0, `${kind} ${seed}: needed a replan`);
   }
 });
+
+test('a walk whose last waypoint is the top of a vine is not "arrived" part way up it (the u204 vineclimb, 0.8 under the top vine)', async () => {
+  const w = makeWorld();
+  const body = new SimBody(w, { x: 0.5, y: 64.2, z: 0.5 }, 0);
+  body.onClimbable = () => true;
+  body.climbYaw = () => null;
+  body.jump = () => {};            // (held where it is: only the arrival test)
+  const motor = new MotorController(body, {}, makeRng(5));
+  const wps = [{ x: 0.5, y: 64, z: 0.5 }, { x: 0.5, y: 65, z: 0.5 }];
+  const { result } = await runMotor(motor, body, motor.followPath(wps), 12);
+  assert.ok(result === null || result.status !== 'arrived', `still climbing after 12 ticks: ${JSON.stringify(result)}`);
+  // The same waypoints on plain ground (not on a climbable): arrived within a block of height, as before.
+  const b2 = new SimBody(w, { x: 0.5, y: 64.2, z: 0.5 }, 0);
+  const m2 = new MotorController(b2, {}, makeRng(5));
+  const r2 = await runMotor(m2, b2, m2.followPath(wps), 12);
+  assert.equal(r2.result?.status, 'arrived');
+});
+
+test('looking straight up a trunk: the yaw is held, whatever the last centimetres of position do to the bearing (the u204 forest: 6705 deg of yaw)', async () => {
+  const w = makeWorld();
+  const body = new SimBody(w, { x: 0.5, y: 64, z: 0.5 }, 90);
+  const motor = new MotorController(body, {}, makeRng(9));
+  // The target 3 up and within a hair of the line: every tick's position jitter would flip its bearing.
+  for (let t = 0; t < 60; t++) {
+    body.pos.x = 0.5 + (t % 2 ? 0.04 : -0.04); body.pos.z = 0.5 + (t % 3 ? -0.03 : 0.03);
+    motor.setFocus({ x: 0.5, y: 68, z: 0.5 });
+    motor.tick(); body.step();
+  }
+  let m = 0;
+  for (let i = 1; i < body.looks.length; i++) m = Math.max(m, Math.abs(angleDiff(body.looks[i].yaw, body.looks[i - 1].yaw)));
+  assert.ok(m < 3, `yaw moved ${m.toFixed(1)} deg in a tick looking straight up`);
+  assert.ok(body.pitch < -60, `pitch ${body.pitch.toFixed(0)} should be up`);
+  // (And a target off to the side is still turned to.)
+  motor.setFocus({ x: 5.5, y: 65, z: 0.5 });
+  for (let t = 0; t < 60; t++) { motor.tick(); body.step(); }
+  assert.ok(Math.abs(angleDiff(body.yaw, -90)) < 15, `faced ${body.yaw.toFixed(0)}, the target is east (-90)`);
+});
