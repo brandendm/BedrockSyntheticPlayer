@@ -29,6 +29,7 @@ import { chainStep, chainItem, chainOutline, held } from '../core/chain.js';
 import { Horses } from './horse.js';
 import { LeadTow } from './leadtow.js';
 import { Boating } from './boating.js';
+import { waterReflex, airFloor, ownsWater } from '../core/water.js';
 import { TowLearn } from './towlearn.js';
 import { Portals } from './portal.js';
 import { FULL_SLOTS } from '../core/storage.js';
@@ -184,6 +185,7 @@ export class Agent {
     this.arenaHook = null;       // a test arena is running (game/arena.js): its rules for deaths, kit and who to fight
     this.knownSurfaceStone = null;
     this.waterIdle = 0;
+    this.ownWaterSince = null; this.ownWaterSaid = false; // (core/water.js: when a job of its own first got wet)
   }
 
   get dim() {
@@ -958,7 +960,7 @@ export class Agent {
       this.nextRoute = 0;
     }
 
-    if (d.mode !== 'none' && this.body.headUnderwater() && this.body.airRatio() < (this.arenaHook?.swims ? 0.25 : 0.5)) {
+    if (d.mode !== 'none' && this.body.headUnderwater() && this.body.airRatio() < airFloor(this.task?.kind, !!this.arenaHook?.swims, !!this.boating?.crossing)) {
       this.checkWater(t, inWater); // air first, fight later
     } else if (d.mode === 'fight') {
       this.calmSince = t;
@@ -1024,33 +1026,41 @@ export class Agent {
 
   /**
    * In water with nowhere to go (knocked in, fell in, path ended in it): swim to the nearest dry
-   * land. Paths that deliberately cross water keep the motor busy, so they aren't interrupted.
+   * land. Paths that deliberately cross water keep the motor busy, so they aren't interrupted; nor are the jobs that
+   * work in water by themselves with raw moves (a test, a tow, an arena, our own boat crossing: core/water.js).
    */
   checkWater(t, inWater) {
-    if (this.boatUnder?.(this.sim)) { this.waterIdle = 0; return false; } // sitting in a boat on the water: nothing to swim out of
-    // Running out of air, whatever we're doing (climbing a flooded shaft, a path through water):
-    // drop it and get our head into air now.
-    const swims = !!this.arenaHook?.swims; // (an arena job under water: the routine comes up for air itself; this is the last resort)
-    if (this.task?.kind !== 'swim_out' && this.body.headUnderwater() && this.body.airRatio() < (swims ? 0.25 : 0.5)) {
-      if (!['fight', 'flee'].includes(this.task?.kind)) this.suspended = this.task ?? this.suspended;
+    const kind = this.task?.kind;
+    const st = {
+      task: kind, crossing: !!this.boating?.crossing, inBoat: !!this.boatUnder?.(this.sim), inWater, headUnder: false, air: 1,
+      swims: !!this.arenaHook?.swims, // (an arena job under water: the routine comes up for air itself; this is the last resort)
+      motorBusy: !!this.motor.busy, onGround: false, idle: this.waterIdle, step: SURVIVE_EVERY,
+    };
+    if (!st.inBoat) { st.headUnder = this.body.headUnderwater(); st.air = this.body.airRatio(); st.onGround = this.body.isOnGround(); }
+    // (core/water.js: a bot in a boat is left alone; one doing a test, a tow, an arena or its own boat crossing is in water on purpose and
+    // is left to its routine until it is really short of air. The u204 leadboat run was taken from by this at 0.6 s in the tow course's pond.)
+    const r = waterReflex(st);
+    this.waterIdle = r.idle;
+    if (inWater && !st.inBoat && ownsWater(kind, st.crossing)) {
+      this.ownWaterSince ??= t;
+      if (!this.ownWaterSaid && t - this.ownWaterSince >= 40) {
+        this.ownWaterSaid = true;
+        const p = this.body.getPos();
+        trace(`water: ${st.crossing ? 'boat crossing' : kind} has been in water ${Math.round((t - this.ownWaterSince) / 20)} s at ${Math.round(p.x)} ${Math.round(p.y)} ${Math.round(p.z)} (air ${Math.round(st.air * 100)}%, motor ${st.motorBusy ? 'busy' : 'free'}): left to its own routine`);
+      }
+    } else { this.ownWaterSince = null; this.ownWaterSaid = false; }
+    if (r.act === 'air') {
+      if (!['fight', 'flee'].includes(kind)) this.suspended = this.task ?? this.suspended;
       const gen = this.newTask({ kind: 'swim_out' });
       this.motor.stop();
       this.calmSince = t;
       if (CONFIG.debug) console.warn(`[agent] air ${Math.round(this.body.airRatio() * 100)}%: swimming for air`);
+      if (ownsWater(kind, st.crossing)) trace(`water: ${kind} had ${Math.round(st.air * 100)}% air: swimming for air`);
       this.swimToAir(gen).then(() => { if (gen === this.taskGen) { this.newTask(null); this.calmSince = system.currentTick; } })
         .catch((e) => console.error(`[agent] swim for air: ${e}`));
       return true;
     }
-    if (!inWater || swims || this.motor.busy || this.task?.kind === 'swim_out') {
-      this.waterIdle = 0;
-      return this.task?.kind === 'swim_out';
-    }
-    // Standing on the bottom with our head in the air (a shallow pool in a cave, a puddle): not
-    // swimming, nothing to swim out of. A player mines on from there. It was cutting the mining off
-    // every 4 s for a swim to shore that ended where it started (swim_out <-> get_iron, 5 minutes).
-    if (this.body.isOnGround() && !this.body.headUnderwater()) { this.waterIdle = 0; return false; }
-    if ((this.waterIdle += SURVIVE_EVERY) < 10) return false;
-    this.waterIdle = 0;
+    if (r.act !== 'shore') return !st.inBoat && kind === 'swim_out';
     // Remember where we got wet so exploring stops heading this way.
     const p = this.body.getPos();
     this.wetSpots = [...(this.wetSpots ?? []).slice(-4), { x: p.x, z: p.z, t }];

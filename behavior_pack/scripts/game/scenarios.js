@@ -49,7 +49,7 @@
 
 import { dist3D } from '../core/mathutil.js';
 import { castRay } from './world.js';
-import { sendEvent } from './bridge.js';
+import { sendEvent, trace } from './bridge.js';
 import { EXPECTED } from '../core/calibrate.js';
 import { CONFIG } from '../config.js';
 import { system, world, ItemStack, EquipmentSlot, Direction } from '@minecraft/server';
@@ -2557,7 +2557,10 @@ async function runOne(agent, player, name, arg, human = false) {
           const rid = () => { try { return boat.getComponent('minecraft:rideable')?.getRiders() ?? []; } catch { return []; } };
           const fns = { riding: (v) => rid().some((r) => r.id === v.id), ridersN: () => rid().length, putIn: (v) => { boardVillager(cmd, boat, v); } };
           rec.reset(); t0 = system.currentTick;
-          await sweepVillagers(agent, gen, boat, vils, gy, fns);
+          // (The side passes of a sweep run east into the pond and the step, or west at the glass: u204's second and third passes were 20 s of the bot
+          // digging at the wall and then swimming at the step. Here each pass is along the line of the two villagers, from the other end.)
+          await sweepVillagers(agent, gen, boat, vils, gy, fns, { turns: [0, Math.PI, 0] });
+          trace(`leadboat: sweep done at ${secs()} s: ${vils.filter((v) => fns.riding(v)).length}/2 villagers in the boat, bot at ${Math.round(sim.location.x - x)} ${Math.round(sim.location.z - z)} (course coordinates)${sim.isInWater ? ', IN WATER' : ''}`);
           const m = await agent.tow.run(gen, boat, { ...farGoal, x: farGoal.x - 0.5 }, { maxS: 150 });
           cal.legs.walk = m;
           // Round the pit to its far side: the boat is pulled straight across it and drops in with its riders.
@@ -2688,9 +2691,12 @@ async function runOne(agent, player, name, arg, human = false) {
       }
       case 'boatcross': {
         // A lake 40 blocks across and the whole width of the slab (nothing to walk round), a boat in the pack: to the gold block on the far shore.
-        const lx1 = x + 4, lx2 = x + 43, R = 9;
+        // (u204: the air fill below ran over the slab's rim, z +-10, and took the glass wall away up to 6 high, leaving a strip of grass each side
+        // of the 19-wide lake: the walking search took it, 53 blocks round, and the bot never met the water. The lake now fills the inside of the
+        // rim exactly and the wall stays, so the only ways across are a boat or a 40 block swim.)
+        const lx1 = x + 4, lx2 = x + 43, R = ext.r - 1;
         cmd(`fill ${lx1} ${gy - 3} ${z - R} ${lx2} ${gy} ${z + R} water`);
-        cmd(`fill ${x - 8} ${gy + 1} ${z - 10} ${x + 54} ${gy + 6} ${z + 10} air`);
+        cmd(`fill ${lx1} ${gy + 1} ${z - R} ${lx2} ${gy + 6} ${z + R} air`);
         cmd(`setblock ${x + 47} ${gy} ${z} gold_block`);
         cleanup.push(() => { try { for (const e of dim.getEntities({ location: { x: x + 24, y: gy, z }, maxDistance: 40 })) if (/boat|raft/.test(e.typeId)) e.remove(); } catch { /* */ } });
         const goal = { x: x + 47.5, y: gy + 1, z: z + 0.5 };
@@ -2699,13 +2705,27 @@ async function runOne(agent, player, name, arg, human = false) {
         const near = () => Math.hypot(who.location.x - goal.x, who.location.z - goal.z) <= 3.5 && who.location.y >= gy + 0.5;
         if (human) { pass = await humanTry(near, 120, { x: goal.x, y: goal.y, z: goal.z }, 'Across the lake to the gold block'); detail = `you ${pass ? 'got across' : 'did not get across'} in ${secs()}s`; break; }
         const gen = agent.newTask({ kind: 'test' });
-        const job = S.travelToward(gen, goal, 8).catch(() => false);
-        for (let i = 0; i < 120 * 4 && !near() && !agent.testSkipped; i++) await system.waitTicks(5);
+        agent.boating.last = null; agent.boating.arrivedAt = null;
+        let jobDone = false;
+        // Across by the bot's own long-travel routine (a boat if the way runs through water), then the few steps to the gold block that
+        // you walk after the boat (the routine stops 12 short of a target).
+        const job = (async () => {
+          await S.travelToward(gen, goal, 8);
+          if (!near()) await S.goNear(gen, goal, 2, 2);
+        })().catch((e) => { if (e?.constructor?.name !== 'Aborted') trace(`boatcross: ${e}`); return false; }).then((v) => { jobDone = true; return v; });
+        // The clock stops at the gold block (as yours does); the bot then gets its boat back in the pack (15 s at most) before the test ends.
+        let tNear = -1, arrivedS = '';
+        for (let i = 0; i < 120 * 4 && !agent.testSkipped; i++) {
+          if (tNear < 0 && near()) { tNear = system.currentTick; legSummary = rec.snapshot(); arrivedS = secs(); }
+          if (tNear >= 0 && (jobDone || system.currentTick - tNear > 20 * 15)) break;
+          if (tNear < 0 && jobDone) { await system.waitTicks(10); if (!near()) break; continue; } // (it finished and is not there: nothing more will happen)
+          await system.waitTicks(5);
+        }
+        const bl = agent.boating.last;
         agent.newTask(null); agent.motor.stop();
         await Promise.race([job, system.waitTicks(20)]);
-        pass = near();
-        const bl = agent.boating.last;
-        detail = `${pass ? 'across' : `${Math.round(Math.hypot(sim.location.x - goal.x, sim.location.z - goal.z))} blocks short`} in ${secs()}s; boat: ${bl ? `${bl.ok ? 'crossed' : `stopped (${bl.why})`}, ${JSON.stringify(bl.how)}` : 'not used'}; the boat is ${agent.boating.have() ? 'in the pack' : 'not in the pack'}`;
+        pass = tNear >= 0;
+        detail = `${pass ? `across in ${arrivedS}s` : `${Math.round(Math.hypot(sim.location.x - goal.x, sim.location.z - goal.z))} blocks short in ${secs()}s`}; boat: ${bl ? `${bl.ok ? 'crossed' : `stopped (${bl.why})`}, ${JSON.stringify(bl.how)}` : 'not used'}; the boat is ${agent.boating.have() ? 'in the pack' : 'not in the pack'}`;
         break;
       }
       case 'vineclimb': {
@@ -2921,12 +2941,12 @@ function boardVillager(cmd, boat, v) {
  * boat sweeps into it. From 6 blocks short of it, a moment for the boat to come up behind, then through it and 5 on at a walk; if that did not take
  * it, again from the sides; the game is helped only after three sweeps. fns: { riding(v), ridersN(), putIn(v, how) }.
  */
-async function sweepVillagers(agent, gen, boat, vils, gy, fns) {
+async function sweepVillagers(agent, gen, boat, vils, gy, fns, { turns = [0, Math.PI / 2, -Math.PI / 2] } = {}) {
   const S = agent.skills, sim = agent.sim;
   for (const v of vils) {
     for (let pass = 0; pass < 3 && v.isValid && !fns.riding(v) && fns.ridersN() < 2; pass++) {
       const vl = v.location, bl = boat.location;
-      const ang = Math.atan2(vl.z - bl.z, vl.x - bl.x) + (pass === 0 ? 0 : pass === 1 ? Math.PI / 2 : -Math.PI / 2);
+      const ang = Math.atan2(vl.z - bl.z, vl.x - bl.x) + turns[pass];
       const ux = Math.cos(ang), uz = Math.sin(ang);
       await S.goNear(gen, { x: vl.x - ux * 6, y: gy + 1, z: vl.z - uz * 6 }, 1, 1).catch(() => false);
       await system.waitTicks(20);

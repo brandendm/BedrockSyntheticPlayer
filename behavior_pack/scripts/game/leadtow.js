@@ -217,6 +217,7 @@ export class LeadTow {
       return out;
     };
 
+    let wetTicks = 0;
     for (let tick = 0; tick < (opts.maxS ?? 120) * 20; tick++) {
       S.check(gen);
       if (!boat.isValid || !this.isLeashed(boat)) { m.snapped = true; m.why = 'the lead broke'; break; }
@@ -224,7 +225,9 @@ export class LeadTow {
       m.maxSep = Math.max(m.maxSep, d);
       if (flat(boat.location, lastBoat) > 0.05) { if (m.pullAt === null) m.pullAt = d; lastBoat = { ...boat.location }; lastBoatMoveTick = system.currentTick; }
       if (flat(pos, goal) < 2.5) { m.arrived = true; break; }
-      if (sim.isInWater && !ride) { m.wet = true; m.why = 'in water (the route should never go there)'; break; }
+      // (A pond is part of the leadboat course, and a lead drags the boat into it: swum out of, not given up on at the first stroke; the u204 bot
+      // went in after the boat it had dragged there and the test was lost to the swim-out reflex. Ten seconds in all ends the tow.)
+      if (sim.isInWater && !ride) { m.wet = true; if (++wetTicks > 200) { m.why = 'in water for 10 s (the route should never go there)'; break; } }
       if (!route || wi >= route.length) {
         try { sim.stopMoving(); } catch { /* */ }
         if (replans++ > 12) { m.why = 'could not find a way on'; break; }
@@ -291,7 +294,7 @@ export class LeadTow {
       }
       // Full speed (what snaps a lead is being stuck, not going fast); a hop at a step up.
       move(wp, Math.max(0.2, Math.min(1, (opts.speed ?? 1) * (d > guard - 2.5 ? 0.5 : 1))));
-      if (wp.y - pos.y > 0.6 && flat(pos, wp) < 1.7 && system.currentTick - lastJump > 8) { try { sim.jump(); m.steps++; lastJump = system.currentTick; } catch { /* */ } }
+      if (wp.y - pos.y > 0.6 && flat(pos, wp) < 1.7 && system.currentTick - lastJump > 8) { try { a.body.jump(); m.steps++; lastJump = system.currentTick; } catch { /* */ } } // (body.jump: afloat, a hop out onto the bank, where sim.jump does nothing)
       await S.wait(gen, 1);
     }
     if (m.snapped && m.maxSep > 3) {

@@ -17,6 +17,7 @@ import { THIN_COVER, castRay, canSee, ONE_TAP, isWatery } from './world.js';
 import { CONFIG } from '../config.js';
 import { wantScore, biomeName } from '../core/biomes.js';
 import { trace } from './bridge.js';
+import { wetRun } from '../core/boating.js';
 import { inside as houseInside } from '../core/house.js';
 import { saplingFor, needs2x2, plantProblem } from '../core/saplings.js';
 import { blockValue } from '../core/wants.js';
@@ -5268,23 +5269,29 @@ export class Skills {
         for (let i = 0; i < path.length; i++) if (open(path[i])) last = i;
         path = path.slice(0, last + 1);
       }
-      // Water ahead on the way: 8 or more wet cells in a row. By boat, from the last dry cell to the first one after.
-      let wet = null;
-      { let run = 0;
-        for (let i = 0; i < path.length; i++) {
-          if (this.isLiquid(path[i])) { run++; if (run >= 8 && !wet) wet = { a: i - run + 1, b: -1 }; }
-          else { if (wet && wet.b < 0) wet.b = i; run = 0; }
+      // Water ahead on the way: 8 or more wet cells in a row. By boat, from the last dry cell to the first one after. The search finishes within
+      // 8 blocks of a far target, so a path across a lake that has its target just past the far shore ENDS IN THE LAKE (the u204 boatcross lake: 37
+      // wet cells and no dry one after them, so no crossing was ever tried): the far shore is then read along the line to the target.
+      const wr = wetRun(path.map((p) => this.isLiquid(p)));
+      const cen = (c) => ({ x: c.x + 0.5, y: c.y, z: c.z + 0.5 });
+      let wetShore = null, wetFar = null;
+      if (wr && wr.a >= 1) {
+        wetShore = cen(path[wr.a - 1]);
+        if (wr.b >= 0 && path[wr.b] && !this.isLiquid(path[wr.b])) wetFar = cen(path[wr.b]);
+        else {
+          const pr = B.probe(wetShore, target);
+          if (pr) { wetFar = pr.far; this.log(`water ahead: the path ends in it; ${pr.width} wide, the far shore at ${Math.round(pr.far.x)} ${Math.round(pr.far.z)}`); }
+          else this.log(`water ahead: ${path.length - wr.a} wet cells at ${Math.round(wetShore.x)} ${Math.round(wetShore.z)}, no far shore along the line to the target: swum`);
         }
-        if (wet && wet.b < 0) wet.b = Math.min(path.length - 1, wet.a + 60); }
-      if (wet && wet.a >= 1 && path[wet.b] && !this.isLiquid(path[wet.b])) {
-        const shore = path[wet.a - 1], far = path[wet.b];
-        if (wet.a - 1 >= 1) await this.a.motor.followPath(smoothPath(this.a.classifier(), path.slice(0, wet.a)));
+      }
+      if (wetShore && wetFar) {
+        if (wr.a - 1 >= 1) await this.a.motor.followPath(smoothPath(this.a.classifier(), path.slice(0, wr.a)));
         this.check(gen);
-        const r = await B.cross(gen, { x: shore.x + 0.5, y: shore.y, z: shore.z + 0.5 }, { x: far.x + 0.5, y: far.y, z: far.z + 0.5 });
+        const r = await B.cross(gen, wetShore, wetFar);
         this.log(`boat: ${r.ok ? 'crossed' : `no crossing (${r.why})`} (${r.secs} s)`);
         if (r.ok) continue;
         // No boat to be had: on through the water as before.
-        path = path.slice(Math.max(0, wet.a - 1));
+        path = path.slice(Math.max(0, wr.a - 1));
       } else if (path.length < 2 || dist3D(from, path[path.length - 1]) < 6) {
         // The walking search stops at the shore with the target beyond (a lake or a sea between): the straight line to it, water then land.
         const pr = B.probe(from, target);
