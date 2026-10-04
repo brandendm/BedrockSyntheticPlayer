@@ -8,6 +8,7 @@ import { spawnSimulatedPlayer } from '@minecraft/server-gametest';
 import { Agent } from './game/agent.js';
 import { runTests } from './game/scenarios.js';
 import { arenaCommand } from './game/arenas.js';
+import { ironFarmCommand } from './game/ironfarm.js';
 import { poll, sendEvent } from './game/bridge.js';
 import { CONFIG } from './config.js';
 import { orderOf } from './core/toggles.js';
@@ -444,6 +445,11 @@ function handle(text, player) {
     // From the dashboard there is no sender: the first real player is the one who takes part.
     const tester = player ?? world.getPlayers().find((pl) => pl.name !== agent.sim.name);
     runTests(agent, tester, lower.split(/\s+/).slice(1)).catch((e) => console.error(`[test] ${e}\n${e.stack}`));
+    return;
+  }
+  if (lower === 'ironfarm' || lower.startsWith('ironfarm ')) {
+    // The iron golem farm (game/ironfarm.js), built with game commands: no bot needed.
+    ironFarmCommand(player, lower.split(/\s+/).slice(1));
     return;
   }
   if (lower === 'arena' || lower.startsWith('arena ')) {
