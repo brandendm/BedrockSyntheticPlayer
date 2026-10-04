@@ -9,12 +9,13 @@ import { register } from 'node:module';
 register('./mock/hooks_ironfarm.mjs', import.meta.url);
 const MC = await import('@minecraft/server');
 const { ironFarmCommand } = await import('../behavior_pack/scripts/game/ironfarm.js');
-const { ironFarmPlan, render, settleWater, waterSources, PLATFORM, WATER_Y, SIGNS, CAMPFIRES, CHESTS, DOOR, BASE_Y } = await import('../behavior_pack/scripts/core/ironfarm.js');
+const { ironFarmPlan, render, settleWater, waterSources, PLATFORM, WATER_Y, SIGNS, CAMPFIRES, CHESTS, DOOR, BASE_Y, GATES, LAVA, CHAMBER_WATER, CHAMBER_WET } = await import('../behavior_pack/scripts/core/ironfarm.js');
 const VERBOSE = process.argv.includes('-v');
 const G = globalThis.__ifw;
 const plan = ironFarmPlan();
 const ref = render(plan);
 const cellsPlan = ref.cells;
+const SLABS = [...cellsPlan.values()].filter((v) => v.id === 'cobblestone_slab').length;
 const OPPOSITE = { 2: 3, 3: 2, 4: 5, 5: 4 };
 
 function reset(knobs = {}) {
@@ -32,6 +33,7 @@ const origin = () => {
 const at = (o, x, y, z) => G.grid.get(`${x + o.x},${y + o.y},${z + o.z}`);
 
 let failed = 0;
+let x4;
 const cases = [];
 const t = (name, fn) => cases.push({ name, fn });
 const ok = (cond, msg) => { if (!cond) throw new Error(msg); };
@@ -44,12 +46,14 @@ async function built(knobs = {}, args = ['build']) {
   return origin();
 }
 const FIELD = settleWater(ref, waterSources(), WATER_Y);
+const wetNow = (o, c) => { const x = at(o, c.x, c.y, c.z); return !!x && (x.id === 'water' || x.id === 'flowing_water'); };
+const hallWet = (o) => CHAMBER_WET.filter((c) => wetNow(o, c)).length;
 const wetCells = (o) => [...FIELD.field.keys()].filter((k) => { const [x, z] = k.split(',').map(Number); const c = at(o, x, WATER_Y, z); return c && (c.id === 'water' || c.id === 'flowing_water'); }).length;
 const WANT_WET = FIELD.field.size;
 /** Source blocks (depth 0) on the platform layer of a built farm. */
 const sourceCells = (o) => [...G.grid].filter(([k, c]) => { const y = Number(k.split(',')[1]); return y === o.y + WATER_Y && (c.id === 'water' || c.id === 'flowing_water') && (c.states?.liquid_depth ?? 0) === 0; }).length;
 
-t('everything is where the plan says, water over the whole platform (48 sources, none made by the game), four campfires, no lava, nothing extra', async () => {
+t('everything is where the plan says: water over the whole platform (48 sources, none made by the game, the hole itself dry), four open gates over the hole, the hallway with its one water source, ONE campfire, the lava held by its signs, nothing extra', async () => {
   const o = await built();
   ok(o, 'it did not build');
   ok(o.y + BASE_Y === 70, `the tower's floor is at y ${o.y + BASE_Y}, the ground top was 69`);
@@ -62,17 +66,22 @@ t('everything is where the plan says, water over the whole platform (48 sources,
   const extra = [...G.grid.keys()].filter((k) => { const [x, y, z] = k.split(',').map(Number); return !cellsPlan.has(`${x - o.x},${y - o.y},${z - o.z}`); });
   ok(extra.every((k) => G.grid.get(k).id === 'flowing_water'), `extra blocks: ${extra.filter((k) => G.grid.get(k).id !== 'flowing_water').slice(0, 3)}`);
   ok(FIELD.converted.length === 0, `the plan's water would convert ${FIELD.converted.length} cells`);
-  ok(WANT_WET === 240 && wetCells(o) === 240, `${wetCells(o)} wet cells of ${WANT_WET}`);
+  ok(WANT_WET === 236 && wetCells(o) === 236, `${wetCells(o)} wet cells of ${WANT_WET}`);
   ok(sourceCells(o) === 48, `${sourceCells(o)} source blocks on the platform: the water has pooled`);
-  ok(![...G.grid.values()].some((c) => c.id === 'lava'), 'there is lava');
-  ok(CAMPFIRES.length === 4, `${CAMPFIRES.length} campfires`);
+  ok([...G.grid.values()].filter((c) => c.id === 'lava').length === 1 && at(o, LAVA.x, LAVA.y, LAVA.z)?.id === 'lava', 'the lava is not the one block');
+  ok(GATES.every((q) => at(o, q.x, q.y, q.z)?.id === 'fence_gate' && at(o, q.x, q.y, q.z).states.open_bit === true), 'a gate is missing or shut');
+  ok(!(x4 = [7, 8].flatMap((x) => [7, 8].map((z) => at(o, x, WATER_Y, z)))).some((c) => c && /water/.test(c.id)), 'water over the hole');
+  ok(hallWet(o) === 3 && wetNow(o, CHAMBER_WATER), `${hallWet(o)} wet hallway cells`);
+  ok(!wetNow(o, CAMPFIRES[0]) && !wetNow(o, { x: 8, y: -6, z: 7 }) && !wetNow(o, { x: 9, y: -6, z: 8 }), 'water on the campfire side');
+  ok(CAMPFIRES.length === 1, `${CAMPFIRES.length} campfires`);
   ok(SIGNS.every((s) => at(o, s.x, s.y, s.z)?.id === 'wall_sign'), 'a sign is missing');
   ok(CAMPFIRES.every((c) => at(o, c.x, c.y, c.z)?.id === 'campfire'), 'a campfire is missing');
   ok(at(o, DOOR.x, DOOR.y, DOOR.z)?.id === 'wooden_door' && at(o, DOOR.x, DOOR.y + 1, DOOR.z)?.id === 'wooden_door', 'no door');
-  ok(chat().some((l) => /Water: flowing over the whole platform/.test(l)), 'the water report is wrong');
+  ok(chat().some((l) => /Water: flowing over the whole platform.*the hole itself dry/.test(l)), `the water report is wrong: ${chat().filter((l) => /Water:/.test(l))}`);
+  ok(chat().some((l) => /Hallway water: running \(north and east of its source\) \(3 of 3 cells wet\)/.test(l)), `the hallway report: ${chat().filter((l) => /Hallway/.test(l))}`);
   ok(chat().some((l) => /a double chest \(54 slots\)/.test(l)), `no word of the double chest: ${chat().filter((l) => /Chest/.test(l))}`);
   ok(chat().some((l) => /Golem spawn spots.*centre 7,1,7: 205 on the platform, 0 elsewhere.*centre 8,1,8: 205 on the platform, 0 elsewhere/.test(l)), `the spawn scan: ${chat().filter((l) => /Golem spawn spots/.test(l))}`);
-  ok(chat().some((l) => /Slabs: 111 placed/.test(l)), `the slab count: ${chat().filter((l) => /Slabs/.test(l))}`);
+  ok(chat().some((l) => new RegExp(`Slabs: ${SLABS} placed`).test(l)), `the slab count: ${chat().filter((l) => /Slabs/.test(l))}`);
   ok(!chat().some((l) => /NOT|Not as planned|failed/.test(l)), `something reported trouble: ${chat().filter((l) => /NOT|Not as planned|failed/.test(l))}`);
   ok(tele.length >= 1, 'not teleported');
 });
@@ -90,12 +99,15 @@ t('signs that will not be placed (no spelling accepted): no water is put in, and
   ok(o, 'it did not build');
   ok(chat().some((l) => /signs over the hole did not stay/i.test(l)), 'no word about the water');
   ok(wetCells(o) === 0, 'water was put in with nothing to stop it going down the shaft');
+  ok(![...G.grid.values()].some((c) => c.id === 'lava'), 'lava was put in with nothing to hold it');
+  ok(hallWet(o) === 0, 'the hallway water was put in with nothing to keep it off the campfire');
+  ok(chat().some((l) => /lava was NOT placed/i.test(l)) && chat().some((l) => /Hallway water: not placed/.test(l)), `no word about the lava and the hallway water: ${chat().filter((l) => /lava|Hallway/i.test(l))}`);
 });
 
 t('water that only spreads after a block update: the nudge from a neighbour does it', async () => {
   const o = await built({ water: 'needsKick' });
   ok(wetCells(o) === WANT_WET, `${wetCells(o)} wet cells`);
-  ok(chat().some((l) => /block update beside the sources: 240 of 240/.test(l)), chat().filter((l) => /Water/.test(l)).join(' | '));
+  ok(chat().some((l) => /block update beside the sources: 236 of 236/.test(l)), chat().filter((l) => /Water/.test(l)).join(' | '));
   ok(!chat().some((l) => /by hand/.test(l)), 'laid by hand when it did not need to be');
 });
 
@@ -114,7 +126,7 @@ t('water that never spreads: laid by hand, cell by cell, at the depths it would 
 t('a slab that has another name: the next spelling is found and used for every top, the step too', async () => {
   const o = await built({ noSlabName: ['cobblestone_slab'] });
   const slabs = [...cellsPlan].filter(([, v]) => v.id === 'cobblestone_slab');
-  ok(slabs.length === 111, `${slabs.length} slabs in the plan`);
+  ok(slabs.length === SLABS && SLABS > 100, `${slabs.length} slabs in the plan`);
   for (const [k] of slabs) { const [x, y, z] = k.split(',').map(Number); ok(at(o, x, y, z)?.id === 'stone_block_slab', `slab at ${k}: ${at(o, x, y, z)?.id}`); }
 });
 
@@ -193,7 +205,7 @@ t('view top / pod / out / the room put you on the platform wall, among the villa
   ok(top.x === o.x - 0.5 && top.y === o.y + 7.5 && top.z === o.z + 7.5, 'top view is not on the wall');
   ok(at(o, -1, 6, 7)?.id === 'cobblestone' && at(o, -1, 7, 7)?.id === 'cobblestone_slab', 'nothing to stand on at the top view');
   ok(pod.y === o.y + 1 && pod.x === o.x + 2.5 && pod.z === o.z + 8.5 && !at(o, 2, 1, 8) && at(o, 2, 0, 8)?.id === 'cobblestone', 'pod view');
-  ok(out.x === o.x + 16.5 && out.y === o.y - 7 && !at(o, 16, -7, 7), 'out view is not on open ground');
+  ok(out.x === o.x + 17.5 && out.y === o.y - 7 && !at(o, 17, -7, 7), 'out view is not on open ground');
   ok(room.y === o.y - 6 && !at(o, 11, -6, 8) && at(o, 11, -7, 8)?.id === 'cobblestone', 'room view');
 });
 
@@ -208,6 +220,9 @@ t('clear takes the water first and then the whole box, leaving nothing', async (
   const water = fills.filter((q) => { const m = q.l.split(' '); return Number(m[2]) === o.y + WATER_Y && Number(m[5]) === o.y + WATER_Y; });
   const whole = fills.find((q) => { const m = q.l.split(' '); return Number(m[5]) - Number(m[2]) > 10; });
   ok(water.length === 4 && whole && water.every((q) => q.i < whole.i), `water rows out at ${water.map((q) => q.i)}, the whole box at ${whole?.i}`);
+  const lavaOut = G.log.findIndex((l, i) => i >= mark && l === `setblock ${o.x + LAVA.x} ${o.y + LAVA.y} ${o.z + LAVA.z} air`);
+  const hallOut = G.log.findIndex((l, i) => i >= mark && l === `setblock ${o.x + CHAMBER_WATER.x} ${o.y + CHAMBER_WATER.y} ${o.z + CHAMBER_WATER.z} air`);
+  ok(lavaOut > 0 && hallOut > 0 && lavaOut < whole.i && hallOut < whole.i, `the lava out at ${lavaOut}, the hallway water at ${hallOut}, the whole box at ${whole.i}`);
 });
 
 /** u209's corner put back on the north-west of a built farm: (0,0) solid, sources at (1,0) and (0,1), (1,1) open water between them. */
@@ -242,6 +257,77 @@ t('the model of the game\'s water rule has teeth: u209\'s corner (two edge sourc
   ironFarmCommand(player, ['status']);
   await settle(/Built .* min ago/);
   ok(chat().some((l) => /POOLING/.test(l)), 'the status does not say pooling');
+});
+
+t('fence gates the game does not know: the farm is built without them, says the golems will be held up at the hole, and does not stop', async () => {
+  const o = await built({ noGateName: ['fence_gate', 'oak_fence_gate'] });
+  ok(o, 'it did not build');
+  ok(GATES.every((q) => !/gate/.test(at(o, q.x, q.y, q.z)?.id ?? '')), 'a gate is there');
+  ok(GATES.every((q) => /water/.test(at(o, q.x, q.y, q.z)?.id ?? '')), 'without the gates the water should run over the hole in the model');
+  ok(chat().some((l) => /4 of the 4 cells over the hole wet: THE GATES DO NOT KEEP THE WATER OUT/.test(l)), `no word about the wet hole: ${chat().filter((l) => /Water:/.test(l))}`);
+  ok(chat().some((l) => /Only 0 of 4 gates over the hole are in and open/.test(l)), `no word about the gates: ${chat().filter((l) => /gate/i.test(l))}`);
+  ok(wetCells(o) >= 236 && hallWet(o) === 3, 'the rest did not get built');
+});
+
+t('a game with no "direction" state on fence gates: the next way of saying "open" is found, and all four gates are in and open', async () => {
+  const o = await built({ gateNoDirection: true });
+  ok(GATES.every((q) => at(o, q.x, q.y, q.z)?.id === 'fence_gate' && at(o, q.x, q.y, q.z).states.open_bit === true), 'a gate is missing or shut');
+  ok(!chat().some((l) => /Only \d of 4 gates/.test(l)), 'it reported the gates as failed');
+});
+
+t('gates that read back shut whatever they are told: it says so, every spelling tried', async () => {
+  const o = await built({ gateShut: true });
+  ok(o, 'it did not build');
+  ok(chat().some((l) => /reads back shut/.test(l)) && chat().some((l) => /Only 0 of 4 gates over the hole are in and open/.test(l)), `no word about the gates: ${chat().filter((l) => /gate/i.test(l))}`);
+});
+
+t('the lava: put in only with its signs; a sign gone (burned) and the watcher takes the lava out and says so; "lava on" refuses until it is back; "lava off" and "on" work', async () => {
+  const o = await built();
+  ok(at(o, LAVA.x, LAVA.y, LAVA.z)?.id === 'lava', 'no lava');
+  const lavaSign = SIGNS.find((s) => s.group === 'lava');
+  const key = `${o.x + lavaSign.x},${o.y + lavaSign.y},${o.z + lavaSign.z}`;
+  const saved = G.grid.get(key);
+  G.grid.delete(key);
+  await MC.system.waitTicks(100);
+  ok(!at(o, LAVA.x, LAVA.y, LAVA.z), 'the lava is still there with a sign gone');
+  ok(chat().some((l) => /signs holding the lava is gone.*I have taken the lava out/.test(l)), `no word: ${chat().filter((l) => /lava/.test(l))}`);
+  ironFarmCommand(player, ['lava', 'on']);
+  await settle(/Not putting the lava in/);
+  ok(!at(o, LAVA.x, LAVA.y, LAVA.z), 'lava went in with a sign missing');
+  G.grid.set(key, saved);
+  ironFarmCommand(player, ['lava', 'on']);
+  await settle(/Lava back/);
+  ok(at(o, LAVA.x, LAVA.y, LAVA.z)?.id === 'lava', 'lava not back');
+  ironFarmCommand(player, ['lava', 'off']);
+  await settle(/Lava removed/);
+  ok(!at(o, LAVA.x, LAVA.y, LAVA.z), 'lava not removed');
+});
+
+t('the watcher notices a gate gone and a hallway sign gone (the water would put the campfire out), once each', async () => {
+  const o = await built();
+  const gate = GATES[0];
+  G.grid.delete(`${o.x + gate.x},${o.y + gate.y},${o.z + gate.z}`);
+  const cs = SIGNS.find((s) => s.group === 'chamber');
+  G.grid.delete(`${o.x + cs.x},${o.y + cs.y},${o.z + cs.z}`);
+  await MC.system.waitTicks(400);
+  ok(chat().filter((l) => /gates over the hole is gone or shut/.test(l)).length === 1, `gate warnings: ${chat().filter((l) => /gate/.test(l))}`);
+  ok(chat().filter((l) => /keep the hallway water off the campfire is gone/.test(l)).length === 1, `sign warnings: ${chat().filter((l) => /hallway water off/.test(l))}`);
+});
+
+t('hallway water that never spreads: the two flowing cells are laid by hand and the report says so', async () => {
+  const o = await built({ water: 'never' });
+  ok(hallWet(o) === 3, `${hallWet(o)} wet hallway cells`);
+  for (const c of CHAMBER_WET) ok((at(o, c.x, c.y, c.z).states?.liquid_depth ?? 0) === c.level, `hallway cell ${c.x},${c.z}: depth ${at(o, c.x, c.y, c.z).states?.liquid_depth}, wanted ${c.level}`);
+  ok(chat().some((l) => /Hallway water: running.*placed by hand/.test(l)), chat().filter((l) => /Hallway/.test(l)).join(' | '));
+});
+
+t('status says how the gates, the hallway, the lava and the campfire are', async () => {
+  await built();
+  ironFarmCommand(player, ['status']);
+  await settle(/Built .* min ago/);
+  const l = chat().find((q) => /Built .* min ago/.test(q));
+  ok(/0 of the 4 cells over the hole wet \(0 is right\)/.test(l) && /Gates over the hole: 4 in, 4 open/.test(l) && /Hallway: 3 of 3 cells wet/.test(l) && /Lava on/.test(l) && /Campfire lit\./.test(l), l);
+  ok(!/Not as planned/.test(l), l);
 });
 
 t('time: day / night set the time; fast runs the clock x N until normal', async () => {

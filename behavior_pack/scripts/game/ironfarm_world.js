@@ -45,7 +45,7 @@ export function chestSize(dim, q) {
 /** Plants and the like: a golem's box can pass through them (and the builder does not count them as being in the way). */
 export const PLANT = /(^|_)(grass|fern|flower|dandelion|poppy|tulip|orchid|allium|azure_bluet|oxeye_daisy|cornflower|lily|rose|peony|lilac|bush|sapling|mushroom|vine|snow_layer|snow|seagrass|kelp|bamboo_sapling|moss_carpet|tallgrass|double_plant|yellow_flower|red_flower|sweet_berry_bush|deadbush|dead_bush)(_|$)/;
 const FREE_IDS = new Set(['air', 'water', 'flowing_water', 'wall_sign', 'standing_sign', 'torch', 'unloaded_free']);
-const free = (id) => FREE_IDS.has(id) || PLANT.test(id) || /_wall_sign$|^(oak|spruce)_sign$/.test(id);
+const free = (id) => FREE_IDS.has(id) || PLANT.test(id) || /_wall_sign$|^(oak|spruce)_sign$|fence_gate$/.test(id);
 /** Not something a golem could be spawned on: slabs, stairs, campfires, doors, ladders, lava, carpets, signs, torches and so on. */
 const NOT_SUPPORT = /slab|stairs|campfire|door|lava|ladder|trapdoor|carpet|sign|torch|button|plate|rail|fence|pane|chain|lantern|water|air|^unloaded$/;
 const supports = (id) => !free(id) && !NOT_SUPPORT.test(id);

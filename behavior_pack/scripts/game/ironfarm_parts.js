@@ -1,8 +1,9 @@
 // The pieces of the iron farm builder (game/ironfarm.js) that have to cope with the game not doing quite what the plan assumes: a slab that has
-// another name, signs that hang the other way round, a door that will not go in, two chests that do not pair, water that will not flow. Each
-// tries the next thing, reads the result back, and says what it found.
+// another name, signs that hang the other way round, fence gates that will not open, a door that will not go in, two chests that do not pair,
+// water that will not flow. Each tries the next thing, reads the result back, and says what it found.
 import {
-  blockArg, settleWater, render, waterSources, SIGNS, HOPPERS, CHESTS, CHEST_FACING, CAMPFIRES, DOOR, DOOR_ID, STEP, WATER_Y, HOLE,
+  blockArg, settleWater, render, waterSources, SIGNS, HOPPERS, CHESTS, CHEST_FACING, CAMPFIRES, DOOR, DOOR_ID, STEP, WATER_Y, HOLE, GATES, GATE_ID,
+  LAVA, CHAMBER_WATER, CHAMBER_WET, CHAMBER_FLOOR_Y,
 } from '../core/ironfarm.js';
 import { wait, run, W, idAt, stateAt, kick, isWater, chestSize } from './ironfarm_world.js';
 
@@ -12,6 +13,9 @@ export const WANT = 10;
 export const SLAB_IDS = ['cobblestone_slab', 'stone_block_slab ["stone_slab_type"="cobblestone"]', 'oak_slab', 'wooden_slab'];
 export const SIGN_IDS = ['wall_sign', 'oak_wall_sign', 'spruce_wall_sign'];
 export const DOOR_IDS = [DOOR_ID, 'oak_door'];
+export const GATE_IDS = [GATE_ID, 'oak_fence_gate'];
+/** Ways to say "an open fence gate" in block states, tried in this order (the plan's own first). */
+export const GATE_STATES = [{ direction: 0, open_bit: true, in_wall_bit: false }, { open_bit: true }, { 'minecraft:cardinal_direction': 'north', open_bit: true }];
 export const OPPOSITE = { 2: 3, 3: 2, 4: 5, 5: 4 };
 
 /** Find a spelling of the cobblestone slab the game accepts: the first slab run is tried with each, and read back. Returns it, or null. */
@@ -27,9 +31,9 @@ export async function findSlab(dim, a, b, notes) {
 }
 
 /**
- * The wall signs: the four that cap the hole in the platform's floor. Each is placed facing the way the plan says, given a block update from a
- * neighbour (a sign with nothing to hang on stays until it gets one), and read back; if it is gone the other way round is tried, then the next
- * spelling of the name. Returns { ok, holeOk, id } (ok is holeOk: there are no other signs since u211).
+ * The wall signs: the four that cap the hole in the platform's floor, the two that keep the hallway's water off the campfire and the three that
+ * hold the lava. Each is placed facing the way the plan says, given a block update from a neighbour (a sign with nothing to hang on stays until it
+ * gets one), and read back; if it is gone the other way round is tried, then the next spelling of the name. Returns { ok, holeOk, chamberOk, lavaOk, id }.
  */
 export async function placeSigns(dim, off, notes) {
   let id = null, flip = false, first = true;
@@ -53,9 +57,39 @@ export async function placeSigns(dim, off, notes) {
     done.set(s, ok);
     if (!ok) notes.push(`The sign at ${s.x},${s.y},${s.z} (plan coordinates; ${s.group}) would not stay on its wall.`);
   }
-  const holeOk = SIGNS.every((s) => done.get(s));
-  if (flip && holeOk) notes.push('(The signs hold the other way round to the plan: facing_direction names the side the sign hangs on here.)');
-  return { ok: holeOk, holeOk, id };
+  const group = (g) => SIGNS.filter((s) => s.group === g).every((s) => done.get(s));
+  const holeOk = group('hole'), chamberOk = group('chamber'), lavaOk = group('lava');
+  if (flip && holeOk && chamberOk && lavaOk) notes.push('(The signs hold the other way round to the plan: facing_direction names the side the sign hangs on here.)');
+  return { ok: holeOk && chamberOk && lavaOk, holeOk, chamberOk, lavaOk, id };
+}
+
+/**
+ * The four open fence gates over the hole. Each is placed with the plan's states, read back (is it a gate, is it open?); if it is not, the next way
+ * of saying "open" is tried, then the next spelling of the name. Returns { ok (all four there and open), id, open (how many read as open) }.
+ */
+export async function placeGates(dim, off, notes) {
+  let id = null, states = null, there = 0, open = 0;
+  for (const g of GATES) {
+    const q = W(off, g);
+    let done = false;
+    for (const cand of id ? [id] : GATE_IDS) {
+      for (const st of states ? [states] : GATE_STATES) {
+        const why = run(dim, `setblock ${q.x} ${q.y} ${q.z} ${blockArg(cand, st)}`);
+        if (why) { notes.push(`Gate ${blockArg(cand, st)}: ${why}.`); continue; }
+        await wait(1);
+        if (idAt(dim, q).endsWith('fence_gate')) {
+          if (stateAt(dim, q, 'open_bit') === true) { done = true; id = cand; states = st; break; }
+          notes.push(`Gate ${blockArg(cand, st)}: placed, but it reads back shut (open_bit ${stateAt(dim, q, 'open_bit')}).`);
+        }
+        run(dim, `setblock ${q.x} ${q.y} ${q.z} air`);
+      }
+      if (done) break;
+    }
+    if (idAt(dim, q).endsWith('fence_gate')) { there++; if (stateAt(dim, q, 'open_bit') === true) open++; }
+    if (!done) notes.push(`The gate at ${g.x},${g.y},${g.z} (plan coordinates) would not go in open.`);
+  }
+  if (open < GATES.length) notes.push(`Only ${open} of ${GATES.length} gates over the hole are in and open: the water will meet over the hole as before (u211) and the golems will go down slowly. Put open fence gates there by hand.`);
+  return { ok: open === GATES.length, id, open, there };
 }
 
 /**
@@ -105,7 +139,7 @@ export async function pairChests(dim, off) {
 // ---- the water ----
 /**
  * The water on the platform floor: how many of the cells it should reach have it, the depth in each, and how many of them are SOURCES (depth 0).
- * More sources than planned means cells have turned into sources (Bedrock's infinite-water rule: a flowing cell that touches two sources): the
+ * `holeWet` is how many of the four cells over the hole have water in them (none, with the gates in). More sources than planned means cells have turned into sources (Bedrock's infinite-water rule: a flowing cell that touches two sources): the
  * water then lies still where that happened. "Wet" alone cannot tell (u209 was wet in all 252 cells and had no current).
  */
 export function waterOnPlatform(dim, off, plan) {
@@ -119,16 +153,60 @@ export function waterOnPlatform(dim, off, plan) {
     if (isWater(idAt(dim, q))) { have++; depth[k] = stateAt(dim, q, 'liquid_depth'); if (depth[k] === 0) sources++; }
   }
   const planned = waterSources().length;
-  return { have, want: field.size, field, depth, hole: depth[`${HOLE.x1},${HOLE.z1}`], sources, planned, pooled: sources > planned };
+  let holeWet = 0;
+  for (let x = HOLE.x1; x <= HOLE.x2; x++) for (let z = HOLE.z1; z <= HOLE.z2; z++) if (isWater(idAt(dim, W(off, { x, y: WATER_Y, z })))) holeWet++;
+  return { have, want: field.size, field, depth, holeWet, sources, planned, pooled: sources > planned };
 }
 
 const waterRows = (plan) => plan.ops.filter((o) => o.tag === 'water');
 
-/** Water in the shaft or the chamber (the signs were meant to stop it): how many wet cells there are below the platform's floor. */
+/** Water in the shaft above the hallway (the signs were meant to stop it): how many wet cells there are below the platform's floor, from one layer over the hallway's up. */
 export function shaftWater(dim, off) {
   let n = 0;
-  for (let x = HOLE.x1; x <= HOLE.x2; x++) for (let z = HOLE.z1; z <= HOLE.z2; z++) for (let y = -6; y <= 2; y++) if (isWater(idAt(dim, W(off, { x, y, z })))) n++;
+  for (let x = HOLE.x1; x <= HOLE.x2; x++) for (let z = HOLE.z1; z <= HOLE.z2; z++) for (let y = CHAMBER_FLOOR_Y + 1; y <= 2; y++) if (isWater(idAt(dim, W(off, { x, y, z })))) n++;
   return n;
+}
+
+/**
+ * The hallway's one water source: put in, given time to run (it should wet its two neighbours and nothing else: the signs keep it off the
+ * campfire's cell), a block update if it does not, the two flowing cells laid by hand if that does not work either. Says what it found.
+ * Returns { ok, note }.
+ */
+export async function chamberWater(dim, off) {
+  const src = W(off, CHAMBER_WATER);
+  const wet = () => CHAMBER_WET.filter((c) => isWater(idAt(dim, W(off, c)))).length;
+  const stray = () => {
+    const out = [];
+    for (let x = 7; x <= 9; x++) for (let z = 7; z <= 8; z++) {
+      if (CHAMBER_WET.some((c) => c.x === x && c.z === z)) continue;
+      const t = idAt(dim, W(off, { x, y: CHAMBER_FLOOR_Y, z }));
+      if (isWater(t) || (CAMPFIRES.some((c) => c.x === x && c.z === z) && t === 'campfire' && stateAt(dim, W(off, { x, y: CHAMBER_FLOOR_Y, z }), 'extinguished') === true)) out.push(`${x},${z}`);
+    }
+    return out;
+  };
+  const tried = [];
+  run(dim, `setblock ${src.x} ${src.y} ${src.z} water`);
+  await wait(40);
+  tried.push(`source placed: ${wet()} of ${CHAMBER_WET.length} cells wet`);
+  if (wet() < CHAMBER_WET.length) {
+    await kick(dim, src);
+    await wait(40);
+    tried.push(`block update beside it: ${wet()} of ${CHAMBER_WET.length}`);
+  }
+  let hand = false;
+  if (wet() < CHAMBER_WET.length) {
+    hand = true;
+    for (const c of CHAMBER_WET) {
+      const q = W(off, c);
+      if (c.level > 0 && !isWater(idAt(dim, q))) run(dim, `setblock ${q.x} ${q.y} ${q.z} flowing_water ["liquid_depth"=${c.level}]`);
+    }
+    await wait(20);
+    tried.push(`flowing cells laid by hand: ${wet()} of ${CHAMBER_WET.length}`);
+  }
+  const bad = stray();
+  const ok = wet() === CHAMBER_WET.length && !bad.length;
+  const note = `Hallway water: ${ok ? 'running (north and east of its source)' : 'NOT right'} (${wet()} of ${CHAMBER_WET.length} cells wet). ${tried.join('; ')}.${bad.length ? ` WATER OR A PUT-OUT CAMPFIRE WHERE IT SHOULD BE DRY at ${bad.join(' ')}: the signs did not keep the water off the campfire.` : ''}${ok && hand ? ' It would not spread by itself, so the two flowing cells are placed by hand.' : ''}`;
+  return { ok, note, wet: wet(), stray: bad };
 }
 
 /**
@@ -179,7 +257,7 @@ export async function ensureWater(dim, off, plan) {
   const down = shaftWater(dim, off);
   const ok = s.have >= s.want && !s.pooled;
   const pool = s.pooled ? ` THE WATER IS POOLING: ${s.sources} source blocks, ${s.planned} planned, so ${s.sources - s.planned} cells turned into sources (the game makes a flowing cell that touches two sources a source) and the water lies still there.` : '';
-  const note = `Water: ${ok ? 'flowing over the whole platform' : 'NOT right'} (${s.have} of ${s.want} cells wet, ${s.sources} sources of ${s.planned} planned, the hole at depth ${s.hole ?? 'none'} of 7). ${tried.join('; ')}.${pool}${ok && hand ? ' It would not spread by itself, so the flowing water is placed cell by cell: if it dries up, the game does not treat command-placed water as water that flows.' : ''}${ok && !hand && tried.length > 1 ? ' (It needed the nudge: the first placement alone did not spread.)' : ''}${down ? ` WATER GOT INTO THE SHAFT (${down} cells): the signs over the hole did not stop it, and it will put the campfires out.` : ''}`;
+  const note = `Water: ${ok ? 'flowing over the whole platform' : 'NOT right'} (${s.have} of ${s.want} cells wet, ${s.sources} sources of ${s.planned} planned, ${s.holeWet ? `${s.holeWet} of the 4 cells over the hole wet: THE GATES DO NOT KEEP THE WATER OUT` : 'the hole itself dry, kept so by the gates'}). ${tried.join('; ')}.${pool}${ok && hand ? ' It would not spread by itself, so the flowing water is placed cell by cell: if it dries up, the game does not treat command-placed water as water that flows.' : ''}${ok && !hand && tried.length > 1 ? ' (It needed the nudge: the first placement alone did not spread.)' : ''}${down ? ` WATER GOT INTO THE SHAFT (${down} cells): the signs over the hole did not stop it, and it will put the campfire out and meet the lava.` : ''}`;
   return { ok, note, state: s, shaftWet: down };
 }
 
@@ -196,6 +274,15 @@ export function verify(dim, off, plan) {
     const t = typeAt(s);
     if (!t.endsWith('wall_sign')) bad.push(`${t} where a sign should be at ${s.x},${s.y},${s.z}`);
   }
+  for (const q of GATES) {
+    const t = typeAt(q);
+    if (!t.endsWith('fence_gate')) bad.push(`${t} where a gate should be at ${q.x},${q.z}`);
+    else if (stateAt(dim, W(off, q), 'open_bit') !== true) bad.push(`the gate at ${q.x},${q.z} is shut`);
+  }
+  const lt = typeAt(LAVA);
+  if (lt !== 'lava') bad.push(`${lt} where the lava should be`);
+  const cw = typeAt(CHAMBER_WATER);
+  if (!isWater(cw)) bad.push(`${cw} where the hallway's water source should be`);
   for (const h of HOPPERS) {
     const f = stateAt(dim, W(off, h), 'facing_direction');
     if (typeAt(h) !== 'hopper') bad.push(`${typeAt(h)} where the hopper should be at ${h.x},${h.z}`);

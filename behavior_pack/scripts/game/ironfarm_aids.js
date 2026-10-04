@@ -5,7 +5,7 @@
 //     and a pack cannot make the game run more ticks, so water, hoppers and the spawn rolls themselves run at the normal rate.
 //   - speed: the gamerule randomtickspeed x N (random ticks only: crops, leaves, fire; not the spawn roll), then the game's own
 //     `tick rate` command if this version has one, else the clock; and says what each did.
-//   - golem: puts iron golems on the platform at once (or one every few seconds), so the water, the hole, the campfires, the hoppers and
+//   - golem: puts iron golems on the platform at once (or one every few seconds), so the water, the gates, the hole, the hallway (campfire and lava), the hoppers and
 //     the chest can be watched working without waiting for the game to spawn one. Those are made by the pack, not by the village: they say nothing
 //     about the spawn rate.
 import { system, world } from '@minecraft/server';
@@ -135,5 +135,5 @@ export function golemCommand(farm, args) {
   }
   const n = Math.max(1, Math.min(10, Math.floor(Number(a)) || 1));
   const made = spawnTestGolems(farm, n);
-  say(`${made} test golem${made === 1 ? '' : 's'} on the platform (made by the pack, not the village: this tests the water, the hole, the campfires, the hoppers and the chest, not the spawn rate). I say what happens to each.`);
+  say(`${made} test golem${made === 1 ? '' : 's'} on the platform (made by the pack, not the village: this tests the water, the gates, the hole, the hallway (campfire and lava), the hoppers and the chest, not the spawn rate). I say what happens to each.`);
 }

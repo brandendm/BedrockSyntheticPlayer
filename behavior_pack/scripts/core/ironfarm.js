@@ -10,16 +10,21 @@
 // them a source (Bedrock's infinite-water rule), cell after cell, so now the sources are the middle twelve of each edge, the corners 2 x 2 solid, and
 // the check settles that rule (grid.js settleWater) instead of assuming the water stays flowing; (2) no lava: a mob that falls into or dies
 // beside lava can lose its drops, so the chamber has a lit campfire on each of its four cells, over four hoppers.
+// u212: after the player watched u211 (his advice): (1) the water ran over the signs on the hole and the currents met there, so golems crept in:
+// four open fence gates over the hole (water cannot go into them, so every current ends in the hole); (2) campfires alone kill slowly: a short
+// hallway at the bottom with one water source that presses the golem into a corner, where ONE lit campfire stands over a hopper (kept dry by two
+// signs) with lava over it at the golem's head height, held by signs; the golem is in the lava, not above it, so what it drops (at its feet) is not.
 //
-// Confirmed by the player: wall signs hold lava and do not burn; golems do spawn on flowing water; the u208 water flowed; four campfires over the
-// four hoppers work as the kill chamber (the player's word).
-// Where it is most likely to be wrong (in the order I would look): the campfires kill slowly (about 2 HP a second, so a golem takes about 50 s, and
-// with ten villagers the village makes no new golem while one is alive); the door's direction; whether two chests set by a command pair into a
-// double chest; the village centre may not be where this works it out to be (the platform is symmetrical about the average); the village may want
-// a day or two before it counts the villagers as working; whether the water really carries a golem to the hole.
+// Confirmed by the player: wall signs hold lava and do not burn; golems do spawn on flowing water; the u211 water flows and the farm works; open
+// fence gates keep water out (his word, u212).
+// Where it is most likely to be wrong (in the order I would look): where the golem really comes to rest in the hallway (it is modelled as a 1.4-wide
+// box pushed by the water the way Java does it, and Bedrock may differ), whether the campfire hurts by the block the golem's centre is in or by any
+// overlap, whether the gates and signs hold the hallway water off the campfire, the fence gate's block name, the lava's damage (the real killer
+// here); the door's direction; whether two chests set by a command pair into a double chest; the village centre may not be where this works it out
+// to be (the platform is symmetrical about the average); the village may want a day or two before it counts the villagers as working.
 import {
-  box, PLATFORM, CORNER_BOXES, POD, POD_SHELL, SHAFT_SHELL, ROOM, ROOM_SHELL, WINDOW, DOOR, STEP, CAMPFIRES, HOPPERS, CHESTS,
-  CHEST_FACING, SIGNS, SLAB, DOOR_ID, FLOOR_Y, WATER_Y, waterSources, villageCentre, hull, opBox,
+  box, PLATFORM, CORNER_BOXES, POD, POD_SHELL, SHAFT_SHELL, ROOM, ROOM_SHELL, WINDOW, DOOR, STEP, HALL, LAVA, CAMPFIRES, CHAMBER_WATER, GATES,
+  GATE_ID, HOPPERS, CHESTS, CHEST_FACING, SIGNS, SLAB, DOOR_ID, FLOOR_Y, WATER_Y, waterSources, villageCentre, hull, opBox,
 } from './ironfarm_geo.js';
 import { render, exposedTops, runs } from './ironfarm_grid.js';
 
@@ -31,9 +36,9 @@ export const BED_X = Object.freeze([3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
 export const NORTH_STATIONS = Object.freeze([3, 5, 7, 9, 11]);   // composters in the north wall (z 1), villagers beside them at z 2
 export const SOUTH_STATIONS = Object.freeze([4, 6, 8, 10, 12]);  // composters in the south wall (z 14), villagers beside them at z 13
 export const POD_TORCHES = Object.freeze([[3, 3], [8, 3], [12, 3], [3, 12], [8, 12], [12, 12], [2, 7], [13, 8]]);
-export const ROOM_TORCH = Object.freeze({ x: 12, y: -6, z: 9 });
+export const ROOM_TORCH = Object.freeze({ x: 13, y: -6, z: 9 });
 
-/** The plan: { ops (in order; tag 'sign' | 'campfire' | 'chest' | 'door' | 'water' | 'slab' marks the ones the builder treats with care), beds, stations, villagers, bounds, centre, centres }. */
+/** The plan: { ops (in order; tag 'sign' | 'gate' | 'lava' | 'campfire' | 'chest' | 'door' | 'water' | 'cwater' | 'slab' marks the ones the builder treats with care), beds, stations, villagers, bounds, centre, centres }. */
 export function ironFarmPlan() {
   const ops = [];
   const fill = (b, id, note = '', tag = '') => ops.push({ op: 'fill', box: b, id, note, tag });
@@ -60,10 +65,11 @@ export function ironFarmPlan() {
   fill(POD_SHELL, 'cobblestone', 'pod shell');
   fill(POD, 'air', 'pod');
   fill(SHAFT_SHELL, 'cobblestone', 'shaft, chamber and the base under them');
-  fill(box(7, -6, 7, 8, FLOOR_Y, 8), 'air', 'shaft, chamber and the hole in the platform floor');
+  fill(box(7, -6, 7, 8, FLOOR_Y, 8), 'air', 'shaft, hallway and the hole in the platform floor');
+  fill(HALL, 'air', 'the east half of the hallway (4 high: a golem standing on the campfire is 3.3), cut out of the shaft wall');
   fill(ROOM_SHELL, 'cobblestone', 'room shell');
   fill(ROOM, 'air', 'room');
-  fill(WINDOW, 'glass', 'window between the room and the chamber');
+  fill(WINDOW, 'glass', 'window between the room and the hallway');
   set(DOOR.x, DOOR.y, DOOR.z, DOOR_ID, { direction: 0, door_hinge_bit: false, open_bit: false, upper_block_bit: false }, 'door, lower half', 'door');
   set(DOOR.x, DOOR.y + 1, DOOR.z, DOOR_ID, { direction: 0, door_hinge_bit: false, open_bit: false, upper_block_bit: true }, 'door, upper half', 'door');
 
@@ -73,13 +79,14 @@ export function ironFarmPlan() {
   for (const [x, z] of POD_TORCHES) set(x, 1, z, 'torch', undefined, 'pod light');
   set(ROOM_TORCH.x, ROOM_TORCH.y, ROOM_TORCH.z, 'torch', undefined, 'room light');
 
-  // The collection: hoppers under the chamber's four cells, then east into a double chest in the room.
+  // The collection: hoppers under every cell of the hallway, then east into a double chest in the room.
   for (const h of HOPPERS) set(h.x, h.y, h.z, 'hopper', { facing_direction: h.facing }, 'hopper');
   for (const c of CHESTS) set(c.x, c.y, c.z, 'chest', { 'minecraft:cardinal_direction': CHEST_FACING }, 'chest (two side by side make the double chest)', 'chest');
 
   // The signs go in first (they only stay on their wall, and they close the shaft off from the sky, which matters to what counts as outside
-  // below), then the slabs, then the campfires and the water.
+  // below), then the gates over the hole, the slabs, then the lava, the campfire and the water.
   for (const s of SIGNS) set(s.x, s.y, s.z, 'wall_sign', { facing_direction: s.facing }, s.note, 'sign');
+  for (const q of GATES) set(q.x, q.y, q.z, GATE_ID, { direction: 0, open_bit: true, in_wall_bit: false }, 'open fence gate over the hole (water cannot go into it, a golem walks through)', 'gate');
 
   // Every upward face left bare outside gets a slab: a golem can spawn on any full block with room over it, and the sky is full of it. (The
   // platform's own floor is meant to be bare.)
@@ -88,8 +95,11 @@ export function ironFarmPlan() {
   for (const run of runs(bare)) fill(box(run.x1, run.y, run.z, run.x2, run.y, run.z), SLAB, 'slab on a bare top (no spawns on it)', 'slab');
   set(STEP.x, STEP.y, STEP.z, SLAB, undefined, 'step up to the door (a slab: walk up it)', 'slab');
 
-  // The kill chamber: a lit campfire on each of its four cells, then the water on the platform (sources only: the rest flows from them).
-  for (const c of CAMPFIRES) set(c.x, c.y, c.z, 'campfire', undefined, 'campfire (lit) on the chamber floor, over a hopper', 'campfire');
+  // The kill hallway: the lava the signs hold (at the golem's head height, over the campfire), the one campfire, the hallway's one water source, then the
+  // water on the platform (sources only: the rest flows from them).
+  set(LAVA.x, LAVA.y, LAVA.z, 'lava', undefined, "the lava source, at the head height of a golem standing in the corner", 'lava');
+  for (const c of CAMPFIRES) set(c.x, c.y, c.z, 'campfire', undefined, 'campfire (lit) in the hallway corner, over a hopper', 'campfire');
+  set(CHAMBER_WATER.x, CHAMBER_WATER.y, CHAMBER_WATER.z, 'water', undefined, "the hallway's one water source (it flows north and east, which presses the golem into the north-east corner)", 'cwater');
   fill(box(2, WATER_Y, 0, 13, WATER_Y, 0), 'water', 'water sources, north edge', 'water');
   fill(box(2, WATER_Y, 15, 13, WATER_Y, 15), 'water', 'water sources, south edge', 'water');
   fill(box(0, WATER_Y, 2, 0, WATER_Y, 13), 'water', 'water sources, west edge', 'water');
@@ -116,10 +126,11 @@ export function materials(plan) {
     `${n.bed ?? 0} beds (3 wool + 3 planks each)`,
     `${n.hopper ?? 0} hoppers (5 iron each = ${(n.hopper ?? 0) * 5} iron) and ${n.chest ?? 0} chests (a double chest)`,
     `${n.wall_sign ?? 0} signs`,
+    `${n.fence_gate ?? 0} fence gates (any wood; 4 sticks and 2 planks each), set open`,
     `${n.campfire ?? 0} campfires (3 sticks, 1 coal, 3 logs each)`,
     `${n[DOOR_ID] ?? 0} door`,
     `${n.torch ?? 0} torches`,
-    `a water bucket (${sources} water sources, the middle twelve cells of each edge; none at the corners, and none in the second row: a cell that touches two sources becomes one)`,
+    `a lava bucket (one source) and a water bucket (${sources} water sources on the platform, the middle twelve cells of each edge, none at the corners and none in the second row: a cell that touches two sources becomes one; one more in the hallway)`,
     `${plan.villagers.length} adult villagers`,
   ];
   return { counts: n, cobble: cobble + cobbleForSlabs, text: lines.join('; ') };

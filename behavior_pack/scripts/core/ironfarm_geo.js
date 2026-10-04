@@ -1,17 +1,19 @@
-// Where everything is in the iron farm (u211). Plan coordinates: x east, y up, z south; the builder shifts them to wherever the farm goes. The
-// farm is a tower on the ground: the golems spawn on a big open platform up top, the water takes them to a hole in its middle, they fall down a
-// shaft onto four lit campfires (one over each of four hoppers; no lava: a mob that dies in or beside lava can lose its drops) and what they drop
-// goes through the hoppers into a double chest in a small room at the bottom, behind glass, with a door: you stand at the bottom, not up in the
+// Where everything is in the iron farm (u212). Plan coordinates: x east, y up, z south; the builder shifts them to wherever the farm goes. The
+// farm is a tower on the ground: the golems spawn on a big open platform up top, the water takes them to a hole in its middle (four open fence
+// gates over the hole keep the water out of it, so every current ends in it), they fall down a shaft into a small hallway at the bottom: a little
+// water there presses the golem into one corner, where a single lit campfire stands over a hopper with lava on signs at the golem's head height.
+// What it drops goes through the hoppers into a double chest in a small room behind glass, with a door: you stand at the bottom, not up in the
 // sky. Layers (y):
 //
 //   y 7        slabs on the tops of the platform's walls (golems do not spawn on slabs)
 //   y 4-6      the platform: 16 x 16, open to the sky, walls 3 high (a golem cannot climb out); water sources along the middle of each edge make
-//              the water run toward the middle, level 7 over the hole; the four 2 x 2 corners are solid (see waterSources for why)
+//              the water run toward the middle; the four 2 x 2 corners are solid (see waterSources for why). In its middle, at y 4, the four gates
 //   y 3        the platform's floor (also the pod's roof); in its middle the 2 x 2 hole, each cell capped with a wall sign (signs stop water, not golems)
 //   y 1-2      the pod (12 x 12 inside, 2 high): 20 beds in two rows, 10 composters in the walls, 10 villagers, torches; the shaft goes through it
-//   y -6..2    the shaft (2 x 2) and, at the bottom of it, the kill chamber: a lit campfire on each of the four floor cells
-//   y -7       the tower's floor, on the ground; hoppers in it under the chamber, a double chest in the room
-//   y -6..-4   the room (3 x 3, 3 high) east of the chamber: glass window onto it, the chests at your feet, a door in the east wall
+//   y -6..2    the shaft (2 x 2) and, at the bottom of it, the kill hallway (x 7-9, z 7-8, y -6..-3): one water source, signs that keep the water
+//              out of the campfire's cell, the campfire in the north-east corner, the lava over it
+//   y -7       the tower's floor, on the ground; hoppers in it under the hallway, a double chest in the room
+//   y -6..-4   the room (3 x 3, 3 high) east of the hallway: glass window onto it, the chests at your feet, a door in the east wall
 //
 // The village is the pod; its centre works out at the middle of the platform, so the platform is in the spawn volume (17 x 13 x 17 blocks, 8 each
 // way) wherever Bedrock puts the centre. The ground must stay out of that volume (golems spawn there too): the builder puts the tower's floor
@@ -35,43 +37,61 @@ export const POD = box(2, 1, 2, 13, 2, 13);               // inside
 export const POD_SHELL = box(1, 0, 1, 14, 2, 14);
 export const SHAFT = box(7, -6, 7, 8, 2, 8);              // the 2 x 2 shaft, chamber at its foot
 export const SHAFT_SHELL = box(6, -7, 6, 9, 2, 9);
-export const ROOM = box(10, -6, 6, 12, -4, 9);           // inside
-export const ROOM_SHELL = box(9, -7, 5, 13, -3, 10);
-export const WINDOW = box(9, -6, 7, 9, -4, 8);            // glass between the room and the chamber
-export const DOOR = Object.freeze({ x: 13, y: -6, z: 7 }); // lower half; the upper half is above it
-export const STEP = Object.freeze({ x: 14, y: -7, z: 7 }); // a slab outside the door, at the ground
+export const ROOM = box(11, -6, 6, 13, -4, 9);           // inside
+export const ROOM_SHELL = box(10, -7, 5, 14, -3, 10);
+export const WINDOW = box(10, -6, 7, 10, -4, 8);          // glass between the room and the hallway
+export const DOOR = Object.freeze({ x: 14, y: -6, z: 7 }); // lower half; the upper half is above it
+export const STEP = Object.freeze({ x: 15, y: -7, z: 7 }); // a slab outside the door, at the ground
 export const CHAMBER_FLOOR_Y = -6;
-/** A lit campfire on each of the chamber's four floor cells, each over a hopper: whichever cell the golem lands on, it stands on one (and the 1.4-wide golem overlaps all four). */
-export const CAMPFIRES = Object.freeze([{ x: 7, y: -6, z: 7 }, { x: 8, y: -6, z: 7 }, { x: 7, y: -6, z: 8 }, { x: 8, y: -6, z: 8 }]);
-/** The hoppers: under the chamber's four cells, then east into the room's chests (facing: 2 north, 3 south, 4 west, 5 east, 0 down). */
+/** The kill hallway: the shaft's foot and the cells east of it (x 7-9, z 7-8), the floor layer; its east half is 4 high (y -6..-3) for the golem and the campfire it stands on. */
+export const HALL = box(9, -6, 7, 9, -3, 8);               // the part carved out of the shaft's east wall
+export const CHAMBER = box(7, -6, 7, 9, -6, 8);             // the floor layer of the whole hallway
+/** The one campfire, lit, in the north-east corner: the water presses the golem into that corner, and the hopper under it takes what falls. */
+export const CAMPFIRES = Object.freeze([{ x: 9, y: -6, z: 7 }]);
+/** The lava, at the golem's head height (two blocks up from its feet) directly over the campfire, held by three signs; the walls and the glass hold the rest. */
+export const LAVA = Object.freeze({ x: 9, y: -4, z: 7 });
+/** The hallway's one water source, in the south-west corner: it runs north and east (not further: signs stop it), which presses the golem north-east. */
+export const CHAMBER_WATER = Object.freeze({ x: 7, y: -6, z: 8 });
+/** The hallway's water cells in all: the source and the two it feeds. */
+export const CHAMBER_WET = Object.freeze([{ x: 7, y: -6, z: 8, level: 0 }, { x: 7, y: -6, z: 7, level: 1 }, { x: 8, y: -6, z: 8, level: 1 }]);
+/** The four open fence gates over the hole, at the platform's water layer: water cannot go into them, so the currents end there; a golem walks through. */
+export const GATES = Object.freeze([{ x: 7, y: 4, z: 7 }, { x: 8, y: 4, z: 7 }, { x: 7, y: 4, z: 8 }, { x: 8, y: 4, z: 8 }]);
+export const GATE_ID = 'fence_gate';
+/** The hoppers: under every cell of the hallway, all running east to the room's chests (facing: 2 north, 3 south, 4 west, 5 east, 0 down). */
 export const HOPPERS = Object.freeze([
-  { x: 7, y: -7, z: 7, facing: 5 }, { x: 8, y: -7, z: 7, facing: 5 }, { x: 9, y: -7, z: 7, facing: 5 },
-  { x: 7, y: -7, z: 8, facing: 2 }, { x: 8, y: -7, z: 8, facing: 2 },
+  { x: 7, y: -7, z: 7, facing: 5 }, { x: 8, y: -7, z: 7, facing: 5 }, { x: 9, y: -7, z: 7, facing: 5 }, { x: 10, y: -7, z: 7, facing: 5 },
+  { x: 7, y: -7, z: 8, facing: 5 }, { x: 8, y: -7, z: 8, facing: 5 }, { x: 9, y: -7, z: 8, facing: 2 },
 ]);
 /** The two chests side by side that make the double chest, in the room's floor layer; both face the same way so they pair. */
-export const CHESTS = Object.freeze([{ x: 10, y: -7, z: 7 }, { x: 11, y: -7, z: 7 }]);
+export const CHESTS = Object.freeze([{ x: 11, y: -7, z: 7 }, { x: 12, y: -7, z: 7 }]);
 export const CHEST_FACING = 'south';
-export const STAND = Object.freeze({ x: 11.5, y: -6, z: 8.5 });   // where the viewer is put: in the room, the window ahead
+export const STAND = Object.freeze({ x: 12.5, y: -6, z: 8.5 });   // where the viewer is put: in the room, the window ahead
 export const POD_VIEW = Object.freeze({ x: 2.5, y: 1, z: 8.5 });
 export const TOP_VIEW = Object.freeze({ x: -0.5, y: 7.5, z: 7.5 }); // on the platform's west wall (slab on top)
-export const OUT_VIEW = Object.freeze({ x: 16.5, y: -7, z: 7.5 });  // on the ground outside the door
+export const OUT_VIEW = Object.freeze({ x: 17.5, y: -7, z: 7.5 });  // on the ground outside the door
 export const SPAWN_COLUMNS = box(-3, 0, -3, 18, 0, 18);           // the ground within reach of the spawn volume, in x and z
 
 /**
- * The signs: where, which way each faces (2 north, 3 south, 4 west, 5 east; it hangs on the block behind it), and what for. All four cap the hole in
- * the platform's floor (water cannot go through a sign, a golem can).
+ * The signs: where, which way each faces (2 north, 3 south, 4 west, 5 east; it hangs on the block behind it), and what for. 'hole' ones cap the hole
+ * in the platform's floor (water cannot go through a sign, a golem can); 'chamber' ones keep the hallway's water out of the campfire's cell; 'lava'
+ * ones hold the lava (below it, south of it, west of it; north is the wall, east the glass, above it the open hallway: a source does not run up).
  */
 export const SIGNS = Object.freeze([
   { x: 7, y: 3, z: 7, facing: 5, group: 'hole', note: 'sign over the shaft (north-west cell of the hole), hung on the floor to its west' },
   { x: 7, y: 3, z: 8, facing: 5, group: 'hole', note: 'sign over the shaft (south-west cell of the hole)' },
   { x: 8, y: 3, z: 7, facing: 4, group: 'hole', note: 'sign over the shaft (north-east cell of the hole), hung on the floor to its east' },
   { x: 8, y: 3, z: 8, facing: 4, group: 'hole', note: 'sign over the shaft (south-east cell of the hole)' },
+  { x: 8, y: -6, z: 7, facing: 3, group: 'chamber', note: 'sign west of the campfire, hung on the north wall: keeps the hallway water out of its cell' },
+  { x: 9, y: -6, z: 8, facing: 2, group: 'chamber', note: 'sign south of the campfire, hung on the south wall: keeps the hallway water out of its cell' },
+  { x: LAVA.x, y: LAVA.y - 1, z: LAVA.z, facing: 3, group: 'lava', note: 'sign under the lava, hung on the north wall' },
+  { x: LAVA.x, y: LAVA.y, z: LAVA.z + 1, facing: 2, group: 'lava', note: 'sign south of the lava, hung on the south wall' },
+  { x: LAVA.x - 1, y: LAVA.y, z: LAVA.z, facing: 3, group: 'lava', note: 'sign west of the lava, hung on the north wall' },
 ]);
 export const SLAB = 'cobblestone_slab';
 export const DOOR_ID = 'wooden_door';
 
 /** Everything the plan may be made of: all of it is there before the Nether. */
-export const ALLOWED = Object.freeze(['air', 'cobblestone', SLAB, 'glass', 'composter', 'bed', 'hopper', 'chest', 'wall_sign', 'torch', 'water', 'campfire', DOOR_ID]);
+export const ALLOWED = Object.freeze(['air', 'cobblestone', SLAB, 'glass', 'composter', 'bed', 'hopper', 'chest', 'wall_sign', 'torch', 'lava', 'water', 'campfire', GATE_ID, DOOR_ID]);
 
 /** Where a wall sign hangs: the offset from the sign to the block it is attached to, by the way it faces. */
 export const signSupport = (facing) => ({ 2: [0, 1], 3: [0, -1], 4: [1, 0], 5: [-1, 0] })[facing] ?? null;

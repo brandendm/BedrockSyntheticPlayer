@@ -1,10 +1,11 @@
 // A stand-in for @minecraft/server with a world that takes `fill` / `setblock` commands, for tools/sim_ironfarm.mjs (game/ironfarm.js runs in Node
 // against it). The world's behaviour is set by `globalThis.__ifw.knobs`, so the sim can make the game awkward in the ways the builder
-// has to cope with: signs that only hang the other way round, water that only spreads after a block update (or never), slabs under another name.
+// has to cope with: signs that only hang the other way round, water that only spreads after a block update (or never), slabs under another name,
+// fence gates that refuse a state, read back shut or have no name at all.
 const G = (globalThis.__ifw ??= { grid: new Map(), log: [], tick: 0, knobs: {}, entities: [], players: [], intervals: new Map(), nextInterval: 1, awake: new Set(), time: 0 });
 const key = (x, y, z) => `${x},${y},${z}`;
 const SUPPORT = { 2: [0, 1], 3: [0, -1], 4: [1, 0], 5: [-1, 0] };
-const KNOWN = new Set(['air', 'cobblestone', 'glass', 'composter', 'bed', 'hopper', 'chest', 'wall_sign', 'oak_wall_sign', 'spruce_wall_sign', 'torch', 'lava', 'water', 'flowing_water', 'cobblestone_slab', 'stone_block_slab', 'oak_slab', 'wooden_slab', 'campfire', 'wooden_door', 'oak_door']);
+const KNOWN = new Set(['air', 'cobblestone', 'glass', 'composter', 'bed', 'hopper', 'chest', 'wall_sign', 'oak_wall_sign', 'spruce_wall_sign', 'torch', 'lava', 'water', 'flowing_water', 'cobblestone_slab', 'stone_block_slab', 'oak_slab', 'wooden_slab', 'campfire', 'wooden_door', 'oak_door', 'fence_gate', 'oak_fence_gate']);
 
 function parseBlock(text) {
   const m = /^(?:minecraft:)?([a-z_]+)\s*(?:\[(.*)\])?$/.exec(text.trim());
@@ -44,6 +45,7 @@ function neighbourChanged(x, y, z, changed = '') {
 }
 
 function put(x, y, z, b) {
+  if (b.id.endsWith('fence_gate') && G.knobs.gateShut) b = { ...b, states: { ...b.states, open_bit: false } };       // (the game keeps it shut whatever it is told)
   if (b.id === 'water' && b.states?.liquid_depth === undefined) b = { ...b, states: { ...b.states, liquid_depth: 0 } };   // (the game's water source reads depth 0)
   if (b.id === 'air') G.grid.delete(key(x, y, z)); else G.grid.set(key(x, y, z), { id: b.id, states: b.states });
   if (b.id === 'bed' && b.states.head_piece_bit) G.grid.set(key(x, y, z - 1), { id: 'bed', states: { direction: 0, head_piece_bit: false } });
@@ -56,6 +58,8 @@ function acceptable(b) {
   if (G.knobs.noSlabName && G.knobs.noSlabName.includes(b.id)) return false;
   if (G.knobs.noSignName?.includes(b.id)) return false;
   if (G.knobs.noDoorName?.includes(b.id)) return false;
+  if (G.knobs.noGateName?.includes(b.id)) return false;
+  if (b.id.endsWith('fence_gate') && G.knobs.gateNoDirection && b.states && 'direction' in b.states) return false;   // (a game that has no such state)
   return true;
 }
 

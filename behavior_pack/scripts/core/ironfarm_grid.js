@@ -21,8 +21,14 @@ export function render(plan) {
   return { at: (x, y, z) => g.get(key(x, y, z)), id: (x, y, z) => g.get(key(x, y, z))?.id ?? 'air', cells: g };
 }
 
-/** What a golem (and anything else) walks through: no collision. Lava, slabs, doors, campfires are not. */
-const FREE = new Set(['air', 'water', 'wall_sign', 'torch']);
+/** What a golem (and anything else) walks through: no collision. Lava, slabs, doors, campfires are not. (An open fence gate has none.) */
+const FREE = new Set(['air', 'water', 'wall_sign', 'torch', 'fence_gate']);
+/** What stops water going sideways but not a golem: a wall sign, an open fence gate. */
+const STOPS_WATER = new Set(['wall_sign', 'fence_gate']);
+/** What water would flow into: the free cells and a campfire's (so a check can see water reaching the campfire, which would put it out). */
+const WATER_FLOWS_IN = new Set([...FREE, 'campfire']);
+/** What a golem's body may overlap while it stands in the hallway: free cells, a campfire (it steps onto it) and lava (it is burning in it). */
+const BODY_FREE = new Set([...FREE, 'campfire', 'lava']);
 /** Full blocks (and near enough): what a golem could be spawned on. Slabs and stairs are not: that is what the slabs are for. */
 const SUPPORT = new Set(['cobblestone', 'glass', 'composter', 'hopper', 'chest', 'bed']);
 /** Blocks that stop light (the torches' glow goes through glass, signs and air). */
@@ -104,7 +110,7 @@ export function golemSpots(grid, centre) {
 
 /**
  * How water spreads from the sources over one layer: Map "x,z" -> level (0 = a source, up to 7), one level more with each step, through free
- * cells (a wall sign stops it: that is what holds the water out of the shaft).
+ * cells (a wall sign or an open fence gate stops it: that is what holds the water out of the shaft, and out of the campfire's cell).
  */
 export function waterField(grid, sources, y) {
   const lv = new Map();
@@ -116,7 +122,7 @@ export function waterField(grid, sources, y) {
     for (const [dx, dz] of DIRS4) {
       const nx = x + dx, nz = z + dz, k = `${nx},${nz}`;
       const here = grid.id(nx, y, nz);
-      if (lv.has(k) || !passable(here) || here === 'wall_sign') continue;
+      if (lv.has(k) || !WATER_FLOWS_IN.has(here) || STOPS_WATER.has(here)) continue;
       lv.set(k, l + 1); q.push([nx, nz, l + 1]);
     }
   }
@@ -190,7 +196,64 @@ export function drift(lv, sx, sz, hx, hz, tol = 0.3, maxSteps = 3000) {
   return { arrived: false, x, z, steps: maxSteps, why: 'going round in circles' };
 }
 
-/** Light from torches (14) and lit campfires (15), one less per block through anything that lets it through: Map "x,y,z" -> level. A source is { x, y, z, level? }. */
+/**
+ * Something with a box, pushed by the water the way the game does it (u212): each tick it takes the push of the wet cells its box overlaps (their
+ * flows averaged, dry cells count for nothing), moves along it (0.05 a step, sliding along walls), and stops where it overlaps no water, where the
+ * push is nothing, or where a wall holds it against the push. `half` is half its width (0.7 for an iron golem, 0.125 for an item) and `tall` the
+ * layers of `grid` it fills from `y` up (3 for a golem, 4 where it may stand on a campfire, 1 for an item). A cell the body cannot overlap is a
+ * wall: anything but air, water, signs, gates, torches, a campfire, lava. Returns { x, z, wet (still overlapping water), rested (held by a wall),
+ * steps, why }.
+ * @param {any} grid @param {Map<string, number>} lv @param {number} y @param {number} sx @param {number} sz
+ * @param {{ half?: number, tall?: number, step?: number, maxSteps?: number }} [o]
+ */
+export function pushBox(grid, lv, y, sx, sz, { half = 0.7, tall = 3, step = 0.05, maxSteps = 4000 } = {}) {
+  const e = 1e-6;
+  const cellsOf = (x, z) => {
+    const out = [];
+    for (let i = Math.floor(x - half + e); i <= Math.floor(x + half - e); i++) for (let j = Math.floor(z - half + e); j <= Math.floor(z + half - e); j++) out.push([i, j]);
+    return out;
+  };
+  const free = (i, j) => { for (let k = 0; k < tall; k++) if (!BODY_FREE.has(grid.id(i, y + k, j))) return false; return true; };
+  const blocked = (x, z) => cellsOf(x, z).some(([i, j]) => !free(i, j));
+  let x = sx, z = sz;
+  if (blocked(x, z)) {
+    // Put where it can be: the nearest spot (in steps of 0.05, out to a block) that does not overlap a wall.
+    let found = false;
+    for (let r = 1; r <= 20 && !found; r++) {
+      for (let a = -r; a <= r && !found; a++) for (let b = -r; b <= r && !found; b++) {
+        if (Math.max(Math.abs(a), Math.abs(b)) !== r) continue;
+        const nx = sx + a * 0.05, nz = sz + b * 0.05;
+        if (!blocked(nx, nz)) { x = nx; z = nz; found = true; }
+      }
+    }
+    if (!found) return { x, z, wet: false, rested: false, steps: 0, why: 'no room to stand' };
+  }
+  for (let n = 0; n < maxSteps; n++) {
+    let vx = 0, vz = 0, wet = 0;
+    for (const [i, j] of cellsOf(x, z)) {
+      const f = flowAt(lv, i, j);
+      if (f) { vx += f.x; vz += f.z; wet++; }
+    }
+    if (!wet) return { x, z, wet: false, rested: false, steps: n, why: 'out of the water' };
+    const m = Math.hypot(vx, vz);
+    if (m < 1e-9) return { x, z, wet: true, rested: false, steps: n, why: 'no push here' };
+    const dx = (vx / m) * step, dz = (vz / m) * step;
+    if (!blocked(x + dx, z + dz)) { x += dx; z += dz; }
+    else if (Math.abs(dx) > 1e-9 && !blocked(x + dx, z)) x += dx;
+    else if (Math.abs(dz) > 1e-9 && !blocked(x, z + dz)) z += dz;
+    else return { x, z, wet: true, rested: true, steps: n, why: 'held against a wall' };
+  }
+  return { x, z, wet: true, rested: false, steps: maxSteps, why: 'going round in circles' };
+}
+
+/** Does a box of half-width `half` at (x, z) rest on something? True if any block under its footprint (layer y - 1) is solid. */
+export function supported(grid, y, x, z, half = 0.7) {
+  const e = 1e-6;
+  for (let i = Math.floor(x - half + e); i <= Math.floor(x + half - e); i++) for (let j = Math.floor(z - half + e); j <= Math.floor(z + half - e); j++) if (solid(grid.id(i, y - 1, j))) return true;
+  return false;
+}
+
+/** Light from torches (14), lit campfires and lava (15), one less per block through anything that lets it through: Map "x,y,z" -> level. A source is { x, y, z, level? }. */
 export function lightField(grid, torches) {
   const lv = new Map();
   const q = [];
