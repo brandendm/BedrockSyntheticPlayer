@@ -1,10 +1,10 @@
 // A stand-in for @minecraft/server with a world that takes `fill` / `setblock` commands, for tools/sim_ironfarm.mjs (game/ironfarm.js runs in Node
 // against it). The world's behaviour is set by `globalThis.__ifw.knobs`, so the sim can make the game awkward in the ways the builder
 // has to cope with: signs that only hang the other way round, water that only spreads after a block update (or never), slabs under another name.
-const G = (globalThis.__ifw ??= { grid: new Map(), log: [], tick: 0, knobs: {}, entities: [], players: [], intervals: [], awake: new Set() });
+const G = (globalThis.__ifw ??= { grid: new Map(), log: [], tick: 0, knobs: {}, entities: [], players: [], intervals: new Map(), nextInterval: 1, awake: new Set(), time: 0 });
 const key = (x, y, z) => `${x},${y},${z}`;
 const SUPPORT = { 2: [0, 1], 3: [0, -1], 4: [1, 0], 5: [-1, 0] };
-const KNOWN = new Set(['air', 'cobblestone', 'glass', 'composter', 'bed', 'hopper', 'chest', 'wall_sign', 'oak_wall_sign', 'spruce_wall_sign', 'torch', 'lava', 'water', 'flowing_water', 'cobblestone_slab', 'stone_block_slab', 'oak_slab', 'wooden_slab']);
+const KNOWN = new Set(['air', 'cobblestone', 'glass', 'composter', 'bed', 'hopper', 'chest', 'wall_sign', 'oak_wall_sign', 'spruce_wall_sign', 'torch', 'lava', 'water', 'flowing_water', 'cobblestone_slab', 'stone_block_slab', 'oak_slab', 'wooden_slab', 'campfire', 'wooden_door', 'oak_door']);
 
 function parseBlock(text) {
   const m = /^(?:minecraft:)?([a-z_]+)\s*(?:\[(.*)\])?$/.exec(text.trim());
@@ -18,10 +18,17 @@ function parseBlock(text) {
   return { id: m[1], states };
 }
 
+/** A chest with another chest beside it facing the same way is half of a double chest (unless the game is made not to pair them). */
+function pairedChest(x, y, z) {
+  if (G.knobs.noPair) return false;
+  const me = G.grid.get(key(x, y, z));
+  return [[1, 0], [-1, 0], [0, 1], [0, -1]].some(([dx, dz]) => { const o = G.grid.get(key(x + dx, y, z + dz)); return o?.id === 'chest' && o.states?.['minecraft:cardinal_direction'] === me.states?.['minecraft:cardinal_direction']; });
+}
+
 const solidId = (id) => ['cobblestone', 'glass', 'composter', 'hopper', 'chest', 'bed'].includes(id) || id.endsWith('slab');
 export const idAtCell = (x, y, z) => G.grid.get(key(x, y, z))?.id ?? 'air';
 
-function neighbourChanged(x, y, z) {
+function neighbourChanged(x, y, z, changed = '') {
   for (const [dx, dy, dz] of [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]]) {
     const nx = x + dx, ny = y + dy, nz = z + dz, c = G.grid.get(key(nx, ny, nz));
     if (!c) continue;
@@ -31,7 +38,8 @@ function neighbourChanged(x, y, z) {
       const off = SUPPORT[f];
       if (!off || !solidId(idAtCell(nx + off[0], ny, nz + off[1]))) { G.grid.delete(key(nx, ny, nz)); G.log.push(`sign popped off at ${nx},${ny},${nz}`); }
     }
-    if (c.id === 'water' && (c.states?.liquid_depth ?? 0) === 0 && G.knobs.water === 'needsKick') G.awake.add(key(nx, ny, nz));
+    // (a source made by a command wakes up only when something that is not water changes beside it)
+    if (c.id === 'water' && (c.states?.liquid_depth ?? 0) === 0 && G.knobs.water === 'needsKick' && !changed.endsWith('water')) G.awake.add(key(nx, ny, nz));
   }
 }
 
@@ -39,13 +47,14 @@ function put(x, y, z, b) {
   if (b.id === 'air') G.grid.delete(key(x, y, z)); else G.grid.set(key(x, y, z), { id: b.id, states: b.states });
   if (b.id === 'bed' && b.states.head_piece_bit) G.grid.set(key(x, y, z - 1), { id: 'bed', states: { direction: 0, head_piece_bit: false } });
   if (b.id === 'water' && (b.states.liquid_depth ?? 0) === 0 && G.knobs.water !== 'never' && G.knobs.water !== 'needsKick') G.awake.add(key(x, y, z));
-  neighbourChanged(x, y, z);
+  neighbourChanged(x, y, z, b.id);
 }
 
 function acceptable(b) {
   if (!b || !KNOWN.has(b.id)) return false;
   if (G.knobs.noSlabName && G.knobs.noSlabName.includes(b.id)) return false;
   if (G.knobs.noSignName?.includes(b.id)) return false;
+  if (G.knobs.noDoorName?.includes(b.id)) return false;
   return true;
 }
 
@@ -73,7 +82,11 @@ class Dimension {
       }
       return { successCount: n };
     }
-    throw new Error(`Syntax error: ${cmd}`);
+    m = /^time (set|add) (-?\d+)$/.exec(cmd);
+    if (m) { G.time = m[1] === 'set' ? Number(m[2]) : G.time + Number(m[2]); return { successCount: 1 }; }
+    m = /^tick rate (\d+)$/.exec(cmd);
+    if (m && G.knobs.tickRate) { G.tickRate = Number(m[1]); return { successCount: 1 }; }
+    throw new Error(`Unknown command or syntax error: ${cmd}`);
   }
   getBlock(l) {
     const x = Math.floor(l.x), y = Math.floor(l.y), z = Math.floor(l.z);
@@ -81,11 +94,16 @@ class Dimension {
     return {
       typeId: `minecraft:${c?.id ?? 'air'}`,
       permutation: { getState: (n) => c?.states?.[n] },
-      getComponent: () => ({ container: { size: 27, getItem: () => undefined } }),
+      getComponent: (n) => (n === 'minecraft:inventory' && c?.id === 'chest' ? { container: { size: pairedChest(x, y, z) ? 54 : 27, getItem: () => undefined } } : undefined),
     };
   }
-  getTopmostBlock({ x, z }) { const y = G.knobs.groundAt?.(x, z); return y === undefined ? undefined : { y }; }
+  getTopmostBlock({ x, z }) { const y = G.knobs.groundAt ? G.knobs.groundAt(x, z) : 69; return y === undefined ? undefined : { y }; }
   spawnEntity(type, loc) {
+    if (type === 'minecraft:iron_golem') {
+      const e = { typeId: type, id: String(G.entities.length + 1), location: { ...loc }, isValid: true, isInWater: false, kill() { this.isValid = false; }, remove() { this.isValid = false; } };
+      G.entities.push(e);
+      return e;
+    }
     const baby = G.entities.length % 5 === 0;
     const e = {
       typeId: type, id: String(G.entities.length + 1), location: { ...loc }, isValid: true, isInWater: false, baby,
@@ -120,15 +138,23 @@ function spread() {
 
 export const system = {
   get currentTick() { return G.tick; },
-  runInterval(fn) { G.intervals.push(fn); return G.intervals.length; },
-  clearRun() {},
+  runInterval(fn, period = 1) { const id = G.nextInterval++; G.intervals.set(id, { fn, period }); return id; },
+  clearRun(id) { G.intervals.delete(id); },
   runTimeout() { return 0; },
-  waitTicks(n) { for (let i = 0; i < n; i++) { G.tick++; if (G.tick % 4 === 0) spread(); } return Promise.resolve(); },
+  waitTicks(n) {
+    for (let i = 0; i < n; i++) {
+      G.tick++;
+      if (G.tick % 4 === 0) spread();
+      for (const { fn, period } of [...G.intervals.values()]) if (G.tick % period === 0) fn();
+    }
+    return Promise.resolve();
+  },
 };
 export const world = {
   sendMessage(m) { G.log.push(`CHAT ${String(m).replace(/§./g, '')}`); },
   getPlayers() { return G.players; },
-  getAbsoluteTime: () => 0,
-  getTimeOfDay: () => 6000,
+  getAbsoluteTime: () => G.time,
+  setAbsoluteTime(t) { G.time = t; },
+  getTimeOfDay: () => G.time % 24000,
 };
 export const dimension = new Dimension();
