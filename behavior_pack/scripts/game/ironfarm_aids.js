@@ -3,7 +3,8 @@
 //   - time: set the time of day, or run it faster (the villagers' day: working, sleeping, "worked yesterday"). Done by moving the world clock
 //     on every tick, so it speeds up the clock and what runs off it. It does NOT speed up the game: Bedrock has no /tick command (Java only),
 //     and a pack cannot make the game run more ticks, so water, hoppers and the spawn rolls themselves run at the normal rate.
-//   - speed: tries the game's own `tick rate` command first (in case this version has one), and says what happened.
+//   - speed: the gamerule randomtickspeed x N (random ticks only: crops, fire and lava ignition; not the spawn roll), then the game's own
+//     `tick rate` command if this version has one, else the clock; and says what each did.
 //   - golem: puts iron golems on the platform at once (or one every few seconds), so the water, the hole, the lava, the campfires, the hoppers and
 //     the chest can be watched working without waiting for the game to spawn one. Those are made by the pack, not by the village: they say nothing
 //     about the spawn rate.
@@ -57,20 +58,37 @@ export function timeCommand(dim, args) {
   say(`Time: now ${clock()}${fast ? `, running x${fast.mult}` : ''}. Commands: time day|night|noon|midnight|sunrise|sunset, time set N, time add N, time fast N (clock x N), time normal.`);
 }
 
-/** `speed N | normal`: the game's own tick rate if this version has the command; otherwise the clock (time fast). */
+let savedRts = null;
+const randomTickSpeed = () => { try { return world.gameRules?.randomTickSpeed ?? null; } catch { return null; } };
+
+/**
+ * `speed N | normal`. Three things, each reported: (1) the gamerule randomtickspeed x N (Bedrock's is 1): crops, leaves, grass, fire and lava
+ * setting things alight; it is NOT the game's tick rate and does not touch the golem spawn roll, the water, the hoppers or the villagers' days;
+ * (2) the game's own `tick rate`, in case this version has the command (Java does; I know of none in Bedrock); (3) if (2) is refused, the clock x N.
+ */
 export function speedCommand(dim, args) {
   const a = (args[0] ?? '').toLowerCase();
   if (a === 'normal' || a === 'off' || a === 'stop') {
+    const back = savedRts ?? 1;
+    const g = run(dim, `gamerule randomtickspeed ${back}`);
     const why = run(dim, 'tick rate 20');
     stopFast();
-    return say(`Speed back to normal${why ? ` (the clock; \`tick rate 20\`: ${why})` : ' (tick rate 20)'}.`);
+    savedRts = null;
+    return say(`Speed back to normal: random ticks ${g ? `(the gamerule: ${g})` : `x1 (randomtickspeed ${back})`}, the clock normal${why ? '' : ', tick rate 20'}.`);
   }
   const n = Math.max(1, Math.min(100, Math.floor(Number(a)) || 0));
   if (!n) return say('Say how many times faster: "speed 5", or "speed normal".');
+  if (savedRts === null) savedRts = randomTickSpeed();
+  const parts = [];
+  const g = run(dim, `gamerule randomtickspeed ${n}`);
+  parts.push(g ? `Random ticks: the game would not take the gamerule (${g}).` : `Random ticks x${n} (gamerule randomtickspeed ${n}; it was ${savedRts ?? 1}): crops, leaves, grass, and fire and lava setting things alight. It is NOT the tick rate: the golem spawn roll, water, hoppers and the villagers' days are not on it. Use it to see whether the lava burns the signs over time.`);
   const why = run(dim, `tick rate ${20 * n}`);
-  if (!why) { stopFast(); return say(`Game speed x${n}: tick rate ${20 * n}. "speed normal" puts it back.`); }
-  startFast(dim, Math.max(2, n));
-  say(`The game would not take \`tick rate ${20 * n}\` (${why}): Bedrock has no /tick, only Java does. So that is not possible from here; what I can do is run the clock x${Math.max(2, n)} instead (the villagers' day), which is now on. Water, hoppers and the spawn rolls stay at the normal speed. "speed normal" stops it.`);
+  if (!why) { stopFast(); parts.push(`Game speed x${n}: tick rate ${20 * n}.`); }
+  else {
+    startFast(dim, Math.max(2, n));
+    parts.push(`The game would not take \`tick rate ${20 * n}\` (${why}): Bedrock has no /tick, only Java does. So the clock runs x${Math.max(2, n)} instead (the villagers' day); water, hoppers and the spawn rolls stay at the normal speed.`);
+  }
+  say(`${parts.join(' ')} "speed normal" puts it all back.`);
 }
 
 /** The platform cells a test golem may start on: not a corner, not the hole, and a few blocks from the hole so the water has something to do. */

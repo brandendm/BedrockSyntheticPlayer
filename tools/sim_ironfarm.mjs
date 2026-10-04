@@ -18,7 +18,7 @@ const cellsPlan = ref.cells;
 const OPPOSITE = { 2: 3, 3: 2, 4: 5, 5: 4 };
 
 function reset(knobs = {}) {
-  G.grid.clear(); G.log.length = 0; G.tick = 0; G.entities.length = 0; G.awake.clear(); G.knobs = knobs; G.intervals.clear(); G.time = 0; G.tickRate = undefined;
+  G.grid.clear(); G.log.length = 0; G.tick = 0; G.entities.length = 0; G.awake.clear(); G.knobs = knobs; G.intervals.clear(); G.time = 0; G.tickRate = undefined; G.rts = undefined;
 }
 const tele = [];
 const player = { location: { x: 100.5, y: 70, z: 100.5 }, dimension: MC.dimension, teleport(l) { tele.push(l); } };
@@ -228,11 +228,13 @@ t('speed: Bedrock has no /tick, so it says so and runs the clock; where the game
   ironFarmCommand(player, ['speed', '5']);
   await settle(/no \/tick|would not take/);
   ok(chat().some((l) => /Bedrock has no \/tick/.test(l)), chat().filter((l) => /tick/.test(l)).join(' | '));
+  ok(G.rts === 5 && chat().some((l) => /Random ticks x5.*it was 1.*NOT the tick rate/.test(l)), `random tick speed ${G.rts}: ${chat().filter((l) => /Random/.test(l))}`);
   const before = G.time;
   await MC.system.waitTicks(10);
   ok(G.time - before === 10 * 4, `the clock moved ${G.time - before}`);
   ironFarmCommand(player, ['speed', 'normal']);
   await settle(/Speed back to normal/);
+  ok(G.rts === 1, `random tick speed ${G.rts} after normal`);
   const t1 = G.time;
   await MC.system.waitTicks(5);
   ok(G.time === t1, 'still fast');

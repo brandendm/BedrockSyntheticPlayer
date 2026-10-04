@@ -17,7 +17,7 @@
 //   !bot ironfarm build force  build even if something is in the way (or the ground is uneven)
 // Test aids (game/ironfarm_aids.js):
 //   !bot ironfarm time day|night|noon|midnight|set N|fast N|normal      the time of day, or the clock x N
-//   !bot ironfarm speed N|normal       the game's own `tick rate` if this version has it; otherwise the clock
+//   !bot ironfarm speed N|normal       random ticks x N (gamerule), the game's own `tick rate` if this version has it, else the clock
 //   !bot ironfarm golem [n]|auto [s]|off   golems made on the platform at once (or every s seconds): tests everything after the spawn
 //
 // Water placed by a command may not start to flow (the game wants a source to get a block update), so after placing it this counts the water on

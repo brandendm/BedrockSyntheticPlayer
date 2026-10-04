@@ -84,6 +84,8 @@ class Dimension {
     }
     m = /^time (set|add) (-?\d+)$/.exec(cmd);
     if (m) { G.time = m[1] === 'set' ? Number(m[2]) : G.time + Number(m[2]); return { successCount: 1 }; }
+    m = /^gamerule randomtickspeed (\d+)$/.exec(cmd);
+    if (m) { G.rts = Number(m[1]); return { successCount: 1 }; }
     m = /^tick rate (\d+)$/.exec(cmd);
     if (m && G.knobs.tickRate) { G.tickRate = Number(m[1]); return { successCount: 1 }; }
     throw new Error(`Unknown command or syntax error: ${cmd}`);
@@ -153,6 +155,7 @@ export const system = {
 export const world = {
   sendMessage(m) { G.log.push(`CHAT ${String(m).replace(/§./g, '')}`); },
   getPlayers() { return G.players; },
+  get gameRules() { return { randomTickSpeed: G.rts ?? 1 }; },
   getAbsoluteTime: () => G.time,
   setAbsoluteTime(t) { G.time = t; },
   getTimeOfDay: () => G.time % 24000,
