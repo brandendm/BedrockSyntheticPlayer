@@ -3,9 +3,9 @@
 //   - time: set the time of day, or run it faster (the villagers' day: working, sleeping, "worked yesterday"). Done by moving the world clock
 //     on every tick, so it speeds up the clock and what runs off it. It does NOT speed up the game: Bedrock has no /tick command (Java only),
 //     and a pack cannot make the game run more ticks, so water, hoppers and the spawn rolls themselves run at the normal rate.
-//   - speed: the gamerule randomtickspeed x N (random ticks only: crops, fire and lava ignition; not the spawn roll), then the game's own
+//   - speed: the gamerule randomtickspeed x N (random ticks only: crops, leaves, fire; not the spawn roll), then the game's own
 //     `tick rate` command if this version has one, else the clock; and says what each did.
-//   - golem: puts iron golems on the platform at once (or one every few seconds), so the water, the hole, the lava, the campfires, the hoppers and
+//   - golem: puts iron golems on the platform at once (or one every few seconds), so the water, the hole, the campfires, the hoppers and
 //     the chest can be watched working without waiting for the game to spawn one. Those are made by the pack, not by the village: they say nothing
 //     about the spawn rate.
 import { system, world } from '@minecraft/server';
@@ -62,8 +62,7 @@ let savedRts = null;
 const randomTickSpeed = () => { try { return world.gameRules?.randomTickSpeed ?? null; } catch { return null; } };
 
 /**
- * `speed N | normal`. Three things, each reported: (1) the gamerule randomtickspeed x N (Bedrock's is 1): crops, leaves, grass, fire and lava
- * setting things alight; it is NOT the game's tick rate and does not touch the golem spawn roll, the water, the hoppers or the villagers' days;
+ * `speed N | normal`. Three things, each reported: (1) the gamerule randomtickspeed x N (Bedrock's is 1): crops, leaves, grass and fire; it is NOT the game's tick rate and does not touch the golem spawn roll, the water, the hoppers or the villagers' days;
  * (2) the game's own `tick rate`, in case this version has the command (Java does; I know of none in Bedrock); (3) if (2) is refused, the clock x N.
  */
 export function speedCommand(dim, args) {
@@ -81,7 +80,7 @@ export function speedCommand(dim, args) {
   if (savedRts === null) savedRts = randomTickSpeed();
   const parts = [];
   const g = run(dim, `gamerule randomtickspeed ${n}`);
-  parts.push(g ? `Random ticks: the game would not take the gamerule (${g}).` : `Random ticks x${n} (gamerule randomtickspeed ${n}; it was ${savedRts ?? 1}): crops, leaves, grass, and fire and lava setting things alight. It is NOT the tick rate: the golem spawn roll, water, hoppers and the villagers' days are not on it. Use it to see whether the lava burns the signs over time.`);
+  parts.push(g ? `Random ticks: the game would not take the gamerule (${g}).` : `Random ticks x${n} (gamerule randomtickspeed ${n}; it was ${savedRts ?? 1}): crops, leaves, grass and fire. It is NOT the tick rate: the golem spawn roll, water, hoppers and the villagers' days are not on it.`);
   const why = run(dim, `tick rate ${20 * n}`);
   if (!why) { stopFast(); parts.push(`Game speed x${n}: tick rate ${20 * n}.`); }
   else {
@@ -136,5 +135,5 @@ export function golemCommand(farm, args) {
   }
   const n = Math.max(1, Math.min(10, Math.floor(Number(a)) || 1));
   const made = spawnTestGolems(farm, n);
-  say(`${made} test golem${made === 1 ? '' : 's'} on the platform (made by the pack, not the village: this tests the water, the hole, the lava, the campfires, the hoppers and the chest, not the spawn rate). I say what happens to each.`);
+  say(`${made} test golem${made === 1 ? '' : 's'} on the platform (made by the pack, not the village: this tests the water, the hole, the campfires, the hoppers and the chest, not the spawn rate). I say what happens to each.`);
 }

@@ -2,7 +2,7 @@
 // another name, signs that hang the other way round, a door that will not go in, two chests that do not pair, water that will not flow. Each
 // tries the next thing, reads the result back, and says what it found.
 import {
-  blockArg, waterField, render, waterSources, SIGNS, HOPPERS, CHESTS, CHEST_FACING, CAMPFIRES, DOOR, DOOR_ID, LAVA, STEP, WATER_Y, HOLE,
+  blockArg, settleWater, render, waterSources, SIGNS, HOPPERS, CHESTS, CHEST_FACING, CAMPFIRES, DOOR, DOOR_ID, STEP, WATER_Y, HOLE,
 } from '../core/ironfarm.js';
 import { wait, run, W, idAt, stateAt, kick, isWater, chestSize } from './ironfarm_world.js';
 
@@ -27,9 +27,9 @@ export async function findSlab(dim, a, b, notes) {
 }
 
 /**
- * The wall signs: the four that cap the hole in the platform's floor and the three that hold the lava. Each is placed facing the way the plan says,
- * given a block update from a neighbour (a sign with nothing to hang on stays until it gets one), and read back; if it is gone the other way round
- * is tried, then the next spelling of the name. Returns { ok, holeOk, lavaOk, id }.
+ * The wall signs: the four that cap the hole in the platform's floor. Each is placed facing the way the plan says, given a block update from a
+ * neighbour (a sign with nothing to hang on stays until it gets one), and read back; if it is gone the other way round is tried, then the next
+ * spelling of the name. Returns { ok, holeOk, id } (ok is holeOk: there are no other signs since u211).
  */
 export async function placeSigns(dim, off, notes) {
   let id = null, flip = false, first = true;
@@ -53,10 +53,9 @@ export async function placeSigns(dim, off, notes) {
     done.set(s, ok);
     if (!ok) notes.push(`The sign at ${s.x},${s.y},${s.z} (plan coordinates; ${s.group}) would not stay on its wall.`);
   }
-  const group = (g) => SIGNS.filter((s) => s.group === g).every((s) => done.get(s));
-  const holeOk = group('hole'), lavaOk = group('lava');
-  if (flip && holeOk && lavaOk) notes.push('(The signs hold the other way round to the plan: facing_direction names the side the sign hangs on here.)');
-  return { ok: holeOk && lavaOk, holeOk, lavaOk, id };
+  const holeOk = SIGNS.every((s) => done.get(s));
+  if (flip && holeOk) notes.push('(The signs hold the other way round to the plan: facing_direction names the side the sign hangs on here.)');
+  return { ok: holeOk, holeOk, id };
 }
 
 /**
@@ -104,18 +103,23 @@ export async function pairChests(dim, off) {
 }
 
 // ---- the water ----
-/** The water on the platform floor: how many of the cells it should reach have it, and the depth in each. */
+/**
+ * The water on the platform floor: how many of the cells it should reach have it, the depth in each, and how many of them are SOURCES (depth 0).
+ * More sources than planned means cells have turned into sources (Bedrock's infinite-water rule: a flowing cell that touches two sources): the
+ * water then lies still where that happened. "Wet" alone cannot tell (u209 was wet in all 252 cells and had no current).
+ */
 export function waterOnPlatform(dim, off, plan) {
-  const field = waterField(render(plan), waterSources(), WATER_Y);
-  let have = 0;
+  const field = settleWater(render(plan), waterSources(), WATER_Y).field;
+  let have = 0, sources = 0;
   /** @type {Record<string, number | undefined>} */
   const depth = {};
   for (const [k] of field) {
     const [x, z] = k.split(',').map(Number);
     const q = W(off, { x, y: WATER_Y, z });
-    if (isWater(idAt(dim, q))) { have++; depth[k] = stateAt(dim, q, 'liquid_depth'); }
+    if (isWater(idAt(dim, q))) { have++; depth[k] = stateAt(dim, q, 'liquid_depth'); if (depth[k] === 0) sources++; }
   }
-  return { have, want: field.size, field, depth, hole: depth[`${HOLE.x1},${HOLE.z1}`] };
+  const planned = waterSources().length;
+  return { have, want: field.size, field, depth, hole: depth[`${HOLE.x1},${HOLE.z1}`], sources, planned, pooled: sources > planned };
 }
 
 const waterRows = (plan) => plan.ops.filter((o) => o.tag === 'water');
@@ -172,9 +176,10 @@ export async function ensureWater(dim, off, plan) {
     }
     s = await settle(`flowing water laid by hand${bad ? ` (${bad} cells refused)` : ''}`, 40);
   }
-  const ok = s.have >= s.want;
   const down = shaftWater(dim, off);
-  const note = `Water: ${ok ? 'flowing over the whole platform' : 'NOT right'} (${s.have} of ${s.want} cells wet, the hole at depth ${s.hole ?? 'none'} of 7). ${tried.join('; ')}.${ok && hand ? ' It would not spread by itself, so the flowing water is placed cell by cell: if it dries up, the game does not treat command-placed water as water that flows.' : ''}${ok && !hand && tried.length > 1 ? ' (It needed the nudge: the first placement alone did not spread.)' : ''}${down ? ` WATER GOT INTO THE SHAFT (${down} cells): the signs over the hole did not stop it, and it will put the campfires out.` : ''}`;
+  const ok = s.have >= s.want && !s.pooled;
+  const pool = s.pooled ? ` THE WATER IS POOLING: ${s.sources} source blocks, ${s.planned} planned, so ${s.sources - s.planned} cells turned into sources (the game makes a flowing cell that touches two sources a source) and the water lies still there.` : '';
+  const note = `Water: ${ok ? 'flowing over the whole platform' : 'NOT right'} (${s.have} of ${s.want} cells wet, ${s.sources} sources of ${s.planned} planned, the hole at depth ${s.hole ?? 'none'} of 7). ${tried.join('; ')}.${pool}${ok && hand ? ' It would not spread by itself, so the flowing water is placed cell by cell: if it dries up, the game does not treat command-placed water as water that flows.' : ''}${ok && !hand && tried.length > 1 ? ' (It needed the nudge: the first placement alone did not spread.)' : ''}${down ? ` WATER GOT INTO THE SHAFT (${down} cells): the signs over the hole did not stop it, and it will put the campfires out.` : ''}`;
   return { ok, note, state: s, shaftWet: down };
 }
 
@@ -187,8 +192,6 @@ export function verify(dim, off, plan) {
   for (const s of plan.stations) if (typeAt(s) === 'composter') comps++;
   if (beds !== plan.beds.length * 2) bad.push(`${beds} of ${plan.beds.length * 2} bed halves in place`);
   if (comps !== plan.stations.length) bad.push(`${comps} of ${plan.stations.length} composters`);
-  const lt = typeAt(LAVA);
-  if (lt !== 'lava') bad.push(`${lt} where the lava should be`);
   for (const s of SIGNS) {
     const t = typeAt(s);
     if (!t.endsWith('wall_sign')) bad.push(`${t} where a sign should be at ${s.x},${s.y},${s.z}`);

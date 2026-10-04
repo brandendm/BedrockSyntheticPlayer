@@ -1,14 +1,13 @@
 // Everything that should hold about the iron farm plan (core/ironfarm.js): returns the list of what does not. Pure; tests/ironfarm.test.js runs
 // it on the plan and then breaks the plan in each way to see that the check notices.
 import {
-  PLATFORM, CORNERS, HOLE, POD, SHAFT, ROOM, DOOR, STEP, LAVA, CAMPFIRES, HOPPERS, CHESTS, CHEST_FACING, STAND, SIGNS, SLAB, DOOR_ID, ALLOWED,
-  WATER_Y, FLOOR_Y, HOLE_CENTRE, ROOM_SHELL, signSupport, waterSources, opBox, inBox,
+  PLATFORM, CORNERS, HOLE, POD, SHAFT, ROOM, DOOR, STEP, CAMPFIRES, HOPPERS, CHESTS, CHEST_FACING, STAND, SIGNS, SLAB, DOOR_ID, ALLOWED,
+  WATER_Y, FLOOR_Y, HOLE_CENTRE, ROOM_SHELL, waterSources, opBox, inBox,
 } from './ironfarm_geo.js';
 import {
-  SPAWN_VOLUME, render, passable, solid, outsideAir, exposedTops, golemSpots, waterField, drift, lightField, walkable,
+  SPAWN_VOLUME, render, passable, solid, outsideAir, exposedTops, golemSpots, settleWater, drift, lightField, walkable,
 } from './ironfarm_grid.js';
 
-const NEIGHBOURS = [[1, 0, 0], [-1, 0, 0], [0, 0, 1], [0, 0, -1], [0, 1, 0], [0, -1, 0]];
 const onPlatformFloor = (x, y, z) => y === FLOOR_Y && x >= PLATFORM.x1 && x <= PLATFORM.x2 && z >= PLATFORM.z1 && z <= PLATFORM.z2;
 const isCorner = (x, z) => CORNERS.some(([a, b]) => a === x && b === z);
 const isHole = (x, z) => x >= HOLE.x1 && x <= HOLE.x2 && z >= HOLE.z1 && z <= HOLE.z2;
@@ -30,8 +29,9 @@ export function checkPlan(plan) {
   const bb = plan.bounds;
 
   // Nothing from the Nether (or anywhere a survival player has not been yet).
-  for (const v of g.cells.values()) if (!ALLOWED.includes(v.id)) bad.push(`${v.id} is not an overworld, pre-Nether material`);
-  for (const o of plan.ops) if (!ALLOWED.includes(o.id)) bad.push(`${o.id} is not an overworld, pre-Nether material`);
+  for (const v of g.cells.values()) if (v.id === 'lava') { bad.push('lava in the plan: a mob that falls into or dies beside lava can lose its drops'); break; }
+  for (const v of g.cells.values()) if (v.id !== 'lava' && !ALLOWED.includes(v.id)) bad.push(`${v.id} is not an overworld, pre-Nether material`);
+  for (const o of plan.ops) if (o.id !== 'lava' && !ALLOWED.includes(o.id)) bad.push(`${o.id} is not an overworld, pre-Nether material`);
 
   // The village: 20 whole beds, 10 workstations, 10 villagers with room, all of them able to walk to a bed and a workstation.
   if (plan.beds.length < 20) bad.push(`${plan.beds.length} beds, 20 needed`);
@@ -62,7 +62,8 @@ export function checkPlan(plan) {
   const torches = [...g.cells].filter(([, v]) => v.id === 'torch').map(([k]) => { const [x, y, z] = k.split(',').map(Number); return { x, y, z }; });
   if (torches.length < 6) bad.push(`${torches.length} torches`);
   for (const t of torches) if (!solid(id(t.x, t.y - 1, t.z))) bad.push(`torch at ${t.x},${t.y},${t.z} has no block under it`);
-  const light = lightField(g, [...torches, { ...LAVA, level: 15 }]);
+  const fires = [...g.cells].filter(([, v]) => v.id === 'campfire' && !v.states?.extinguished).map(([k]) => { const [x, y, z] = k.split(',').map(Number); return { x, y, z, level: 15 }; });
+  const light = lightField(g, [...torches, ...fires]);
   for (const r of [POD, ROOM, SHAFT]) for (let x = r.x1; x <= r.x2; x++) for (let y = r.y1; y <= r.y2; y++) for (let z = r.z1; z <= r.z2; z++) {
     if (!passable(id(x, y, z))) continue;
     if ((light.get(`${x},${y},${z}`) ?? 0) < 1) bad.push(`no light at ${x},${y},${z}`);
@@ -80,14 +81,14 @@ export function checkPlan(plan) {
     if (q.x1 < bb.x1 || q.x2 > bb.x2 || q.y1 < bb.y1 || q.y2 > bb.y2 || q.z1 < bb.z1 || q.z2 > bb.z2) bad.push(`${o.id} is outside the farm's bounds`);
   }
 
-  // Sealed: no air inside the pod, the room or the shaft is reachable from outside (a hole would let the water, the villagers or the lava out, and mobs in).
+  // Sealed: no air inside the pod, the room or the shaft is reachable from outside (a hole would let the water or the villagers out, and mobs in).
   const out = outsideAir(g, bb);
   for (const r of [POD, ROOM, SHAFT]) for (let x = r.x1; x <= r.x2; x++) for (let y = r.y1; y <= r.y2; y++) for (let z = r.z1; z <= r.z2; z++) {
     if (out.has(`${x},${y},${z}`)) bad.push(`the shell has a hole: ${x},${y},${z} is open to the outside`);
   }
 
   // The platform: 16 x 16, open to the sky, so its walls hold the water and the golems in: solid all round, three high from the floor (a golem climbs one
-  // block, not three), the floor under it all (but the hole), the four corners solid.
+  // block, not three), the floor under it all (but the hole), the four 2 x 2 corners solid.
   if (PLATFORM.x2 - PLATFORM.x1 + 1 !== 16 || PLATFORM.z2 - PLATFORM.z1 + 1 !== 16) bad.push('the platform is not 16 x 16');
   if (PLATFORM.y2 - PLATFORM.y1 + 1 < 3) bad.push('the platform walls are less than three high: a golem could climb out');
   for (let x = PLATFORM.x1 - 1; x <= PLATFORM.x2 + 1; x++) for (let z = PLATFORM.z1 - 1; z <= PLATFORM.z2 + 1; z++) {
@@ -119,11 +120,24 @@ export function checkPlan(plan) {
   const bare = exposedTops(g, bb, onPlatformFloor);
   if (bare.length) bad.push(`${bare.length} bare tops outside (first ${bare[0].x},${bare[0].y},${bare[0].z}): a golem could stand there`);
 
-  // Water: the sources are the platform's edge rows; the field they make reaches every cell, deepest (level 7) in the hole; and a thing drifting
-  // with the push of it, from anywhere on the platform, ends up in the middle of the hole.
-  const sources = waterSources();
-  for (const s of sources) if (id(s.x, WATER_Y, s.z) !== 'water') bad.push(`no water source at ${s.x},${s.z}`);
-  const lv = waterField(g, sources, WATER_Y);
+  // Water: the sources are the middle of the platform's edge rows. Bedrock turns a flowing cell that touches two sources into a source (u209 had a ring
+  // of sources and the whole platform went still), so first settle that rule: nothing may be converted. Then the field they make reaches every cell,
+  // deepest (level 7) in the hole; and a thing drifting with the push of it, from anywhere on the platform, ends up in the middle of the hole.
+  const planned = waterSources();
+  for (const s of planned) if (id(s.x, WATER_Y, s.z) !== 'water') bad.push(`no water source at ${s.x},${s.z}`);
+  // (Every water block the plan lays on the platform layer is a source, the planned ones or not: all of them go into the rule.)
+  const sources = [...planned];
+  const seen = new Set(planned.map((q) => `${q.x},${q.z}`));
+  for (const [k, v] of g.cells) {
+    if (v.id !== 'water') continue;
+    const [x, y, z] = k.split(',').map(Number);
+    if (y === WATER_Y && !seen.has(`${x},${z}`)) { seen.add(`${x},${z}`); sources.push({ x, z }); }
+  }
+  const settled = settleWater(g, sources, WATER_Y);
+  if (settled.converted.length) {
+    bad.push(`${settled.converted.length} water cells would turn into sources (each touches two), first ${settled.converted.slice(0, 3).map((c) => `${c.x},${c.z}`).join(' ')}: the platform would go still`);
+  }
+  const lv = settled.field;
   for (let x = PLATFORM.x1; x <= PLATFORM.x2; x++) for (let z = PLATFORM.z1; z <= PLATFORM.z2; z++) {
     if (isCorner(x, z)) continue;
     const l = lv.get(`${x},${z}`);
@@ -139,39 +153,21 @@ export function checkPlan(plan) {
     }
   }
   if (lost > 3) bad.push(`${lost} starting points in all would not drift to the hole`);
-
-  // The lava: every side is cobblestone or a wall sign hanging on a block, never air or water (above it is the open shaft: a source does not run up).
-  if (id(LAVA.x, LAVA.y, LAVA.z) !== 'lava') bad.push('no lava');
-  for (const [dx, dy, dz] of NEIGHBOURS) {
-    const q = { x: LAVA.x + dx, y: LAVA.y + dy, z: LAVA.z + dz };
-    const n = g.at(q.x, q.y, q.z);
-    let ok = n?.id === 'cobblestone' || (dy === 1 && !n);
-    if (n?.id === 'wall_sign') {
-      const off = signSupport(n.states?.facing_direction);
-      ok = !!off && solid(id(q.x + off[0], q.y, q.z + off[1]));
-      if (!ok) bad.push(`the sign at ${dx},${dy},${dz} from the lava has nothing behind it to hang on`);
-    }
-    if (!ok && n?.id !== 'wall_sign') bad.push(`lava has ${n?.id ?? 'air'} beside it at ${dx},${dy},${dz}`);
-    if (n?.id === 'water') bad.push('lava touches water');
-  }
   for (const [k, v] of g.cells) if (v.id === 'water') { const y = Number(k.split(',')[1]); if (y !== WATER_Y) bad.push(`water at ${k}: only the platform has water`); }
-  if (LAVA.y - 2 < SHAFT.y1) bad.push('the lava is too low in the chamber');
-  for (const s of SIGNS.filter((q) => q.group === 'lava')) {
-    const n = g.at(s.x, s.y, s.z);
-    if (n?.id !== 'wall_sign') bad.push(`no sign at ${s.x},${s.y},${s.z} to hold the lava`);
-  }
 
-  // The campfires: lit, on the chamber's floor, each over a hopper.
-  for (const c of CAMPFIRES) {
-    if (id(c.x, c.y, c.z) !== 'campfire') bad.push(`no campfire at ${c.x},${c.y},${c.z}`);
-    if (id(c.x, c.y - 1, c.z) !== 'hopper') bad.push(`the campfire at ${c.x},${c.z} is not over a hopper`);
-    if (g.at(c.x, c.y, c.z)?.states?.extinguished) bad.push('a campfire is put out');
-  }
-
-  // Nothing but campfires and air on the chamber floor over the hoppers (a slab there would stop the items reaching them).
+  // The campfires: lit, one on each of the chamber's four floor cells (the golem is 1.4 wide and lands on whichever it lands on), each over a hopper;
+  // nothing else on the chamber floor (a slab there would stop the items reaching the hoppers).
   for (let x = SHAFT.x1; x <= SHAFT.x2; x++) for (let z = SHAFT.z1; z <= SHAFT.z2; z++) {
     const f = id(x, SHAFT.y1, z);
-    if (f !== 'air' && f !== 'campfire') bad.push(`the chamber floor has ${f} at ${x},${z}`);
+    if (f !== 'campfire') bad.push(`no campfire on the chamber floor at ${x},${z} (${f})`);
+    if (id(x, SHAFT.y1 - 1, z) !== 'hopper') bad.push(`the campfire at ${x},${z} is not over a hopper`);
+    if (g.at(x, SHAFT.y1, z)?.states?.extinguished) bad.push('a campfire is put out');
+  }
+  if (CAMPFIRES.length !== 4) bad.push(`${CAMPFIRES.length} campfires listed, 4 wanted`);
+  for (const c of CAMPFIRES) if (id(c.x, c.y, c.z) !== 'campfire') bad.push(`no campfire at ${c.x},${c.y},${c.z}`);
+  // Nothing above them in the shaft but air up to the sign: a golem falls to the floor, and what drops can reach a hopper. Water never comes down.
+  for (let x = SHAFT.x1; x <= SHAFT.x2; x++) for (let z = SHAFT.z1; z <= SHAFT.z2; z++) for (let y = SHAFT.y1 + 1; y <= SHAFT.y2; y++) {
+    if (id(x, y, z) !== 'air') bad.push(`the shaft is not clear at ${x},${y},${z} (${id(x, y, z)})`);
   }
 
   // The collection: a hopper under each of the chamber's four cells, every hopper leading on to a chest, the chests side by side and facing the same way,

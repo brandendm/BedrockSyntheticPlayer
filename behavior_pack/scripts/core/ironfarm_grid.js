@@ -123,6 +123,33 @@ export function waterField(grid, sources, y) {
   return lv;
 }
 
+/**
+ * Bedrock's infinite-water rule on top of waterField: a flowing cell that touches two sources (side by side, not diagonally) and rests on a solid
+ * block becomes a source itself, which can make its neighbours touch two sources in turn. Settles to where that stops. Returns
+ * { field (the levels after it), sources (all, the made ones too), converted (the cells that turned into sources: [] for a layout that keeps
+ * its gradient) }. A ring of sources round a platform's edge goes all the way (u209: a still pool).
+ * @param {any} grid @param {{x:number,z:number}[]} sources @param {number} y
+ */
+export function settleWater(grid, sources, y) {
+  const src = new Map(sources.map((s) => [`${s.x},${s.z}`, { x: s.x, z: s.z }]));
+  const converted = [];
+  for (let round = 0; round < 1000; round++) {
+    const field = waterField(grid, [...src.values()], y);
+    const add = [];
+    for (const k of field.keys()) {
+      if (src.has(k)) continue;
+      const [x, z] = k.split(',').map(Number);
+      if (!solid(grid.id(x, y - 1, z))) continue;
+      let n = 0;
+      for (const [dx, dz] of DIRS4) if (src.has(`${x + dx},${z + dz}`)) n++;
+      if (n >= 2) add.push({ x, z });
+    }
+    if (!add.length) return { field, sources: [...src.values()], converted };
+    for (const a of add) { src.set(`${a.x},${a.z}`, a); converted.push(a); }
+  }
+  return { field: waterField(grid, [...src.values()], y), sources: [...src.values()], converted };
+}
+
 /** The height of the water at a level (a source is 8/9 of a block; each level is a ninth lower). */
 const heightOf = (l) => (8 - l) / 9;
 
@@ -163,7 +190,7 @@ export function drift(lv, sx, sz, hx, hz, tol = 0.3, maxSteps = 3000) {
   return { arrived: false, x, z, steps: maxSteps, why: 'going round in circles' };
 }
 
-/** Light from torches (14) and lava (15), one less per block through anything that lets it through: Map "x,y,z" -> level. A source is { x, y, z, level? }. */
+/** Light from torches (14) and lit campfires (15), one less per block through anything that lets it through: Map "x,y,z" -> level. A source is { x, y, z, level? }. */
 export function lightField(grid, torches) {
   const lv = new Map();
   const q = [];

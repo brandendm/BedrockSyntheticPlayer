@@ -44,6 +44,7 @@ function neighbourChanged(x, y, z, changed = '') {
 }
 
 function put(x, y, z, b) {
+  if (b.id === 'water' && b.states?.liquid_depth === undefined) b = { ...b, states: { ...b.states, liquid_depth: 0 } };   // (the game's water source reads depth 0)
   if (b.id === 'air') G.grid.delete(key(x, y, z)); else G.grid.set(key(x, y, z), { id: b.id, states: b.states });
   if (b.id === 'bed' && b.states.head_piece_bit) G.grid.set(key(x, y, z - 1), { id: 'bed', states: { direction: 0, head_piece_bit: false } });
   if (b.id === 'water' && (b.states.liquid_depth ?? 0) === 0 && G.knobs.water !== 'never' && G.knobs.water !== 'needsKick') G.awake.add(key(x, y, z));
@@ -136,6 +137,28 @@ function spread() {
     }
   }
   for (const [nk, d] of fresh) { if (!G.grid.has(nk)) { G.grid.set(nk, { id: 'flowing_water', states: { liquid_depth: d } }); G.awake.add(nk); } }
+  convert();
+}
+
+/**
+ * The game's infinite-water rule: a flowing cell with a solid block (or a source) under it that touches two sources, side by side, becomes a source.
+ * One round per call, as the game does one per update; a layout with a ring of sources goes on round after round until the platform is all source
+ * (u209). `G.knobs.noConversion` turns it off (to show that the sim notices the pooling).
+ */
+function convert() {
+  if (G.knobs.noConversion) return;
+  const src = (x, y, z) => { const c = G.grid.get(key(x, y, z)); return !!c && (c.id === 'water' || c.id === 'flowing_water') && (c.states?.liquid_depth ?? 0) === 0; };
+  const made = [];
+  for (const [k, c] of G.grid) {
+    if (c.id !== 'flowing_water' && c.id !== 'water') continue;
+    if ((c.states?.liquid_depth ?? 0) === 0) continue;
+    const [x, y, z] = k.split(',').map(Number);
+    if (!solidId(idAtCell(x, y - 1, z)) && !src(x, y - 1, z)) continue;
+    let n = 0;
+    for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) if (src(x + dx, y, z + dz)) n++;
+    if (n >= 2) made.push(k);
+  }
+  for (const k of made) { G.grid.set(k, { id: 'water', states: { liquid_depth: 0 } }); G.awake.add(k); }
 }
 
 export const system = {

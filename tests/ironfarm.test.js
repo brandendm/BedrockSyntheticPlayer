@@ -1,8 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  ironFarmPlan, checkPlan, render, golemSpots, waterField, waterSources, flowAt, drift, lightField, blockArg, villageCentre, materials, exposedTops,
-  outsideAir, signSupport, SIGNS, PLATFORM, POD, SPAWN_VOLUME, ALLOWED, SLAB, LAVA, HOPPERS, CHESTS, CAMPFIRES, DOOR, STEP, HOLE, HOLE_CENTRE, WATER_Y,
+  ironFarmPlan, checkPlan, render, golemSpots, waterField, settleWater, waterSources, flowAt, drift, lightField, blockArg, villageCentre, materials, exposedTops,
+  outsideAir, signSupport, SIGNS, PLATFORM, POD, SPAWN_VOLUME, ALLOWED, SLAB, HOPPERS, CHESTS, CAMPFIRES, DOOR, STEP, HOLE, HOLE_CENTRE, WATER_Y,
   FLOOR_Y, CORNERS,
 } from '../behavior_pack/scripts/core/ironfarm.js';
 import { MAX_COBBLE as MAX, MIN_SPOTS } from '../behavior_pack/scripts/core/ironfarm_check.js';
@@ -45,15 +45,17 @@ test('the shopping list is something a survival player can meet: counted from th
   assert.equal(m.counts.composter, 10);
   assert.equal(m.counts.hopper, 5);
   assert.equal(m.counts.chest, 2);
-  assert.equal(m.counts.campfire, 2);
+  assert.equal(m.counts.campfire, 4);
   assert.equal(m.counts.wooden_door, 1);
-  assert.equal(m.counts.wall_sign, 7);
+  assert.equal(m.counts.wall_sign, 4);
+  assert.equal(m.counts.lava, undefined);
   assert.equal(m.counts.water, waterSources().length);
   assert.ok(m.counts.cobblestone_slab > 80 && m.counts.cobblestone_slab < 200, `${m.counts.cobblestone_slab} slabs`);
   assert.match(m.text, /20 beds/);
-  assert.match(m.text, /lava bucket/);
+  assert.match(m.text, /a water bucket \(48 water sources/);
+  assert.doesNotMatch(m.text, /lava/);
   assert.match(m.text, /double chest/);
-  assert.match(m.text, /2 campfires/);
+  assert.match(m.text, /4 campfires/);
 });
 
 test('the village: 20 whole beds in two rows, 10 composters, 10 villagers with room, all able to walk to a bed and a workstation', () => {
@@ -78,7 +80,7 @@ test('a bed is set at its head with direction 0: the foot is one block north of 
   assert.equal(p.beds[0].foot.z, p.beds[0].head.z - 1);
 });
 
-test('the pod, the room and the shaft are lit (torches on blocks; the lava lights the shaft), and without the torches the check says where it is dark', () => {
+test('the pod, the room and the shaft are lit (torches on blocks; the campfires light the chamber), and without the torches the check says where it is dark', () => {
   const p = ironFarmPlan();
   const g = render(p);
   const torches = [...g.cells].filter(([, v]) => v.id === 'torch').map(([k]) => k.split(',').map(Number));
@@ -105,12 +107,12 @@ test('the centre is the average of the beds and workstations, in the middle of t
   assert.equal(PLATFORM.z2 - PLATFORM.z1 + 1, 16);
 });
 
-test('the golem spawn rule: a full block under, a 2 x 4 x 2 box free over it; the platform has 217 spots, nowhere else has any, and slabs are why', () => {
+test('the golem spawn rule: a full block under, a 2 x 4 x 2 box free over it; the platform has 205 spots, nowhere else has any, and slabs are why', () => {
   const p = ironFarmPlan();
   const g = render(p);
   for (const k of [{ x: 7, y: 1, z: 7 }, { x: 8, y: 1, z: 8 }]) {
     const spots = golemSpots(g, k);
-    assert.equal(spots.length, 217);
+    assert.equal(spots.length, 205);
     for (const s of spots) assert.ok(s.y === WATER_Y && s.x >= 1 && s.x <= 15 && s.z >= 1 && s.z <= 15, `stray spot ${s.x},${s.y},${s.z}`);
     assert.ok(spots.length >= MIN_SPOTS);
   }
@@ -120,12 +122,12 @@ test('the golem spawn rule: a full block under, a 2 x 4 x 2 box free over it; th
   // The 2 x 4 x 2 box: one solid block in it ruins the spot (four feet cells have it in their box); the block's own top is a new spot, off the water.
   const pillar = render(put(ironFarmPlan(), 5, 5, 5, 'cobblestone'));
   const ps = golemSpots(pillar, { x: 7, y: 1, z: 7 });
-  assert.equal(ps.filter((s) => s.y === WATER_Y).length, 217 - 4);
+  assert.equal(ps.filter((s) => s.y === WATER_Y).length, 205 - 4);
   assert.deepEqual(ps.filter((s) => s.y !== WATER_Y), [{ x: 5, y: 6, z: 5 }]);
   caught(put(ironFarmPlan(), 5, 5, 5, 'cobblestone'), /golems could also spawn at 5,6,5/);
   // A slab in the box is not a free box either (and a slab is not something to spawn on).
   const slabbed = render(put(ironFarmPlan(), 5, 5, 5, SLAB));
-  assert.equal(golemSpots(slabbed, { x: 7, y: 1, z: 7 }).filter((s) => s.y === WATER_Y).length, 217 - 4);
+  assert.equal(golemSpots(slabbed, { x: 7, y: 1, z: 7 }).filter((s) => s.y === WATER_Y).length, 205 - 4);
   assert.equal(golemSpots(slabbed, { x: 7, y: 1, z: 7 }).filter((s) => s.y !== WATER_Y).length, 0);
 });
 
@@ -171,7 +173,8 @@ test('the pod, the room and the shaft are sealed (a hole in a wall is caught); t
   caught(carve(ironFarmPlan(), 0, 5, 0, 0, 5, 0), /the platform wall has a gap at 0,5,0/);
   caught(carve(ironFarmPlan(), -1, 6, -1, 16, 6, -1), /the platform wall has a gap at -1,6,-1/);
   assert.equal(PLATFORM.y2 - PLATFORM.y1 + 1, 3);
-  assert.equal(CORNERS.length, 4);
+  assert.equal(CORNERS.length, 16);
+  for (const [x, z] of CORNERS) for (let y = 4; y <= 6; y++) assert.equal(g.id(x, y, z), 'cobblestone', `corner ${x},${z}`);
 });
 
 test('the hole in the floor is 2 x 2 over the shaft, capped by four wall signs hanging on the floor beside it (water cannot go through a sign)', () => {
@@ -188,11 +191,17 @@ test('the hole in the floor is 2 x 2 over the shaft, capped by four wall signs h
   caught(without(ironFarmPlan(), (o) => o.id === 'wall_sign' && o.y === FLOOR_Y && o.x === 7 && o.z === 7), /no sign over the shaft|the shell has a hole/);
 });
 
-test('water: a ring of sources round the edge gives level = distance from the edge, 7 over the hole; a thing in it drifts to the middle of the hole from anywhere', () => {
+test('water: sources on the middle of each edge give level = distance from the edge, 7 over the hole, and the game turns none of the flowing cells into sources; a thing in it drifts to the middle of the hole from anywhere', () => {
   const p = ironFarmPlan();
   const g = render(p);
-  const lv = waterField(g, waterSources(), WATER_Y);
-  assert.equal(lv.size, 252);
+  assert.equal(waterSources().length, 48);
+  for (const s of waterSources()) assert.ok(s.x >= 2 && s.x <= 13 && s.z >= 2 && s.z <= 13 || ((s.x === 0 || s.x === 15) && s.z >= 2 && s.z <= 13) || ((s.z === 0 || s.z === 15) && s.x >= 2 && s.x <= 13));
+  const settled = settleWater(g, waterSources(), WATER_Y);
+  assert.deepEqual(settled.converted, [], 'cells would turn into sources');
+  assert.equal(settled.sources.length, 48);
+  const lv = settled.field;
+  assert.deepEqual([...lv].sort(), [...waterField(g, waterSources(), WATER_Y)].sort());
+  assert.equal(lv.size, 240);
   for (let x = 0; x <= 15; x++) for (let z = 0; z <= 15; z++) {
     if (CORNERS.some(([a, b]) => a === x && b === z)) { assert.equal(lv.has(`${x},${z}`), false); continue; }
     assert.equal(lv.get(`${x},${z}`), Math.min(x, z, 15 - x, 15 - z), `${x},${z}`);
@@ -207,63 +216,86 @@ test('water: a ring of sources round the edge gives level = distance from the ed
   assert.ok(h.x > 0 && h.z > 0);
   for (const [k] of lv) {
     const [x, z] = k.split(',').map(Number);
-    for (const [ox, oz] of [[0.5, 0.5], [0.1, 0.9], [0.9, 0.1]]) {
+    for (const [ox, oz] of [[0.5, 0.5], [0.1, 0.9], [0.9, 0.1], [0.2, 0.2], [0.8, 0.8]]) {
       const r = drift(lv, x + ox, z + oz, HOLE_CENTRE.x, HOLE_CENTRE.z);
       assert.ok(r.arrived, `from ${x + ox},${z + oz}: ${r.why} at ${r.x.toFixed(2)},${r.z.toFixed(2)}`);
     }
   }
-  // A corner left open (no solid corner) would be a cell to get stuck in; a missing source ring does not reach the hole.
+  // A corner left open (no solid corner) would be a cell to get stuck in; a missing source row does not reach the hole.
   caught(carve(ironFarmPlan(), 0, 4, 0, 0, 6, 0), /the platform wall has a gap at 0,/);
+  caught(carve(ironFarmPlan(), 1, 4, 1, 1, 6, 1), /the platform wall has a gap at 1,/);
   caught(without(ironFarmPlan(), (o) => o.tag === 'water' && o.box.z1 === 15 && o.box.z2 === 15), /no water source/);
 });
 
-test('sources on two walls only would leave the far side dry (why it is a ring all round the edge)', () => {
+test('u209\'s ring of 56 sources, with a single solid corner cell, turns the WHOLE platform into sources under the game\'s rule (a flowing cell touching two sources becomes one): still water, no current', () => {
+  const base = render(ironFarmPlan());
+  // The old corners: only (0,0), (15,0), (0,15), (15,15) solid; the rest of each 2 x 2 open.
+  const old = { id: (x, y, z) => ((y === WATER_Y || y === 5 || y === 6) && [[1, 0], [0, 1], [1, 1], [14, 0], [15, 1], [14, 1], [0, 14], [1, 14], [1, 15], [14, 15], [15, 14], [14, 14]].some(([a, b]) => a === x && b === z) ? 'air' : base.id(x, y, z)) };
+  const ring = [];
+  for (let i = 1; i <= 14; i++) ring.push({ x: i, z: 0 }, { x: i, z: 15 }, { x: 0, z: i }, { x: 15, z: i });
+  const r = settleWater(old, ring, WATER_Y);
+  assert.equal(ring.length, 56);
+  assert.equal(r.converted.length, 192, 'every other cell of the platform but the four over the hole');
+  assert.equal(r.field.size, 252);
+  // Every cell is a source (level 0) but the four over the hole (level 1, nothing solid under them): no gradient, so nothing to carry a golem to the hole.
+  const levels = [...r.field.values()];
+  assert.equal(levels.filter((l) => l === 0).length, 248);
+  for (let x = 7; x <= 8; x++) for (let z = 7; z <= 8; z++) assert.equal(r.field.get(`${x},${z}`), 1);
+  assert.ok(flowAt(r.field, 3, 3).x === 0 || Math.abs(flowAt(r.field, 3, 3).x) < 1e-9, 'a push where all is source');
+  // And the new layout's check does notice a source dropped where it makes a neighbour touch two.
+  caught(put(ironFarmPlan(), 3, 4, 1, 'water'), /water cells would turn into sources/);
+  caught(put(ironFarmPlan(), 2, 4, 1, 'water'), /water cells would turn into sources/);
+  // With a 1 x 1 corner and the new rows (2..13) nothing converts, but the corner pocket (1,1) is a dead end: a thing in it is not pushed anywhere.
+  const pocket = settleWater(old, waterSources(), WATER_Y);
+  assert.deepEqual(pocket.converted, []);
+  assert.equal(drift(pocket.field, 1.5, 1.5, HOLE_CENTRE.x, HOLE_CENTRE.z).arrived, false);
+});
+
+test('sources on two walls only would leave the far side dry (why there are sources on all four edges)', () => {
   const g = render(ironFarmPlan());
   const lv = waterField(g, waterSources().filter((s) => s.x === 0 || s.z === 0), WATER_Y);
-  assert.ok(lv.size < 252 && !lv.has('14,14'));
+  assert.ok(lv.size < 240 && !lv.has('14,14'));
   const r = drift(lv, 14.5, 14.5, HOLE_CENTRE.x, HOLE_CENTRE.z);
   assert.equal(r.arrived, false);
 });
 
-test('the lava is held on every side by cobblestone or a wall sign hanging on a block, at head height in the chamber; a missing sign or one with nothing behind it is caught', () => {
-  const p = ironFarmPlan();
-  const g = render(p);
-  assert.equal(g.id(LAVA.x, LAVA.y, LAVA.z), 'lava');
-  const lava = SIGNS.filter((s) => s.group === 'lava');
-  assert.equal(lava.length, 3);
-  for (const s of lava) {
-    assert.equal(g.id(s.x, s.y, s.z), 'wall_sign');
-    const off = signSupport(s.facing);
-    assert.equal(g.id(s.x + off[0], s.y, s.z + off[1]), 'cobblestone', `behind the sign at ${s.x},${s.y},${s.z}`);
-  }
-  assert.equal(g.id(LAVA.x, LAVA.y + 1, LAVA.z), 'air');
-  const turned = ironFarmPlan();
-  turned.ops.find((o) => o.id === 'wall_sign' && o.y === LAVA.y).states = { facing_direction: 2 };
-  caught(turned, /nothing behind it/);
-  caught(without(ironFarmPlan(), (o) => o.id === 'wall_sign' && o.y === LAVA.y - 1), /lava has air|no sign at/);
-  caught(put(ironFarmPlan(), 7, -5, 8, 'water'), /lava touches water|only the platform has water/);
+test('there is no lava anywhere (a mob that dies in or beside lava can lose its drops), and one put in is caught; water is only on the platform', () => {
+  const g = render(ironFarmPlan());
+  assert.ok(![...g.cells.values()].some((v) => v.id === 'lava'));
+  assert.ok(!ALLOWED.includes('lava'));
+  assert.ok(SIGNS.every((s) => s.group === 'hole'));
+  caught(put(ironFarmPlan(), 7, -4, 7, 'lava'), /lava in the plan/);
+  caught(put(ironFarmPlan(), 7, -5, 8, 'water'), /only the platform has water/);
 });
 
-test('the signs are placed before the lava and the campfires, and the lava before the water, so a sign that will not stay can stop the lava going in', () => {
+test('the signs are placed before the campfires and the campfires before the water, so a sign that will not stay can stop the water going in', () => {
   const p = ironFarmPlan();
   const at = (tag) => p.ops.findIndex((o) => o.tag === tag);
-  assert.ok(at('sign') >= 0 && at('sign') < at('lava') && at('lava') < at('campfire') && at('campfire') < at('water'));
-  assert.equal(p.ops.filter((o) => o.tag === 'sign').length, 7);
-  assert.equal(p.ops.filter((o) => o.tag === 'lava').length, 1);
+  assert.ok(at('sign') >= 0 && at('sign') < at('slab') && at('campfire') > at('slab') && at('campfire') < at('water'));
+  assert.equal(p.ops.filter((o) => o.tag === 'sign').length, 4);
+  assert.equal(p.ops.filter((o) => o.tag === 'lava').length, 0);
   assert.equal(p.ops.filter((o) => o.tag === 'water').length, 4);
   assert.deepEqual(p.ops.filter((o) => o.tag === 'sign').map((o) => o.states.facing_direction), SIGNS.map((s) => s.facing));
 });
 
-test('campfires on the chamber floor, lit, each over a hopper', () => {
+test('campfires: a lit one on each of the chamber\'s four floor cells, each over a hopper, nothing in the shaft above them', () => {
   const p = ironFarmPlan();
   const g = render(p);
-  assert.equal(CAMPFIRES.length, 2);
-  for (const c of CAMPFIRES) { assert.equal(g.id(c.x, c.y, c.z), 'campfire'); assert.equal(g.id(c.x, c.y - 1, c.z), 'hopper'); assert.equal(g.at(c.x, c.y, c.z).states?.extinguished, undefined); }
+  assert.equal(CAMPFIRES.length, 4);
+  assert.deepEqual(CAMPFIRES.map((c) => `${c.x},${c.z}`).sort(), ['7,7', '7,8', '8,7', '8,8']);
+  for (const c of CAMPFIRES) { assert.equal(c.y, -6); assert.equal(g.id(c.x, c.y, c.z), 'campfire'); assert.equal(g.id(c.x, c.y - 1, c.z), 'hopper'); assert.equal(g.at(c.x, c.y, c.z).states?.extinguished, undefined); }
+  for (let y = -5; y <= 2; y++) for (const [x, z] of [[7, 7], [8, 7], [7, 8], [8, 8]]) assert.equal(g.id(x, y, z), 'air', `${x},${y},${z}`);
+  caught(without(ironFarmPlan(), (o) => o.id === 'campfire' && o.x === 7 && o.z === 7), /no campfire/);
   caught(without(ironFarmPlan(), (o) => o.id === 'campfire'), /no campfire/);
-  caught(put(ironFarmPlan(), 7, -6, 7, SLAB), /chamber floor/);
+  caught(put(ironFarmPlan(), 8, -6, 8, SLAB), /chamber floor/);
+  caught(put(ironFarmPlan(), 7, -3, 8, 'cobblestone'), /the shaft is not clear/);
   const off = ironFarmPlan();
   off.ops.find((o) => o.id === 'campfire').states = { extinguished: true };
   caught(off, /put out/);
+  // Lit campfires light the chamber (15), and the light gets into the room through the glass.
+  const lit = lightField(g, [...CAMPFIRES.map((c) => ({ ...c, level: 15 }))]);
+  assert.equal(lit.get('7,-6,7'), 15);
+  assert.ok(lit.get('7,-5,7') === 14 && (lit.get('10,-6,7') ?? 0) > 8);
 });
 
 test('the hoppers run under the chamber and east into the chests, which are a double chest: side by side, the same way round, room to open, in reach', () => {

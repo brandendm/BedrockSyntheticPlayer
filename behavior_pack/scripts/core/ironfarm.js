@@ -6,14 +6,19 @@
 // u207: a hollow shell of overworld materials instead of a solid block, the lava held by wall signs. u208: the platform open to the sky.
 // u209: after the first look in the game: a 16 x 16 platform (4 x 4 was a few percent of what the spawn rule can use), a way in and out (a
 // door), a double chest, campfires under the lava, and the farm on the ground rather than in the sky (see geo.js for the layers).
+// u211: after the player looked at u209: (1) the water was a still pool: a ring of sources all round the edge makes every cell that touches two of
+// them a source (Bedrock's infinite-water rule), cell after cell, so now the sources are the middle twelve of each edge, the corners 2 x 2 solid, and
+// the check settles that rule (grid.js settleWater) instead of assuming the water stays flowing; (2) no lava: a mob that falls into or dies
+// beside lava can lose its drops, so the chamber has a lit campfire on each of its four cells, over four hoppers.
 //
-// Confirmed by the player: wall signs hold lava and do not burn; golems do spawn on flowing water; the u208 water flowed.
-// Where it is most likely to be wrong (in the order I would look): whether the golem in the chamber is really in the lava; the door's
-// direction; whether two chests set by a command pair into a double chest; the village centre may not be where this works it out to be (the
-// platform is symmetrical about the average); the village may want a day or two before it counts the villagers as working; whether a campfire
-// over a hopper lets the items through.
+// Confirmed by the player: wall signs hold lava and do not burn; golems do spawn on flowing water; the u208 water flowed; four campfires over the
+// four hoppers work as the kill chamber (the player's word).
+// Where it is most likely to be wrong (in the order I would look): the campfires kill slowly (about 2 HP a second, so a golem takes about 50 s, and
+// with ten villagers the village makes no new golem while one is alive); the door's direction; whether two chests set by a command pair into a
+// double chest; the village centre may not be where this works it out to be (the platform is symmetrical about the average); the village may want
+// a day or two before it counts the villagers as working; whether the water really carries a golem to the hole.
 import {
-  box, PLATFORM, CORNERS, POD, POD_SHELL, SHAFT_SHELL, ROOM, ROOM_SHELL, WINDOW, DOOR, STEP, LAVA, CAMPFIRES, HOPPERS, CHESTS,
+  box, PLATFORM, CORNER_BOXES, POD, POD_SHELL, SHAFT_SHELL, ROOM, ROOM_SHELL, WINDOW, DOOR, STEP, CAMPFIRES, HOPPERS, CHESTS,
   CHEST_FACING, SIGNS, SLAB, DOOR_ID, FLOOR_Y, WATER_Y, waterSources, villageCentre, hull, opBox,
 } from './ironfarm_geo.js';
 import { render, exposedTops, runs } from './ironfarm_grid.js';
@@ -28,7 +33,7 @@ export const SOUTH_STATIONS = Object.freeze([4, 6, 8, 10, 12]);  // composters i
 export const POD_TORCHES = Object.freeze([[3, 3], [8, 3], [12, 3], [3, 12], [8, 12], [12, 12], [2, 7], [13, 8]]);
 export const ROOM_TORCH = Object.freeze({ x: 12, y: -6, z: 9 });
 
-/** The plan: { ops (in order; tag 'sign' | 'lava' | 'campfire' | 'chest' | 'door' | 'water' | 'slab' marks the ones the builder treats with care), beds, stations, villagers, bounds, centre, centres }. */
+/** The plan: { ops (in order; tag 'sign' | 'campfire' | 'chest' | 'door' | 'water' | 'slab' marks the ones the builder treats with care), beds, stations, villagers, bounds, centre, centres }. */
 export function ironFarmPlan() {
   const ops = [];
   const fill = (b, id, note = '', tag = '') => ops.push({ op: 'fill', box: b, id, note, tag });
@@ -44,13 +49,13 @@ export function ironFarmPlan() {
   const c1 = villageCentre(beds, stations), c2 = villageCentre(beds, stations, true);
   const centre = { x: Math.floor((c1.x + c2.x) / 2), y: Math.floor((c1.y + c2.y) / 2), z: Math.floor((c1.z + c2.z) / 2) };
 
-  // The platform: floor (which is also the pod's roof), walls three high all round, the four inside corners solid, then the hole in the floor.
+  // The platform: floor (which is also the pod's roof), walls three high all round, the four 2 x 2 inside corners solid, then the hole in the floor.
   fill(box(-1, FLOOR_Y, -1, 16, FLOOR_Y, 16), 'cobblestone', 'platform floor / pod roof');
   fill(box(-1, 4, -1, 16, 6, -1), 'cobblestone', 'platform wall, north');
   fill(box(-1, 4, 16, 16, 6, 16), 'cobblestone', 'platform wall, south');
   fill(box(-1, 4, 0, -1, 6, 15), 'cobblestone', 'platform wall, west');
   fill(box(16, 4, 0, 16, 6, 15), 'cobblestone', 'platform wall, east');
-  for (const [x, z] of CORNERS) fill(box(x, 4, z, x, 6, z), 'cobblestone', 'solid corner (a golem pushed into a corner would stay there)');
+  for (const c of CORNER_BOXES) fill(c, 'cobblestone', 'solid 2 x 2 corner (the water makes a dead pocket in a corner, and a golem pushed into one would stay there)');
   // The pod, the shaft through it and down to the chamber, the room beside the chamber.
   fill(POD_SHELL, 'cobblestone', 'pod shell');
   fill(POD, 'air', 'pod');
@@ -72,8 +77,8 @@ export function ironFarmPlan() {
   for (const h of HOPPERS) set(h.x, h.y, h.z, 'hopper', { facing_direction: h.facing }, 'hopper');
   for (const c of CHESTS) set(c.x, c.y, c.z, 'chest', { 'minecraft:cardinal_direction': CHEST_FACING }, 'chest (two side by side make the double chest)', 'chest');
 
-  // The signs go in first (they only stay on their wall, and the ones over the hole close the shaft off from the sky, which matters to what counts as
-  // outside below), then the slabs, then the lava they hold, the campfires and the water.
+  // The signs go in first (they only stay on their wall, and they close the shaft off from the sky, which matters to what counts as outside
+  // below), then the slabs, then the campfires and the water.
   for (const s of SIGNS) set(s.x, s.y, s.z, 'wall_sign', { facing_direction: s.facing }, s.note, 'sign');
 
   // Every upward face left bare outside gets a slab: a golem can spawn on any full block with room over it, and the sky is full of it. (The
@@ -83,13 +88,12 @@ export function ironFarmPlan() {
   for (const run of runs(bare)) fill(box(run.x1, run.y, run.z, run.x2, run.y, run.z), SLAB, 'slab on a bare top (no spawns on it)', 'slab');
   set(STEP.x, STEP.y, STEP.z, SLAB, undefined, 'step up to the door (a slab: walk up it)', 'slab');
 
-  // The kill chamber: the lava the signs hold, the campfires, then the water that comes down.
-  set(LAVA.x, LAVA.y, LAVA.z, 'lava', undefined, 'the lava source, at head height of what stands in the chamber', 'lava');
+  // The kill chamber: a lit campfire on each of its four cells, then the water on the platform (sources only: the rest flows from them).
   for (const c of CAMPFIRES) set(c.x, c.y, c.z, 'campfire', undefined, 'campfire (lit) on the chamber floor, over a hopper', 'campfire');
-  fill(box(1, WATER_Y, 0, 14, WATER_Y, 0), 'water', 'water sources, north edge', 'water');
-  fill(box(1, WATER_Y, 15, 14, WATER_Y, 15), 'water', 'water sources, south edge', 'water');
-  fill(box(0, WATER_Y, 1, 0, WATER_Y, 14), 'water', 'water sources, west edge', 'water');
-  fill(box(15, WATER_Y, 1, 15, WATER_Y, 14), 'water', 'water sources, east edge', 'water');
+  fill(box(2, WATER_Y, 0, 13, WATER_Y, 0), 'water', 'water sources, north edge', 'water');
+  fill(box(2, WATER_Y, 15, 13, WATER_Y, 15), 'water', 'water sources, south edge', 'water');
+  fill(box(0, WATER_Y, 2, 0, WATER_Y, 13), 'water', 'water sources, west edge', 'water');
+  fill(box(15, WATER_Y, 2, 15, WATER_Y, 13), 'water', 'water sources, east edge', 'water');
 
   const bounds = hull(ops.map(opBox));
   return { ops, beds, stations, villagers, bounds, centre, centres: [c1, c2] };
@@ -115,7 +119,7 @@ export function materials(plan) {
     `${n.campfire ?? 0} campfires (3 sticks, 1 coal, 3 logs each)`,
     `${n[DOOR_ID] ?? 0} door`,
     `${n.torch ?? 0} torches`,
-    `a lava bucket and a water bucket (${sources} water sources on the platform's edge: in survival every other one will do, the gaps fill themselves)`,
+    `a water bucket (${sources} water sources, the middle twelve cells of each edge; none at the corners, and none in the second row: a cell that touches two sources becomes one)`,
     `${plan.villagers.length} adult villagers`,
   ];
   return { counts: n, cobble: cobble + cobbleForSlabs, text: lines.join('; ') };

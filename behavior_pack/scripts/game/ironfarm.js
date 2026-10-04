@@ -1,18 +1,17 @@
 // `!bot ironfarm`: puts the iron golem farm of core/ironfarm.js into the world in one go with game commands. The bot is not involved (it works
 // with no bot spawned): this is for looking at the design and testing the mechanics. The farm is a tower on the ground where you stand (u209):
-// a 16 x 16 open platform up top where the golems spawn, a hole in its middle, a shaft down to a kill chamber (lava on signs, campfires) and a
-// small room at the bottom with a window onto it, a door, and a double chest. You stand at the bottom, not up in the sky. Slabs cover every bare
+// a 16 x 16 open platform up top where the golems spawn, the water running them to a hole in its middle, a shaft down to a kill chamber (a lit
+// campfire on each of its four cells, no lava since u211) and a small room at the bottom with a window onto it, a door, and a double chest. You stand at the bottom, not up in the sky. Slabs cover every bare
 // top so the platform is the only place golems can spawn; the builder then READS the real blocks with the game's spawn rule and says how many
 // spots there are on the platform and anywhere else. Nothing of the world is overwritten but air up there (`force` replaces whatever is in the way).
 //
 //   !bot ironfarm              build it (and teleport you into the room at the bottom)
 //   !bot ironfarm clear        take it away again
-//   !bot ironfarm status       what is there and what has happened (blocks, water, lava, villagers, golems, chests)
+//   !bot ironfarm status       what is there and what has happened (blocks, water, campfires, villagers, golems, chests)
 //   !bot ironfarm bill         what it would take to build it by hand in survival
 //   !bot ironfarm scan         read the real blocks round the village centre: where could a golem spawn?
 //   !bot ironfarm view [pod|top|out]  back to the room (or in among the villagers, on the platform's west wall, outside the door)
 //   !bot ironfarm water on|off|kick   the platform's water sources: off drains the platform; on / kick put them back and make sure they flow
-//   !bot ironfarm lava on|off  the lava over the kill chamber (off if something goes wrong with it)
 //   !bot ironfarm villagers    new villagers (adults only, nitwits removed)
 //   !bot ironfarm build force  build even if something is in the way (or the ground is uneven)
 // Test aids (game/ironfarm_aids.js):
@@ -22,13 +21,13 @@
 //
 // Water placed by a command may not start to flow (the game wants a source to get a block update), so after placing it this counts the water on
 // the platform and, until every cell has it: gives some sources a block update from a neighbour; takes the sources out and puts them back; and as
-// the last resort lays the flowing water by hand, a cell at a time at the depth it would have. It says which one worked. The lava is placed only
-// once the signs that hold it (and the signs that stop the water going down the shaft) have been seen to stay on their wall.
+// the last resort lays the flowing water by hand, a cell at a time at the depth it would have. It says which one worked. The water is placed only
+// once the signs that stop it going down the shaft have been seen to stay on their wall.
 //
 // Tip: `/gamemode spectator` flies through the stone to look at the inside.
 import { system, world } from '@minecraft/server';
 import {
-  ironFarmPlan, checkPlan, blockArg, materials, STAND, POD_VIEW, TOP_VIEW, OUT_VIEW, CHESTS, PLATFORM, LAVA, SIGNS, CAMPFIRES, WATER_Y, BASE_Y,
+  ironFarmPlan, checkPlan, blockArg, materials, STAND, POD_VIEW, TOP_VIEW, OUT_VIEW, CHESTS, PLATFORM, SIGNS, CAMPFIRES, WATER_Y, BASE_Y,
   SPAWN_COLUMNS, SHAFT_SHELL, ROOM_SHELL,
 } from '../core/ironfarm.js';
 import { say, wait, W, run, idAt, stateAt, chestSize, scanSpawnSpots, PLANT } from './ironfarm_world.js';
@@ -37,7 +36,7 @@ import {
 } from './ironfarm_parts.js';
 import { timeCommand, speedCommand, golemCommand, fastTime } from './ironfarm_aids.js';
 
-/** @type {null | { dim: any, off: {x:number,y:number,z:number}, plan: any, builtAt: number, waterOn: boolean, lavaOn: boolean, seen: Map<string, any>, ironSeen: number, watcher: number, villagerNote: string, buildNote: string, waterNote: string, announced: Set<number>, slab: string|null, slabCells: number, signId: string|null, ticks: number, warned: Set<string>, test: Set<string>, auto: number, foundation: any[], door: any, chestNote: string, scanNote: string }} */
+/** @type {null | { dim: any, off: {x:number,y:number,z:number}, plan: any, builtAt: number, waterOn: boolean, seen: Map<string, any>, ironSeen: number, watcher: number, villagerNote: string, buildNote: string, waterNote: string, announced: Set<number>, slab: string|null, slabCells: number, signId: string|null, ticks: number, warned: Set<string>, test: Set<string>, auto: number, foundation: any[], door: any, chestNote: string, scanNote: string }} */
 let farm = null;
 
 export function ironFarmCommand(player, args) {
@@ -51,13 +50,13 @@ export function ironFarmCommand(player, args) {
     if (sub === 'bill' || sub === 'materials') return say(`Materials for a survival build: ${materials(ironFarmPlan()).text}.`);
     if (sub === 'view') return view(p, args[1]);
     if (sub === 'water') return water(args[1]);
-    if (sub === 'lava') return lava(args[1]);
+    if (sub === 'lava') return say('There is no lava in the farm any more (u211): a mob that dies in or beside lava can lose its drops. The chamber is four lit campfires over four hoppers.');
     if (sub === 'villagers') return villagers();
     if (sub === 'scan') return scan();
     if (sub === 'time') return timeCommand(p.dimension, args.slice(1));
     if (sub === 'speed' || sub === 'tick') return speedCommand(p.dimension, args.slice(1));
     if (sub === 'golem' || sub === 'golems') return golemCommand(farm, args.slice(1));
-    say('Commands: build [force], clear, status, bill, scan, view [pod|top|out], water on|off|kick, lava on|off, villagers; test aids: time day|night|noon|midnight|set N|fast N|normal, speed N|normal, golem [n]|auto [s]|off.');
+    say('Commands: build [force], clear, status, bill, scan, view [pod|top|out], water on|off|kick, villagers; test aids: time day|night|noon|midnight|set N|fast N|normal, speed N|normal, golem [n]|auto [s]|off.');
   };
   go().catch((e) => say(`failed: ${e}\n${e?.stack ?? ''}`));
 }
@@ -147,17 +146,14 @@ async function build(p, force) {
       if (!run(dim, cmd)) slabCells += cells; else fails.push(`${o.note}: ${cmd}`);
       continue;
     }
-    if (o.tag === 'lava') {
-      if (!signs?.ok) { notes.push('The lava was NOT placed: the signs that hold it (or the ones over the hole) would not stay on their wall (see above).'); continue; }
-      cmd = `setblock ${a.x} ${a.y} ${a.z} lava`;
-    } else if (o.op === 'fill') cmd = `fill ${a.x} ${a.y} ${a.z} ${b.x} ${b.y} ${b.z} ${o.id}`;
+    if (o.op === 'fill') cmd = `fill ${a.x} ${a.y} ${a.z} ${b.x} ${b.y} ${b.z} ${o.id}`;
     else cmd = `setblock ${a.x} ${a.y} ${a.z} ${blockArg(o.id, o.states)}`;
     const why = run(dim, cmd);
     if (why) fails.push(`${o.note || o.id}: ${why} (${cmd})`);
     if (o.op === 'fill' && o.id === 'cobblestone') await wait(2);
   }
   await wait(5);
-  farm = { dim, off, plan, builtAt: system.currentTick, waterOn: true, lavaOn: !!signs?.ok, seen: new Map(), ironSeen: 0, watcher: -1, villagerNote: '', buildNote: '', waterNote: '', announced: new Set(), slab, slabCells, signId: signs?.id ?? null, ticks: 0, warned: new Set(), test: new Set(), auto: -1, foundation: found.cols, door, chestNote: '', scanNote: '' };
+  farm = { dim, off, plan, builtAt: system.currentTick, waterOn: true, seen: new Map(), ironSeen: 0, watcher: -1, villagerNote: '', buildNote: '', waterNote: '', announced: new Set(), slab, slabCells, signId: signs?.id ?? null, ticks: 0, warned: new Set(), test: new Set(), auto: -1, foundation: found.cols, door, chestNote: '', scanNote: '' };
   if (signs && !signs.holeOk) notes.push('The signs over the hole did not stay: water will run down the shaft. Not putting the water in.');
   const chests = await pairChests(dim, off);
   farm.chestNote = chests.note;
@@ -224,9 +220,7 @@ async function clear(announce) {
   const c = plan.bounds, cen = W(off, plan.centre);
   for (const t of [...VILLAGERS, 'minecraft:iron_golem', 'minecraft:item']) { try { for (const e of dim.getEntities({ type: t, location: cen, maxDistance: 30 })) { try { e.remove(); } catch { /* */ } } } catch { /* */ } }
   const lo = W(off, { x: c.x1, y: c.y1, z: c.z1 }), hi = W(off, { x: c.x2, y: c.y2, z: c.z2 });
-  // The lava and the water go first, so they do not run when the walls go.
-  const l = W(off, LAVA);
-  run(dim, `setblock ${l.x} ${l.y} ${l.z} air`);
+  // The water goes first, so it does not run when the walls go.
   for (const o of plan.ops.filter((q) => q.tag === 'water')) {
     const a = W(off, { x: o.box.x1, y: o.box.y1, z: o.box.z1 }), b = W(off, { x: o.box.x2, y: o.box.y2, z: o.box.z2 });
     run(dim, `fill ${a.x} ${a.y} ${a.z} ${b.x} ${b.y} ${b.z} air`);
@@ -265,19 +259,7 @@ async function water(arg) {
   say(w.note);
 }
 
-const lavaSigns = () => SIGNS.filter((s) => s.group === 'lava');
 const holeSigns = () => SIGNS.filter((s) => s.group === 'hole');
-
-function lava(arg) {
-  if (!farm) return say('No farm.');
-  const q = W(farm.off, LAVA);
-  if (arg === 'off') { const why = run(farm.dim, `setblock ${q.x} ${q.y} ${q.z} air`); farm.lavaOn = false; return say(`Lava removed${why ? ` (${why})` : ''}.`); }
-  const gone = lavaSigns().filter((s) => !idAt(farm.dim, W(farm.off, s)).endsWith('wall_sign'));
-  if (gone.length) return say(`Not putting the lava in: ${gone.length} of the ${lavaSigns().length} signs that hold it are missing.`);
-  const why = run(farm.dim, `setblock ${q.x} ${q.y} ${q.z} lava`);
-  farm.lavaOn = !why;
-  say(`Lava back${why ? ` (${why})` : ''}.`);
-}
 
 /** What is in the chests (a double chest counted once). */
 function inventoryOf(dim, off) {
@@ -309,28 +291,19 @@ function watch() {
   if (!farm) return;
   farm.ticks++;
   const { dim, off, plan } = farm;
-  // The lava is only as safe as the signs: if one has burned or popped off, take the lava out before it runs over the chamber.
-  if (farm.lavaOn && farm.ticks % 2 === 0) {
-    const gone = lavaSigns().filter((s) => !idAt(dim, W(off, s)).endsWith('wall_sign'));
-    if (gone.length) {
-      const l = W(off, LAVA);
-      run(dim, `setblock ${l.x} ${l.y} ${l.z} air`);
-      farm.lavaOn = false;
-      say(`${gone.length} of the ${lavaSigns().length} signs holding the lava is gone (${gone.map((s) => `${s.x},${s.y},${s.z}`).join(' ')}): burned by the lava or popped off? I have taken the lava out. "!bot ironfarm lava on" puts it back if the signs are back.`);
-    }
-  }
-  // The signs over the hole keep the water out of the shaft: if one goes, the water would put out the campfires and meet the lava.
+  // The signs over the hole keep the water out of the shaft: if one goes, the water would run down the shaft and put out the campfires.
   if (farm.waterOn && farm.ticks % 2 === 0 && !farm.warned.has('holesign')) {
     const gone = holeSigns().filter((s) => !idAt(dim, W(off, s)).endsWith('wall_sign'));
     if (gone.length) {
       farm.warned.add('holesign');
-      say(`${gone.length} of the ${holeSigns().length} signs over the hole is gone (${gone.map((s) => `${s.x},${s.y},${s.z}`).join(' ')}). Water would run down the shaft onto the lava and the campfires. Taking the water off: "!bot ironfarm water off" did it; put the sign back and "water on".`);
+      say(`${gone.length} of the ${holeSigns().length} signs over the hole is gone (${gone.map((s) => `${s.x},${s.y},${s.z}`).join(' ')}). Water would run down the shaft onto the campfires. Taking the water off: "!bot ironfarm water off" did it; put the sign back and "water on".`);
       void water('off');
     }
   }
   if (farm.waterOn && farm.ticks % 5 === 0 && !farm.warned.has('dry')) {
     const s = waterOnPlatform(dim, off, plan);
     if (s.have < s.want) { farm.warned.add('dry'); say(`The platform water has dried up: ${s.have} of ${s.want} cells wet. "!bot ironfarm water kick" tries again.`); }
+    else if (s.pooled && !farm.warned.has('pool')) { farm.warned.add('pool'); say(`The platform water is pooling: ${s.sources} source blocks where ${s.planned} were planned, so cells have turned into sources and the water lies still there. "!bot ironfarm status" for the rest.`); }
   }
   if (farm.waterOn && farm.ticks % 5 === 0 && !farm.warned.has('shaft')) {
     const n = shaftWater(dim, off);
@@ -384,6 +357,6 @@ function status() {
   const b = plan.bounds;
   const camp = CAMPFIRES.map((c) => (idAt(dim, W(off, c)) === 'campfire' ? (stateAt(dim, W(off, c), 'extinguished') === true ? 'out' : 'lit') : idAt(dim, W(off, c))).toString()).join('/');
   const size = chestSize(dim, W(off, CHESTS[0]));
-  say(`Built ${((system.currentTick - farm.builtAt) / 1200).toFixed(1)} min ago at ${off.x + b.x1} ${off.y + b.y1} ${off.z + b.z1} (the corner of its box);${time}. Villagers in it: ${vs.length} (${babies} babies). Golems alive: ${golems.length}; seen so far: ${farm.seen.size}. Chest (${size === 54 ? 'double' : `${size} slots`}): ${Object.keys(inv).length ? Object.entries(inv).map(([k, v]) => `${v} ${k}`).join(', ') : 'empty'}. Water ${farm.waterOn ? 'on' : 'off'}: ${w.have} of ${w.want} platform cells wet, hole depth ${w.hole ?? 'none'}; ${shaftWater(dim, off)} wet cells in the shaft. Lava ${farm.lavaOn ? 'on' : 'off'}. Campfires ${camp}. Door: ${farm.door?.ok ? 'in' : 'NOT in (open doorway)'}. Slabs: ${farm.slabCells} placed (${farm.slab ?? 'none'}). ${checks.length ? `Not as planned: ${checks.join('; ')}.` : 'Blocks as planned.'} Village centre by my reckoning: ${plan.centre.x} ${plan.centre.y} ${plan.centre.z} plan, ${plan.centre.x + off.x} ${plan.centre.y + off.y} ${plan.centre.z + off.z} in the world. ${farm.scanNote} ${farm.villagerNote}`);
+  say(`Built ${((system.currentTick - farm.builtAt) / 1200).toFixed(1)} min ago at ${off.x + b.x1} ${off.y + b.y1} ${off.z + b.z1} (the corner of its box);${time}. Villagers in it: ${vs.length} (${babies} babies). Golems alive: ${golems.length}; seen so far: ${farm.seen.size}. Chest (${size === 54 ? 'double' : `${size} slots`}): ${Object.keys(inv).length ? Object.entries(inv).map(([k, v]) => `${v} ${k}`).join(', ') : 'empty'}. Water ${farm.waterOn ? 'on' : 'off'}: ${w.have} of ${w.want} platform cells wet, ${w.sources} of them sources (${w.planned} planned${w.pooled ? ': POOLING, some cells turned into sources' : ''}), hole depth ${w.hole ?? 'none'}; ${shaftWater(dim, off)} wet cells in the shaft. Campfires ${camp}. Door: ${farm.door?.ok ? 'in' : 'NOT in (open doorway)'}. Slabs: ${farm.slabCells} placed (${farm.slab ?? 'none'}). ${checks.length ? `Not as planned: ${checks.join('; ')}.` : 'Blocks as planned.'} Village centre by my reckoning: ${plan.centre.x} ${plan.centre.y} ${plan.centre.z} plan, ${plan.centre.x + off.x} ${plan.centre.y + off.y} ${plan.centre.z + off.z} in the world. ${farm.scanNote} ${farm.villagerNote}`);
 }
 
