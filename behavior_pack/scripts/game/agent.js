@@ -3530,8 +3530,9 @@ export class Agent {
       // the walk stuck. On top of a block lower than a full one (a bed, a chest, a composter's rim), the search starts from the cell above it.)
       {
         const fx = Math.floor(from.x), fy = Math.floor(from.y), fz = Math.floor(from.z);
-        // (u221: only for one nearly a full block high, a chest's 7/8: from a bed's 9/16 the cell above is a jump of a block and a half up.)
-        try { if (classify(fx, fy, fz) === Cell.SOLID && from.y - fy > 0.7 && classify(fx, fy + 1, fz) === Cell.AIR) from = { x: from.x, y: fy + 1, z: from.z }; } catch { /* */ }
+        // (u227: any block it stands in part way up (a chest's 7/8, the bowl of a composter it stepped into); a bed is not one: the farm build's
+        // pathfinder reads a bed as danger, not solid, u221.)
+        try { if (classify(fx, fy, fz) === Cell.SOLID && from.y - fy > 0.3 && classify(fx, fy + 1, fz) === Cell.AIR && !/bed$/.test(this.dim.getBlock({ x: fx, y: fy, z: fz })?.typeId ?? '')) from = { x: from.x, y: fy + 1, z: from.z }; } catch { /* */ }
       }
       const t0 = system.currentTick;
       // A water bucket on us (not in the Nether, not badly hurt): long drops are fine (the fall's

@@ -51,7 +51,7 @@ const SOUND = { dirt: 'use.gravel', cobblestone: 'use.stone', glass: 'use.stone'
 const HAND_NAME = { held: 'with the game\'s held button', quick: 'with the quick hand (aimed by the bot, put in by command)', real: 'with the game\'s own item use' };
 const modeArg = (args) => MODES.find((m) => args.some((a) => a.toLowerCase() === m)) ?? null;
 
-/** @type {null | { running: boolean, finished: boolean, dim: any, off: {x:number,y:number,z:number}, shell: string|undefined, stats: any, started: number, phase: string, report: string, stop: boolean, mode: string, probed: null | { ok: boolean, line: string } }} */
+/** @type {null | { running: boolean, finished: boolean, dim: any, off: {x:number,y:number,z:number}, shell: string|undefined, stats: any, started: number, phase: string, report: string, stop: boolean, mode: string, probed: null | { ok: boolean, line: string }, parts?: number }} */
 let job = null;
 
 const strip = (id) => id.replace('minecraft:', '');
@@ -259,7 +259,7 @@ async function start(agent, player, args) {
     try {
       const st = job?.stats;
       if (st) {
-        const n = st.hand + st.command + (st.scaffoldUp ?? 0);
+        const n = st.hand + st.command + (st.scaffoldUp ?? 0) + (job.parts ?? 0);
         if (n !== lastHand) {
           if (stalled) S.log(`farmbuild: STALL over after ${((system.currentTick - lastAt) / 20).toFixed(0)} s (layer ${st.layer}, phase ${job.phase})`);
           lastHand = n; lastAt = system.currentTick; stalled = false;
@@ -433,6 +433,7 @@ async function start(agent, player, args) {
       check: () => S.check(gen),
       yield: () => S.wait(gen, 1),
       say: (m) => say(m),
+      note: (m) => S.log(`farmbuild: ${m}`),
     };
     // The one time the bot is put anywhere: on the pad at the start (the flat place to build on, as asked), unless it is already on the site;
     // from here on it goes on foot.
@@ -477,7 +478,8 @@ async function start(agent, player, args) {
     const partStand = (c, reach, skip = new Set()) => {
       const from = hands.where();
       let best = null, bs = Infinity;
-      for (let dy = -3; dy <= 3; dy++) for (let dx = -4; dx <= 4; dx++) for (let dz = -4; dz <= 4; dz++) {
+      // (u227: up to five over it: a campfire on the hallway floor from the top of the hallway's walls, reach 5.5)
+      for (let dy = -3; dy <= 5; dy++) for (let dx = -4; dx <= 4; dx++) for (let dz = -4; dz <= 4; dz++) {
         const q = { x: c.x + dx, y: c.y + dy, z: c.z + dz };
         if (skip.has(`${q.x},${q.y},${q.z}`) || bedCells.has(`${q.x},${q.y},${q.z}`) || bedCells.has(`${q.x},${q.y - 1},${q.z}`)) continue;
         if (q.x === c.x && q.z === c.z && (q.y === c.y || q.y + 1 === c.y)) continue;
@@ -524,7 +526,7 @@ async function start(agent, player, args) {
       }
       const ok = await put();
       if (ok && there && it) {
-        partStats.hand++;
+        partStats.hand++; J.parts = partStats.hand;
         // (A bucket is not used up: one water bucket stands for the refills a player makes from a source of its own.)
         if (!bucket) { try { take(sim, it, 1); } catch { /* */ } }
       } else if (ok) { partStats.command++; partStats.missing.push(`${id} at ${cell.x},${cell.y},${cell.z}${it ? '' : ' (no item by that name)'}`); }

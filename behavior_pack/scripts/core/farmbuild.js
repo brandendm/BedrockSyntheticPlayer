@@ -131,7 +131,11 @@ export async function runBuild(plan, hands, { after = null, maxTicks = Infinity,
 
   const commandPlace = (c, why) => {
     const id = finalId.get(key(c.x, c.y, c.z));
-    if (hands.set(c, id)) { W.set(key(c.x, c.y, c.z), id); stats.command++; bump(stats.commandById, id); if (why) stats[why]++; return true; }
+    if (hands.set(c, id)) {
+      W.set(key(c.x, c.y, c.z), id); stats.command++; bump(stats.commandById, id); if (why) stats[why]++;
+      hands.note?.(`COMMAND ${id} at ${c.x} ${c.y} ${c.z} (${why || 'set'}), layer ${stats.layer}, bot at ${JSON.stringify(hands.where())}`);
+      return true;
+    }
     return false;
   };
   // (A slab goes only on the top of the block under it: clicked on a side face's upper half it would be a top slab, on which mobs spawn.)
@@ -340,12 +344,20 @@ export async function runBuild(plan, hands, { after = null, maxTicks = Infinity,
           if (!c0) line = null;
         }
         if (!c0) {
-          let d0 = Infinity;
+          // (u227 live: the nearest block with something to click was often one it could only get to over open air (the far wall of the pod from
+          // the shaft's top), so it asked for spot after spot it could not walk to. The nearest few are tried for one it can walk to a spot for.)
+          const cand = [];
           for (const c of T.values()) {
             if (!supportedNow(c)) continue;
-            const d = here ? Math.hypot(c.x - here.x, (c.y - here.y) * 2, c.z - here.z) : 0;
-            if (d < d0) { d0 = d; c0 = c; }
+            cand.push({ c, d: here ? Math.hypot(c.x - here.x, (c.y - here.y) * 2, c.z - here.z) : 0 });
           }
+          cand.sort((a, b) => a.d - b.d);
+          const reachHere = here ? walkable(here) : null;
+          for (const { c } of cand.slice(0, 16)) {
+            const st = bestStand(c, [c], here);
+            if (st && (!reachHere || reachHere.has(key(st.x, st.y, st.z)))) { c0 = c; break; }
+          }
+          if (!c0 && cand.length) c0 = cand[0].c;
           if (c0) { line = lineThrough(T, c0, here); c0 = line.find((c) => supportedNow(c)) ?? c0; }
         }
         if (!c0) {
