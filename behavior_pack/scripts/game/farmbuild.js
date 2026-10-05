@@ -357,6 +357,14 @@ async function start(agent, player, args) {
           if (ok) { scaffold.delete(k); stats.scaffoldDown = (stats.scaffoldDown ?? 0) + 1; }
         }
       },
+      /** One block of its own in a cell the farm wants something else in: broken by hand, nothing else of its scaffolding touched (u222). */
+      async unblock(c) {
+        const q = W(off, c);
+        try {
+          if (!S.inReach(q)) await S.goNear(gen, { x: q.x + 0.5, y: q.y + 1, z: q.z + 0.5 }, 2.5, 2);
+          if (await S.mine(gen, q, { collect: true, allowBelow: true })) { scaffold.delete(`${c.x},${c.y},${c.z}`); stats.scaffoldDown = (stats.scaffoldDown ?? 0) + 1; }
+        } catch (e) { if (aborted(e)) throw e; }
+      },
       async place(c, id) {
         if (noItem.has(id)) return false;
         const q = W(off, c), below = id === SLAB;

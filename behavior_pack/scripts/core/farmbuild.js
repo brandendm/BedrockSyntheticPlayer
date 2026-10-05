@@ -25,7 +25,8 @@ export const JUDGE_AFTER = 24;     // hand attempts before the hit rate is judge
 export const ROUNDS = 3;           // passes over a layer's leftovers (blocks it could not get to or that would not go down) before a command does them
 export const TRIES = 3;
 export const SCAFFOLD_COST = 200;  // a block of scaffolding to stand on (u220: it pillared where it could have stayed put)
-export const ENCLOSED_COST = 400;  // a spot in air the farm closes in (the pod, the room, the shaft)            // spots tried for one block in a pass before it is left for the next pass
+export const ENCLOSED_COST = 400;
+export const CLIMB_COST = 100;     // a spot it cannot walk to from where it is: a climb (u222)  // a spot in air the farm closes in (the pod, the room, the shaft)            // spots tried for one block in a pass before it is left for the next pass
 
 const key = (x, y, z) => `${x},${y},${z}`;
 const DIRS = [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]];
@@ -159,6 +160,37 @@ export async function runBuild(plan, hands, { after = null, maxTicks = Infinity,
    * closed-in air; with `scaffold`, also a spot with nothing under it yet (the bot pillars or bridges to it with a block of the shell), at a cost.
    * null if there is none.
    */
+  // Where the bot can walk to from where it is (u222, the player: "it created a pillar it didn't need, then went back to remove it and pillared
+  // again to get back up"): spots with room and a floor, one block up with a jump or down a drop of up to three, round the bot. A spot it cannot
+  // walk to costs as much as a pillar, so it builds from where its feet already take it.
+  let reach = null, reachFrom = '';
+  const standable = (x, y, z) => FREE.has(idAt(x, y, z)) && FREE.has(idAt(x, y + 1, z)) && STAND_ON.has(idAt(x, y - 1, z));
+  const walkable = (from) => {
+    const k0 = from ? key(from.x, from.y, from.z) : '';
+    if (reach && reachFrom === k0) return reach;
+    const seen = new Set();
+    if (from) {
+      const q = [from];
+      seen.add(k0);
+      for (let i = 0; i < q.length && seen.size < 6000; i++) {
+        const c = q[i];
+        for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+          for (let dy = 1; dy >= -3; dy--) {
+            const n = { x: c.x + dx, y: c.y + dy, z: c.z + dz };
+            if (Math.abs(n.x - from.x) > 12 || Math.abs(n.z - from.z) > 12 || Math.abs(n.y - from.y) > 8) continue;
+            if (dy === 1 && !FREE.has(idAt(c.x, c.y + 2, c.z))) continue;   // (head room for the jump)
+            if (dy < 0 && !(FREE.has(idAt(n.x, c.y, n.z)) && FREE.has(idAt(n.x, c.y + 1, n.z)))) continue;   // (the way over the edge)
+            if (!standable(n.x, n.y, n.z)) continue;
+            const k = key(n.x, n.y, n.z);
+            if (!seen.has(k)) { seen.add(k); q.push(n); }
+            break;
+          }
+        }
+      }
+    }
+    reach = seen; reachFrom = k0;
+    return seen;
+  };
   /** Spots the bot could not get to in this pass over the layer (u218): not offered again until the next pass. */
   let unreachable = new Set();
   const bestStand = (c, near, from, { scaffold = false } = {}) => {
@@ -185,6 +217,8 @@ export async function runBuild(plan, hands, { after = null, maxTicks = Infinity,
           cost = side ? SCAFFOLD_COST : SCAFFOLD_COST * h;
         }
         if (!placeableFrom(s, c)) continue;
+        // (not a spot its feet take it to from here: a climb it would have to pillar for)
+        if (!cost && from && !walkable(from).has(key(s.x, sy, s.z))) cost = CLIMB_COST;
         let n = 0;
         for (const t of near) if (reaches(s, t) && !(t.x === s.x && t.z === s.z && (t.y === s.y || t.y === s.y + 1))) n++;
         // (u220, the player's way: stay up on what it has built and carry on from there. A spot on the farm's own blocks, near, not lower than
@@ -220,6 +254,7 @@ export async function runBuild(plan, hands, { after = null, maxTicks = Infinity,
       if (id) { redo.set(key(c.x, c.y, c.z), { x: c.x, y: c.y, z: c.z, id }); stats.broken++; }
     }
     W = new Map();   // (it walked, climbed or broke its way: what the cache knew may have changed)
+    reach = null;
     return ok;
   };
 
@@ -261,8 +296,10 @@ export async function runBuild(plan, hands, { after = null, maxTicks = Infinity,
     unreachable = new Set();
     for (let pass = 0; pass < 2; pass++) {
     if (pass) {
-      // The second pass: the scaffolding is down; what it stood in is built now.
-      if (hands.tidy) { await hands.tidy(); W = new Map(); }
+      // The second pass: just the blocks of its own in the way taken out (u222: not all its scaffolding, which sent it down for its pillars and up
+      // on new ones), and those cells built.
+      for (const c of blocked.values()) { if (hands.unblock) await hands.unblock(c); else if (hands.tidy) { await hands.tidy(); break; } }
+      W = new Map(); reach = null;
       for (const [k, c] of blocked) T.set(k, c);
       blocked.clear();
       if (!T.size) break;
@@ -315,6 +352,7 @@ export async function runBuild(plan, hands, { after = null, maxTicks = Infinity,
           await hands.yield();
           continue;
         }
+        if (here && STAND_ON.has(idAt(s.x, s.y - 1, s.z)) && !walkable(here).has(key(s.x, s.y, s.z))) stats.climbs = (stats.climbs ?? 0) + 1;
         if (!(await goStand(s))) {
           stats.standFails++;
           unreachable.add(key(s.x, s.y, s.z));
@@ -350,7 +388,7 @@ export async function runBuild(plan, hands, { after = null, maxTicks = Infinity,
           stats.handTicks += hands.now() - a;
           if (ok) {
             T.delete(key(k.x, k.y, k.z));
-            stats.hand++; stats.hits++; bump(stats.handById, id); W.set(key(k.x, k.y, k.z), id); if (back.includes(k)) stats.putBack++;
+            stats.hand++; stats.hits++; bump(stats.handById, id); W.set(key(k.x, k.y, k.z), id); reach = null; if (back.includes(k)) stats.putBack++;
           } else { missed.add(key(k.x, k.y, k.z)); stats.misses = (stats.misses ?? 0) + 1; fail(k); W = new Map(); }
           judge();
           if (stats.gaveUp) break;

@@ -473,20 +473,11 @@ export class Skills {
     const res = await this.a.plan(this.sim.location, pos, 0, 6000, goal);
     this.check(gen);
     if (res.complete && res.path.length >= 2) {
-      // (u221 live: "a TON of spinning in place": every step to the next spot along a wall turned the head to where it walked and back to the
-      // wall. A short level step is a sidestep with the eyes kept on the work, as a player slides along a wall; anything else, a walk.)
-      const first = this.sim.location, last = res.path[res.path.length - 1];
-      const dx = last.x + 0.5 - first.x, dz = last.z + 0.5 - first.z, dd = Math.hypot(dx, dz);
-      const level = res.path.every((q) => q.y === last.y) && Math.abs(first.y - last.y) < 0.6;
-      const straight = level && res.path.every((q) => Math.abs((q.x + 0.5 - first.x) * dz - (q.z + 0.5 - first.z) * dx) / (dd || 1) < 0.45);
-      if (straight && dd > 0.2 && dd <= 4.5 && this.a.motor.focus) {
-        await this.a.motor.strafe({ x: dx / dd, z: dz / dd }, Math.ceil(dd / 0.2155) + 1, { reaction: 1 });
-        this.check(gen);
-        if (!at() && Math.hypot(this.sim.location.x - pos.x, this.sim.location.z - pos.z) > 0.3) await this.a.motor.followPath([{ x: this.sim.location.x, y: this.sim.location.y, z: this.sim.location.z }, pos]);
-      } else {
-        this.a.motor.setFocus(null);
-        await this.a.motor.followPath(smoothPath(this.a.classifier(), res.path));
-      }
+      // (u221/u222 live: "it constantly spins in place": every walk to the next spot turned the head to where it walked (a turn in place first,
+      // when that was behind it) and back to the work. Over a short way the head stays on the work and the feet go where the route says, as a
+      // player walks backwards and sideways along a wall it builds; a long way, it turns and walks.)
+      if (!(this.a.motor.focus && res.path.length <= 12)) this.a.motor.setFocus(null);
+      await this.a.motor.followPath(smoothPath(this.a.classifier(), res.path));
       this.check(gen);
     }
     if (at()) { out.ok = true; return out; }

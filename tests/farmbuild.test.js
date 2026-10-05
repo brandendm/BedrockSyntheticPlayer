@@ -39,6 +39,7 @@ function fake(plan, { miss = 0, seed = 1, noStand = false, unreach = null, stopA
       bot = { ...s }; tick += 4; log.stands++;
       return true;
     },
+    async unblock(c) { const k = key(c.x, c.y, c.z); if (scaffold.has(k)) { world.delete(k); scaffold.delete(k); log.unblocked = (log.unblocked ?? 0) + 1; } },
     async tidy() {
       const g = final();
       for (const k of [...scaffold]) {
@@ -146,11 +147,12 @@ test('with hands that work, the bot builds the whole shell itself under the rule
     assert.ok(stats.footing < 40, `${stats.footing} blocks set by command just to have something to stand on`);
     assert.ok(stats.standMoves < 400, `${stats.standMoves} spots`);
     assert.ok(stats.command <= stats.footing, `${stats.command} by command, ${stats.footing} of them footings`);
-    if (process.env.SHOW) console.log(shell, JSON.stringify({ hand: stats.hand, command: stats.command, stands: stats.standMoves, scaffold: f.log.scaffold, down: f.log.down, up: f.log.up, inLine: f.log.inLine, pairs: f.log.pairs }));
+    if (process.env.SHOW) console.log(shell, JSON.stringify({ hand: stats.hand, command: stats.command, stands: stats.standMoves, scaffold: f.log.scaffold, climbs: stats.climbs, unblocked: f.log.unblocked, down: f.log.down, up: f.log.up, inLine: f.log.inLine, pairs: f.log.pairs }));
     // u220 (the player): in lines and layers, standing on what it built: one block after the next beside it, little scaffolding, and up the
     // tower about once (it is 15 high).
     assert.ok(f.log.inLine / f.log.pairs > 0.8, `${f.log.inLine} of ${f.log.pairs} blocks went next to the one before`);
     assert.ok(f.log.scaffold <= 20, `${f.log.scaffold} blocks of scaffolding`);
+    assert.ok((stats.climbs ?? 0) <= 15, `${stats.climbs} spots it could not walk to (each a pillar in the game)`);
     assert.ok(f.log.up <= 45, `climbed ${f.log.up} levels for a 15-high build`);
     assert.ok(stats.handById[shell] > 700 && stats.handById[SLAB] > 100 && stats.handById.glass === 5 && stats.handById.composter === 10, JSON.stringify(stats.handById));
   }
