@@ -253,7 +253,23 @@ async function start(agent, player, args) {
   agent.homestead.placedLenient = 0;
   const siteCentre = W(off, { x: 7.5, y: 0, z: 7.5 });
   let swept = 0;
+  // (u226, for the log: a stall of 8 s or more with nothing placed is written down once, with what it was doing, and when it ends)
+  let lastHand = -1, lastAt = system.currentTick, stalled = false;
   const sweeper = system.runInterval(() => {
+    try {
+      const st = job?.stats;
+      if (st) {
+        const n = st.hand + st.command + (st.scaffoldUp ?? 0);
+        if (n !== lastHand) {
+          if (stalled) S.log(`farmbuild: STALL over after ${((system.currentTick - lastAt) / 20).toFixed(0)} s (layer ${st.layer}, phase ${job.phase})`);
+          lastHand = n; lastAt = system.currentTick; stalled = false;
+        } else if (!stalled && system.currentTick - lastAt >= 160) {
+          stalled = true;
+          const l = sim.location;
+          S.log(`farmbuild: STALL 8 s, nothing placed: layer ${st.layer}, phase ${job.phase}, at ${l.x.toFixed(1)} ${l.y.toFixed(2)} ${l.z.toFixed(1)}, motor ${agent.motor.intent?.kind ?? 'idle'}, focus ${agent.motor.focus ? 'on' : 'off'}, stand fails ${st.standFails}`);
+        }
+      }
+    } catch { /* */ }
     try { for (const e of dim.getEntities({ location: siteCentre, maxDistance: 48, families: ['monster'] })) { try { e.remove(); swept++; } catch { /* */ } } } catch { /* */ }
   }, 40);
   const view = { x: 7.5, y: BASE_Y, z: PAD.z1 + 2.5 };
@@ -339,6 +355,9 @@ async function start(agent, player, args) {
         // slab spot on the room's roof, again and again, standing still.)
         const r = await S.walkTo(gen, W(off, s.up ? { x: s.x, y: s.y + 1, z: s.z } : s), { escape: (on) => { escaping = on; }, actions: climb });
         for (const c of r.placed) { const q = rel(c); scaffold.set(`${q.x},${q.y},${q.z}`, q); stats.scaffoldUp = (stats.scaffoldUp ?? 0) + 1; }
+        // (u226, for the log: every block of scaffolding, where (plan coordinates), for which spot, on which layer, and every block of the farm it broke)
+        if (r.placed.length) S.log(`farmbuild: SCAFFOLD ${r.placed.length} (${r.placed.map((c) => { const q = rel(c); return `${q.x} ${q.y} ${q.z}`; }).join(', ')}) to get to ${s.x} ${s.y} ${s.z}, layer ${stats.layer}, climb ${climb}, from ${JSON.stringify(f0)}`);
+        if (r.broke.length) S.log(`farmbuild: BROKE ${r.broke.length} of the farm (${r.broke.map((c) => { const q = rel(c); return `${q.x} ${q.y} ${q.z}`; }).join(', ')}) to get to ${s.x} ${s.y} ${s.z}, layer ${stats.layer}`);
         if (r.broke.length) stats.escapes = (stats.escapes ?? 0) + 1;
         if (!r.ok) S.log(`farmbuild: could not get to ${s.x} ${s.y} ${s.z} (from ${JSON.stringify(hands.where())})`);
         return { ok: r.ok, broke: r.broke.map(rel) };
@@ -602,6 +621,7 @@ async function start(agent, player, args) {
         }
       }
       J.phase = `layer ${y} done`;
+      S.log(`farmbuild: LAYER ${y} done ${mins(system.currentTick - J.started)} in: ${st.hand} by hand, ${st.command} by command, ${st.standMoves} spots, ${st.standFails} spots it could not get to, ${st.scaffoldUp ?? 0} scaffolding, ${partStats.hand} parts by hand, ${pending.length} parts waiting`);
       if ([-4, 0, 3, 6].includes(y)) say(`Layer ${y} done: ${st.hand} of ${st.cells} blocks placed by the bot so far, ${st.command} by command, ${mins(system.currentTick - J.started)} in.`);
       topUp(sim);
     };

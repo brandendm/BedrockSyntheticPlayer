@@ -483,7 +483,7 @@ export class Skills {
     }
     if (at()) { out.ok = true; return out; }
     // (actions false: on foot only, no pillar, bridge or dig: the caller tries another spot instead, u223)
-    if (!actions) { this.log(`walkTo ${cell.x} ${cell.y} ${cell.z}: not on foot from here (${res.complete ? 'the walk stopped short' : 'no walking route'}), no climbing asked for`); return out; }
+    if (!actions) { this.log(`walkTo ${cell.x} ${cell.y} ${cell.z}: not on foot from here (${res.complete ? 'the walk stopped short' : 'no walking route'}), no climbing asked for. ${this.whereWhy(cell, res)}`); return out; }
     for (const dear of escape ? [false, true] : [false]) {
       if (dear) escape(true);
       try {
@@ -504,7 +504,7 @@ export class Skills {
         const wasSolid = breaks.map((c) => !OPEN.test(this.blockAt(c) ?? 'air'));
         const info = {};
         const went = await this.followActionPath(gen, ar.path, { sweep: false, info });
-        if (!went) this.log(`walkTo ${cell.x} ${cell.y} ${cell.z}: route given up at step ${info.step} of ${info.of}: ${info.why} (feet ${info.feet} on ${info.on})`);
+        if (!went) this.log(`walkTo ${cell.x} ${cell.y} ${cell.z}: route given up at step ${info.step} of ${info.of}: ${info.why} (feet ${info.feet} on ${info.on}) ${this.whereWhy(cell)}`);
         puts.forEach((c, i) => { if (wasOpen[i] && !OPEN.test(this.blockAt(c) ?? 'air')) out.placed.push(c); });
         breaks.forEach((c, i) => { if (wasSolid[i] && OPEN.test(this.blockAt(c) ?? 'air')) out.broke.push(c); });
         // (Within a step of it on the same level: the last step.)
@@ -517,6 +517,23 @@ export class Skills {
       } finally { if (dear) escape(false); }
     }
     return out;
+  }
+
+  /**
+   * For the log when a walk to a cell fails (u226): what the pathfinder sees there (the cell, the one over it, the one under it, as its cell
+   * classes) and where the bot really is (position to a tenth, the block under its feet, what the pathfinder makes of its own cell), the route's
+   * length and how far it got. Enough to tell a planner refusal from a body that would not go.
+   */
+  whereWhy(cell, res = null) {
+    const cl = this.a.classifier();
+    const N = ['air', 'solid', 'liquid', 'danger', 'unknown', 'climb', 'step', 'slab', 'flow'];
+    const c = (x, y, z) => { try { return N[cl(x, y, z)] ?? String(cl(x, y, z)); } catch { return '?'; } };
+    const l = this.sim.location, f = this.feet();
+    const at = (q) => `${this.blockAt(q) ?? '?'}/${c(q.x, q.y, q.z)}`;
+    const end = res?.path?.length ? res.path[res.path.length - 1] : null;
+    return `[there: feet ${at(cell)}, head ${at({ x: cell.x, y: cell.y + 1, z: cell.z })}, under ${at({ x: cell.x, y: cell.y - 1, z: cell.z })}; ` +
+      `me: ${l.x.toFixed(1)} ${l.y.toFixed(2)} ${l.z.toFixed(1)} on ${at({ x: f.x, y: f.y - 1, z: f.z })}, my cell ${at(f)}; ` +
+      `route ${res ? `${res.complete ? 'complete' : 'partial'} ${res.path?.length ?? 0} steps, ${res.expanded ?? '?'} searched${end ? `, ends ${end.x} ${end.y} ${end.z}` : ''}` : '-'}]`;
   }
 
   /** Take down what goSee built to see from (a pillar): top first, standing on it. */
