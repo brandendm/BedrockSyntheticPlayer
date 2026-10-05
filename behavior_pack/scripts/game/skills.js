@@ -462,9 +462,9 @@ export class Skills {
    * block with a jump, down drops); if that will not get there, a route that also pillars, bridges and digs (what may be dug, and at what price, is
    * the job's: agent.digCost); with `escape`, a last try in which escape(true) has made the job's own blocks breakable (walled in). Returns
    * { ok, placed: the cells it put a block in on the way, broke: the cells it broke }.
-   * @param {any} gen @param {{x:number,y:number,z:number}} cell @param {{ escape?: null | ((on: boolean) => void) }} [opts]
+   * @param {any} gen @param {{x:number,y:number,z:number}} cell @param {{ escape?: null | ((on: boolean) => void), actions?: boolean }} [opts]
    */
-  async walkTo(gen, cell, { escape = null } = {}) {
+  async walkTo(gen, cell, { escape = null, actions = true } = {}) {
     const out = { ok: false, placed: /** @type {any[]} */ ([]), broke: /** @type {any[]} */ ([]) };
     const at = () => { const f = this.feet(); return f.x === cell.x && f.y === cell.y && f.z === cell.z; };
     if (at()) { out.ok = true; return out; }
@@ -476,11 +476,13 @@ export class Skills {
       // (u221/u222 live: "it constantly spins in place": every walk to the next spot turned the head to where it walked (a turn in place first,
       // when that was behind it) and back to the work. Over a short way the head stays on the work and the feet go where the route says, as a
       // player walks backwards and sideways along a wall it builds; a long way, it turns and walks.)
-      if (!(this.a.motor.focus && res.path.length <= 12)) this.a.motor.setFocus(null);
+      if (!(this.a.motor.focus && res.path.length <= 20)) this.a.motor.setFocus(null);
       await this.a.motor.followPath(smoothPath(this.a.classifier(), res.path));
       this.check(gen);
     }
     if (at()) { out.ok = true; return out; }
+    // (actions false: on foot only, no pillar, bridge or dig: the caller tries another spot instead, u223)
+    if (!actions) { this.log(`walkTo ${cell.x} ${cell.y} ${cell.z}: not on foot from here (${res.complete ? 'the walk stopped short' : 'no walking route'}), no climbing asked for`); return out; }
     for (const dear of escape ? [false, true] : [false]) {
       if (dear) escape(true);
       try {

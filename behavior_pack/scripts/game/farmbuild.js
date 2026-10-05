@@ -321,7 +321,7 @@ async function start(agent, player, args) {
       // On its own feet (u217: never teleported once it is on the pad): walking, jumping up onto what it has laid, pillaring and bridging with the
       // shell, breaking its way out (and so back in) only when walled in. What it put down is scaffolding (taken down at the end of the layer);
       // what of the farm it broke goes back to the core to be put back by hand.
-      async stand(s) {
+      async stand(s, { climb = true } = {}) {
         agent.motor.stop();
         // (u221 live: on a bed it tried again and again to jump a block and a half up off it. Off the bed first, onto the floor beside it.)
         const f0 = hands.where();
@@ -333,7 +333,7 @@ async function start(agent, player, args) {
         // (u218 live: "no route, 0 blocks to build with": the layer's blocks and the spare went on scaffolding. Never under 32 of the shell to pillar and
         // bridge with when it sets off.)
         { const have = invCounts(sim)[plan.shell] ?? 0; if (have < 32 && !noItem.has(plan.shell)) { try { give(sim, plan.shell, 64 - have); } catch { /* */ } } }
-        const r = await S.walkTo(gen, W(off, s), { escape: (on) => { escaping = on; } });
+        const r = await S.walkTo(gen, W(off, s), { escape: (on) => { escaping = on; }, actions: climb });
         for (const c of r.placed) { const q = rel(c); scaffold.set(`${q.x},${q.y},${q.z}`, q); stats.scaffoldUp = (stats.scaffoldUp ?? 0) + 1; }
         if (r.broke.length) stats.escapes = (stats.escapes ?? 0) + 1;
         if (!r.ok) S.log(`farmbuild: could not get to ${s.x} ${s.y} ${s.z} (from ${JSON.stringify(hands.where())})`);
@@ -451,11 +451,12 @@ async function start(agent, player, args) {
     // (Not at the lip of the hole up on the platform: a slip there is a fall down the shaft onto the campfires and the lava.)
     const nearShaft = (q) => q.x >= SHAFT.x1 - 1 && q.x <= SHAFT.x2 + 1 && q.z >= SHAFT.z1 - 1 && q.z <= SHAFT.z2 + 1 && q.y > SHAFT.y2;
     /** A spot to put a part in from: room for the bot, something solid under it, the cell in reach, near where it is, not at the lip of the shaft. */
-    const partStand = (c, reach) => {
+    const partStand = (c, reach, skip = new Set()) => {
       const from = hands.where();
       let best = null, bs = Infinity;
       for (let dy = -3; dy <= 3; dy++) for (let dx = -4; dx <= 4; dx++) for (let dz = -4; dz <= 4; dz++) {
         const q = { x: c.x + dx, y: c.y + dy, z: c.z + dz };
+        if (skip.has(`${q.x},${q.y},${q.z}`) || bedCells.has(`${q.x},${q.y},${q.z}`) || bedCells.has(`${q.x},${q.y - 1},${q.z}`)) continue;
         if (q.x === c.x && q.z === c.z && (q.y === c.y || q.y + 1 === c.y)) continue;
         const ex = q.x + 0.5 - (c.x + 0.5), ey = q.y + 1.52 - (c.y + 0.5), ez = q.z + 0.5 - (c.z + 0.5);
         if (ex * ex + ey * ey + ez * ez > reach * reach) continue;
@@ -473,13 +474,25 @@ async function start(agent, player, args) {
      * One part by the bot's hand: there, item in hand, crosshair on it; then `put()` (the command with the plan's state, or one of the parts
      * routines that tries the game's spellings). `reach` 5 for a bucket poured onto a floor below (a player's reach in Bedrock).
      */
-    const byHand = async (cell, id, put, { reach = 4.2, bucket = false } = {}) => {
+    /** Parts it could not get to yet (u223: not put in by command instead; tried again after each layer, by command only at the very end). */
+    const pending = [];
+    const byHand = async (cell, id, put, { reach = 4.2, bucket = false, last = false } = {}) => {
       const it = itemFor(id);
       let there = false;
       const at = hands.where();
-      const ok0 = at && (() => { const ex = at.x + 0.5 - (cell.x + 0.5), ey = at.y + 1.52 - (cell.y + 0.5), ez = at.z + 0.5 - (cell.z + 0.5); return ex * ex + ey * ey + ez * ez <= reach * reach && !(at.x === cell.x && at.z === cell.z && (at.y === cell.y || at.y + 1 === cell.y)); })();
-      if (ok0) there = true;
-      else { const st = partStand(cell, reach); if (st) there = (await hands.stand(st)).ok; }
+      const inReach = (a) => { const ex = a.x + 0.5 - (cell.x + 0.5), ey = a.y + 1.52 - (cell.y + 0.5), ez = a.z + 0.5 - (cell.z + 0.5); return ex * ex + ey * ey + ez * ez <= reach * reach && !(a.x === cell.x && a.z === cell.z && (a.y === cell.y || a.y + 1 === cell.y)); };
+      if (at && inReach(at)) there = true;
+      else {
+        // (three spots, on foot first; on the last try, at the very end, it may climb)
+        const skip = new Set();
+        for (let k = 0; k < 3 && !there; k++) {
+          const st = partStand(cell, reach, skip);
+          if (!st) break;
+          there = (await hands.stand(st, { climb: last })).ok;
+          if (!there) skip.add(`${st.x},${st.y},${st.z}`);
+        }
+      }
+      if (!there && !last) { pending.push({ cell, id, put, reach, bucket }); return false; }
       const q = W(off, cell);
       if (there && it) {
         try { await agent.homestead.aimFace(gen, q, it, { snap: true, lenient: true, aimTicks: 2 }); } catch (e) { if (aborted(e)) throw e; }
@@ -501,7 +514,19 @@ async function start(agent, player, args) {
       if (why) fails.push(`${o.note || o.id}: ${why} (${cmd})`);
       return !why;
     };
-    const visit = async (c, item) => { await byHand(c, item === 'oak_sign' ? 'wall_sign' : 'fence_gate', async () => true); };
+    const visit = async (c, item) => { await byHand(c, item === 'oak_sign' ? 'wall_sign' : 'fence_gate', async () => true, { last: true }); };
+    let hallDone = false, hallLast = false;
+    const hallWater = async () => {
+      const camps = CAMPFIRES.every((c) => hands.blockAt(c) === 'campfire');
+      const cw = rest.find((o) => o.tag === 'cwater');
+      if (!camps || !cw) return;
+      if (!/water/.test(hands.blockAt(cw) ?? '') && !(await byHand(cw, 'water', setOp(cw), { reach: 5, bucket: true, last: hallLast }))) return;
+      // (u220 live: the water it poured did not flow. Water set by a command may not know it should spread: the hallway routine from the
+      // command build, at once: a block update beside it, else the three flowing cells laid at their depths.)
+      const r = await chamberWater(dim, off);
+      if (!r.ok) notes.push(r.note);
+      hallDone = true;
+    };
     const plain = (y) => rest.filter((o) => o.y === y && !special.has(o.tag));
     /** Every cell a list of ops fills (a bed's foot too). */
     const cellsOf = (ops) => new Set([...render({ ops }).cells.keys()]);
@@ -516,12 +541,17 @@ async function start(agent, player, args) {
           if (!(side && (await hands.stand(side)).ok)) await hands.stand(PARK);
         }
       }
+      if (pending.length) {
+        const again = pending.splice(0);
+        for (const p of again) await byHand(p.cell, p.id, p.put, { reach: p.reach, bucket: p.bucket, last: y === 'slabs' });
+      }
       if (y === 'slabs') {
+        if (!hallDone) { hallLast = true; await hallWater(); }
         J.phase = 'the door';
         // The door last of all (u218): until now the doorway was the room's way out (the pathfinder does not open doors). From outside it.
         if (!door) {
           const dl = plan.ops.find((q) => q.tag === 'door' && !q.states.upper_block_bit), du = plan.ops.find((q) => q.tag === 'door' && q.states.upper_block_bit);
-          await byHand(dl, 'wooden_door', async () => { door = await placeDoor(dim, off, dl, du, notes); return !!door?.ok; });
+          await byHand(dl, 'wooden_door', async () => { door = await placeDoor(dim, off, dl, du, notes); return !!door?.ok; }, { last: true });
         }
         if (partStats.command) notes.push(`${partStats.command} parts were put in by command, not by the bot's hand (it could not get to them, or the game has no item by that name): ${partStats.missing.slice(0, 6).join('; ')}.`);
         notes.push(`The parts (hoppers, chests, stair, campfires, signs, lava, beds, torches, gates, door, the water) by the bot's hand: ${partStats.hand}${partStats.command ? `, ${partStats.command} by command` : ', all of them'}. The villagers are summoned (it does not bring them).`);
@@ -531,17 +561,7 @@ async function start(agent, player, args) {
       // (carrying on after a stop: what is in already is left as it is)
       for (const o of plain(y)) if (hands.blockAt(o) !== o.id) await byHand(o, o.id, setOp(o));
       // The hallway water once the campfires are in (they keep it in its four cells).
-      if (y === CHAMBER_WATER.y) {
-        const camps = CAMPFIRES.every((c) => hands.blockAt(c) === 'campfire');
-        const cw = rest.find((o) => o.tag === 'cwater');
-        if (camps && cw) {
-          if (!/water/.test(hands.blockAt(cw) ?? '')) await byHand(cw, 'water', setOp(cw), { reach: 5, bucket: true });
-          // (u220 live: the water it poured did not flow. Water set by a command may not know it should spread: the hallway routine from the
-          // command build, at once: a block update beside it, else the three flowing cells laid at their depths.)
-          const r = await chamberWater(dim, off);
-          if (!r.ok) notes.push(r.note);
-        }
-      }
+      if (y === CHAMBER_WATER.y) await hallWater();
       // The signs that hold the lava, and the lava, once the hallway walls are up to the lava's height (later it cannot get to them).
       if (y === LAVA.y && !signs) {
         const signsIn = SIGNS.every((q) => /wall_sign$/.test(hands.blockAt(q) ?? ''));
@@ -566,8 +586,10 @@ async function start(agent, player, args) {
           await byHand(c, 'water', () => run(dim, `setblock ${W(off, c).x} ${W(off, c).y} ${W(off, c).z} water`) === '', { reach: 5, bucket: true });
         }
         // (and made to flow the way the command build does it, now: the sources poured are left, the nudges and, last, the flowing water laid)
-        const w = await ensureWater(dim, off, plan);
-        if (!w.ok) notes.push(w.note);
+        if (srcs.every((c) => /water/.test(hands.blockAt(c) ?? ''))) {
+          const w = await ensureWater(dim, off, plan);
+          if (!w.ok) notes.push(w.note);
+        }
       }
       J.phase = `layer ${y} done`;
       if ([-4, 0, 3, 6].includes(y)) say(`Layer ${y} done: ${st.hand} of ${st.cells} blocks placed by the bot so far, ${st.command} by command, ${mins(system.currentTick - J.started)} in.`);
@@ -575,7 +597,7 @@ async function start(agent, player, args) {
     };
     J.phase = 'placing';
     say(`The bot is placing the farm (${plan.shell}: it has what it needs). "!bot buildfarm status" says how far it has got, "!bot buildfarm stop" stops it. Watch from the pad.`);
-    await runBuild(plan, hands, { after, maxTicks: MAX_TICKS, stats });
+    await runBuild(plan, hands, { after, maxTicks: MAX_TICKS, stats, avoid: bedCells });
     agent.motor.setFocus(null);
     J.phase = 'finishing';
     const slabCells = (stats.handById[SLAB] ?? 0) + (stats.commandById[SLAB] ?? 0);

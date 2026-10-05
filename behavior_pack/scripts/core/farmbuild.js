@@ -110,9 +110,9 @@ export function lineThrough(T, c, from) {
  *   now() -> ticks   check() -> throws when told to stop   yield() -> Promise (a tick)   say(msg)
  * `after(y, stats)` runs once the hand layer y is done and checked (y from the bottom of the plan to the top, then 'slabs' last): the commands for what
  * the bot does not place. Everything is in plan coordinates. Returns the stats.
- * @param {any} plan @param {any} hands @param {{ after?: (y: number|string, stats: any) => Promise<void>, maxTicks?: number, stats?: any }} [opts]
+ * @param {any} plan @param {any} hands @param {{ after?: (y: number|string, stats: any) => Promise<void>, maxTicks?: number, stats?: any, avoid?: Set<string> }} [opts]
  */
-export async function runBuild(plan, hands, { after = null, maxTicks = Infinity, stats = newStats() } = {}) {
+export async function runBuild(plan, hands, { after = null, maxTicks = Infinity, stats = newStats(), avoid = new Set() } = {}) {
   const { cells, final } = splitPlan(plan);
   const finalId = new Map(cells.map((c) => [key(c.x, c.y, c.z), c.id]));
   const bd = plan.bounds;
@@ -180,7 +180,7 @@ export async function runBuild(plan, hands, { after = null, maxTicks = Infinity,
             if (Math.abs(n.x - from.x) > 12 || Math.abs(n.z - from.z) > 12 || Math.abs(n.y - from.y) > 8) continue;
             if (dy === 1 && !FREE.has(idAt(c.x, c.y + 2, c.z))) continue;   // (head room for the jump)
             if (dy < 0 && !(FREE.has(idAt(n.x, c.y, n.z)) && FREE.has(idAt(n.x, c.y + 1, n.z)))) continue;   // (the way over the edge)
-            if (!standable(n.x, n.y, n.z)) continue;
+            if (!standable(n.x, n.y, n.z) || avoid.has(key(n.x, n.y, n.z)) || avoid.has(key(n.x, n.y - 1, n.z))) continue;
             const k = key(n.x, n.y, n.z);
             if (!seen.has(k)) { seen.add(k); q.push(n); }
             break;
@@ -200,6 +200,7 @@ export async function runBuild(plan, hands, { after = null, maxTicks = Infinity,
       for (let dx = -4; dx <= 4; dx++) for (let dz = -4; dz <= 4; dz++) {
         const s = { x: c.x + dx, y: sy, z: c.z + dz };
         if (unreachable.has(key(s.x, sy, s.z))) continue;
+        if (avoid.has(key(s.x, sy, s.z)) || avoid.has(key(s.x, sy + 1, s.z)) || avoid.has(key(s.x, sy - 1, s.z))) continue;   // (the beds' cells, u223)
         if (!FREE.has(idAt(s.x, sy, s.z)) || !FREE.has(idAt(s.x, sy + 1, s.z))) continue;
         const under = idAt(s.x, sy - 1, s.z);
         let cost = 0;
@@ -246,8 +247,12 @@ export async function runBuild(plan, hands, { after = null, maxTicks = Infinity,
   /** Hand cells the bot broke to get out of somewhere (stand reports them): put back by hand in the layer it is on. */
   const redo = new Map();
   /** Put the bot on s (walking, climbing, bridging: the hands decide how). True when it is there; what it broke on the way is queued to put back. */
-  const goStand = async (s) => {
-    const r = await hands.stand(s);
+  /**
+   * `climb`: may it pillar, bridge or dig to get there (u223: only for a spot that needs it (nothing under it yet), or on a later pass over a layer's
+   * leftovers; a plain spot its feet do not take it to is given up at once and another one tried, not pillared to).
+   */
+  const goStand = async (s, climb = false) => {
+    const r = await hands.stand(s, { climb });
     const ok = typeof r === 'object' ? !!r?.ok : !!r;
     for (const c of (typeof r === 'object' && r?.broke) || []) {
       const id = finalId.get(key(c.x, c.y, c.z));
@@ -353,7 +358,7 @@ export async function runBuild(plan, hands, { after = null, maxTicks = Infinity,
           continue;
         }
         if (here && STAND_ON.has(idAt(s.x, s.y - 1, s.z)) && !walkable(here).has(key(s.x, s.y, s.z))) stats.climbs = (stats.climbs ?? 0) + 1;
-        if (!(await goStand(s))) {
+        if (!(await goStand(s, round > 0 || !STAND_ON.has(idAt(s.x, s.y - 1, s.z))))) {
           stats.standFails++;
           unreachable.add(key(s.x, s.y, s.z));
           fail(c0);
