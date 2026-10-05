@@ -13,7 +13,7 @@ import { toolFor, planCrafts, applyCraft, isLog, isPlanks, STONE_TARGETS, SHOVEL
 import { canBreak, chooseTool, breakSeconds, cheapestPlaceable, spendableBlocks, blockSourceCost, itemValue, plankReserve } from '../core/costs.js';
 import { invCounts, hold, take, give, container, findSlot } from './inventory.js';
 import { chooseSource, chooseSourceSticky, sourceKey, trustFor, trunksOf, EXPLORE_S, DIG_DOWN_S } from '../core/sourcing.js';
-import { THIN_COVER, castRay, canSee, ONE_TAP, isWatery } from './world.js';
+import { THIN_COVER, castRay, canSee, ONE_TAP, isWatery, USABLE } from './world.js';
 import { CONFIG } from '../config.js';
 import { wantScore, biomeName } from '../core/biomes.js';
 import { trace } from './bridge.js';
@@ -480,7 +480,7 @@ export class Skills {
       try {
         const ar = await this.a.plan(this.sim.location, pos, 0, 12000, goal, { actions: this.actionOpts({ force: false }), weight: 1.5 });
         this.check(gen);
-        if (!ar.complete) continue;
+        if (!ar.complete) { this.log(`walkTo ${cell.x} ${cell.y} ${cell.z}: no route${dear ? ' even breaking out' : ''} (${ar.expanded ?? '?'} searched, ${this.blockCount()} blocks to build with)`); continue; }
         // What the route will put down and break, read before and after (a step that did not happen is not counted).
         const puts = [], breaks = [];
         for (let i = 1; i < ar.path.length; i++) {
@@ -492,7 +492,9 @@ export class Skills {
         }
         const wasOpen = puts.map((c) => OPEN.test(this.blockAt(c) ?? 'air'));
         const wasSolid = breaks.map((c) => !OPEN.test(this.blockAt(c) ?? 'air'));
-        await this.followActionPath(gen, ar.path, { sweep: false });
+        const info = {};
+        const went = await this.followActionPath(gen, ar.path, { sweep: false, info });
+        if (!went) this.log(`walkTo ${cell.x} ${cell.y} ${cell.z}: route given up at step ${info.step} of ${info.of}: ${info.why} (feet ${info.feet} on ${info.on})`);
         puts.forEach((c, i) => { if (wasOpen[i] && !OPEN.test(this.blockAt(c) ?? 'air')) out.placed.push(c); });
         breaks.forEach((c, i) => { if (wasSolid[i] && OPEN.test(this.blockAt(c) ?? 'air')) out.broke.push(c); });
         // (Within a step of it on the same level: the last step.)
@@ -534,9 +536,11 @@ export class Skills {
       await this.useGap(gen, cal && attempt === 0 ? cal.gap : undefined);
       let ok = false;
       try {
-        if (cal?.method === 'interact' && attempt === 0) { this.sim.selectedSlotIndex = slot; ok = /** @type {any} */ (this.sim).interactWithBlock(neighbor, face); }
-        else if (cal?.method === 'useOnBlock' && attempt === 0) { this.sim.selectedSlotIndex = slot; ok = /** @type {any} */ (this.sim).useItemOnBlock(container(this.sim)?.getItem(slot), neighbor, face, faceLoc); }
-        else ok = attempt === 1 ? this.sim.useItemInSlotOnBlock(slot, neighbor, face) : this.sim.useItemInSlotOnBlock(slot, neighbor, face, faceLoc);
+        ok = this.useCrouched(neighbor, () => {
+          if (cal?.method === 'interact' && attempt === 0) { this.sim.selectedSlotIndex = slot; return /** @type {any} */ (this.sim).interactWithBlock(neighbor, face); }
+          if (cal?.method === 'useOnBlock' && attempt === 0) { this.sim.selectedSlotIndex = slot; return /** @type {any} */ (this.sim).useItemOnBlock(container(this.sim)?.getItem(slot), neighbor, face, faceLoc); }
+          return attempt === 1 ? this.sim.useItemInSlotOnBlock(slot, neighbor, face) : this.sim.useItemInSlotOnBlock(slot, neighbor, face, faceLoc);
+        });
       } catch {}
       this.lastUseTick = system.currentTick;
       for (let k = 0; k < 2; k++) {
@@ -744,6 +748,20 @@ export class Skills {
   }
 
   /** Jump and put a block under our feet: one level up, right here. */
+  /**
+   * Clicking a block with something in hand to put it down: if that block does something when used (a chest, a hopper, a door, a gate, a bed, a
+   * composter, a furnace...), a player crouches first, or the click opens it instead (u218: the iron farm build pillared off its own chest and went
+   * nowhere, ten times). Runs `use` crouched when it is one of those, and stands up again (unless it was crouching already).
+   * @template T @param {{x:number,y:number,z:number}} block @param {() => T} use @returns {T}
+   */
+  useCrouched(block, use) {
+    const id = this.blockAt(block) ?? '';
+    if (!USABLE.test(id)) return use();
+    let was = false;
+    try { was = this.sim.isSneaking; this.sim.isSneaking = true; } catch { /* */ }
+    try { return use(); } finally { if (!was) { try { this.sim.isSneaking = false; } catch { /* */ } } }
+  }
+
   async stepUp(gen) {
     // Landed first: asked again straight after a placement it was still in the air above the new block, the jump was ignored, nothing
     // went down in the 12 ticks and it returned failed (a pillar race: 1.3 s a block against a player's 0.5).
@@ -758,7 +776,7 @@ export class Skills {
       await this.wait(gen, 1);
       if (this.sim.location.y >= f.y + 1.05) {
         try { this.sim.lookAtBlock({ x: f.x, y: f.y - 1, z: f.z }); } catch {}
-        try { this.sim.useItemInSlotOnBlock(slot, { x: f.x, y: f.y - 1, z: f.z }, Direction.Up); } catch {}
+        try { const under = { x: f.x, y: f.y - 1, z: f.z }; this.useCrouched(under, () => this.sim.useItemInSlotOnBlock(slot, under, Direction.Up)); } catch {}
         placed = !OPEN.test(this.blockAt(f) ?? 'air');
       }
     }
@@ -804,8 +822,10 @@ export class Skills {
   }
 
   /** Follow a path from an actions search: walk the plain parts, dig and pillar where it says. */
-  async followActionPath(gen, path, { sweep = true } = {}) {
+  async followActionPath(gen, path, { sweep = true, info = null } = {}) {
     const cls = this.a.classifier();
+    // (u218: `info` says where and why a route was given up, for the log.)
+    const fail = (why) => { if (info) { const f = this.feet(); Object.assign(info, { step: i, of: path.length - 1, why, feet: `${f.x} ${f.y} ${f.z}`, on: this.blockAt({ x: f.x, y: f.y - 1, z: f.z }) ?? '?' }); } return false; };
     let i = 1;
     while (i < path.length) {
       this.check(gen);
@@ -815,7 +835,7 @@ export class Skills {
         while (j < path.length && isWalkMove(path[j])) j++;
         const r = await this.a.motor.followPath(smoothPath(cls, path.slice(i - 1, j)));
         this.check(gen);
-        if (r.status !== 'arrived') return false;
+        if (r.status !== 'arrived') return fail(`walk ${r.status}`);
         i = j;
         continue;
       }
@@ -823,14 +843,14 @@ export class Skills {
       for (const [x, y, z] of m.breaks) {
         const c = { x, y, z };
         for (let k = 0; k < 6 && !OPEN.test(this.blockAt(c) ?? 'air'); k++) { // sand/gravel can keep dropping in
-          if (!(await this.mine(gen, c, { collect: false, allowBelow: m.type === 'digDown' }))) return false;
+          if (!(await this.mine(gen, c, { collect: false, allowBelow: m.type === 'digDown' }))) return fail(`could not break ${this.blockAt(c)} at ${x} ${y} ${z}`);
           if (FALLING.test(this.blockAt({ x, y: y + 1, z }) ?? '')) await this.wait(gen, 10);
         }
       }
       if (m.type === 'pillar') {
-        if (!(await this.stepUp(gen))) return false;
+        if (!(await this.stepUp(gen))) return fail(`pillar failed (${this.placeableSlot() < 0 ? 'nothing to place' : 'the block did not go under it'})`);
       } else if (m.type === 'bridge') {
-        if (!(await this.bridgeTo(gen, path[i - 1], n))) return false;
+        if (!(await this.bridgeTo(gen, path[i - 1], n))) return fail('bridge failed');
       } else if (m.type === 'digDown') {
         for (let t = 0; t < 20 && this.feet().y > n.y; t++) await this.wait(gen, 1);
       } else {
@@ -839,7 +859,7 @@ export class Skills {
         this.check(gen);
       }
       const f = this.feet();
-      if (Math.abs(f.x - n.x) > 1 || Math.abs(f.z - n.z) > 1 || Math.abs(f.y - n.y) > 1) return false; // knocked off course: replan
+      if (Math.abs(f.x - n.x) > 1 || Math.abs(f.z - n.z) > 1 || Math.abs(f.y - n.y) > 1) return fail(`${m.type}: off course (wanted ${n.x} ${n.y} ${n.z})`); // knocked off course: replan
       i++;
     }
     if (sweep) await this.sweep(gen, this.sim.location, 4, null, 3); // what we dug up on the way
@@ -4597,7 +4617,7 @@ export class Skills {
         await this.wait(gen, 1);
         if (this.sim.location.y >= f.y + 1.05) {
           try { this.sim.lookAtBlock({ x: f.x, y: f.y - 1, z: f.z }); } catch {}
-          try { this.sim.useItemInSlotOnBlock(slot, { x: f.x, y: f.y - 1, z: f.z }, Direction.Up); } catch {}
+          try { const under = { x: f.x, y: f.y - 1, z: f.z }; this.useCrouched(under, () => this.sim.useItemInSlotOnBlock(slot, under, Direction.Up)); } catch {}
           placed = (this.blockAt(f) ?? 'air') !== 'air';
         }
       }

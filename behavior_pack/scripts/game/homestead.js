@@ -12,7 +12,7 @@ import { cheapestPlaceable, plankReserve, canBreak } from '../core/costs.js';
 import { siteWork, siteScore } from '../core/site.js';
 import { depositPlan, takePlan, sortIntoChests } from '../core/storage.js';
 import { invCounts, hold, take, give, container as packOf } from './inventory.js';
-import { canSee, ONE_TAP, castRay } from './world.js';
+import { canSee, ONE_TAP, castRay, USABLE } from './world.js';
 import { barricadeCells } from '../core/tactics.js';
 import { Cell } from '../core/pathfinder.js';
 import { trace } from './bridge.js';
@@ -715,14 +715,17 @@ export class Homestead {
     const on = await this.aimFace(gen, cell, itemId, { below, aimTicks, snap });
     if (!on) return { ok: false, extra: 0 };
     const before = invCounts(this.sim)[itemId] ?? 0;
+    const crouch = USABLE.test(S.blockAt(on.n) ?? '') && !this.sim.isSneaking;
     let ok = false;
     try {
+      // (Crouched, the button held, if the face is on a chest, a hopper, a composter...: a click there opens it.)
+      if (crouch) this.sim.isSneaking = true;
       /** @type {any} */ (this.sim).startBuild(on.slot);
       for (let k = 0; k < maxTicks; k++) {
         await S.wait(gen, 1);
         if (!SOFT.test(S.blockAt(cell) ?? 'air')) { ok = true; break; }
       }
-    } finally { try { /** @type {any} */ (this.sim).stopBuild(); } catch { /* */ } }
+    } finally { try { /** @type {any} */ (this.sim).stopBuild(); } catch { /* */ } try { if (crouch) this.sim.isSneaking = false; } catch { /* */ } }
     const used = before - (invCounts(this.sim)[itemId] ?? 0);
     if (!ok) this.placeWhy = 'the held button put nothing there';
     return { ok, extra: Math.max(0, used - (ok ? 1 : 0)) };

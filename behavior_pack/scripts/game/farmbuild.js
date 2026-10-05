@@ -31,7 +31,7 @@ const PAD_TORCHES = (() => {
   for (const x of [-9, -1, 8, 17, 25]) for (const z of [-9, -1, 8, 17, 25]) if (!(x >= -2 && x <= 17 && z >= -2 && z <= 17)) out.push({ x, z });
   return out;
 })();
-const MAX_TICKS = 75 * 60 * 20;   // seventy-five minutes of building by hand (walking and climbing included), then the rest by command
+const MAX_TICKS = 3 * 60 * 60 * 20;   // three hours of building by hand (walking and climbing included), then the rest by command (u218: was 75 minutes)
 const SCAFFOLD_SPARE = 48;        // shell blocks over a layer's count: what it pillars and bridges with
 /**
  * How the bot's hand puts a block down (u216). The game gives a simulated player one item use every 10 ticks (measured: 9 refused), a block every
@@ -406,6 +406,14 @@ async function start(agent, player, args) {
       }
       if (y === 'slabs') {
         J.phase = 'lava, water, the rest';
+        // The door last of all (u218): until now the doorway was the room's way out (the bot could be shut in there, and the pathfinder does not
+        // open doors). Off the doorway first.
+        if (!door) {
+          const dl = plan.ops.find((q) => q.tag === 'door' && !q.states.upper_block_bit), du = plan.ops.find((q) => q.tag === 'door' && q.states.upper_block_bit);
+          const at = hands.where();
+          if (at && dl && at.x === dl.x && at.z === dl.z && Math.abs(at.y - dl.y) <= 1) await hands.stand({ x: dl.x + 2, y: BASE_Y, z: dl.z });
+          door = await placeDoor(dim, off, dl, du, notes);
+        }
         const lava = rest.find((o) => o.tag === 'lava');
         if (lava) {
           if (!signs?.lavaOk) notes.push('The lava was NOT placed: the signs that hold it would not stay on their wall (see above).');
@@ -419,7 +427,6 @@ async function start(agent, player, args) {
         const why = run(dim, cmd);
         if (why) fails.push(`${o.note || o.id}: ${why} (${cmd})`);
       }
-      if (y === DOOR.y + 1 && !door) door = await placeDoor(dim, off, plan.ops.find((q) => q.tag === 'door' && !q.states.upper_block_bit), plan.ops.find((q) => q.tag === 'door' && q.states.upper_block_bit), notes);
       if (y === FLOOR_Y && !signs) signs = await placeSigns(dim, off, notes);
       if (y === GATES[0].y && !gates) gates = await placeGates(dim, off, notes);
       J.phase = `layer ${y} done`;

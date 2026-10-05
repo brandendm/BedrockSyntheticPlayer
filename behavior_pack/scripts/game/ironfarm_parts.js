@@ -33,7 +33,7 @@ export async function findSlab(dim, a, b, notes) {
 /**
  * The wall signs: the four that cap the hole in the platform's floor and the three that hold the lava. Each is placed facing the way the plan says,
  * given a block update from a neighbour (a sign with nothing to hang on stays until it gets one), and read back; if it is gone the other way round
- * is tried, then the next spelling of the name. Returns { ok, holeOk, lavaOk, id }.
+ * is tried, then the next spelling of the name. Returns { ok, lavaOk, id } (u218: the lava's three are the only signs).
  */
 export async function placeSigns(dim, off, notes) {
   let id = null, flip = false, first = true;
@@ -58,9 +58,9 @@ export async function placeSigns(dim, off, notes) {
     if (!ok) notes.push(`The sign at ${s.x},${s.y},${s.z} (plan coordinates; ${s.group}) would not stay on its wall.`);
   }
   const group = (g) => SIGNS.filter((s) => s.group === g).every((s) => done.get(s));
-  const holeOk = group('hole'), lavaOk = group('lava');
-  if (flip && holeOk && lavaOk) notes.push('(The signs hold the other way round to the plan: facing_direction names the side the sign hangs on here.)');
-  return { ok: holeOk && lavaOk, holeOk, lavaOk, id };
+  const lavaOk = group('lava');
+  if (flip && lavaOk) notes.push('(The signs hold the other way round to the plan: facing_direction names the side the sign hangs on here.)');
+  return { ok: lavaOk, lavaOk, id };
 }
 
 /**
@@ -256,7 +256,7 @@ export async function ensureWater(dim, off, plan) {
   const down = shaftWater(dim, off);
   const ok = s.have >= s.want && !s.pooled;
   const pool = s.pooled ? ` THE WATER IS POOLING: ${s.sources} source blocks, ${s.planned} planned, so ${s.sources - s.planned} cells turned into sources (the game makes a flowing cell that touches two sources a source) and the water lies still there.` : '';
-  const note = `Water: ${ok ? 'flowing over the whole platform' : 'NOT right'} (${s.have} of ${s.want} cells wet, ${s.sources} sources of ${s.planned} planned, ${s.holeWet ? `${s.holeWet} of the 4 cells over the hole wet: THE GATES DO NOT KEEP THE WATER OUT` : 'the hole itself dry, kept so by the gates'}). ${tried.join('; ')}.${pool}${ok && hand ? ' It would not spread by itself, so the flowing water is placed cell by cell: if it dries up, the game does not treat command-placed water as water that flows.' : ''}${ok && !hand && tried.length > 1 ? ' (It needed the nudge: the first placement alone did not spread.)' : ''}${down ? ` WATER GOT INTO THE SHAFT (${down} cells): the signs over the hole did not stop it, and it will put the campfire out and meet the lava.` : ''}`;
+  const note = `Water: ${ok ? 'flowing over the whole platform' : 'NOT right'} (${s.have} of ${s.want} cells wet, ${s.sources} sources of ${s.planned} planned, ${s.holeWet ? `${s.holeWet} of the 4 cells over the hole wet: THE GATES DO NOT KEEP THE WATER OUT` : 'the hole itself dry, kept so by the gates'}). ${tried.join('; ')}.${pool}${ok && hand ? ' It would not spread by itself, so the flowing water is placed cell by cell: if it dries up, the game does not treat command-placed water as water that flows.' : ''}${ok && !hand && tried.length > 1 ? ' (It needed the nudge: the first placement alone did not spread.)' : ''}${down ? ` WATER GOT INTO THE SHAFT (${down} cells): the gates over the hole did not stop it, and it will put the campfire out and meet the lava.` : ''}`;
   return { ok, note, state: s, shaftWet: down };
 }
 

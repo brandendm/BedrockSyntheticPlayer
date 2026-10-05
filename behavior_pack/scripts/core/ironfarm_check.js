@@ -104,10 +104,8 @@ export function checkPlan(plan, { deep = true } = {}) {
     }
     if (!isHole(x, z) && !solid(id(x, FLOOR_Y, z))) bad.push(`the platform floor has a gap at ${x},${z}`);
   }
-  for (const s of SIGNS.filter((q) => q.group === 'hole')) {
-    const n = g.at(s.x, s.y, s.z);
-    if (n?.id !== 'wall_sign') bad.push(`no sign over the shaft at ${s.x},${s.z}: the water would run down it`);
-  }
+  // The hole itself is open (u218: no signs in it; the gates over it keep the water out).
+  for (let x = HOLE.x1; x <= HOLE.x2; x++) for (let z = HOLE.z1; z <= HOLE.z2; z++) if (id(x, FLOOR_Y, z) !== 'air') bad.push(`the hole is not open at ${x},${z} (${id(x, FLOOR_Y, z)})`);
   // The gates: one open fence gate over each cell of the hole, at the water layer. Open: a golem walks through; water does not go in, so every
   // current on the platform ends at the hole instead of meeting over it.
   if (GATES.length !== 4) bad.push(`${GATES.length} gates listed, 4 wanted`);
@@ -260,11 +258,12 @@ export function checkPlan(plan, { deep = true } = {}) {
     if (id(x, y, z) !== 'air' && !(listed && id(x, y, z) === 'wall_sign')) bad.push(`the shaft is not clear at ${x},${y},${z} (${id(x, y, z)})`);
   }
 
-  // The collection: a hopper under each campfire (the drops reach the others by the water: the item sim above), every hopper leading on to a chest, no
+  // The collection: a hopper under each campfire and one in front of the first (the drops reach the others by the water: the item sim above), every hopper leading on to a chest, no
   // other hopper, the chests side by side and facing the same way, with room over them to open, in reach of the viewer.
   const hopperCells = [...g.cells].filter(([, v]) => v.id === 'hopper').length;
   if (hopperCells !== HOPPERS.length) bad.push(`${hopperCells} hoppers in the plan, ${HOPPERS.length} listed`);
-  if (HOPPERS.length !== 2) bad.push(`${HOPPERS.length} hoppers listed, 2 wanted (one under each campfire)`);
+  if (HOPPERS.length !== 3) bad.push(`${HOPPERS.length} hoppers listed, 3 wanted (one under each campfire, one in front of the first)`);
+  if (id(CAMPFIRES[0].x - 1, CAMPFIRES[0].y - 1, CAMPFIRES[0].z) !== 'hopper') bad.push('no hopper in front of the first campfire, where the water ends');
   const FACE = { 2: [0, -1], 3: [0, 1], 4: [-1, 0], 5: [1, 0] };
   for (const h of HOPPERS) {
     const here = g.at(h.x, h.y, h.z);

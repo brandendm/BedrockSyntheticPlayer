@@ -8,7 +8,7 @@
 //   y 7        slabs on the tops of the platform's walls (golems do not spawn on slabs)
 //   y 4-6      the platform: 16 x 16, open to the sky, walls 3 high (a golem cannot climb out); water sources along the middle of each edge make
 //              the water run toward the middle; the four 2 x 2 corners are solid (see waterSources for why). In its middle, at y 4, the four gates
-//   y 3        the platform's floor (also the pod's roof); in its middle the 2 x 2 hole, each cell capped with a wall sign (signs stop water, not golems)
+//   y 3        the platform's floor (also the pod's roof); in its middle the 2 x 2 hole, open (u218: the player's call, the gates over it are enough)
 //   y 1-2      the pod (12 x 12 inside, 2 high): 20 beds in two rows, 10 composters in the walls, 10 villagers, torches; the shaft goes through it
 //   y -6..2    the shaft (2 x 2) and, at the bottom of it, the kill hallway (x 7-9, z 7-8, y -6..-3): one water source; the two campfires in its east
 //              column (they stop the water, so it runs on to the north-east corner), the lava over the north-east one
@@ -68,6 +68,9 @@ export const GATE_ID = 'fence_gate';
  */
 export const HOPPERS = Object.freeze([
   { x: 9, y: -7, z: 7, facing: 5 }, { x: 9, y: -7, z: 8, facing: 2 },
+  // u218 (the player's): one in the floor in front of the first campfire, where the water ends: ingots that stick against the campfire there
+  // go in it and on east into the first.
+  { x: 8, y: -7, z: 7, facing: 5 },
 ]);
 /**
  * The two chests side by side that make the double chest, in the floor layer; both face the same way so they pair. u217 (the player's idea): the first
@@ -88,16 +91,12 @@ export const OUT_VIEW = Object.freeze({ x: 17.5, y: -7, z: 7.5 });  // on the gr
 export const SPAWN_COLUMNS = box(-3, 0, -3, 18, 0, 18);           // the ground within reach of the spawn volume, in x and z
 
 /**
- * The signs: where, which way each faces (2 north, 3 south, 4 west, 5 east; it hangs on the block behind it), and what for. 'hole' ones cap the hole
- * in the platform's floor (water cannot go through a sign, a golem can); 'lava' ones hold the lava (below it, south of it, west of it; north is the
+ * The signs: where, which way each faces (2 north, 3 south, 4 west, 5 east; it hangs on the block behind it), and what for. (u218: the four that
+ * capped the hole are gone, the player's call: the gates over it keep the water out.) 'lava' ones hold the lava (below it, south of it, west of it; north is the
  * wall, east the glass, above it the open hallway: a source does not run up). (u212 had two more on the hallway floor to keep the water off the
  * campfire; the player took them out in his redesign: the campfires themselves keep it off each other.)
  */
 export const SIGNS = Object.freeze([
-  { x: 7, y: 3, z: 7, facing: 5, group: 'hole', note: 'sign over the shaft (north-west cell of the hole), hung on the floor to its west' },
-  { x: 7, y: 3, z: 8, facing: 5, group: 'hole', note: 'sign over the shaft (south-west cell of the hole)' },
-  { x: 8, y: 3, z: 7, facing: 4, group: 'hole', note: 'sign over the shaft (north-east cell of the hole), hung on the floor to its east' },
-  { x: 8, y: 3, z: 8, facing: 4, group: 'hole', note: 'sign over the shaft (south-east cell of the hole)' },
   { x: LAVA.x, y: LAVA.y - 1, z: LAVA.z, facing: 3, group: 'lava', note: 'sign under the lava, hung on the north wall' },
   { x: LAVA.x, y: LAVA.y, z: LAVA.z + 1, facing: 2, group: 'lava', note: 'sign south of the lava, hung on the south wall' },
   { x: LAVA.x - 1, y: LAVA.y, z: LAVA.z, facing: 3, group: 'lava', note: 'sign west of the lava, hung on the north wall' },

@@ -189,3 +189,6 @@ export function canSee(dimension, eye, target) {
  * (Never saplings, torches, crops or berry bushes: ours, or not ours to mow down.)
  */
 export const ONE_TAP = /^(short_grass|tall_grass|fern|large_fern|dead_bush|deadbush|leaf_litter|wildflowers|pink_petals|tall_dry_grass|short_dry_grass|bush|firefly_bush|(?!chorus_)[a-z_]*_flower|dandelion|poppy|.*_tulip|azure_bluet|allium|blue_orchid|oxeye_daisy|cornflower|lily_of_the_valley|sunflower|lilac|rose_bush|peony)$/;
+
+/** Blocks that do something when clicked with an item in hand (a block goes against them only with a crouch). */
+export const USABLE = /(chest|hopper|barrel|furnace|smoker|crafting_table|door|trapdoor|fence_gate|bed$|composter|anvil|lever|button|dispenser|dropper|shulker_box|enchanting_table|brewing_stand|loom|grindstone|stonecutter|cartography_table|smithing_table|lectern|bell|cake|noteblock|jukebox|beacon|repeater|comparator|daylight_detector|crafter|campfire|cauldron|flower_pot|respawn_anchor|beehive|bee_nest|chiseled_bookshelf|decorated_pot|vault|^sign|_sign$|frame)/;

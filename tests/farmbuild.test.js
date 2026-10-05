@@ -11,19 +11,38 @@ const DIRS = [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1
  * eye is on the open side of, only from a spot that is solid underfoot with room to head height; and it takes an item from the pack to do it. Every time
  * the engine asks for something the rules forbid, it is written down in `log.violations`.
  */
-function fake(plan, { miss = 0, seed = 1, noStand = false, stopAfter = Infinity, world = new Map(), inv = {}, slip = 0, tidy = false } = {}) {
-  let bot = null, tick = 0, rnd = seed, placeCalls = 0;
+function fake(plan, { miss = 0, seed = 1, noStand = false, unreach = null, stopAfter = Infinity, world = new Map(), inv = {}, slip = 0, tidy = false } = {}) {
+  let bot = null, tick = 0, rnd = seed, placeCalls = 0, grid = null;
+  const scaffold = new Set();
+  const final = () => (grid ??= render(plan));
   const rand = () => { rnd = (rnd * 1664525 + 1013904223) % 4294967296; return rnd / 4294967296; };
-  const log = { violations: /** @type {string[]} */ ([]), said: /** @type {string[]} */ ([]), stands: 0, sets: 0, slips: /** @type {string[]} */ ([]), cleared: 0 };
+  const log = { violations: /** @type {string[]} */ ([]), said: /** @type {string[]} */ ([]), stands: 0, scaffold: 0, sets: 0, slips: /** @type {string[]} */ ([]), cleared: 0 };
   const idAt = (x, y, z) => (y <= BASE_Y - 1 ? 'stone' : (world.get(key(x, y, z)) ?? 'air'));
   const hands = {
     blockAt: (c) => idAt(c.x, c.y, c.z),
     where: () => bot,
     async stand(s) {
-      if (noStand) return false;
+      if (noStand || (unreach && unreach(s, log.stands))) { tick += 20; return false; }
+      // (On air, as the game's walkTo does: a pillar under it from what is below, or a bridge block from a solid side; scaffolding, tidied later.)
+      if (idAt(s.x, s.y - 1, s.z) === 'air') {
+        let h = 1;
+        while (h <= 5 && idAt(s.x, s.y - 1 - h, s.z) === 'air') h++;
+        const side = DIRS.some(([a, b, d]) => b === 0 && !FREE.has(idAt(s.x + a, s.y - 1, s.z + d)));
+        if (side) h = 1;
+        if (h > 5) { log.violations.push(`no way onto ${key(s.x, s.y, s.z)}`); return false; }
+        for (let i = 1; i <= h; i++) { const k = key(s.x, s.y - i, s.z); world.set(k, plan.shell ?? 'dirt'); scaffold.add(k); log.scaffold++; }
+      }
       if (!STAND_ON.has(idAt(s.x, s.y - 1, s.z)) || !FREE.has(idAt(s.x, s.y, s.z)) || !FREE.has(idAt(s.x, s.y + 1, s.z))) { log.violations.push(`stand at ${key(s.x, s.y, s.z)} on ${idAt(s.x, s.y - 1, s.z)}`); return false; }
       bot = { ...s }; tick += 4; log.stands++;
       return true;
+    },
+    async tidy() {
+      const g = final();
+      for (const k of [...scaffold]) {
+        scaffold.delete(k);
+        const want = g.cells.get(k)?.id;
+        if (want !== world.get(k)) world.delete(k);
+      }
     },
     async place(c, id) {
       tick += 14;
@@ -89,7 +108,7 @@ test('the plan splits into what the bot places (the shell, glass, composters, sl
   for (const o of plan.ops.filter((q) => q.tag === 'water')) for (const k of render({ ops: [o] }).cells.keys()) covered.add(k);
   const missing = [...final.cells.keys()].filter((k) => !covered.has(k));
   assert.deepEqual(missing, [], 'cells of the plan that are neither the bot\'s, nor a command\'s, nor water');
-  assert.equal(plan.ops.filter((o) => o.id === 'wall_sign').length, 7);
+  assert.equal(plan.ops.filter((o) => o.id === 'wall_sign').length, 3, 'the three that hold the lava (u218: none over the hole)');
 });
 
 test('reach and faces: the same rules the bot\'s placement uses (the eye 1.52 up, a face you are behind cannot be clicked)', () => {
@@ -119,20 +138,37 @@ test('with hands that work, the bot builds the whole shell itself under the rule
     assert.equal(stats.fallback, 0);
     assert.equal(stats.repaired, 0);
     assert.ok(stats.footing < 40, `${stats.footing} blocks set by command just to have something to stand on`);
-    assert.ok(stats.standMoves < 300, `${stats.standMoves} spots`);
-    assert.ok(stats.handById[shell] > 700 && stats.handById[SLAB] > 100 && stats.handById.glass === 6 && stats.handById.composter === 10, JSON.stringify(stats.handById));
+    assert.ok(stats.standMoves < 400, `${stats.standMoves} spots`);
+    assert.ok(stats.command <= stats.footing, `${stats.command} by command, ${stats.footing} of them footings`);
+    assert.ok(stats.handById[shell] > 700 && stats.handById[SLAB] > 100 && stats.handById.glass === 5 && stats.handById.composter === 10, JSON.stringify(stats.handById));
   }
 });
 
-test('misses: a block that will not go down is set by command, counted, and the farm is the same', async () => {
+test('misses (u218): a block that will not go down is tried again, not handed to a command; the farm is the same', async () => {
   const plan = ironFarmPlan();
   const f = fake(plan, { miss: 0.3, seed: 7 });
   const stats = await runBuild(plan, f.hands, { after: afterFor(plan, f.world) });
   assert.deepEqual(sameAsPlan(plan, f.world), []);
-  assert.ok(stats.fallback > 50, `${stats.fallback} fallbacks`);
+  assert.ok(stats.misses > 50, `${stats.misses} misses`);
+  assert.ok(stats.fallback <= 2, `${stats.fallback} fallbacks`);
   assert.equal(stats.gaveUp, '', 'a 70% hit rate is not a reason to give up');
-  assert.ok(stats.hand > stats.cells * 0.6);
+  assert.ok(stats.hand > stats.cells * 0.95, `${stats.hand} of ${stats.cells} by hand`);
   assert.equal(stats.hand + stats.command + stats.already, stats.cells);
+});
+
+test('spots it cannot get to (u218): it tries other spots and comes back; nothing is handed to a command for it', async () => {
+  const plan = ironFarmPlan();
+  // (one spot in three refuses it the first time it is asked for)
+  const asked = new Map();
+  const f = fake(plan, { unreach: (s) => { const k = key(s.x, s.y, s.z), n = (asked.get(k) ?? 0) + 1; asked.set(k, n); return n === 1 && (s.x * 7 + s.z * 3 + s.y) % 3 === 0; } });
+  const stats = await runBuild(plan, f.hands, { after: afterFor(plan, f.world) });
+  assert.deepEqual(f.log.violations, []);
+  assert.deepEqual(sameAsPlan(plan, f.world), []);
+  assert.ok(stats.standFails > 20, `${stats.standFails} spots refused`);
+  assert.equal(stats.gaveUp, '');
+  assert.equal(stats.fallback, 0);
+  assert.equal(stats.repaired, 0);
+  assert.ok(stats.command <= stats.footing, `${stats.command} by command`);
 });
 
 test('hands that never work: it says so after two dozen tries and sets the rest by command; the farm is the same', async () => {
@@ -143,7 +179,7 @@ test('hands that never work: it says so after two dozen tries and sets the rest 
   assert.match(stats.gaveUp, /only 0 of 24/);
   assert.equal(stats.attempts, 24);
   assert.equal(stats.hand, 0);
-  assert.ok(f.log.said.some((m) => /not working well enough/.test(m)));
+  assert.ok(f.log.said.some((m) => /not working at all/.test(m)));
 });
 
 test('a bot that cannot be put on its spots: given up after six, the farm is the same', async () => {

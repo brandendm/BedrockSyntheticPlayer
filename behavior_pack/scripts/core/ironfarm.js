@@ -96,8 +96,8 @@ export function ironFarmPlan({ shell = SHELL } = {}) {
   for (const c of CHESTS) set(c.x, c.y, c.z, 'chest', { 'minecraft:cardinal_direction': CHEST_FACING }, 'chest (two side by side make the double chest)', 'chest');
   set(STAIR.x, STAIR.y, STAIR.z, STAIR_ID, { ...STAIR_STATES }, 'upside-down stair over the first chest, in the window (the chest opens under it; the hallway stays closed off)', 'stair');
 
-  // The signs go in first (they only stay on their wall, and they close the shaft off from the sky, which matters to what counts as outside
-  // below), then the gates over the hole, the slabs, then the lava, the campfire and the water.
+  // The signs (the lava's three) and the gates over the hole go in before the slabs (the gates close the shaft off from the sky, which matters to
+  // what counts as outside below: u218, no signs in the hole), then the lava, the campfires and the water.
   for (const s of SIGNS) set(s.x, s.y, s.z, 'wall_sign', { facing_direction: s.facing }, s.note, 'sign');
   for (const q of GATES) set(q.x, q.y, q.z, GATE_ID, { direction: 0, open_bit: true, in_wall_bit: false }, 'open fence gate over the hole (water cannot go into it, a golem walks through)', 'gate');
 

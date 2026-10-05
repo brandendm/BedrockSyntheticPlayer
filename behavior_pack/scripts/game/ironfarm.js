@@ -178,15 +178,17 @@ async function build(p, force, shell) {
 export async function finishBuild({ p, dim, off, plan, found, fails, notes, slab, slabCells, signs, door, gates, lead = '', extra = '' }) {
   await wait(5);
   farm = { dim, off, plan, builtAt: system.currentTick, waterOn: true, lavaOn: !!signs?.lavaOk, gates, chamberNote: '', seen: new Map(), ironSeen: 0, watcher: -1, villagerNote: '', buildNote: '', waterNote: '', announced: new Set(), slab, slabCells, signId: signs?.id ?? null, ticks: 0, warned: new Set(), test: new Set(), auto: -1, foundation: found.cols, door, chestNote: '', scanNote: '' };
-  if (signs && !signs.holeOk) notes.push('The signs over the hole did not stay: water will run down the shaft. Not putting the water in.');
+  // (u218: no signs over the hole; the gates keep the water out of it, so the platform water goes in only when all four are there and open.)
+  const gatesOk = (gates?.there ?? 0) === GATES.length;   // (shut, they still keep the water out; only the golems are held up)
+  if (!gatesOk) notes.push('The gates over the hole are not all there: water would run down the shaft. Not putting the platform water in.');
   const chests = await pairChests(dim, off);
   farm.chestNote = chests.note;
   // (The campfires are what keeps the hallway's water in its four cells, so it goes in only when both are there.)
   const campsIn = CAMPFIRES.every((c) => idAt(dim, W(off, c)) === 'campfire');
   const cw = campsIn ? await chamberWater(dim, off) : { ok: false, note: 'Hallway water: not placed (a campfire is missing: the water would run where they should stand).' };
   farm.chamberNote = cw.note;
-  const w = signs?.holeOk ? await ensureWater(dim, off, plan) : { ok: false, note: 'Water: not placed (the signs over the hole are missing).' };
-  farm.waterOn = !!signs?.holeOk;
+  const w = gatesOk ? await ensureWater(dim, off, plan) : { ok: false, note: 'Water: not placed (the gates over the hole are missing).' };
+  farm.waterOn = gatesOk;
   farm.waterNote = w.note;
   const checks = verify(dim, off, plan);
   const sc = scanReport(dim, off, plan);
@@ -296,7 +298,6 @@ async function water(arg) {
   say(w.note);
 }
 
-const holeSigns = () => SIGNS.filter((s) => s.group === 'hole');
 const lavaSigns = () => SIGNS.filter((s) => s.group === 'lava');
 const signGone = (s) => !idAt(farm.dim, W(farm.off, s)).endsWith('wall_sign');
 
@@ -359,15 +360,12 @@ function watch() {
   // The gates over the hole keep the platform water off it: gone or shut, the currents meet over the hole again and the golems go down slowly.
   if (farm.ticks % 5 === 0 && !farm.warned.has('gates')) {
     const bad = GATES.filter((q) => { const t = idAt(dim, W(off, q)); return !t.endsWith('fence_gate') || stateAt(dim, W(off, q), 'open_bit') === false; });
-    if (bad.length) { farm.warned.add('gates'); say(`${bad.length} of the ${GATES.length} gates over the hole is gone or shut (${bad.map((q) => `${q.x},${q.z}`).join(' ')}): golems will be held up there.`); }
-  }
-  // The signs over the hole keep the water out of the shaft: if one goes, the water would run down the shaft and put out the campfire.
-  if (farm.waterOn && farm.ticks % 2 === 0 && !farm.warned.has('holesign')) {
-    const gone = holeSigns().filter(signGone);
-    if (gone.length) {
-      farm.warned.add('holesign');
-      say(`${gone.length} of the ${holeSigns().length} signs over the hole is gone (${gone.map((s) => `${s.x},${s.y},${s.z}`).join(' ')}). Water would run down the shaft onto the lava and the campfires. Taking the water off: "!bot ironfarm water off" did it; put the sign back and "water on".`);
-      void water('off');
+    if (bad.length) {
+      farm.warned.add('gates');
+      // (u218: with no signs in the hole, a gate gone lets the water down the shaft onto the lava and the campfires: the water comes off.)
+      const gone = bad.filter((q) => !idAt(dim, W(off, q)).endsWith('fence_gate'));
+      say(`${bad.length} of the ${GATES.length} gates over the hole is gone or shut (${bad.map((q) => `${q.x},${q.z}`).join(' ')}): golems will be held up there.${gone.length && farm.waterOn ? ' One is gone, so the water would run down the shaft: taking the water off ("!bot ironfarm water on" once it is back).' : ''}`);
+      if (gone.length && farm.waterOn) void water('off');
     }
   }
   if (farm.waterOn && farm.ticks % 5 === 0 && !farm.warned.has('dry')) {
@@ -377,7 +375,7 @@ function watch() {
   }
   if (farm.waterOn && farm.ticks % 5 === 0 && !farm.warned.has('shaft')) {
     const n = shaftWater(dim, off);
-    if (n) { farm.warned.add('shaft'); say(`Water in the shaft: ${n} wet cells below the platform floor. The signs over the hole did not hold it; the campfires will be out. "!bot ironfarm status" for the rest.`); }
+    if (n) { farm.warned.add('shaft'); say(`Water in the shaft: ${n} wet cells below the platform floor. The gates over the hole did not hold it; the campfires will be out. "!bot ironfarm status" for the rest.`); }
   }
   const golems = entities(dim, off, plan, 'minecraft:iron_golem');
   const now = new Set();

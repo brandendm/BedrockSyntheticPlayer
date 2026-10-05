@@ -95,11 +95,10 @@ t('a game that names the sign side the other way round: the signs are turned, st
   ok(SIGNS.every((s) => at(o, s.x, s.y, s.z).states.facing_direction === OPPOSITE[s.facing]), 'not turned');
 });
 
-t('signs that will not be placed (no spelling accepted): no water is put in, and it says so', async () => {
+t('signs that will not be placed (no spelling accepted): no lava, and it says so; the water still goes in (u218: the gates, not signs, keep it out of the hole)', async () => {
   const o = await built({ noSignName: ['wall_sign', 'oak_wall_sign', 'spruce_wall_sign'] });
   ok(o, 'it did not build');
-  ok(chat().some((l) => /signs over the hole did not stay/i.test(l)), 'no word about the water');
-  ok(wetCells(o) === 0, 'water was put in with nothing to stop it going down the shaft');
+  ok(wetCells(o) >= 236, `${wetCells(o)} wet cells: the platform water was held back`);
   ok(![...G.grid.values()].some((c) => c.id === 'lava'), 'lava was put in with nothing to hold it');
   ok(hallWet(o) === 4, `${hallWet(o)} hallway cells wet: the campfires, not signs, hold the hallway water, so it goes in`);
   ok(chat().some((l) => /lava was NOT placed/i.test(l)) && !chat().some((l) => /Hallway water: not placed/.test(l)), `no word about the lava, or the hallway water was held back: ${chat().filter((l) => /lava|Hallway/i.test(l))}`);
@@ -260,14 +259,14 @@ t('the model of the game\'s water rule has teeth: u209\'s corner (two edge sourc
   ok(chat().some((l) => /POOLING/.test(l)), 'the status does not say pooling');
 });
 
-t('fence gates the game does not know: the farm is built without them, says the golems will be held up at the hole, and does not stop', async () => {
+t('fence gates the game does not know: the farm is built without them and without the platform water (u218: nothing else keeps it out of the hole), says so, and does not stop', async () => {
   const o = await built({ noGateName: ['fence_gate', 'oak_fence_gate'] });
   ok(o, 'it did not build');
   ok(GATES.every((q) => !/gate/.test(at(o, q.x, q.y, q.z)?.id ?? '')), 'a gate is there');
-  ok(GATES.every((q) => /water/.test(at(o, q.x, q.y, q.z)?.id ?? '')), 'without the gates the water should run over the hole in the model');
-  ok(chat().some((l) => /4 of the 4 cells over the hole wet: THE GATES DO NOT KEEP THE WATER OUT/.test(l)), `no word about the wet hole: ${chat().filter((l) => /Water:/.test(l))}`);
+  ok(wetCells(o) === 0, `${wetCells(o)} wet cells: the water went in with nothing over the hole`);
+  ok(chat().some((l) => /gates over the hole are not all there/.test(l)), `no word about the water: ${chat().filter((l) => /Water|gates/.test(l))}`);
   ok(chat().some((l) => /Only 0 of 4 gates over the hole are in and open/.test(l)), `no word about the gates: ${chat().filter((l) => /gate/i.test(l))}`);
-  ok(wetCells(o) >= 236 && hallWet(o) === 4, 'the rest did not get built');
+  ok(hallWet(o) === 4, 'the hallway did not get built');
 });
 
 t('a game with no "direction" state on fence gates: the next way of saying "open" is found, and all four gates are in and open', async () => {

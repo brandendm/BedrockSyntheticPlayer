@@ -59,12 +59,12 @@ test('the shopping list is something a survival player can meet: counted from th
   const m = materials(ironFarmPlan());
   assert.equal(m.counts.bed, 20);
   assert.equal(m.counts.composter, 10);
-  assert.equal(m.counts.hopper, 2);
+  assert.equal(m.counts.hopper, 3);
   assert.equal(m.counts.stone_stairs, 1);
   assert.equal(m.counts.chest, 2);
   assert.equal(m.counts.campfire, 2);
   assert.equal(m.counts.wooden_door, 1);
-  assert.equal(m.counts.wall_sign, 7);
+  assert.equal(m.counts.wall_sign, 3);
   assert.equal(m.counts.fence_gate, 4);
   assert.equal(m.counts.lava, 1);
   assert.equal(m.counts.water, waterSources().length + 1);
@@ -73,10 +73,10 @@ test('the shopping list is something a survival player can meet: counted from th
   assert.match(m.text, /a lava bucket \(one source\) and a water bucket \(48 water sources/);
   assert.match(m.text, /double chest/);
   assert.match(m.text, /2 campfires/);
-  assert.match(m.text, /2 hoppers \(5 iron each = 10 iron\)/);
+  assert.match(m.text, /3 hoppers \(5 iron each = 15 iron\)/);
   assert.match(m.text, /1 cobblestone stair, upside down over the chest/);
   assert.match(m.text, /4 fence gates/);
-  assert.match(m.text, /7 signs/);
+  assert.match(m.text, /3 signs/);
 });
 
 test('the village: 20 whole beds in two rows, 10 composters, 10 villagers with room, all able to walk to a bed and a workstation', () => {
@@ -199,18 +199,12 @@ test('the pod, the room and the shaft are sealed (a hole in a wall is caught); t
   for (const [x, z] of CORNERS) for (let y = 4; y <= 6; y++) assert.equal(g.id(x, y, z), SHELL, `corner ${x},${z}`);
 });
 
-test('the hole in the floor is 2 x 2 over the shaft, capped by four wall signs hanging on the floor beside it (water cannot go through a sign)', () => {
+test('the hole in the floor is 2 x 2 over the shaft and open (u218, the player\'s call: no signs in it, the gates over it are enough)', () => {
   const p = ironFarmPlan();
   const g = render(p);
-  const hole = SIGNS.filter((s) => s.group === 'hole');
-  assert.equal(hole.length, 4);
-  for (const s of hole) {
-    assert.equal(g.id(s.x, s.y, s.z), 'wall_sign');
-    assert.ok(s.x >= HOLE.x1 && s.x <= HOLE.x2 && s.z >= HOLE.z1 && s.z <= HOLE.z2 && s.y === FLOOR_Y);
-    const off = signSupport(s.facing);
-    assert.equal(g.id(s.x + off[0], s.y, s.z + off[1]), SHELL, `behind the sign at ${s.x},${s.z}`);
-  }
-  caught(without(ironFarmPlan(), (o) => o.id === 'wall_sign' && o.y === FLOOR_Y && o.x === 7 && o.z === 7), /no sign over the shaft|the shell has a hole/);
+  assert.equal(SIGNS.filter((s) => s.group === 'hole').length, 0);
+  for (let x = HOLE.x1; x <= HOLE.x2; x++) for (let z = HOLE.z1; z <= HOLE.z2; z++) assert.equal(g.id(x, FLOOR_Y, z), 'air', `the hole at ${x},${z}`);
+  caught(put(ironFarmPlan(), 7, FLOOR_Y, 7, 'wall_sign'), /the hole is not open at 7,7/);
 });
 
 test('water: sources on the middle of each edge give level = distance from the edge, the gates keep it out of the hole so the rim is level 6, the game turns none of the flowing cells into sources, and a golem (a 1.4-wide box) is carried into the hole from anywhere', () => {
@@ -267,7 +261,7 @@ test('the gates: an open fence gate over each cell of the hole, at the water lay
     assert.equal(q.y, WATER_Y);
     assert.equal(g.id(q.x, q.y, q.z), GATE_ID);
     assert.equal(g.at(q.x, q.y, q.z).states.open_bit, true);
-    assert.equal(g.id(q.x, q.y - 1, q.z), 'wall_sign', 'the sign stays under the gate');
+    assert.equal(g.id(q.x, q.y - 1, q.z), 'air', 'the hole is open under the gate');
   }
   assert.equal(p.ops.filter((o) => o.tag === 'gate').length, 4);
   const noGates = without(ironFarmPlan(), (o) => o.tag === 'gate');
@@ -349,7 +343,7 @@ test('the lava: one source over the first campfire at the golem\'s head height, 
   assert.equal(LAVA.y - CHAMBER_FLOOR_Y, 2, 'two up from the floor: the head of something 2.9 tall');
   assert.deepEqual([LAVA.x, LAVA.z], [CAMPFIRES[0].x, CAMPFIRES[0].z]);
   assert.ok(ALLOWED.includes('lava'));
-  assert.deepEqual(SIGNS.map((s) => s.group).sort(), ['hole', 'hole', 'hole', 'hole', 'lava', 'lava', 'lava']);
+  assert.deepEqual(SIGNS.map((s) => s.group).sort(), ['lava', 'lava', 'lava']);
   const around = [[1, 0, 0, 'glass'], [0, 0, -1, SHELL], [0, 0, 1, 'wall_sign'], [-1, 0, 0, 'wall_sign'], [0, -1, 0, 'wall_sign']];
   for (const [dx, dy, dz, want] of around) assert.equal(g.id(LAVA.x + dx, LAVA.y + dy, LAVA.z + dz), want, `${dx},${dy},${dz} from the lava`);
   for (const s of SIGNS) { const off = signSupport(s.facing); assert.equal(g.id(s.x + off[0], s.y, s.z + off[1]) !== 'air', true, `behind ${s.group} sign ${s.x},${s.y},${s.z}`); }
@@ -374,7 +368,7 @@ test('the order of building: signs, then gates and slabs, then lava, campfire an
   const at = (tag) => p.ops.findIndex((o) => o.tag === tag);
   assert.ok(at('sign') >= 0 && at('sign') < at('gate') && at('gate') < at('slab') && at('lava') > at('slab') && at('campfire') > at('slab'));
   assert.ok(at('cwater') > at('campfire') && at('water') > at('cwater'));
-  assert.equal(p.ops.filter((o) => o.tag === 'sign').length, 7);
+  assert.equal(p.ops.filter((o) => o.tag === 'sign').length, 3);
   assert.equal(p.ops.filter((o) => o.tag === 'lava').length, 1);
   assert.equal(p.ops.filter((o) => o.tag === 'gate').length, 4);
   assert.equal(p.ops.filter((o) => o.tag === 'water').length, 4);
@@ -481,20 +475,21 @@ test('campfires: TWO, lit, side by side in the hallway\'s east column (the first
   assert.ok(lit.get('9,-5,7') === 14 && (lit.get('11,-6,7') ?? 0) > 8);
 });
 
-test('two hoppers (u217, the player\'s idea): one under each campfire, the south one feeding the north one, which feeds the double chest straight east; an upside-down stair over the first chest; side by side, the same way round, room to open, in reach', () => {
+test('three hoppers (u217/u218, the player\'s ideas): one under each campfire, the south one feeding the north one, which feeds the double chest straight east, and one in front of the first campfire where the water ends feeding it; an upside-down stair over the first chest; side by side, the same way round, room to open, in reach', () => {
   const p = ironFarmPlan();
   const g = render(p);
-  assert.equal(HOPPERS.length, 2);
-  assert.equal([...g.cells.values()].filter((v) => v.id === 'hopper').length, 2);
+  assert.equal(HOPPERS.length, 3);
+  assert.equal([...g.cells.values()].filter((v) => v.id === 'hopper').length, 3);
   for (const h of HOPPERS) assert.equal(g.at(h.x, h.y, h.z).states.facing_direction, h.facing);
   for (const c of CAMPFIRES) assert.equal(g.id(c.x, -7, c.z), 'hopper', `under the campfire at ${c.x},${c.z}`);
-  assert.deepEqual(HOPPERS.map((h) => `${h.x},${h.z},${h.facing}`), ['9,7,5', '9,8,2']);
+  assert.deepEqual(HOPPERS.map((h) => `${h.x},${h.z},${h.facing}`), ['9,7,5', '9,8,2', '8,7,5']);
+  assert.equal(g.id(8, -7, 7), 'hopper', 'in front of the first campfire, under the end of the current');
   assert.deepEqual(CHESTS.map((c) => `${c.x},${c.y},${c.z}`), ['10,-7,7', '11,-7,7']);
   assert.equal(g.id(10, -6, 7), 'stone_stairs');
   assert.equal(g.at(10, -6, 7).states.upside_down_bit, true);
   assert.equal(g.id(12, -7, 7), SHELL);
-  // Under the four cells of the shaft's foot there is only floor: what lands there is carried to the campfires by the water.
-  for (const [x, z] of [[7, 7], [8, 7], [7, 8], [8, 8]]) assert.equal(g.id(x, -7, z), SHELL, `under ${x},${z}`);
+  // Under the other three cells of the shaft's foot there is only floor: what lands there is carried on by the water.
+  for (const [x, z] of [[7, 7], [7, 8], [8, 8]]) assert.equal(g.id(x, -7, z), SHELL, `under ${x},${z}`);
   assert.equal(CHESTS.length, 2);
   assert.equal(CHESTS[1].x, CHESTS[0].x + 1);
   const dirs = CHESTS.map((c) => g.at(c.x, c.y, c.z).states['minecraft:cardinal_direction']);
@@ -504,7 +499,8 @@ test('two hoppers (u217, the player\'s idea): one under each campfire, the south
   caught(put(ironFarmPlan(), 11, -6, 7, 'cobblestone'), /something is on top of the chest/);
   caught((() => { const q = ironFarmPlan(); q.ops.find((o) => o.id === 'stone_stairs').states = { weirdo_direction: 1, upside_down_bit: false }; return q; })(), /something is on top of the chest at 10,7/);
   caught(without(ironFarmPlan(), (o) => o.id === 'hopper' && o.x === 9 && o.z === 8), /hopper at 9,8|not over a hopper/);
-  caught(put(ironFarmPlan(), 8, -7, 7, 'hopper'), /3 hoppers in the plan, 2 listed/);
+  caught(put(ironFarmPlan(), 7, -7, 7, 'hopper'), /4 hoppers in the plan, 3 listed/);
+  caught(without(ironFarmPlan(), (o) => o.id === 'hopper' && o.x === 8 && o.z === 7), /in front of the first campfire|2 hoppers in the plan/);
 });
 
 test('a way in: a door in the room\'s outer wall (both halves), a step up to it, a window onto the hallway; without the door the check says so', () => {
