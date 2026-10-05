@@ -470,10 +470,25 @@ export class Skills {
     if (at()) { out.ok = true; return out; }
     const pos = { x: cell.x + 0.5, y: cell.y, z: cell.z + 0.5 };
     const goal = (x, y, z) => x === cell.x && y === cell.y && z === cell.z;
-    this.a.motor.setFocus(null);
     const res = await this.a.plan(this.sim.location, pos, 0, 6000, goal);
     this.check(gen);
-    if (res.complete && res.path.length >= 2) { await this.a.motor.followPath(smoothPath(this.a.classifier(), res.path)); this.check(gen); }
+    if (res.complete && res.path.length >= 2) {
+      // (u221 live: "a TON of spinning in place": every step to the next spot along a wall turned the head to where it walked and back to the
+      // wall. A short level step is a sidestep with the eyes kept on the work, as a player slides along a wall; anything else, a walk.)
+      const first = this.sim.location, last = res.path[res.path.length - 1];
+      const dx = last.x + 0.5 - first.x, dz = last.z + 0.5 - first.z, dd = Math.hypot(dx, dz);
+      const level = res.path.every((q) => q.y === last.y) && Math.abs(first.y - last.y) < 0.6;
+      const straight = level && res.path.every((q) => Math.abs((q.x + 0.5 - first.x) * dz - (q.z + 0.5 - first.z) * dx) / (dd || 1) < 0.45);
+      if (straight && dd > 0.2 && dd <= 4.5 && this.a.motor.focus) {
+        await this.a.motor.strafe({ x: dx / dd, z: dz / dd }, Math.ceil(dd / 0.2155) + 1, { reaction: 1 });
+        this.check(gen);
+        if (!at() && Math.hypot(this.sim.location.x - pos.x, this.sim.location.z - pos.z) > 0.3) await this.a.motor.followPath([{ x: this.sim.location.x, y: this.sim.location.y, z: this.sim.location.z }, pos]);
+      } else {
+        this.a.motor.setFocus(null);
+        await this.a.motor.followPath(smoothPath(this.a.classifier(), res.path));
+      }
+      this.check(gen);
+    }
     if (at()) { out.ok = true; return out; }
     for (const dear of escape ? [false, true] : [false]) {
       if (dear) escape(true);

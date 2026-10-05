@@ -3523,12 +3523,15 @@ export class Agent {
       // Places we got physically stuck at recently count as walls, so we don't try them again.
       const classify0 = bad.size ? (x, y, z) => ((bad.get(`${x},${y},${z}`) ?? 0) > now ? Cell.DANGER : base(x, y, z)) : base;
       // (extra.wrap: a search's own view on top, e.g. cells by a creeper counted dangerous while running.)
-      const classify = extra.wrap ? extra.wrap(classify0) : classify0;
+      const classify1 = extra.wrap ? extra.wrap(classify0) : classify0;
+      // (A job's own view on top of that: the iron farm build keeps the bot off the beds it has put in the pod, u221.)
+      const classify = /** @type {any} */ (this).planWrap ? /** @type {any} */ (this).planWrap(classify1) : classify1;
       // (u219 live: standing on a bed (9/16 high) the feet's cell is the bed, which reads as solid: every route from there began inside a block and
       // the walk stuck. On top of a block lower than a full one (a bed, a chest, a composter's rim), the search starts from the cell above it.)
       {
         const fx = Math.floor(from.x), fy = Math.floor(from.y), fz = Math.floor(from.z);
-        try { if (classify(fx, fy, fz) === Cell.SOLID && from.y - fy > 0.3 && classify(fx, fy + 1, fz) === Cell.AIR) from = { x: from.x, y: fy + 1, z: from.z }; } catch { /* */ }
+        // (u221: only for one nearly a full block high, a chest's 7/8: from a bed's 9/16 the cell above is a jump of a block and a half up.)
+        try { if (classify(fx, fy, fz) === Cell.SOLID && from.y - fy > 0.7 && classify(fx, fy + 1, fz) === Cell.AIR) from = { x: from.x, y: fy + 1, z: from.z }; } catch { /* */ }
       }
       const t0 = system.currentTick;
       // A water bucket on us (not in the Nether, not badly hurt): long drops are fine (the fall's

@@ -18,8 +18,9 @@ import { system, world } from '@minecraft/server';
 import { ironFarmPlan, checkPlan, blockArg, BASE_Y, GATES, OUT_VIEW, SLAB, STAIR_ID, SHAFT, SIGNS, LAVA, CAMPFIRES, CHAMBER_WATER, PLATFORM, WATER_Y, waterSources } from '../core/ironfarm.js';
 import { runBuild, newStats, splitPlan, handSet, edge } from '../core/farmbuild.js';
 import { render } from '../core/ironfarm_grid.js';
+import { Cell } from '../core/pathfinder.js';
 import { say, wait, W, run, idAt } from './ironfarm_world.js';
-import { findSlab, placeSigns, placeGates, placeDoor } from './ironfarm_parts.js';
+import { findSlab, placeSigns, placeGates, placeDoor, chamberWater, ensureWater } from './ironfarm_parts.js';
 import { finishBuild, clearFarm, farmStands, shellArg } from './ironfarm.js';
 import { invCounts, give, take, hold, container, kitOf, restoreKit } from './inventory.js';
 
@@ -289,6 +290,10 @@ async function start(agent, player, args) {
     // (It pillars and bridges with the shell: the glass, composters and slabs are kept for the farm.)
     agent.reserveExtra = (inv) => ({ glass: inv.glass ?? 0, composter: inv.composter ?? 0, [SLAB]: inv[SLAB] ?? 0 });
     const special = new Set(['sign', 'gate', 'door', 'lava', 'cwater', 'water']);
+    // The beds' cells (both halves): never walked on or stood on while it builds (u221; the pathfinder takes them as walls).
+    const bedCells = new Set([...render({ ops: rest.filter((o) => o.id === 'bed') }).cells.keys()]);
+    const bedWorld = new Set([...bedCells].map((k) => { const [x, y, z] = k.split(',').map(Number); const w = W(off, { x, y, z }); return `${w.x},${w.y},${w.z}`; }));
+    agent.planWrap = (cl) => (x, y, z) => (bedWorld.has(`${x},${y},${z}`) ? Cell.DANGER : cl(x, y, z));
     // (A slab as the bot meets it: a bottom one is SLAB; a top one (mobs spawn on it) and a double one are not.)
     const norm = (b) => {
       const id = strip(b.typeId);
@@ -318,6 +323,13 @@ async function start(agent, player, args) {
       // what of the farm it broke goes back to the core to be put back by hand.
       async stand(s) {
         agent.motor.stop();
+        // (u221 live: on a bed it tried again and again to jump a block and a half up off it. Off the bed first, onto the floor beside it.)
+        const f0 = hands.where();
+        if (f0 && bedCells.has(`${f0.x},${f0.y},${f0.z}`)) {
+          const n = [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [-1, 1], [1, -1], [-1, -1]].map(([dx, dz]) => ({ x: f0.x + dx, y: f0.y, z: f0.z + dz }))
+            .find((q) => !bedCells.has(`${q.x},${q.y},${q.z}`) && FREE_ID.test(hands.blockAt(q) ?? 'x') && FREE_ID.test(hands.blockAt({ ...q, y: q.y + 1 }) ?? 'x') && !FREE_ID.test(hands.blockAt({ ...q, y: q.y - 1 }) ?? 'air'));
+          if (n) { const w = W(off, n); try { await agent.motor.followPath([{ x: sim.location.x, y: sim.location.y, z: sim.location.z }, { x: w.x + 0.5, y: w.y, z: w.z + 0.5 }]); } catch { /* */ } }
+        }
         // (u218 live: "no route, 0 blocks to build with": the layer's blocks and the spare went on scaffolding. Never under 32 of the shell to pillar and
         // bridge with when it sets off.)
         { const have = invCounts(sim)[plan.shell] ?? 0; if (have < 32 && !noItem.has(plan.shell)) { try { give(sim, plan.shell, 64 - have); } catch { /* */ } } }
@@ -514,7 +526,13 @@ async function start(agent, player, args) {
       if (y === CHAMBER_WATER.y) {
         const camps = CAMPFIRES.every((c) => hands.blockAt(c) === 'campfire');
         const cw = rest.find((o) => o.tag === 'cwater');
-        if (camps && cw) await byHand(cw, 'water', setOp(cw), { reach: 5, bucket: true });
+        if (camps && cw) {
+          if (!/water/.test(hands.blockAt(cw) ?? '')) await byHand(cw, 'water', setOp(cw), { reach: 5, bucket: true });
+          // (u220 live: the water it poured did not flow. Water set by a command may not know it should spread: the hallway routine from the
+          // command build, at once: a block update beside it, else the three flowing cells laid at their depths.)
+          const r = await chamberWater(dim, off);
+          if (!r.ok) notes.push(r.note);
+        }
       }
       // The signs that hold the lava, and the lava, once the hallway walls are up to the lava's height (later it cannot get to them).
       if (y === LAVA.y && !signs) {
@@ -539,6 +557,9 @@ async function start(agent, player, args) {
         for (const c of srcs.sort((a, b) => ring(a) - ring(b))) {
           await byHand(c, 'water', () => run(dim, `setblock ${W(off, c).x} ${W(off, c).y} ${W(off, c).z} water`) === '', { reach: 5, bucket: true });
         }
+        // (and made to flow the way the command build does it, now: the sources poured are left, the nudges and, last, the flowing water laid)
+        const w = await ensureWater(dim, off, plan);
+        if (!w.ok) notes.push(w.note);
       }
       J.phase = `layer ${y} done`;
       if ([-4, 0, 3, 6].includes(y)) say(`Layer ${y} done: ${st.hand} of ${st.cells} blocks placed by the bot so far, ${st.command} by command, ${mins(system.currentTick - J.started)} in.`);
@@ -577,6 +598,7 @@ async function start(agent, player, args) {
     agent.testHold = testHeld;
     agent.digCost = undefined;
     agent.reserveExtra = undefined;
+    agent.planWrap = undefined;
     try { /** @type {any} */ (sim).stopBuild?.(); } catch { /* */ }
     try { agent.motor.setFocus(null); } catch { /* */ }
     try { container(sim)?.clearAll(); restoreKit(sim, { slots: saved.slots, worn: {} }); } catch (e) { say(`Could not put the bot's things back: ${e}. They are in the world's memory and come back at the next spawn.`); }
