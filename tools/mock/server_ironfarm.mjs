@@ -217,3 +217,4 @@ export class Container {
 export const EntityComponentTypes = { Inventory: 'minecraft:inventory', Equippable: 'minecraft:equippable' };
 export const EquipmentSlot = { Head: 'Head', Chest: 'Chest', Legs: 'Legs', Feet: 'Feet', Offhand: 'Offhand', Mainhand: 'Mainhand' };
 export const EnchantmentTypes = { get: () => undefined };
+export const Direction = { Down: 'Down', Up: 'Up', North: 'North', South: 'South', West: 'West', East: 'East' };

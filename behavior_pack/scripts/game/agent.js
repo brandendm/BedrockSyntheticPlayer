@@ -3524,6 +3524,12 @@ export class Agent {
       const classify0 = bad.size ? (x, y, z) => ((bad.get(`${x},${y},${z}`) ?? 0) > now ? Cell.DANGER : base(x, y, z)) : base;
       // (extra.wrap: a search's own view on top, e.g. cells by a creeper counted dangerous while running.)
       const classify = extra.wrap ? extra.wrap(classify0) : classify0;
+      // (u219 live: standing on a bed (9/16 high) the feet's cell is the bed, which reads as solid: every route from there began inside a block and
+      // the walk stuck. On top of a block lower than a full one (a bed, a chest, a composter's rim), the search starts from the cell above it.)
+      {
+        const fx = Math.floor(from.x), fy = Math.floor(from.y), fz = Math.floor(from.z);
+        try { if (classify(fx, fy, fz) === Cell.SOLID && from.y - fy > 0.3 && classify(fx, fy + 1, fz) === Cell.AIR) from = { x: from.x, y: fy + 1, z: from.z }; } catch { /* */ }
+      }
       const t0 = system.currentTick;
       // A water bucket on us (not in the Nether, not badly hurt): long drops are fine (the fall's
       // broken with the water, fallTick), so a route can go off a pillar or a cliff edge.

@@ -15,13 +15,13 @@
 //   !bot buildfarm clearpad     take the pad away again (after "ironfarm clear")
 // The farm is then the same one `!bot ironfarm` makes: status, view, golem, time, bill and the rest of its commands work on it.
 import { system, world } from '@minecraft/server';
-import { ironFarmPlan, checkPlan, blockArg, BASE_Y, FLOOR_Y, DOOR, GATES, OUT_VIEW, SLAB } from '../core/ironfarm.js';
-import { runBuild, newStats, splitPlan, handSet } from '../core/farmbuild.js';
+import { ironFarmPlan, checkPlan, blockArg, BASE_Y, GATES, OUT_VIEW, SLAB, STAIR_ID, SHAFT, SIGNS, LAVA, CAMPFIRES, CHAMBER_WATER, PLATFORM, WATER_Y, waterSources } from '../core/ironfarm.js';
+import { runBuild, newStats, splitPlan, handSet, edge } from '../core/farmbuild.js';
 import { render } from '../core/ironfarm_grid.js';
 import { say, wait, W, run, idAt } from './ironfarm_world.js';
 import { findSlab, placeSigns, placeGates, placeDoor } from './ironfarm_parts.js';
 import { finishBuild, clearFarm, farmStands, shellArg } from './ironfarm.js';
-import { invCounts, give, container, kitOf, restoreKit } from './inventory.js';
+import { invCounts, give, take, hold, container, kitOf, restoreKit } from './inventory.js';
 
 const AREA = 'bsp_farmbuild';
 /** The pad, in plan coordinates: 12 blocks all round the tower (x and z -1..16), one block thick, its top just under the tower's bottom layer. */
@@ -300,6 +300,16 @@ async function start(agent, player, args) {
     };
     let mode = J.mode, heldMisses = 0, heldSlips = 0;
     const fast = () => mode !== 'real';
+    /** A block put against the side of the one the bot stands on (see hands.place): crouched at the edge, looking down at that face. */
+    const bridgeHand = async (c, id, ft) => {
+      const q = W(off, c), floor = W(off, { x: ft.x, y: ft.y - 1, z: ft.z });
+      let was = false;
+      try { was = sim.isSneaking; sim.isSneaking = true; } catch { /* */ }
+      try {
+        if (mode === 'quick') return await agent.homestead.placeQuick(gen, q, id, () => hands.set(c, id), { gap: QUICK_GAP, sound: SOUND[id] ?? null, against: floor });
+        return await agent.homestead.placeAt(gen, q, id, floor, null, { lenient: true, stay: true });
+      } finally { if (!was) { try { sim.isSneaking = false; } catch { /* */ } } }
+    };
     const hands = {
       blockAt: (c) => { const q = W(off, c); try { const b = dim.getBlock(q); return b ? norm(b) : null; } catch { return null; } },
       where: () => { const l = sim.location; return { x: Math.floor(l.x) - off.x, y: Math.floor(l.y + 0.05) - off.y, z: Math.floor(l.z) - off.z }; },
@@ -339,6 +349,13 @@ async function start(agent, player, args) {
         if (noItem.has(id)) return false;
         const q = W(off, c), below = id === SLAB;
         let ok = false;
+        // Beside the block under its feet, at that block's level (a floor laid outward from the floor it stands on): crouched at the edge, the
+        // block against the side of the one under it, as a player bridges (u220).
+        const ft = hands.where();
+        if (!below && edge(ft, c) && !FREE_ID.test(hands.blockAt({ x: ft.x, y: ft.y - 1, z: ft.z }) ?? 'air')) {
+          try { ok = await bridgeHand(c, id, ft); } catch (e) { if (aborted(e)) throw e; S.log(`farmbuild: bridge ${id}: ${e}`); }
+          return ok && hands.blockAt(c) === id;
+        }
         try {
           if (mode === 'held') {
             const r = await agent.homestead.placeHeld(gen, q, id, { below });
@@ -396,60 +413,133 @@ async function start(agent, player, args) {
       }
       J.mode = mode;
     }
-    // (u218 live: the beds went in under the bot as it built the pod, it stood on them and could not walk off. The beds and torches go in at the
-    // very end now, when the bot is outside; nothing it walks over changes under it while it builds.)
-    const LATE = (o) => o.id === 'bed' || o.id === 'torch';
-    const plain = (y) => rest.filter((o) => o.y === y && !special.has(o.tag) && !LATE(o));
+    // u220 (the player: "place everything by hand"): every part goes in by the bot's own hand, the quick hand's way (it walks to a spot in reach,
+    // takes the item in hand, puts the crosshair on the face it goes against, and the block goes in with the state the plan wants, by command:
+    // the facing a click would give is not something a simulated player's aim can be trusted with), each as soon as the layer under it is down and
+    // while the bot can still get to it: the hoppers, chests and stair on the floor, the campfires and the hallway water, the signs and the lava
+    // once the hallway walls hold them, the beds and torches in the pod, the gates over the hole, the platform water from the wall tops, the door
+    // last. The villagers are the one thing it does not bring: they are summoned at the end, as before.
+    const ITEMS = { hopper: ['hopper'], chest: ['chest'], [STAIR_ID]: [STAIR_ID, 'cobblestone_stairs'], campfire: ['campfire'], torch: ['torch'], bed: ['bed', 'red_bed', 'white_bed'], wall_sign: ['oak_sign'], fence_gate: ['oak_fence_gate', 'fence_gate'], wooden_door: ['wooden_door', 'oak_door'], lava: ['lava_bucket'], water: ['water_bucket'] };
+    /** The item for a part, in the pack (given if it is not there). null if the game knows none of its names. */
+    const itemFor = (id) => {
+      for (const it of ITEMS[id] ?? [id]) {
+        if ((invCounts(sim)[it] ?? 0) > 0) return it;
+        try { give(sim, it, 1); if ((invCounts(sim)[it] ?? 0) > 0) return it; } catch { /* the next name */ }
+      }
+      return null;
+    };
+    // (Not at the lip of the hole up on the platform: a slip there is a fall down the shaft onto the campfires and the lava.)
+    const nearShaft = (q) => q.x >= SHAFT.x1 - 1 && q.x <= SHAFT.x2 + 1 && q.z >= SHAFT.z1 - 1 && q.z <= SHAFT.z2 + 1 && q.y > SHAFT.y2;
+    /** A spot to put a part in from: room for the bot, something solid under it, the cell in reach, near where it is, not at the lip of the shaft. */
+    const partStand = (c, reach) => {
+      const from = hands.where();
+      let best = null, bs = Infinity;
+      for (let dy = -3; dy <= 3; dy++) for (let dx = -4; dx <= 4; dx++) for (let dz = -4; dz <= 4; dz++) {
+        const q = { x: c.x + dx, y: c.y + dy, z: c.z + dz };
+        if (q.x === c.x && q.z === c.z && (q.y === c.y || q.y + 1 === c.y)) continue;
+        const ex = q.x + 0.5 - (c.x + 0.5), ey = q.y + 1.52 - (c.y + 0.5), ez = q.z + 0.5 - (c.z + 0.5);
+        if (ex * ex + ey * ey + ez * ez > reach * reach) continue;
+        if (!FREE_ID.test(hands.blockAt(q) ?? 'x') || !FREE_ID.test(hands.blockAt({ ...q, y: q.y + 1 }) ?? 'x')) continue;
+        const under = hands.blockAt({ ...q, y: q.y - 1 }) ?? 'air';
+        if (FREE_ID.test(under) || /water|lava|campfire|magma/.test(under)) continue;
+        if (nearShaft(q)) continue;
+        const d = from ? Math.abs(q.x - from.x) + Math.abs(q.z - from.z) + Math.abs(q.y - from.y) * 2 + (q.y < from.y ? 6 : 0) : 0;
+        if (d < bs) { bs = d; best = q; }
+      }
+      return best;
+    };
+    const partStats = { hand: 0, command: 0, missing: /** @type {string[]} */ ([]) };
+    /**
+     * One part by the bot's hand: there, item in hand, crosshair on it; then `put()` (the command with the plan's state, or one of the parts
+     * routines that tries the game's spellings). `reach` 5 for a bucket poured onto a floor below (a player's reach in Bedrock).
+     */
+    const byHand = async (cell, id, put, { reach = 4.2, bucket = false } = {}) => {
+      const it = itemFor(id);
+      let there = false;
+      const at = hands.where();
+      const ok0 = at && (() => { const ex = at.x + 0.5 - (cell.x + 0.5), ey = at.y + 1.52 - (cell.y + 0.5), ez = at.z + 0.5 - (cell.z + 0.5); return ex * ex + ey * ey + ez * ez <= reach * reach && !(at.x === cell.x && at.z === cell.z && (at.y === cell.y || at.y + 1 === cell.y)); })();
+      if (ok0) there = true;
+      else { const st = partStand(cell, reach); if (st) there = (await hands.stand(st)).ok; }
+      const q = W(off, cell);
+      if (there && it) {
+        try { await agent.homestead.aimFace(gen, q, it, { snap: true, lenient: true, aimTicks: 2 }); } catch (e) { if (aborted(e)) throw e; }
+        try { hold(sim, it); } catch { /* */ }
+        await S.wait(gen, QUICK_GAP);
+      }
+      const ok = await put();
+      if (ok && there && it) {
+        partStats.hand++;
+        // (A bucket is not used up: one water bucket stands for the refills a player makes from a source of its own.)
+        if (!bucket) { try { take(sim, it, 1); } catch { /* */ } }
+      } else if (ok) { partStats.command++; partStats.missing.push(`${id} at ${cell.x},${cell.y},${cell.z}${it ? '' : ' (no item by that name)'}`); }
+      return ok;
+    };
+    const setOp = (o) => () => {
+      const q = W(off, o);
+      const cmd = `setblock ${q.x} ${q.y} ${q.z} ${blockArg(o.id, o.states)}`;
+      const why = run(dim, cmd);
+      if (why) fails.push(`${o.note || o.id}: ${why} (${cmd})`);
+      return !why;
+    };
+    const visit = async (c, item) => { await byHand(c, item === 'oak_sign' ? 'wall_sign' : 'fence_gate', async () => true); };
+    const plain = (y) => rest.filter((o) => o.y === y && !special.has(o.tag));
     /** Every cell a list of ops fills (a bed's foot too). */
     const cellsOf = (ops) => new Set([...render({ ops }).cells.keys()]);
     const after = async (y, st) => {
-      // (Off any cell a command is about to fill: a bed or a chest set where the bot stands has it inside a block.)
+      // (Off any cell a part is about to go in: a bed or a chest put where the bot stands has it inside a block.)
       if (y !== 'slabs') {
         const at = hands.where();
         const filled = cellsOf(plain(y));
         const hit = (q) => filled.has(`${q.x},${q.y},${q.z}`) || filled.has(`${q.x},${q.y + 1},${q.z}`);
         if (at && hit(at)) {
-          // (A step aside, to a cell next to it that nothing is about to be set in; the pad if there is none.)
           const side = [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [-1, -1], [1, -1], [-1, 1]].map(([dx, dz]) => ({ x: at.x + dx, y: at.y, z: at.z + dz })).find((q) => !hit(q) && FREE_ID.test(hands.blockAt(q) ?? '') && FREE_ID.test(hands.blockAt({ ...q, y: q.y + 1 }) ?? '') && !FREE_ID.test(hands.blockAt({ ...q, y: q.y - 1 }) ?? 'air'));
           if (!(side && (await hands.stand(side)).ok)) await hands.stand(PARK);
         }
       }
       if (y === 'slabs') {
-        J.phase = 'lava, water, the rest';
-        // The beds and the torches (see LATE), the bot off them first.
-        const late = rest.filter(LATE);
-        const lateCells = cellsOf(late);
-        const at0 = hands.where();
-        if (at0 && (lateCells.has(`${at0.x},${at0.y},${at0.z}`) || lateCells.has(`${at0.x},${at0.y + 1},${at0.z}`))) await hands.stand(PARK);
-        for (const o of late) {
-          const q = W(off, o);
-          const cmd = `setblock ${q.x} ${q.y} ${q.z} ${blockArg(o.id, o.states)}`;
-          const why = run(dim, cmd);
-          if (why) fails.push(`${o.note || o.id}: ${why} (${cmd})`);
-        }
-        // The door last of all (u218): until now the doorway was the room's way out (the bot could be shut in there, and the pathfinder does not
-        // open doors). Off the doorway first.
+        J.phase = 'the door';
+        // The door last of all (u218): until now the doorway was the room's way out (the pathfinder does not open doors). From outside it.
         if (!door) {
           const dl = plan.ops.find((q) => q.tag === 'door' && !q.states.upper_block_bit), du = plan.ops.find((q) => q.tag === 'door' && q.states.upper_block_bit);
-          const at = hands.where();
-          if (at && dl && at.x === dl.x && at.z === dl.z && Math.abs(at.y - dl.y) <= 1) await hands.stand({ x: dl.x + 2, y: BASE_Y, z: dl.z });
-          door = await placeDoor(dim, off, dl, du, notes);
+          await byHand(dl, 'wooden_door', async () => { door = await placeDoor(dim, off, dl, du, notes); return !!door?.ok; });
         }
+        if (partStats.command) notes.push(`${partStats.command} parts were put in by command, not by the bot's hand (it could not get to them, or the game has no item by that name): ${partStats.missing.slice(0, 6).join('; ')}.`);
+        notes.push(`The parts (hoppers, chests, stair, campfires, signs, lava, beds, torches, gates, door, the water) by the bot's hand: ${partStats.hand}${partStats.command ? `, ${partStats.command} by command` : ', all of them'}. The villagers are summoned (it does not bring them).`);
+        return;
+      }
+      J.phase = `layer ${y}: the parts`;
+      // (carrying on after a stop: what is in already is left as it is)
+      for (const o of plain(y)) if (hands.blockAt(o) !== o.id) await byHand(o, o.id, setOp(o));
+      // The hallway water once the campfires are in (they keep it in its four cells).
+      if (y === CHAMBER_WATER.y) {
+        const camps = CAMPFIRES.every((c) => hands.blockAt(c) === 'campfire');
+        const cw = rest.find((o) => o.tag === 'cwater');
+        if (camps && cw) await byHand(cw, 'water', setOp(cw), { reach: 5, bucket: true });
+      }
+      // The signs that hold the lava, and the lava, once the hallway walls are up to the lava's height (later it cannot get to them).
+      if (y === LAVA.y && !signs) {
+        const signsIn = SIGNS.every((q) => /wall_sign$/.test(hands.blockAt(q) ?? ''));
+        signs = signsIn ? { ok: true, lavaOk: true, id: hands.blockAt(SIGNS[0]) } : await placeSigns(dim, off, notes, visit);
         const lava = rest.find((o) => o.tag === 'lava');
         if (lava) {
           if (!signs?.lavaOk) notes.push('The lava was NOT placed: the signs that hold it would not stay on their wall (see above).');
-          else { const q = W(off, lava); const why = run(dim, `setblock ${q.x} ${q.y} ${q.z} lava`); if (why) fails.push(`lava: ${why}`); }
+          else if (hands.blockAt(lava) !== 'lava') await byHand(lava, 'lava', setOp(lava), { reach: 5, bucket: true });
         }
-        return;
       }
-      for (const o of plain(y)) {
-        const q = W(off, o);
-        const cmd = `setblock ${q.x} ${q.y} ${q.z} ${blockArg(o.id, o.states)}`;
-        const why = run(dim, cmd);
-        if (why) fails.push(`${o.note || o.id}: ${why} (${cmd})`);
+      if (y === GATES[0].y && !gates) {
+        const gatesIn = GATES.every((q) => /fence_gate$/.test(hands.blockAt(q) ?? ''));
+        gates = gatesIn ? { ok: true, id: hands.blockAt(GATES[0]), open: GATES.length, there: GATES.length } : await placeGates(dim, off, notes, visit);
       }
-      if (y === FLOOR_Y && !signs) signs = await placeSigns(dim, off, notes);
-      if (y === GATES[0].y && !gates) gates = await placeGates(dim, off, notes);
+      // The platform water, poured from the wall tops once the walls are up (the gates are already in).
+      if (y === PLATFORM.y2 && (gates?.there ?? 0) === GATES.length) {
+        J.phase = 'pouring the platform water';
+        const srcs = waterSources().map((c) => ({ x: c.x, y: WATER_Y, z: c.z }));
+        // (round the walls in order, the way a player walks it)
+        const ring = (c) => (c.z === PLATFORM.z1 ? c.x : c.x === PLATFORM.x2 ? 100 + c.z : c.z === PLATFORM.z2 ? 300 - c.x : 400 - c.z);
+        for (const c of srcs.sort((a, b) => ring(a) - ring(b))) {
+          await byHand(c, 'water', () => run(dim, `setblock ${W(off, c).x} ${W(off, c).y} ${W(off, c).z} water`) === '', { reach: 5, bucket: true });
+        }
+      }
       J.phase = `layer ${y} done`;
       if ([-4, 0, 3, 6].includes(y)) say(`Layer ${y} done: ${st.hand} of ${st.cells} blocks placed by the bot so far, ${st.command} by command, ${mins(system.currentTick - J.started)} in.`);
       topUp(sim);
@@ -460,9 +550,9 @@ async function start(agent, player, args) {
     agent.motor.setFocus(null);
     J.phase = 'finishing';
     const slabCells = (stats.handById[SLAB] ?? 0) + (stats.commandById[SLAB] ?? 0);
-    const byHand = Math.round((100 * stats.hand) / Math.max(1, stats.cells - stats.already));
+    const pctHand = Math.round((100 * stats.hand) / Math.max(1, stats.cells - stats.already));
     const rate = stats.handTicks ? (20 * stats.hand) / stats.handTicks : 0;
-    const lead = `The bot placed ${stats.hand} of ${stats.cells - stats.already} blocks itself (${byHand}%) in ${mins(system.currentTick - J.started)}, ${HAND_NAME[mode]}, ${rate.toFixed(1)} blocks a second while placing (you, building fast: about 5.5); ${stats.command} were set by command (${stats.footing} to have something to stand on${stats.fallback + stats.repaired ? `, ${stats.fallback + stats.repaired} that would not go down by hand` : ''}${stats.gaveUp ? `; it gave up placing by hand: ${stats.gaveUp}` : ''}). `;
+    const lead = `The bot placed ${stats.hand} of ${stats.cells - stats.already} blocks itself (${pctHand}%) in ${mins(system.currentTick - J.started)}, ${HAND_NAME[mode]}, ${rate.toFixed(1)} blocks a second while placing (you, building fast: about 5.5); ${stats.command} were set by command (${stats.footing} to have something to stand on${stats.fallback + stats.repaired ? `, ${stats.fallback + stats.repaired} that would not go down by hand` : ''}${stats.gaveUp ? `; it gave up placing by hand: ${stats.gaveUp}` : ''}). `;
     notes.push(`On its own feet the whole build: ${stats.standMoves} places to build from, ${stats.scaffoldUp ?? 0} blocks of scaffolding pillared or bridged and ${stats.scaffoldDown ?? 0} taken down again${stats.escapes ? `; it walled itself in ${stats.escapes} times and broke its way out (${stats.broken} blocks, ${stats.putBack} put back by hand, the rest by command)` : ''}.`);
     if (stats.strays) notes.push(`${stats.strays} blocks were left where the plan has none (a slip of the hand, scaffolding it could not get to) and were taken out by command.`);
     const lenient = agent.homestead.placedLenient ?? 0;

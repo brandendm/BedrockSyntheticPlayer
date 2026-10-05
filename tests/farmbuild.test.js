@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { ironFarmPlan, render, BASE_Y, SLAB } from '../behavior_pack/scripts/core/ironfarm.js';
-import { runBuild, splitPlan, reaches, facing, FREE, STAND_ON, handSet } from '../behavior_pack/scripts/core/farmbuild.js';
+import { runBuild, splitPlan, reaches, facing, edge, FREE, STAND_ON, handSet } from '../behavior_pack/scripts/core/farmbuild.js';
 
 const key = (x, y, z) => `${x},${y},${z}`;
 const DIRS = [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]];
@@ -16,7 +16,7 @@ function fake(plan, { miss = 0, seed = 1, noStand = false, unreach = null, stopA
   const scaffold = new Set();
   const final = () => (grid ??= render(plan));
   const rand = () => { rnd = (rnd * 1664525 + 1013904223) % 4294967296; return rnd / 4294967296; };
-  const log = { violations: /** @type {string[]} */ ([]), said: /** @type {string[]} */ ([]), stands: 0, scaffold: 0, sets: 0, slips: /** @type {string[]} */ ([]), cleared: 0 };
+  const log = { violations: /** @type {string[]} */ ([]), said: /** @type {string[]} */ ([]), stands: 0, scaffold: 0, down: 0, up: 0, pairs: 0, inLine: 0, last: null, sets: 0, slips: /** @type {string[]} */ ([]), cleared: 0 };
   const idAt = (x, y, z) => (y <= BASE_Y - 1 ? 'stone' : (world.get(key(x, y, z)) ?? 'air'));
   const hands = {
     blockAt: (c) => idAt(c.x, c.y, c.z),
@@ -31,8 +31,11 @@ function fake(plan, { miss = 0, seed = 1, noStand = false, unreach = null, stopA
         if (side) h = 1;
         if (h > 5) { log.violations.push(`no way onto ${key(s.x, s.y, s.z)}`); return false; }
         for (let i = 1; i <= h; i++) { const k = key(s.x, s.y - i, s.z); world.set(k, plan.shell ?? 'dirt'); scaffold.add(k); log.scaffold++; }
+        if (process.env.SHOW3) console.log("scaf", h, side, JSON.stringify(s), JSON.stringify(bot));
       }
       if (!STAND_ON.has(idAt(s.x, s.y - 1, s.z)) || !FREE.has(idAt(s.x, s.y, s.z)) || !FREE.has(idAt(s.x, s.y + 1, s.z))) { log.violations.push(`stand at ${key(s.x, s.y, s.z)} on ${idAt(s.x, s.y - 1, s.z)}`); return false; }
+      if (bot && s.y < bot.y) { log.down += bot.y - s.y; if (process.env.SHOW2) console.log("down", JSON.stringify(bot), "->", JSON.stringify(s)); }
+      if (bot && s.y > bot.y) log.up += s.y - bot.y;
       bot = { ...s }; tick += 4; log.stands++;
       return true;
     },
@@ -52,11 +55,14 @@ function fake(plan, { miss = 0, seed = 1, noStand = false, unreach = null, stopA
       if (idAt(c.x, c.y, c.z) !== 'air') { log.violations.push(`occupied ${key(c.x, c.y, c.z)} by ${idAt(c.x, c.y, c.z)}`); return false; }
       if (c.x === bot.x && c.z === bot.z && (c.y === bot.y || c.y === bot.y + 1)) { log.violations.push(`on the bot ${key(c.x, c.y, c.z)}`); return false; }
       // (A slab only on the top of the block under it: anywhere else it could come out a top slab.)
-      const face = (id === SLAB ? [[0, -1, 0]] : DIRS).some(([a, b, d]) => { const n = { x: c.x + a, y: c.y + b, z: c.z + d }; return !FREE.has(idAt(n.x, n.y, n.z)) && facing(bot, c, n); });
+      const bridged = id !== SLAB && edge(bot, c) && !FREE.has(idAt(bot.x, bot.y - 1, bot.z));
+      const face = bridged || (id === SLAB ? [[0, -1, 0]] : DIRS).some(([a, b, d]) => { const n = { x: c.x + a, y: c.y + b, z: c.z + d }; return !FREE.has(idAt(n.x, n.y, n.z)) && facing(bot, c, n); });
       if (!face) { log.violations.push(`no face to click for ${key(c.x, c.y, c.z)} (${id}) from ${key(bot.x, bot.y, bot.z)}`); return false; }
       if (!((inv[id] ?? 0) > 0)) { log.violations.push(`out of ${id}`); return false; }
       if (rand() < miss) return false;
       inv[id]--; world.set(key(c.x, c.y, c.z), id);
+      if (log.last && log.last.y === c.y) { log.pairs++; if (Math.abs(log.last.x - c.x) + Math.abs(log.last.z - c.z) === 1) log.inLine++; }
+      log.last = c;
       // (A slip of the hand: a second block in the free cell in front of the face, toward the bot.)
       if (slip && rand() < slip) {
         const dx = Math.sign(bot.x - c.x), dz = Math.sign(bot.z - c.z);
@@ -140,6 +146,12 @@ test('with hands that work, the bot builds the whole shell itself under the rule
     assert.ok(stats.footing < 40, `${stats.footing} blocks set by command just to have something to stand on`);
     assert.ok(stats.standMoves < 400, `${stats.standMoves} spots`);
     assert.ok(stats.command <= stats.footing, `${stats.command} by command, ${stats.footing} of them footings`);
+    if (process.env.SHOW) console.log(shell, JSON.stringify({ hand: stats.hand, command: stats.command, stands: stats.standMoves, scaffold: f.log.scaffold, down: f.log.down, up: f.log.up, inLine: f.log.inLine, pairs: f.log.pairs }));
+    // u220 (the player): in lines and layers, standing on what it built: one block after the next beside it, little scaffolding, and up the
+    // tower about once (it is 15 high).
+    assert.ok(f.log.inLine / f.log.pairs > 0.8, `${f.log.inLine} of ${f.log.pairs} blocks went next to the one before`);
+    assert.ok(f.log.scaffold <= 20, `${f.log.scaffold} blocks of scaffolding`);
+    assert.ok(f.log.up <= 45, `climbed ${f.log.up} levels for a 15-high build`);
     assert.ok(stats.handById[shell] > 700 && stats.handById[SLAB] > 100 && stats.handById.glass === 5 && stats.handById.composter === 10, JSON.stringify(stats.handById));
   }
 });

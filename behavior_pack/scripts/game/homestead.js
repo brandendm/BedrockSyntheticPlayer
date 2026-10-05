@@ -689,10 +689,19 @@ export class Homestead {
    * in by `put(cell)` (a command), not by the game's item use, which a simulated player is given only once every 10 ticks (a player places every
    * 3 or 4). `gap`: the fewest ticks since the last one, a player's pace. The aim overlaps the wait, as a hand moves while the click comes round.
    */
-  async placeQuick(gen, cell, itemId, put, { gap = 3, below = false, aimTicks = 3, sound = null, snap = true } = {}) {
+  async placeQuick(gen, cell, itemId, put, { gap = 3, below = false, aimTicks = 3, sound = null, snap = true, against = null } = {}) {
     const S = this.S;
     if (!SOFT.test(S.blockAt(cell) ?? 'air')) { this.placeWhy = `${S.blockAt(cell)} there`; return false; }
-    const on = await this.aimFace(gen, cell, itemId, { below, aimTicks, snap, lenient: true });
+    let on = null;
+    if (against) {
+      // (Bridging, u220: against the side of the block under its feet, crouched at the edge; the eye is out over the edge, which the line test
+      // from the middle of the cell does not see. The crosshair onto that face.)
+      const slot = hold(this.sim, itemId);
+      if (slot < 0) { this.placeWhy = `no ${itemId} in hand`; return false; }
+      const pt = { x: against.x + 0.5 + (cell.x - against.x) * 0.5, y: against.y + 0.5 + (cell.y - against.y) * 0.5, z: against.z + 0.5 + (cell.z - against.z) * 0.5 };
+      try { if (this.a.motor.snap) this.a.motor.snap(pt); else this.a.motor.setFocus(pt); } catch { /* */ }
+      on = { slot };
+    } else on = await this.aimFace(gen, cell, itemId, { below, aimTicks, snap, lenient: true });
     if (!on) return false;
     const since = system.currentTick - (this.quickAt ?? -100);
     if (since < gap) await S.wait(gen, gap - since);

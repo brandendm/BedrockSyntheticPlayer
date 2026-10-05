@@ -23,7 +23,9 @@ export const REACH = 4.0;          // (the game's is 4.5: a margin for where in 
 export const EYE = 1.52;
 export const JUDGE_AFTER = 24;     // hand attempts before the hit rate is judged
 export const ROUNDS = 3;           // passes over a layer's leftovers (blocks it could not get to or that would not go down) before a command does them
-export const TRIES = 3;            // spots tried for one block in a pass before it is left for the next pass
+export const TRIES = 3;
+export const SCAFFOLD_COST = 200;  // a block of scaffolding to stand on (u220: it pillared where it could have stayed put)
+export const ENCLOSED_COST = 400;  // a spot in air the farm closes in (the pod, the room, the shaft)            // spots tried for one block in a pass before it is left for the next pass
 
 const key = (x, y, z) => `${x},${y},${z}`;
 const DIRS = [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]];
@@ -62,6 +64,14 @@ export function facing(s, t, n) {
   return (e.x - fc.x) * nx + (e.y - fc.y) * ny + (e.z - fc.z) * nz > 0.05;
 }
 
+/**
+ * A cell beside the block the bot stands on, at that block's level: a player puts it against the side of the block under its feet, crouched at the
+ * edge with the eye out over it (bridging). (u220: the floors of the pod and the platform were laid from scaffolding under them instead.)
+ */
+export function edge(s, t) {
+  return t.y === s.y - 1 && Math.abs(t.x - s.x) + Math.abs(t.z - s.z) === 1;
+}
+
 /** The counts a build keeps (pass your own to runBuild to read them while it runs). */
 export const newStats = () => ({
   cells: 0, hand: 0, command: 0, already: 0, footing: 0, fallback: 0, repaired: 0, gaveUp: '', standMoves: 0, standFails: 0, attempts: 0, hits: 0, handTicks: 0, ticks: 0, strays: 0,
@@ -69,6 +79,25 @@ export const newStats = () => ({
   layer: /** @type {number|string|null} */ (null),
   handById: /** @type {Record<string, number>} */ ({}), commandById: /** @type {Record<string, number>} */ ({}), layers: /** @type {any[]} */ ([]),
 });
+
+/**
+ * The straight run of cells of `T` through c (along x or along z, whichever is longer), ordered from the end nearer `from` to the other: a line as a
+ * player lays it. (u220)
+ */
+export function lineThrough(T, c, from) {
+  const runs = [[1, 0], [0, 1]].map(([dx, dz]) => {
+    const out = [c];
+    for (let i = 1; T.has(key(c.x + dx * i, c.y, c.z + dz * i)); i++) out.push(T.get(key(c.x + dx * i, c.y, c.z + dz * i)));
+    for (let i = 1; T.has(key(c.x - dx * i, c.y, c.z - dz * i)); i++) out.unshift(T.get(key(c.x - dx * i, c.y, c.z - dz * i)));
+    return out;
+  });
+  const run = runs[0].length >= runs[1].length ? runs[0] : runs[1];
+  if (from) {
+    const d = (q) => Math.abs(q.x - from.x) + Math.abs(q.z - from.z);
+    if (d(run[run.length - 1]) < d(run[0])) run.reverse();
+  }
+  return run;
+}
 
 /**
  * Build it. `hands`:
@@ -109,7 +138,8 @@ export async function runBuild(plan, hands, { after = null, maxTicks = Infinity,
   /** Placeable from s right now: in reach, free, and some neighbour to click that has the eye on its open side. */
   const placeableFrom = (s, c) => {
     if (!reaches(s, c)) return false;
-    if (!FREE.has(idAt(c.x, c.y, c.z))) return false;   // (something there already: scaffolding of its own, taken down at the end of the layer)
+    if (!FREE.has(idAt(c.x, c.y, c.z))) return false;   // (something there already: scaffolding of its own, taken down at the end)
+    if (c.id !== SLAB && edge(s, c) && clickable(idAt(s.x, s.y - 1, s.z))) return true;
     if (c.x === s.x && c.z === s.z && (c.y === s.y || c.y === s.y + 1)) return false;
     return dirsOf(c).some(([a, b, d]) => { const n = { x: c.x + a, y: c.y + b, z: c.z + d }; return clickable(idAt(n.x, n.y, n.z)) && facing(s, c, n); });
   };
@@ -131,14 +161,13 @@ export async function runBuild(plan, hands, { after = null, maxTicks = Infinity,
    */
   /** Spots the bot could not get to in this pass over the layer (u218): not offered again until the next pass. */
   let unreachable = new Set();
-  const bestStand = (c, near, from, { scaffold = false, inside = true } = {}) => {
+  const bestStand = (c, near, from, { scaffold = false } = {}) => {
     let best = null, bestScore = -Infinity;
     for (let dy = -3; dy <= 2; dy++) {
       const sy = c.y + dy;
       for (let dx = -4; dx <= 4; dx++) for (let dz = -4; dz <= 4; dz++) {
         const s = { x: c.x + dx, y: sy, z: c.z + dz };
         if (unreachable.has(key(s.x, sy, s.z))) continue;
-        if (!inside && enclosed.has(key(s.x, sy, s.z))) continue;
         if (!FREE.has(idAt(s.x, sy, s.z)) || !FREE.has(idAt(s.x, sy + 1, s.z))) continue;
         const under = idAt(s.x, sy - 1, s.z);
         let cost = 0;
@@ -153,13 +182,18 @@ export async function runBuild(plan, hands, { after = null, maxTicks = Infinity,
           let clash = false;
           for (let i = 1; i <= (side ? 1 : h); i++) { const w = final.at(s.x, sy - i, s.z)?.id; if (w && w !== 'air' && w !== shellId) clash = true; }
           if (clash) continue;
-          cost = side ? 120 : 120 * h;
+          cost = side ? SCAFFOLD_COST : SCAFFOLD_COST * h;
         }
         if (!placeableFrom(s, c)) continue;
         let n = 0;
         for (const t of near) if (reaches(s, t) && !(t.x === s.x && t.z === s.z && (t.y === s.y || t.y === s.y + 1))) n++;
+        // (u220, the player's way: stay up on what it has built and carry on from there. A spot on the farm's own blocks, near, not lower than
+        // where it is (down is a climb back up later), no scaffolding unless there is nothing else: each of those weighs more than covering a few
+        // more blocks of the line from one spot.)
         const walk = from ? Math.abs(s.x - from.x) + Math.abs(s.z - from.z) + Math.abs(s.y - from.y) * 2 : 0;
-        const score = n * 100 - Math.abs(dx) - Math.abs(dz) - Math.abs(dy) * 2 - walk * 4 - cost - (enclosed.has(key(s.x, s.y, s.z)) ? 2000 : 0);
+        const down = from && sy < from.y ? from.y - sy : 0;
+        const onBuild = final.cells.has(key(s.x, sy - 1, s.z)) && !cost ? 1 : 0;
+        const score = n * 40 - Math.abs(dx) - Math.abs(dz) - walk * 6 - down * 60 - cost + onBuild * 20 - (enclosed.has(key(s.x, s.y, s.z)) ? ENCLOSED_COST : 0);
         if (score > bestScore) { bestScore = score; best = s; }
       }
     }
@@ -237,6 +271,8 @@ export async function runBuild(plan, hands, { after = null, maxTicks = Infinity,
       takeRedo();
       let guard = 0;
       const cap = (T.size + back.length) * (TRIES + 2) + 40;
+      /** The run of blocks it is laying (u220: in lines, as a player lays a course, not whatever is in reach all round). */
+      let line = null;
       while (T.size) {
         hands.check();
         takeRedo();
@@ -245,12 +281,22 @@ export async function runBuild(plan, hands, { after = null, maxTicks = Infinity,
         if (!T.size) break;
         if (stats.gaveUp) { for (const c of [...T.values(), ...later.values(), ...blocked.values()]) commandPlace(c, 'fallback'); T.clear(); later.clear(); blocked.clear(); break; }
         const here = hands.where();
-        // The next block: one with something to click, nearest to where the bot is.
-        let c0 = null, d0 = Infinity;
-        for (const c of T.values()) {
-          if (!supportedNow(c)) continue;
-          const d = here ? Math.hypot(c.x - here.x, (c.y - here.y) * 2, c.z - here.z) : 0;
-          if (d < d0) { d0 = d; c0 = c; }
+        // The next block: the next one of the line it is laying; else the start of a new line, at the block with something to click nearest to
+        // where the bot is (so one line leads on to the next round a corner).
+        let c0 = null;
+        if (line) {
+          line = line.filter((c) => T.has(key(c.x, c.y, c.z)));
+          c0 = line.find((c) => supportedNow(c)) ?? null;
+          if (!c0) line = null;
+        }
+        if (!c0) {
+          let d0 = Infinity;
+          for (const c of T.values()) {
+            if (!supportedNow(c)) continue;
+            const d = here ? Math.hypot(c.x - here.x, (c.y - here.y) * 2, c.z - here.z) : 0;
+            if (d < d0) { d0 = d; c0 = c; }
+          }
+          if (c0) { line = lineThrough(T, c0, here); c0 = line.find((c) => supportedNow(c)) ?? c0; }
         }
         if (!c0) {
           // Nothing to click against: if what is left for later is what it rests on, the next pass first; else the first block by command.
@@ -260,11 +306,8 @@ export async function runBuild(plan, hands, { after = null, maxTicks = Infinity,
           commandPlace(first, 'footing'); T.delete(key(first.x, first.y, first.z));
           continue;
         }
-        const near = [];
-        for (const t of T.values()) if (Math.abs(t.x - c0.x) <= 9 && Math.abs(t.z - c0.z) <= 9 && Math.abs(t.y - c0.y) <= 6) near.push(t);
-        // (u218 live: a spot inside the pod, the room or the shaft is taken only when there is none outside, even one it has to bridge or pillar
-        // to: inside, it gets shut in by its own walls.)
-        const s = bestStand(c0, near, here, { inside: false }) ?? bestStand(c0, near, here, { scaffold: true, inside: false }) ?? bestStand(c0, near, here) ?? bestStand(c0, near, here, { scaffold: true });
+        const near = line && line.length ? line.slice(line.indexOf(c0)) : [c0];
+        const s = bestStand(c0, near, here, { scaffold: true });
         if (!s) {
           // No spot left to try: for later if it failed to reach some this pass, else there is none at all and a command sets it (a footing).
           if (unreachable.size) { tried.set(key(c0.x, c0.y, c0.z), TRIES - 1); fail(c0); continue; }
@@ -281,15 +324,20 @@ export async function runBuild(plan, hands, { after = null, maxTicks = Infinity,
           continue;
         }
         stats.standMoves++;
-        // Everything in reach from this spot that can be placed, lowest first, nearest first (one that would not go down is tried again later).
+        // Along the line from this spot, in order, as far as it reaches (one that would not go down is tried again later; the cell it stands in
+        // is skipped and comes round again once it has moved on).
         const missed = new Set();
+        const order = line ?? [c0];
+        let at = Math.max(0, order.indexOf(c0));
         for (let inner = 0; inner < 400; inner++) {
           hands.check();
-          let k = null, dk = Infinity;
-          for (const t of T.values()) {
-            if (missed.has(key(t.x, t.y, t.z)) || !placeableFrom(s, t)) continue;
-            const d = (t.y - s.y) * 3 + Math.hypot(t.x - s.x, t.z - s.z);
-            if (d < dk) { dk = d; k = t; }
+          let k = null;
+          while (at < order.length) {
+            const t = order[at];
+            if (!T.has(key(t.x, t.y, t.z)) || missed.has(key(t.x, t.y, t.z))) { at++; continue; }
+            if (t.x === s.x && t.z === s.z && (t.y === s.y || t.y === s.y + 1)) { at++; continue; }
+            if (placeableFrom(s, t)) { k = t; break; }
+            break;
           }
           if (!k) break;
           const now = hands.where();
@@ -330,7 +378,6 @@ export async function runBuild(plan, hands, { after = null, maxTicks = Infinity,
     // Read it all back: whatever is not there is set. Then the bot's scaffolding comes down (by its own hand).
     W = new Map();
     for (const c of [...mine, ...back]) if (idAt(c.x, c.y, c.z) !== c.id) commandPlace(c, 'repaired');
-    if (hands.tidy) { await hands.tidy(); W = new Map(); }
     stats.layers.push({ y, slabs, cells: mine.length, hand: stats.hand - before.hand, command: stats.command - before.command });
   }
 
@@ -340,7 +387,11 @@ export async function runBuild(plan, hands, { after = null, maxTicks = Infinity,
     if (after) { await after(y, stats); W = new Map(); }
     await hands.yield();
   }
-  for (let y = bd.y1; y <= bd.y2; y++) { stats.layer = `slabs ${y}`; await layer(y, true); await hands.yield(); }
+  // (The slabs from the top down: it is up on the platform wall when the shell is done, and works its way down once. u220)
+  for (let y = bd.y2; y >= bd.y1; y--) { stats.layer = `slabs ${y}`; await layer(y, true); await hands.yield(); }
+  // Its scaffolding down, once, at the end (u220: not after every layer, which sent it back down the hole for its pillars and up again on new
+  // ones; it reuses what it put up as it goes).
+  if (hands.tidy) { stats.layer = 'scaffolding'; await hands.tidy(); }
   // Tidy: a block of the hand kinds anywhere in (or just round) the farm where the plan has none (a held button that put down a second block before
   // it was let go, a slip of the hand) is taken out again. A layer of the box a tick.
   if (hands.clear) {

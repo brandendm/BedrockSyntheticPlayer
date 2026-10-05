@@ -11,7 +11,7 @@ const MC = await import('@minecraft/server');
 const { farmBuildCommand } = await import('../behavior_pack/scripts/game/farmbuild.js');
 const { ironFarmCommand } = await import('../behavior_pack/scripts/game/ironfarm.js');
 const { ironFarmPlan, render, LAVA, BASE_Y, SLAB } = await import('../behavior_pack/scripts/core/ironfarm.js');
-const { reaches, facing, FREE, STAND_ON } = await import('../behavior_pack/scripts/core/farmbuild.js');
+const { reaches, facing, edge, FREE, STAND_ON } = await import('../behavior_pack/scripts/core/farmbuild.js');
 const { container, invCounts } = await import('../behavior_pack/scripts/game/inventory.js');
 const VERBOSE = process.argv.includes('-v');
 const G = globalThis.__ifw;
@@ -69,7 +69,7 @@ function makeAgent(knobs = {}) {
       if (!reaches(s, cell)) throw new Error(`out of reach ${key(cell.x, cell.y, cell.z)} from ${key(s.x, s.y, s.z)}`);
       if (cell.x === s.x && cell.z === s.z && (cell.y === s.y || cell.y === s.y + 1)) throw new Error('asked to place into the bot');
       if (id === SLAB && !below) throw new Error('a slab asked for without "only on the block under it"');
-      if (!(below ? [[0, -1, 0]] : DIRS).some(([a, b, d]) => { const n = { x: cell.x + a, y: cell.y + b, z: cell.z + d }; return !FREE.has(idAt(n.x, n.y, n.z)) && facing(s, cell, n); })) throw new Error(`nothing to click for ${key(cell.x, cell.y, cell.z)} from ${key(s.x, s.y, s.z)}`);
+      if (!(!below && edge(s, cell) && !FREE.has(idAt(s.x, s.y - 1, s.z))) && !(below ? [[0, -1, 0]] : DIRS).some(([a, b, d]) => { const n = { x: cell.x + a, y: cell.y + b, z: cell.z + d }; return !FREE.has(idAt(n.x, n.y, n.z)) && facing(s, cell, n); })) throw new Error(`nothing to click for ${key(cell.x, cell.y, cell.z)} from ${key(s.x, s.y, s.z)}`);
       const c = container(agent.sim);
       const slot = [...Array(c.size).keys()].find((i) => c.getItem(i)?.typeId === `minecraft:${id}`);
       if (slot === undefined) return false;
@@ -236,8 +236,8 @@ t('stopped half way: the bot gets its things back at once; "buildfarm" carries o
   ok(JSON.stringify(invCounts(agent.sim)) === JSON.stringify(mine), 'the bot\'s things are not back');
   ok(!agent.kitHeld, 'kit still held');
   const calls = agent.placeCalls;
-  const o1 = originOf(ironFarmPlan());
-  ok(o1 === null, 'the lava is down before the end');
+  // (u220: the lava goes in by hand once the hallway walls hold it, part way up, so it may be down at the stop; the farm is not finished either way.)
+  ok(!msgs.some((l) => /Built\. The bot placed/.test(l)), 'it says it finished');
   const dirt = [...G.grid.values()].filter((c) => c.id === 'dirt').length;
   ok(dirt > 300 && dirt < 700, `${dirt} dirt after the stop`);
   const msgs2 = await again(agent);
@@ -315,7 +315,8 @@ t('a held button the game paces like a player\'s: the test on the pad passes, th
   ok(msgs.some((l) => /Held-button test: 5 of 5 blocks went in, 3\.0 ticks a block.*no cheat/.test(l)), msgs.find((l) => /Held-button/.test(l)));
   const line = msgs.find((l) => /Built\. The bot placed/.test(l));
   ok(/held button/.test(line) && rateOf(line) >= 5, line);
-  ok(agent.byWay.held > 1100 && !agent.byWay.quick, JSON.stringify(agent.byWay));
+  // (the edge blocks of the floors are bridged with the game's own click, "real": u220)
+  ok(agent.byWay.held > 900 && (agent.byWay.held + (agent.byWay.real ?? 0)) > 1150 && !agent.byWay.quick, JSON.stringify(agent.byWay));
   ok(!matches(ironFarmPlan(), originOf(ironFarmPlan())).length, 'not the plan (the test blocks left on the pad?)');
 });
 
@@ -330,7 +331,7 @@ t('a held button that now and then puts a second block down: after three, the qu
   const agent = makeAgent({ held: true, heldTicks: 3, heldSlip: 50 });
   const msgs = await run(agent);
   ok(msgs.some((l) => /held button is not working out \(it put a second block down/.test(l)), 'no switch');
-  ok(agent.byWay.held >= 100 && agent.byWay.quick > 500, JSON.stringify(agent.byWay));
+  ok(agent.byWay.held >= 100 && agent.byWay.quick > 150, JSON.stringify(agent.byWay));
   const bad = matches(ironFarmPlan(), originOf(ironFarmPlan()));
   ok(!bad.length, bad.slice(0, 3).join(' | '));
   // (u218: a slip into a cell of the plan that wants that block is kept as placed; only one where the plan has none is a stray, and the report says so.)

@@ -35,10 +35,11 @@ export async function findSlab(dim, a, b, notes) {
  * given a block update from a neighbour (a sign with nothing to hang on stays until it gets one), and read back; if it is gone the other way round
  * is tried, then the next spelling of the name. Returns { ok, lavaOk, id } (u218: the lava's three are the only signs).
  */
-export async function placeSigns(dim, off, notes) {
+export async function placeSigns(dim, off, notes, visit = null) {
   let id = null, flip = false, first = true;
   const done = new Map();
   for (const s of SIGNS) {
+    if (visit) await visit(s, 'oak_sign');   // (the bot's own hand: it goes there and puts it up, u220)
     const q = W(off, s);
     let ok = false;
     for (const cand of id ? [id] : SIGN_IDS) {
@@ -67,9 +68,10 @@ export async function placeSigns(dim, off, notes) {
  * The four open fence gates over the hole. Each is placed with the plan's states, read back (is it a gate, is it open?); if it is not, the next way
  * of saying "open" is tried, then the next spelling of the name. Returns { ok (all four there and open), id, open (how many read as open) }.
  */
-export async function placeGates(dim, off, notes) {
+export async function placeGates(dim, off, notes, visit = null) {
   let id = null, states = null, there = 0, open = 0;
   for (const g of GATES) {
+    if (visit) await visit(g, 'oak_fence_gate');
     const q = W(off, g);
     let done = false;
     for (const cand of id ? [id] : GATE_IDS) {
@@ -184,7 +186,8 @@ export async function chamberWater(dim, off) {
     return out;
   };
   const tried = [];
-  run(dim, `setblock ${src.x} ${src.y} ${src.z} water`);
+  // (u220: the bot pours it with its own bucket while it builds; set here only if it is not there.)
+  if (!isWater(idAt(dim, src))) run(dim, `setblock ${src.x} ${src.y} ${src.z} water`);
   await wait(40);
   tried.push(`source placed: ${wet()} of ${CHAMBER_WET.length} cells wet`);
   if (wet() < CHAMBER_WET.length) {
@@ -222,8 +225,10 @@ export async function ensureWater(dim, off, plan) {
     tried.push(`${name}: ${s.have} of ${s.want} cells`);
     return s;
   };
-  put('water');
-  let s = await settle('sources placed', 60);
+  // (u220: the bot pours the sources with its own bucket from the wall tops while it builds; filled here only if some are not there.)
+  const poured = waterSources().every((c) => isWater(idAt(dim, W(off, { x: c.x, y: WATER_Y, z: c.z }))));
+  if (!poured) put('water');
+  let s = await settle(poured ? 'sources poured by the bot' : 'sources placed', 60);
   if (s.have < s.want) {
     // 1: a block update beside some of the sources (a source made by a command may not know it should spread until something next to it changes).
     // (A row of blocks laid on top of each row of sources and taken off again: one update for every source in it.)
