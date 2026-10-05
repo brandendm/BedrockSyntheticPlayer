@@ -11,20 +11,53 @@ const DIRS = [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1
  * eye is on the open side of, only from a spot that is solid underfoot with room to head height; and it takes an item from the pack to do it. Every time
  * the engine asks for something the rules forbid, it is written down in `log.violations`.
  */
+/** Can a bot walk from a to b over this world (one block up with a jump, down a drop of up to three, round a 25-wide box)? */
+function walkable(idAt, a, b) {
+  const standable = (x, y, z) => FREE.has(idAt(x, y, z)) && FREE.has(idAt(x, y + 1, z)) && STAND_ON.has(idAt(x, y - 1, z))
+    // (or on a bottom slab in that cell, half a block up: it walks over the slabs it has laid)
+    || (idAt(x, y, z) === SLAB && FREE.has(idAt(x, y + 1, z)) && FREE.has(idAt(x, y + 2, z)));
+  const seen = new Set([key(a.x, a.y, a.z)]);
+  const q = [a];
+  for (let i = 0; i < q.length && seen.size < 8000; i++) {
+    const c = q[i];
+    if (c.x === b.x && c.y === b.y && c.z === b.z) return true;
+    for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+      for (let dy = 1; dy >= -3; dy--) {
+        const n = { x: c.x + dx, y: c.y + dy, z: c.z + dz };
+        if (Math.abs(n.x - a.x) > 14 || Math.abs(n.z - a.z) > 14 || Math.abs(n.y - a.y) > 8) continue;
+        if (dy === 1 && !FREE.has(idAt(c.x, c.y + 2, c.z))) continue;
+        if (dy < 0 && !(FREE.has(idAt(n.x, c.y, n.z)) && FREE.has(idAt(n.x, c.y + 1, n.z)))) continue;
+        if (!standable(n.x, n.y, n.z)) continue;
+        const k = key(n.x, n.y, n.z);
+        if (!seen.has(k)) { seen.add(k); q.push(n); }
+        break;
+      }
+    }
+  }
+  return false;
+}
+
 function fake(plan, { miss = 0, seed = 1, noStand = false, unreach = null, stopAfter = Infinity, world = new Map(), inv = {}, slip = 0, tidy = false } = {}) {
   let bot = null, tick = 0, rnd = seed, placeCalls = 0, grid = null;
   const scaffold = new Set();
   const final = () => (grid ??= render(plan));
+  const walksTo = (a, b) => walkable((x, y, z) => (y <= BASE_Y - 1 ? 'stone' : (world.get(key(x, y, z)) ?? 'air')), a, b);
   const rand = () => { rnd = (rnd * 1664525 + 1013904223) % 4294967296; return rnd / 4294967296; };
-  const log = { violations: /** @type {string[]} */ ([]), said: /** @type {string[]} */ ([]), stands: 0, scaffold: 0, down: 0, up: 0, pairs: 0, inLine: 0, last: null, sets: 0, slips: /** @type {string[]} */ ([]), cleared: 0 };
+  const log = { violations: /** @type {string[]} */ ([]), said: /** @type {string[]} */ ([]), stands: 0, refused: 0, pillars: 0, scaffold: 0, down: 0, up: 0, pairs: 0, inLine: 0, last: null, sets: 0, slips: /** @type {string[]} */ ([]), cleared: 0 };
   const idAt = (x, y, z) => (y <= BASE_Y - 1 ? 'stone' : (world.get(key(x, y, z)) ?? 'air'));
   const hands = {
     blockAt: (c) => idAt(c.x, c.y, c.z),
     where: () => bot,
-    async stand(s) {
+    async stand(s, { climb = true } = {}) {
       if (noStand || (unreach && unreach(s, log.stands))) { tick += 20; return false; }
+      // (As the game's walkTo: on foot when its feet take it there (a jump up one, a drop down to three); else, only when asked to climb, a
+      // pillar, counted.)
+      if (bot && !walksTo(bot, s)) {
+        if (!climb) { log.refused++; tick += 10; return false; }
+        log.pillars += Math.max(1, s.y - bot.y);
+      }
       // (On air, as the game's walkTo does: a pillar under it from what is below, or a bridge block from a solid side; scaffolding, tidied later.)
-      if (idAt(s.x, s.y - 1, s.z) === 'air') {
+      if (!s.up && idAt(s.x, s.y - 1, s.z) === 'air') {
         let h = 1;
         while (h <= 5 && idAt(s.x, s.y - 1 - h, s.z) === 'air') h++;
         const side = DIRS.some(([a, b, d]) => b === 0 && !FREE.has(idAt(s.x + a, s.y - 1, s.z + d)));
@@ -33,7 +66,8 @@ function fake(plan, { miss = 0, seed = 1, noStand = false, unreach = null, stopA
         for (let i = 1; i <= h; i++) { const k = key(s.x, s.y - i, s.z); world.set(k, plan.shell ?? 'dirt'); scaffold.add(k); log.scaffold++; }
         if (process.env.SHOW3) console.log("scaf", h, side, JSON.stringify(s), JSON.stringify(bot));
       }
-      if (!STAND_ON.has(idAt(s.x, s.y - 1, s.z)) || !FREE.has(idAt(s.x, s.y, s.z)) || !FREE.has(idAt(s.x, s.y + 1, s.z))) { log.violations.push(`stand at ${key(s.x, s.y, s.z)} on ${idAt(s.x, s.y - 1, s.z)}`); return false; }
+      const onSlab = s.up && idAt(s.x, s.y, s.z) === SLAB && FREE.has(idAt(s.x, s.y + 1, s.z)) && FREE.has(idAt(s.x, s.y + 2, s.z));
+      if (!onSlab && (!STAND_ON.has(idAt(s.x, s.y - 1, s.z)) || !FREE.has(idAt(s.x, s.y, s.z)) || !FREE.has(idAt(s.x, s.y + 1, s.z)))) { log.violations.push(`stand at ${key(s.x, s.y, s.z)} on ${idAt(s.x, s.y - 1, s.z)}`); return false; }
       if (bot && s.y < bot.y) { log.down += bot.y - s.y; if (process.env.SHOW2) console.log("down", JSON.stringify(bot), "->", JSON.stringify(s)); }
       if (bot && s.y > bot.y) log.up += s.y - bot.y;
       bot = { ...s }; tick += 4; log.stands++;
@@ -54,9 +88,9 @@ function fake(plan, { miss = 0, seed = 1, noStand = false, unreach = null, stopA
       if (!bot) { log.violations.push('no bot'); return false; }
       if (!reaches(bot, c)) { log.violations.push(`out of reach ${key(c.x, c.y, c.z)} from ${key(bot.x, bot.y, bot.z)}`); return false; }
       if (idAt(c.x, c.y, c.z) !== 'air') { log.violations.push(`occupied ${key(c.x, c.y, c.z)} by ${idAt(c.x, c.y, c.z)}`); return false; }
-      if (c.x === bot.x && c.z === bot.z && (c.y === bot.y || c.y === bot.y + 1)) { log.violations.push(`on the bot ${key(c.x, c.y, c.z)}`); return false; }
+      if (c.x === bot.x && c.z === bot.z && (c.y === bot.y || c.y === bot.y + 1 || (bot.up && c.y === bot.y + 2))) { log.violations.push(`on the bot ${key(c.x, c.y, c.z)}`); return false; }
       // (A slab only on the top of the block under it: anywhere else it could come out a top slab.)
-      const bridged = id !== SLAB && edge(bot, c) && !FREE.has(idAt(bot.x, bot.y - 1, bot.z));
+      const bridged = !bot.up && id !== SLAB && edge(bot, c) && !FREE.has(idAt(bot.x, bot.y - 1, bot.z));
       const face = bridged || (id === SLAB ? [[0, -1, 0]] : DIRS).some(([a, b, d]) => { const n = { x: c.x + a, y: c.y + b, z: c.z + d }; return !FREE.has(idAt(n.x, n.y, n.z)) && facing(bot, c, n); });
       if (!face) { log.violations.push(`no face to click for ${key(c.x, c.y, c.z)} (${id}) from ${key(bot.x, bot.y, bot.z)}`); return false; }
       if (!((inv[id] ?? 0) > 0)) { log.violations.push(`out of ${id}`); return false; }
@@ -147,12 +181,15 @@ test('with hands that work, the bot builds the whole shell itself under the rule
     assert.ok(stats.footing < 40, `${stats.footing} blocks set by command just to have something to stand on`);
     assert.ok(stats.standMoves < 400, `${stats.standMoves} spots`);
     assert.ok(stats.command <= stats.footing, `${stats.command} by command, ${stats.footing} of them footings`);
-    if (process.env.SHOW) console.log(shell, JSON.stringify({ hand: stats.hand, command: stats.command, stands: stats.standMoves, scaffold: f.log.scaffold, climbs: stats.climbs, unblocked: f.log.unblocked, down: f.log.down, up: f.log.up, inLine: f.log.inLine, pairs: f.log.pairs }));
+    if (process.env.SHOW) console.log(shell, JSON.stringify({ hand: stats.hand, command: stats.command, stands: stats.standMoves, scaffold: f.log.scaffold, pillars: f.log.pillars, refused: f.log.refused, climbs: stats.climbs, unblocked: f.log.unblocked, down: f.log.down, up: f.log.up, inLine: f.log.inLine, pairs: f.log.pairs }));
     // u220 (the player): in lines and layers, standing on what it built: one block after the next beside it, little scaffolding, and up the
     // tower about once (it is 15 high).
     assert.ok(f.log.inLine / f.log.pairs > 0.8, `${f.log.inLine} of ${f.log.pairs} blocks went next to the one before`);
     assert.ok(f.log.scaffold <= 20, `${f.log.scaffold} blocks of scaffolding`);
-    assert.ok((stats.climbs ?? 0) <= 15, `${stats.climbs} spots it could not walk to (each a pillar in the game)`);
+    // u224 (the player: "the layer itself should be the pillar/bridge"): no scaffolding, no pillars, no spot it cannot walk to.
+    assert.equal(f.log.scaffold, 0, `${f.log.scaffold} blocks of scaffolding`);
+    assert.equal(f.log.pillars, 0, `${f.log.pillars} levels pillared`);
+    assert.equal(f.log.refused, 0, `${f.log.refused} spots it could not walk to`);
     assert.ok(f.log.up <= 45, `climbed ${f.log.up} levels for a 15-high build`);
     assert.ok(stats.handById[shell] > 700 && stats.handById[SLAB] > 100 && stats.handById.glass === 5 && stats.handById.composter === 10, JSON.stringify(stats.handById));
   }
@@ -260,7 +297,7 @@ test('the pack always has what the layer needs, and never more than a layer\'s w
   assert.ok(asked.every(([id, n]) => Math.ceil(n / 64) <= 6), 'no more than six stacks of anything at a time');
 });
 
-test('the layers are built bottom to top, the slabs last; the commands for a layer run when its blocks are down', async () => {
+test('the layers are built bottom to top, each one\'s slabs with it (u224); the commands for a layer run when its blocks are down', async () => {
   const plan = ironFarmPlan();
   const f = fake(plan);
   const order = [];
@@ -270,10 +307,10 @@ test('the layers are built bottom to top, the slabs last; the commands for a lay
   assert.deepEqual(ys, [...ys].sort((a, b) => a - b));
   assert.equal(order.at(-1), 'slabs');
   assert.deepEqual(ys, Array.from({ length: plan.bounds.y2 - plan.bounds.y1 + 1 }, (_, i) => plan.bounds.y1 + i));
-  assert.deepEqual(stats.layers.filter((l) => !l.slabs).map((l) => l.y), [...stats.layers.filter((l) => !l.slabs).map((l) => l.y)].sort((a, b) => a - b));
-  // no slab goes down before the last layer of dirt
-  const lastDirt = stats.layers.findLastIndex((l) => !l.slabs), firstSlab = stats.layers.findIndex((l) => l.slabs);
-  assert.ok(lastDirt < firstSlab);
+  const L = stats.layers;
+  assert.deepEqual(L.map((l) => l.y), [...L.map((l) => l.y)].sort((a, b) => a - b), 'never back down to an earlier layer');
+  // the walls of a layer before its slabs
+  for (let i = 1; i < L.length; i++) if (L[i].y === L[i - 1].y) assert.ok(!L[i - 1].slabs && L[i].slabs);
 });
 
 test('quick enough to run in the game: the planning for the whole farm in a fraction of a second of a second Node', async () => {

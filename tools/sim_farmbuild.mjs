@@ -43,7 +43,8 @@ function makeAgent(knobs = {}) {
         if (knobs.unreach && knobs.unreach(cell)) return { ok: false, placed: [], broke: [] };
         const placed = [];
         const under = { x: cell.x, y: cell.y - 1, z: cell.z };
-        if (idAt(under.x, under.y, under.z) === 'air') {
+        const onSlab = idAt(cell.x, cell.y, cell.z) === SLAB;   // (on a slab it has laid: half a block up, u224)
+        if (!onSlab && idAt(under.x, under.y, under.z) === 'air') {
           const c = container(agent.sim);
           const slot = [...Array(c.size).keys()].find((i) => /dirt|cobblestone$/.test(c.getItem(i)?.typeId ?? ''));
           if (slot === undefined) return { ok: false, placed, broke: [] };
@@ -52,7 +53,7 @@ function makeAgent(knobs = {}) {
           if (it.amount > 1) { it.amount--; c.setItem(slot, it); } else c.setItem(slot, undefined);
           placed.push(under); agent.scaffolded = (agent.scaffolded ?? 0) + 1;
         }
-        agent.sim.location = { x: cell.x + 0.5, y: cell.y, z: cell.z + 0.5 }; agent.standing++;
+        agent.sim.location = { x: cell.x + 0.5, y: cell.y + (onSlab ? 0.5 : 0), z: cell.z + 0.5 }; agent.standing++;
         return { ok: true, placed, broke: [] };
       },
       inReach() { return true; },
@@ -64,12 +65,13 @@ function makeAgent(knobs = {}) {
       agent.skills.check(gen);
       if (knobs.miss && (knobs.miss === 1 || Math.abs(cell.x * 7 + cell.y * 13 + cell.z * 31) % knobs.miss === 0)) return false;   // (the same cells every time: a retry misses too)
       const l = agent.sim.location, s = { x: Math.floor(l.x), y: Math.floor(l.y + 0.05), z: Math.floor(l.z) };
-      if (!STAND_ON.has(idAt(s.x, s.y - 1, s.z)) || !FREE.has(idAt(s.x, s.y, s.z)) || !FREE.has(idAt(s.x, s.y + 1, s.z))) throw new Error(`the bot is standing wrong at ${key(s.x, s.y, s.z)}`);
+      if (l.y - s.y > 0.4) s.up = 0.5;
+      if (s.up ? !(idAt(s.x, s.y, s.z) === SLAB && FREE.has(idAt(s.x, s.y + 1, s.z)) && FREE.has(idAt(s.x, s.y + 2, s.z))) : (!STAND_ON.has(idAt(s.x, s.y - 1, s.z)) || !FREE.has(idAt(s.x, s.y, s.z)) || !FREE.has(idAt(s.x, s.y + 1, s.z)))) throw new Error(`the bot is standing wrong at ${key(s.x, s.y, s.z)}`);
       if (idAt(cell.x, cell.y, cell.z) !== 'air') return false;
       if (!reaches(s, cell)) throw new Error(`out of reach ${key(cell.x, cell.y, cell.z)} from ${key(s.x, s.y, s.z)}`);
-      if (cell.x === s.x && cell.z === s.z && (cell.y === s.y || cell.y === s.y + 1)) throw new Error('asked to place into the bot');
+      if (cell.x === s.x && cell.z === s.z && (cell.y === s.y || cell.y === s.y + 1 || (s.up && cell.y === s.y + 2))) throw new Error('asked to place into the bot');
       if (id === SLAB && !below) throw new Error('a slab asked for without "only on the block under it"');
-      if (!(!below && edge(s, cell) && !FREE.has(idAt(s.x, s.y - 1, s.z))) && !(below ? [[0, -1, 0]] : DIRS).some(([a, b, d]) => { const n = { x: cell.x + a, y: cell.y + b, z: cell.z + d }; return !FREE.has(idAt(n.x, n.y, n.z)) && facing(s, cell, n); })) throw new Error(`nothing to click for ${key(cell.x, cell.y, cell.z)} from ${key(s.x, s.y, s.z)}`);
+      if (!(!below && !s.up && edge(s, cell) && !FREE.has(idAt(s.x, s.y - 1, s.z))) && !(below ? [[0, -1, 0]] : DIRS).some(([a, b, d]) => { const n = { x: cell.x + a, y: cell.y + b, z: cell.z + d }; return !FREE.has(idAt(n.x, n.y, n.z)) && facing(s, cell, n); })) throw new Error(`nothing to click for ${key(cell.x, cell.y, cell.z)} from ${key(s.x, s.y, s.z)}`);
       const c = container(agent.sim);
       const slot = [...Array(c.size).keys()].find((i) => c.getItem(i)?.typeId === `minecraft:${id}`);
       if (slot === undefined) return false;

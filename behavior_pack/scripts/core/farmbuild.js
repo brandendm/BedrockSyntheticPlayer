@@ -26,6 +26,7 @@ export const ROUNDS = 3;           // passes over a layer's leftovers (blocks it
 export const TRIES = 3;
 export const SCAFFOLD_COST = 200;  // a block of scaffolding to stand on (u220: it pillared where it could have stayed put)
 export const ENCLOSED_COST = 400;
+export const LOW_COST = 200;        // per level its feet are below the course it lays (u224)
 export const CLIMB_COST = 100;     // a spot it cannot walk to from where it is: a climb (u222)  // a spot in air the farm closes in (the pod, the room, the shaft)            // spots tried for one block in a pass before it is left for the next pass
 
 const key = (x, y, z) => `${x},${y},${z}`;
@@ -53,13 +54,13 @@ export function splitPlan(plan) {
 
 /** Is cell t within reach of a bot standing with its feet in cell s? */
 export function reaches(s, t) {
-  const dx = s.x + 0.5 - (t.x + 0.5), dy = s.y + EYE - (t.y + 0.5), dz = s.z + 0.5 - (t.z + 0.5);
+  const dx = s.x + 0.5 - (t.x + 0.5), dy = s.y + (s.up ?? 0) + EYE - (t.y + 0.5), dz = s.z + 0.5 - (t.z + 0.5);
   return dx * dx + dy * dy + dz * dz <= REACH * REACH;
 }
 
 /** Is the eye, standing at s, on the open side of the face of neighbour n that looks toward cell t? (You cannot click a face you are behind.) */
 export function facing(s, t, n) {
-  const e = { x: s.x + 0.5, y: s.y + EYE, z: s.z + 0.5 };
+  const e = { x: s.x + 0.5, y: s.y + (s.up ?? 0) + EYE, z: s.z + 0.5 };
   const nx = t.x - n.x, ny = t.y - n.y, nz = t.z - n.z;   // the face's outward normal
   const fc = { x: n.x + 0.5 + nx * 0.5, y: n.y + 0.5 + ny * 0.5, z: n.z + 0.5 + nz * 0.5 };
   return (e.x - fc.x) * nx + (e.y - fc.y) * ny + (e.z - fc.z) * nz > 0.05;
@@ -140,8 +141,8 @@ export async function runBuild(plan, hands, { after = null, maxTicks = Infinity,
   const placeableFrom = (s, c) => {
     if (!reaches(s, c)) return false;
     if (!FREE.has(idAt(c.x, c.y, c.z))) return false;   // (something there already: scaffolding of its own, taken down at the end)
-    if (c.id !== SLAB && edge(s, c) && clickable(idAt(s.x, s.y - 1, s.z))) return true;
-    if (c.x === s.x && c.z === s.z && (c.y === s.y || c.y === s.y + 1)) return false;
+    if (!s.up && c.id !== SLAB && edge(s, c) && clickable(idAt(s.x, s.y - 1, s.z))) return true;
+    if (c.x === s.x && c.z === s.z && (c.y === s.y || c.y === s.y + 1 || (s.up && c.y === s.y + 2))) return false;
     return dirsOf(c).some(([a, b, d]) => { const n = { x: c.x + a, y: c.y + b, z: c.z + d }; return clickable(idAt(n.x, n.y, n.z)) && facing(s, c, n); });
   };
 
@@ -164,7 +165,9 @@ export async function runBuild(plan, hands, { after = null, maxTicks = Infinity,
   // again to get back up"): spots with room and a floor, one block up with a jump or down a drop of up to three, round the bot. A spot it cannot
   // walk to costs as much as a pillar, so it builds from where its feet already take it.
   let reach = null, reachFrom = '';
-  const standable = (x, y, z) => FREE.has(idAt(x, y, z)) && FREE.has(idAt(x, y + 1, z)) && STAND_ON.has(idAt(x, y - 1, z));
+  const standable = (x, y, z) => FREE.has(idAt(x, y, z)) && FREE.has(idAt(x, y + 1, z)) && STAND_ON.has(idAt(x, y - 1, z))
+    // (or on a bottom slab in that cell, half a block up: it walks over the slabs it has laid)
+    || (idAt(x, y, z) === SLAB && FREE.has(idAt(x, y + 1, z)) && FREE.has(idAt(x, y + 2, z)));
   const walkable = (from) => {
     const k0 = from ? key(from.x, from.y, from.z) : '';
     if (reach && reachFrom === k0) return reach;
@@ -201,10 +204,12 @@ export async function runBuild(plan, hands, { after = null, maxTicks = Infinity,
         const s = { x: c.x + dx, y: sy, z: c.z + dz };
         if (unreachable.has(key(s.x, sy, s.z))) continue;
         if (avoid.has(key(s.x, sy, s.z)) || avoid.has(key(s.x, sy + 1, s.z)) || avoid.has(key(s.x, sy - 1, s.z))) continue;   // (the beds' cells, u223)
-        if (!FREE.has(idAt(s.x, sy, s.z)) || !FREE.has(idAt(s.x, sy + 1, s.z))) continue;
+        // (u224: on a bottom slab it has laid, half a block up, as a player walks the rim it has slabbed)
+        if (idAt(s.x, sy, s.z) === SLAB && FREE.has(idAt(s.x, sy + 1, s.z)) && FREE.has(idAt(s.x, sy + 2, s.z))) s.up = 0.5;
+        else if (!FREE.has(idAt(s.x, sy, s.z)) || !FREE.has(idAt(s.x, sy + 1, s.z))) continue;
         const under = idAt(s.x, sy - 1, s.z);
         let cost = 0;
-        if (!STAND_ON.has(under)) {
+        if (!s.up && !STAND_ON.has(under)) {
           if (!scaffold || under !== 'air') continue;
           // (A floor to make: one block under it, bridged from a neighbour that is solid, or a short pillar from what is below.)
           let h = 1;
@@ -228,7 +233,10 @@ export async function runBuild(plan, hands, { after = null, maxTicks = Infinity,
         const walk = from ? Math.abs(s.x - from.x) + Math.abs(s.z - from.z) + Math.abs(s.y - from.y) * 2 : 0;
         const down = from && sy < from.y ? from.y - sy : 0;
         const onBuild = final.cells.has(key(s.x, sy - 1, s.z)) && !cost ? 1 : 0;
-        const score = n * 40 - Math.abs(dx) - Math.abs(dz) - walk * 6 - down * 60 - cost + onBuild * 20 - (enclosed.has(key(s.x, s.y, s.z)) ? ENCLOSED_COST : 0);
+        // (u224: up on the course below the one it lays, feet level with it, not under it: from below, the next layer up is out of a jump's
+        // reach and it pillars to it.)
+        const low = sy < c.y ? (c.y - sy) * LOW_COST : 0;
+        const score = n * 40 - Math.abs(dx) - Math.abs(dz) - walk * 6 - down * 60 - cost + onBuild * 20 - low - (enclosed.has(key(s.x, s.y, s.z)) ? ENCLOSED_COST : 0);
         if (score > bestScore) { bestScore = score; best = s; }
       }
     }
@@ -349,7 +357,7 @@ export async function runBuild(plan, hands, { after = null, maxTicks = Infinity,
           continue;
         }
         const near = line && line.length ? line.slice(line.indexOf(c0)) : [c0];
-        const s = bestStand(c0, near, here, { scaffold: true });
+        const s = bestStand(c0, near, here) ?? bestStand(c0, near, here, { scaffold: true });
         if (!s) {
           // No spot left to try: for later if it failed to reach some this pass, else there is none at all and a command sets it (a footing).
           if (unreachable.size) { tried.set(key(c0.x, c0.y, c0.z), TRIES - 1); fail(c0); continue; }
@@ -424,14 +432,16 @@ export async function runBuild(plan, hands, { after = null, maxTicks = Infinity,
     stats.layers.push({ y, slabs, cells: mine.length, hand: stats.hand - before.hand, command: stats.command - before.command });
   }
 
+  // Layer by layer, each one's slabs with it (u224, the player: "it didn't remember the layer when it was at that layer": the slabs on the room's
+  // roof left to the end meant a trip back down from the top of the platform, pillars and all). It walks over the slabs it has laid.
   for (let y = bd.y1; y <= bd.y2; y++) {
     stats.layer = y;
     await layer(y, false);
+    stats.layer = `slabs ${y}`;
+    await layer(y, true);
     if (after) { await after(y, stats); W = new Map(); }
     await hands.yield();
   }
-  // (The slabs from the top down: it is up on the platform wall when the shell is done, and works its way down once. u220)
-  for (let y = bd.y2; y >= bd.y1; y--) { stats.layer = `slabs ${y}`; await layer(y, true); await hands.yield(); }
   // Its scaffolding down, once, at the end (u220: not after every layer, which sent it back down the hole for its pillars and up again on new
   // ones; it reuses what it put up as it goes).
   if (hands.tidy) { stats.layer = 'scaffolding'; await hands.tidy(); }

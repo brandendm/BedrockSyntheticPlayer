@@ -486,7 +486,8 @@ export class Skills {
     for (const dear of escape ? [false, true] : [false]) {
       if (dear) escape(true);
       try {
-        const ar = await this.a.plan(this.sim.location, pos, 0, 12000, goal, { actions: this.actionOpts({ force: false }), weight: 1.5 });
+        // (u224 live: a 12000-node search took the game 13 s, the bot standing still, three times running: 4000 is plenty for a spot a few blocks off)
+        const ar = await this.a.plan(this.sim.location, pos, 0, 4000, goal, { actions: this.actionOpts({ force: false }), weight: 1.5 });
         this.check(gen);
         if (!ar.complete) { this.log(`walkTo ${cell.x} ${cell.y} ${cell.z}: no route${dear ? ' even breaking out' : ''} (${ar.expanded ?? '?'} searched, ${this.blockCount()} blocks to build with)`); continue; }
         // What the route will put down and break, read before and after (a step that did not happen is not counted).
