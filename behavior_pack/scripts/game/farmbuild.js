@@ -311,7 +311,10 @@ async function start(agent, player, args) {
     const bedWorld = new Set([...bedCells].map((k) => { const [x, y, z] = k.split(',').map(Number); const w = W(off, { x, y, z }); return `${w.x},${w.y},${w.z}`; }));
     // (u225: only where a bed IS: walls to its pathfinder once they are in, open floor to build from before. Keeping out of the planned cells from
     // the start left no spot over the bed rows to lay the pod floor from, and it put scaffolding under it.)
-    agent.planWrap = (cl) => (x, y, z) => { const c = cl(x, y, z); return c === Cell.SOLID && bedWorld.has(`${x},${y},${z}`) ? Cell.DANGER : c; };
+    // (u229: and its composters and hoppers: bowls it sinks into and cannot route out of; never walked on)
+    const bowls = new Set([...render({ ops: plan.ops.filter((o) => o.op === 'set' && (o.id === 'composter' || o.id === 'hopper')) }).cells.keys(), ...splitPlan(plan).cells.filter((c) => c.id === 'composter').map((c) => `${c.x},${c.y},${c.z}`)]);
+    const bowlWorld = new Set([...bowls].map((k) => { const [x, y, z] = k.split(',').map(Number); const w = W(off, { x, y, z }); return `${w.x},${w.y},${w.z}`; }));
+    agent.planWrap = (cl) => (x, y, z) => { const c = cl(x, y, z); const k = `${x},${y},${z}`; return c === Cell.SOLID && (bedWorld.has(k) || bowlWorld.has(k)) ? Cell.DANGER : c; };
     // (A slab as the bot meets it: a bottom one is SLAB; a top one (mobs spawn on it) and a double one are not.)
     const norm = (b) => {
       const id = strip(b.typeId);
@@ -498,7 +501,7 @@ async function start(agent, player, args) {
         if (ex * ex + ey * ey + ez * ez > reach * reach) continue;
         if (!FREE_ID.test(hands.blockAt(q) ?? 'x') || !FREE_ID.test(hands.blockAt({ ...q, y: q.y + 1 }) ?? 'x')) continue;
         const under = hands.blockAt({ ...q, y: q.y - 1 }) ?? 'air';
-        if (FREE_ID.test(under) || /water|lava|campfire|magma/.test(under)) continue;
+        if (FREE_ID.test(under) || /water|lava|campfire|magma|composter|hopper|bed|chest/.test(under)) continue;
         if (nearShaft(q)) continue;
         // (never down in the shaft or the hallway: no way in or out of there on foot, u228)
         if (q.x >= SHAFT.x1 && q.x <= HALL.x2 && q.z >= SHAFT.z1 && q.z <= SHAFT.z2 && q.y >= SHAFT.y1 && q.y <= SHAFT.y2 + 1) continue;

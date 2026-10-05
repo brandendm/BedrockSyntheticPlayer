@@ -37,7 +37,7 @@ function walkable(idAt, a, b) {
   return false;
 }
 
-function fake(plan, { miss = 0, seed = 1, noStand = false, unreach = null, stopAfter = Infinity, world = new Map(), inv = {}, slip = 0, tidy = false } = {}) {
+function fake(plan, { miss = 0, seed = 1, noStand = false, unreach = null, fallAt = 0, stopAfter = Infinity, world = new Map(), inv = {}, slip = 0, tidy = false } = {}) {
   let bot = null, tick = 0, rnd = seed, placeCalls = 0, grid = null;
   const scaffold = new Set();
   const final = () => (grid ??= render(plan));
@@ -71,6 +71,8 @@ function fake(plan, { miss = 0, seed = 1, noStand = false, unreach = null, stopA
       if (bot && s.y < bot.y) { log.down += bot.y - s.y; if (process.env.SHOW2) console.log("down", JSON.stringify(bot), "->", JSON.stringify(s)); }
       if (bot && s.y > bot.y) log.up += s.y - bot.y;
       bot = { ...s }; tick += 4; log.stands++;
+      // (a fall: off the wall to the pad, outside the tower)
+      if (fallAt && log.stands === fallAt) { bot = { x: s.x, y: BASE_Y, z: -4 }; log.fell = true; }
       return true;
     },
     async unblock(c) { const k = key(c.x, c.y, c.z); if (scaffold.has(k)) { world.delete(k); scaffold.delete(k); log.unblocked = (log.unblocked ?? 0) + 1; } },
@@ -221,6 +223,16 @@ test('spots it cannot get to (u218): it tries other spots and comes back; nothin
   assert.equal(stats.fallback, 0);
   assert.equal(stats.repaired, 0);
   assert.ok(stats.command <= stats.footing, `${stats.command} by command`);
+});
+
+test('a fall (u229 live: off the pod\'s wall to the pad, nine down): it climbs back up and carries on; nothing carried off or set by command', async () => {
+  const plan = ironFarmPlan();
+  const f = fake(plan, { fallAt: 300 });
+  const stats = await runBuild(plan, f.hands, { after: afterFor(plan, f.world) });
+  assert.ok(f.log.fell);
+  assert.deepEqual(sameAsPlan(plan, f.world), []);
+  assert.equal(stats.command, 0, `${stats.command} by command`);
+  assert.ok(f.log.pillars > 0, 'it should have climbed back');
 });
 
 test('hands that never work: it says so after two dozen tries and sets the rest by command; the farm is the same', async () => {

@@ -35,7 +35,9 @@ const BELOW = [[0, -1, 0]];
 /** What the bot walks through (and a block can be put into): no collision. */
 export const FREE = new Set(['air', 'wall_sign', 'torch', 'fence_gate', 'water', 'flowing_water', 'lava']);
 /** What the bot can stand on (full blocks it can also click against). */
-export const STAND_ON = new Set(['dirt', 'cobblestone', 'stone', 'smooth_stone', 'glass', 'composter', 'grass_block']);
+// (not a composter: its top is a bowl it sinks into, and then every route starts inside a block (u229 live: it stood in the pod's wall
+// composters, could not get out, and fell off the wall))
+export const STAND_ON = new Set(['dirt', 'cobblestone', 'stone', 'smooth_stone', 'glass', 'grass_block']);
 const clickable = (id) => !FREE.has(id) && id !== 'unloaded';
 
 /** The ids the bot places by hand. */
@@ -373,7 +375,10 @@ export async function runBuild(plan, hands, { after = null, maxTicks = Infinity,
           }
           // (none of those from where it can walk: if the layer can carry them up, the rest that can be clicked are left for later at once, without
           // asking for spots it cannot reach, u228)
-          if (!c0 && cand.length && canCarry && reachHere && !cand.slice(16).some(({ c }) => { const st = bestStand(c, [c], here); return st && reachHere.has(key(st.x, st.y, st.z)); })) {
+          // (u229 live: from the pad at the start, 14 blocks off, every block of the first layer was "out of reach" of its 12-block look round and
+          // all of it went up a layer. Only when they are all close to it and it is up at the layer, not fallen off below it.)
+          const close = here && cand.every(({ c }) => Math.abs(c.x - here.x) <= 9 && Math.abs(c.z - here.z) <= 9 && Math.abs(c.y - here.y) <= 3);
+          if (!c0 && cand.length && canCarry && reachHere && close && !cand.slice(16).some(({ c }) => { const st = bestStand(c, [c], here); return st && reachHere.has(key(st.x, st.y, st.z)); })) {
             for (const { c } of cand) { tried.set(key(c.x, c.y, c.z), TRIES - 1); fail(c); }
             continue;
           }
@@ -400,7 +405,10 @@ export async function runBuild(plan, hands, { after = null, maxTicks = Infinity,
         }
         if (here && STAND_ON.has(idAt(s.x, s.y - 1, s.z)) && !walkable(here).has(key(s.x, s.y, s.z))) stats.climbs = (stats.climbs ?? 0) + 1;
         // (u225: climbing only on the last pass over the leftovers, or to a spot with nothing under it yet; the earlier passes find another spot on foot)
-        if (!(await goStand(s, (round + 1 >= ROUNDS && !canCarry) || (!s.up && !STAND_ON.has(idAt(s.x, s.y - 1, s.z)))))) {
+        // (climbing: on the last pass of the top layer, to a spot with nothing under it yet, or when it has fallen off well below the layer it
+        // is laying (u229 live: it fell off the pod's wall to the pad, nine down, and could only get back up by climbing))
+        const fallen = !!here && here.y < y - 3;
+        if (!(await goStand(s, fallen || (round + 1 >= ROUNDS && !canCarry) || (!s.up && !STAND_ON.has(idAt(s.x, s.y - 1, s.z)))))) {
           stats.standFails++;
           unreachable.add(key(s.x, s.y, s.z));
           fail(c0);
@@ -446,7 +454,8 @@ export async function runBuild(plan, hands, { after = null, maxTicks = Infinity,
       }
       if (!later.size) break;
       if (round + 1 >= ROUNDS) {
-        const up = canCarry ? [...later.values()].filter((c) => !handMissed.has(key(c.x, c.y, c.z))) : [];
+        const lowNow = hands.where();
+        const up = canCarry && !(lowNow && lowNow.y < y - 3) ? [...later.values()].filter((c) => !handMissed.has(key(c.x, c.y, c.z))) : [];
         if (up.length) { for (const c of up) carryOut.push(c); stats.carried = (stats.carried ?? 0) + up.length; hands.note?.(`CARRY ${up.length} of layer ${y} up to the next: ${up.map((c) => `${c.x} ${c.y} ${c.z}`).join(', ')}`); }
         const upK = new Set(up.map((c) => key(c.x, c.y, c.z)));
         for (const c of later.values()) if (!upK.has(key(c.x, c.y, c.z))) { commandPlace(c, 'fallback'); forced++; }
