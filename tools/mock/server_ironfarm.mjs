@@ -126,7 +126,10 @@ class Dimension {
     G.entities.push(e);
     return e;
   }
-  getEntities({ type }) { return G.entities.filter((e) => e.isValid && (!type || e.typeId === type)); }
+  getEntities({ type, families }) {
+    const MONSTER = /zombie|skeleton|creeper|spider|witch|enderman|phantom|drowned|husk|stray/;
+    return G.entities.filter((e) => e.isValid && (!type || e.typeId === type) && (!families || (families.includes('monster') && MONSTER.test(e.typeId))));
+  }
 }
 
 /** Spread the water one ring: a source (or a flowing cell) fills its free horizontal neighbours one level deeper, up to 7. */

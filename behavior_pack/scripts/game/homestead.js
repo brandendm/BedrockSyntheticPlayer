@@ -650,6 +650,85 @@ export class Homestead {
   }
 
   /**
+   * The crosshair onto a face of a solid neighbour of `cell` that a block put against it would land in `cell` from (the same rules as placeAt: in
+   * reach, the eye on the open side of the face, nothing in the way), the block in hand. { slot, n } once it is on, null if there is none or it
+   * would not settle in `aimTicks`. `below`: only the top of the block under it (a slab clicked there is a bottom slab). The u216 hands use it.
+   */
+  async aimFace(gen, cell, itemId, { below = false, aimTicks = 6, snap = false, lenient = false } = {}) {
+    const S = this.S;
+    if (!S.inReach(cell)) { this.placeWhy = 'out of reach'; return null; }
+    const solidAt = (n) => { const nid = S.blockAt(n) ?? 'air'; return !SOFT.test(nid) && !/water|lava/.test(nid); };
+    const faces = below ? FACES.slice(0, 1) : FACES;
+    const slot = hold(this.sim, itemId);
+    if (slot < 0) { this.placeWhy = `no ${itemId} in hand`; return null; }
+    let seen = null;
+    for (const [o, face] of faces) {
+      const n = { x: cell.x + o[0], y: cell.y + o[1], z: cell.z + o[2] };
+      if (!solidAt(n)) continue;
+      const pp = S.placePoint(cell, n, S.eye());
+      if (!pp) { this.placeWhy = `no line to the ${face} face from here`; continue; }
+      seen ??= { slot, n, face, settled: false };
+      if (snap && this.a.motor.snap) this.a.motor.snap(pp.pt); else this.a.motor.setFocus(pp.pt);
+      for (let k = 0; k <= aimTicks; k++) {
+        const h = S.crosshair();
+        if (h && ((h.location.x === n.x && h.location.y === n.y && h.location.z === n.z && h.face.x === -o[0] && h.face.y === -o[1] && h.face.z === -o[2]) ||
+          (h.location.x === cell.x && h.location.y === cell.y && h.location.z === cell.z))) return { slot, n, face, settled: true };
+        if (k < aimTicks) await S.wait(gen, 1);
+      }
+      this.placeWhy = `the crosshair did not settle on the ${face} face`;
+    }
+    // (lenient: a face the eye has a clear line to, though the head's own crosshair never reported it: the line is what a player needs, the
+    // report is the game's; the quick hand takes it, the held button never does, as it puts the block wherever the crosshair really is.)
+    if (lenient && seen) { this.placedLenient = (this.placedLenient ?? 0) + 1; return seen; }
+    return null;
+  }
+
+  /**
+   * The quick hand (u216, `!bot buildfarm`, a cheat by design): everything a player's placement needs (in reach, the crosshair on a solid
+   * neighbour's face from where it stands, the block in hand and one taken from the pack), but once the crosshair is on the face the block is put
+   * in by `put(cell)` (a command), not by the game's item use, which a simulated player is given only once every 10 ticks (a player places every
+   * 3 or 4). `gap`: the fewest ticks since the last one, a player's pace. The aim overlaps the wait, as a hand moves while the click comes round.
+   */
+  async placeQuick(gen, cell, itemId, put, { gap = 3, below = false, aimTicks = 3, sound = null, snap = true } = {}) {
+    const S = this.S;
+    if (!SOFT.test(S.blockAt(cell) ?? 'air')) { this.placeWhy = `${S.blockAt(cell)} there`; return false; }
+    const on = await this.aimFace(gen, cell, itemId, { below, aimTicks, snap, lenient: true });
+    if (!on) return false;
+    const since = system.currentTick - (this.quickAt ?? -100);
+    if (since < gap) await S.wait(gen, gap - since);
+    S.check(gen);
+    if (!put(cell)) { this.placeWhy = 'the block would not go in'; return false; }
+    this.quickAt = system.currentTick;
+    take(this.sim, itemId, 1);
+    if (sound) { try { this.dim.playSound(sound, center(cell)); } catch { /* */ } }
+    return true;
+  }
+
+  /**
+   * The held hand (u216, experimental): the game's own "keep the use button down" (SimulatedPlayer.startBuild, undocumented), started once the
+   * crosshair is on the face and stopped as soon as the block is in, so the game does the placing at whatever pace it gives a held button.
+   * { ok, extra }: extra is how many more of the item went than the one (a second block put down before the stop: somewhere it should not be).
+   */
+  async placeHeld(gen, cell, itemId, { below = false, aimTicks = 6, maxTicks = 12, snap = true } = {}) {
+    const S = this.S;
+    if (!SOFT.test(S.blockAt(cell) ?? 'air')) { this.placeWhy = `${S.blockAt(cell)} there`; return { ok: false, extra: 0 }; }
+    const on = await this.aimFace(gen, cell, itemId, { below, aimTicks, snap });
+    if (!on) return { ok: false, extra: 0 };
+    const before = invCounts(this.sim)[itemId] ?? 0;
+    let ok = false;
+    try {
+      /** @type {any} */ (this.sim).startBuild(on.slot);
+      for (let k = 0; k < maxTicks; k++) {
+        await S.wait(gen, 1);
+        if (!SOFT.test(S.blockAt(cell) ?? 'air')) { ok = true; break; }
+      }
+    } finally { try { /** @type {any} */ (this.sim).stopBuild(); } catch { /* */ } }
+    const used = before - (invCounts(this.sim)[itemId] ?? 0);
+    if (!ok) this.placeWhy = 'the held button put nothing there';
+    return { ok, extra: Math.max(0, used - (ok ? 1 : 0)) };
+  }
+
+  /**
    * Place a set of blocks one leading into the next, the order a hand sweeps (core/flow.js: along a
    * course, up a course, bottom up, only against something), not one by one with a stop and look
    * between. items: [{ cell, id, via? }]; id may be a function (the material, looked up as we go).

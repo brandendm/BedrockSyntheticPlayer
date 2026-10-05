@@ -27,41 +27,76 @@ function makeAgent(knobs = {}) {
   pack.addItem(new MC.ItemStack('iron_sword', 1));
   pack.addItem(new MC.ItemStack('bread', 12));
   const agent = {
-    taskGen: 0, task: null, suspended: null, kitHeld: false, saves: [], placeCalls: 0, standing: 0,
+    taskGen: 0, task: null, suspended: null, kitHeld: false, testHold: false, saves: [], placeCalls: 0, standing: 0,
     newTask(t) { this.task = t; return ++this.taskGen; },
     saveKit() { if (this.kitHeld) return; this.saves.push(Object.entries(invCounts(this.sim)).map(([k, n]) => `${k}:${n}`).join(',')); },
-    motor: { stop() {}, setFocus() {} },
+    motor: { stop() {}, setFocus() {}, snap() {} },
     skills: {
       check(gen) { if (gen !== agent.taskGen) throw new Aborted(); },
       async wait(gen, n) { await MC.system.waitTicks(n); this.check(gen); },
       log() {},
     },
+    /** One placement under a player's rules (throws on a rule the build should never ask to break); `drop` puts the block in. */
+    rules(gen, cell, id, below, drop) {
+      agent.skills.check(gen);
+      if (knobs.miss && (knobs.miss === 1 || Math.abs(cell.x * 7 + cell.y * 13 + cell.z * 31) % knobs.miss === 0)) return false;   // (the same cells every time: a retry misses too)
+      const l = agent.sim.location, s = { x: Math.floor(l.x), y: Math.floor(l.y + 0.05), z: Math.floor(l.z) };
+      if (!STAND_ON.has(idAt(s.x, s.y - 1, s.z)) || !FREE.has(idAt(s.x, s.y, s.z)) || !FREE.has(idAt(s.x, s.y + 1, s.z))) throw new Error(`the bot is standing wrong at ${key(s.x, s.y, s.z)}`);
+      if (idAt(cell.x, cell.y, cell.z) !== 'air') return false;
+      if (!reaches(s, cell)) throw new Error(`out of reach ${key(cell.x, cell.y, cell.z)} from ${key(s.x, s.y, s.z)}`);
+      if (cell.x === s.x && cell.z === s.z && (cell.y === s.y || cell.y === s.y + 1)) throw new Error('asked to place into the bot');
+      if (id === SLAB && !below) throw new Error('a slab asked for without "only on the block under it"');
+      if (!(below ? [[0, -1, 0]] : DIRS).some(([a, b, d]) => { const n = { x: cell.x + a, y: cell.y + b, z: cell.z + d }; return !FREE.has(idAt(n.x, n.y, n.z)) && facing(s, cell, n); })) throw new Error(`nothing to click for ${key(cell.x, cell.y, cell.z)} from ${key(s.x, s.y, s.z)}`);
+      const c = container(agent.sim);
+      const slot = [...Array(c.size).keys()].find((i) => c.getItem(i)?.typeId === `minecraft:${id}`);
+      if (slot === undefined) return false;
+      if (!drop()) return false;
+      const it = c.getItem(slot); it.amount--; c.setItem(slot, it.amount ? it : undefined);
+      agent.byWay[agent.way] = (agent.byWay[agent.way] ?? 0) + 1;
+      return true;
+    },
+    byWay: {}, way: '',
     homestead: {
       async placeAt(gen, cell, id, via, next, opts) {
-        agent.skills.check(gen);
         agent.placeCalls++;
         await MC.system.waitTicks(10);
         if (knobs.stopAfter && agent.placeCalls === knobs.stopAfter) agent.newTask(null);   // someone typed "stop"
-        agent.skills.check(gen);
-        if (knobs.miss && (knobs.miss === 1 || Math.abs(cell.x * 7 + cell.y * 13 + cell.z * 31) % knobs.miss === 0)) return false;   // (the same cells every time: a retry misses too)
         if (!opts?.stay) throw new Error('the farm build must not let the bot walk off its spot');
-        const l = agent.sim.location, s = { x: Math.floor(l.x), y: Math.floor(l.y + 0.05), z: Math.floor(l.z) };
-        if (!STAND_ON.has(idAt(s.x, s.y - 1, s.z)) || !FREE.has(idAt(s.x, s.y, s.z)) || !FREE.has(idAt(s.x, s.y + 1, s.z))) throw new Error(`the bot is standing wrong at ${key(s.x, s.y, s.z)}`);
-        if (idAt(cell.x, cell.y, cell.z) !== 'air') return false;
-        if (!reaches(s, cell)) throw new Error(`out of reach ${key(cell.x, cell.y, cell.z)} from ${key(s.x, s.y, s.z)}`);
-        if (cell.x === s.x && cell.z === s.z && (cell.y === s.y || cell.y === s.y + 1)) throw new Error('asked to place into the bot');
-        if (!DIRS.some(([a, b, d]) => { const n = { x: cell.x + a, y: cell.y + b, z: cell.z + d }; return !FREE.has(idAt(n.x, n.y, n.z)) && facing(s, cell, n); })) throw new Error(`nothing to click for ${key(cell.x, cell.y, cell.z)} from ${key(s.x, s.y, s.z)}`);
-        const c = container(agent.sim);
-        const slot = [...Array(c.size).keys()].find((i) => c.getItem(i)?.typeId === `minecraft:${id}`);
-        if (slot === undefined) return false;
-        const it = c.getItem(slot); it.amount--; c.setItem(slot, it.amount ? it : undefined);
-        G.grid.set(key(cell.x, cell.y, cell.z), { id: id === SLAB ? SLAB : id });
-        return true;
+        if (id === SLAB && !(via && via.y === cell.y - 1 && via.x === cell.x && via.z === cell.z)) throw new Error('a slab placed without the block under it as the face');
+        agent.way = 'real';
+        return agent.rules(gen, cell, id, id === SLAB, () => { G.grid.set(key(cell.x, cell.y, cell.z), { id }); return true; });
+      },
+      async placeQuick(gen, cell, id, put, opts) {
+        agent.placeCalls++;
+        const since = MC.system.currentTick - (this.quickAt ?? -100);
+        await MC.system.waitTicks(Math.max(1, (opts?.gap ?? 3) - since));
+        if (knobs.stopAfter && agent.placeCalls === knobs.stopAfter) agent.newTask(null);
+        agent.way = 'quick';
+        const r = agent.rules(gen, cell, id, !!opts?.below, () => put(cell));
+        if (r) this.quickAt = MC.system.currentTick;
+        return r;
+      },
+      async placeHeld(gen, cell, id, opts) {
+        agent.placeCalls++;
+        if (typeof agent.sim.startBuild !== 'function') throw new TypeError('startBuild is not a function');
+        await MC.system.waitTicks(knobs.heldTicks ?? 3);
+        if (knobs.stopAfter && agent.placeCalls === knobs.stopAfter) agent.newTask(null);
+        agent.way = 'held';
+        const ok = agent.rules(gen, cell, id, !!opts?.below, () => { G.grid.set(key(cell.x, cell.y, cell.z), { id }); return true; });
+        // (knobs.heldSlip: every n-th held placement puts a second block down before it is let go, in front of the first, toward the bot)
+        let extra = 0;
+        if (ok && knobs.heldSlip && agent.placeCalls % knobs.heldSlip === 0) {
+          const l = agent.sim.location, s = { x: Math.floor(l.x), z: Math.floor(l.z) };
+          const q = { x: cell.x + Math.sign(s.x - cell.x), y: cell.y, z: cell.z + Math.sign(s.z - cell.z) };
+          if ((q.x !== cell.x || q.z !== cell.z) && idAt(q.x, q.y, q.z) === 'air' && !(q.x === s.x && q.z === s.z)) { G.grid.set(key(q.x, q.y, q.z), { id }); extra = 1; }
+        }
+        return { ok, extra };
       },
     },
     sim: {
       location: { x: 100.5, y: 70, z: 100.5 }, dimension: MC.dimension, isValid: true,
       teleport(loc) { this.location = { x: loc.x, y: loc.y, z: loc.z }; agent.standing++; }, clearVelocity() {},
+      ...(knobs.held ? { startBuild() {}, stopBuild() {} } : {}),
       selectedSlotIndex: 0,
       getComponent(n) {
         if (n === 'minecraft:inventory') return { container: pack };
@@ -214,6 +249,67 @@ t('one block in five will not go down by hand: set by command, counted, and the 
   const line = msgs.find((l) => /Built\. The bot placed/.test(l));
   ok(/that would not go down by hand/.test(line), line);
   ok(!/gave up placing by hand/.test(line), 'gave up at a 80% hit rate');
+});
+
+const rateOf = (line) => Number(/([\d.]+) blocks a second while placing/.exec(line ?? '')?.[1] ?? NaN);
+
+t('no held button in this version: the quick hand, at a player\'s pace (5 or more blocks a second while placing), every block taken from the pack', async () => {
+  const agent = makeAgent();
+  const msgs = await run(agent);
+  ok(msgs.some((l) => /Held-button test: this version has no held button/.test(l)), 'no word on the held button');
+  const line = msgs.find((l) => /Built\. The bot placed/.test(l));
+  ok(/quick hand/.test(line), line);
+  ok(rateOf(line) >= 5, `rate ${rateOf(line)}: ${line}`);
+  ok(agent.byWay.quick > 1100 && !agent.byWay.real && !agent.byWay.held, JSON.stringify(agent.byWay));
+  ok(!matches(ironFarmPlan(), originOf(ironFarmPlan())).length, 'not the plan');
+});
+
+t('"real": the game\'s own item use, a block every 10 ticks (2 a second), as before', async () => {
+  const agent = makeAgent();
+  const msgs = await run(agent, ['real']);
+  const line = msgs.find((l) => /Built\. The bot placed/.test(l));
+  ok(/game's own item use/.test(line), line);
+  ok(rateOf(line) <= 2.1, `rate ${rateOf(line)}`);
+  ok(agent.byWay.real > 1100 && !agent.byWay.quick, JSON.stringify(agent.byWay));
+  ok(!msgs.some((l) => /Held-button test/.test(l)), 'tried the held button though "real" was asked for');
+});
+
+t('a held button the game paces like a player\'s: the test on the pad passes, the bot builds with it (no cheat), the test blocks are gone', async () => {
+  const agent = makeAgent({ held: true, heldTicks: 3 });
+  const msgs = await run(agent, [], { held: true });
+  ok(msgs.some((l) => /Held-button test: 5 of 5 blocks went in, 3\.0 ticks a block.*no cheat/.test(l)), msgs.find((l) => /Held-button/.test(l)));
+  const line = msgs.find((l) => /Built\. The bot placed/.test(l));
+  ok(/held button/.test(line) && rateOf(line) >= 5, line);
+  ok(agent.byWay.held > 1100 && !agent.byWay.quick, JSON.stringify(agent.byWay));
+  ok(!matches(ironFarmPlan(), originOf(ironFarmPlan())).length, 'not the plan (the test blocks left on the pad?)');
+});
+
+t('a held button at the game\'s 10-tick pace: the test says so and the quick hand builds it', async () => {
+  const agent = makeAgent({ held: true, heldTicks: 10 });
+  const msgs = await run(agent);
+  ok(msgs.some((l) => /Held-button test: 5 of 5 blocks went in, 10\.0 ticks a block.*So the quick hand/.test(l)), msgs.find((l) => /Held-button/.test(l)));
+  ok(agent.byWay.quick > 1100, JSON.stringify(agent.byWay));
+});
+
+t('a held button that now and then puts a second block down: after three, the quick hand takes over; the strays are taken out and the farm is the plan', async () => {
+  const agent = makeAgent({ held: true, heldTicks: 3, heldSlip: 50 });
+  const msgs = await run(agent);
+  ok(msgs.some((l) => /held button is not working out \(it put a second block down/.test(l)), 'no switch');
+  ok(agent.byWay.held >= 100 && agent.byWay.quick > 500, JSON.stringify(agent.byWay));
+  const bad = matches(ironFarmPlan(), originOf(ironFarmPlan()));
+  ok(!bad.length, bad.slice(0, 3).join(' | '));
+  ok(msgs.some((l) => /blocks were where the plan has none .* taken out again/.test(l)), 'no word about the strays');
+});
+
+t('monsters round the site are taken away while it builds; the villagers are left alone', async () => {
+  const agent = makeAgent();
+  reset();
+  G.entities.push({ typeId: 'minecraft:zombie', id: 'z1', location: { x: 150, y: 90, z: 100 }, isValid: true, remove() { this.isValid = false; }, kill() { this.isValid = false; } });
+  const msgs = await again(agent);
+  ok(!G.entities[0].isValid, 'the zombie is still there');
+  ok(msgs.some((l) => /1 monsters that turned up round the site were taken away/.test(l)), 'not reported');
+  ok(G.entities.filter((e) => /villager/.test(e.typeId) && e.isValid).length >= 10, 'villagers gone');
+  ok(agent.testHold === false, 'the bot was left unable to fight');
 });
 
 t('not in the overworld: it says so and does nothing', async () => {

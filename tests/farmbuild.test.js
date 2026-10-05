@@ -11,10 +11,10 @@ const DIRS = [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1
  * eye is on the open side of, only from a spot that is solid underfoot with room to head height; and it takes an item from the pack to do it. Every time
  * the engine asks for something the rules forbid, it is written down in `log.violations`.
  */
-function fake(plan, { miss = 0, seed = 1, noStand = false, stopAfter = Infinity, world = new Map(), inv = {} } = {}) {
+function fake(plan, { miss = 0, seed = 1, noStand = false, stopAfter = Infinity, world = new Map(), inv = {}, slip = 0, tidy = false } = {}) {
   let bot = null, tick = 0, rnd = seed, placeCalls = 0;
   const rand = () => { rnd = (rnd * 1664525 + 1013904223) % 4294967296; return rnd / 4294967296; };
-  const log = { violations: /** @type {string[]} */ ([]), said: /** @type {string[]} */ ([]), stands: 0, sets: 0 };
+  const log = { violations: /** @type {string[]} */ ([]), said: /** @type {string[]} */ ([]), stands: 0, sets: 0, slips: /** @type {string[]} */ ([]), cleared: 0 };
   const idAt = (x, y, z) => (y <= BASE_Y - 1 ? 'stone' : (world.get(key(x, y, z)) ?? 'air'));
   const hands = {
     blockAt: (c) => idAt(c.x, c.y, c.z),
@@ -32,14 +32,22 @@ function fake(plan, { miss = 0, seed = 1, noStand = false, stopAfter = Infinity,
       if (!reaches(bot, c)) { log.violations.push(`out of reach ${key(c.x, c.y, c.z)} from ${key(bot.x, bot.y, bot.z)}`); return false; }
       if (idAt(c.x, c.y, c.z) !== 'air') { log.violations.push(`occupied ${key(c.x, c.y, c.z)} by ${idAt(c.x, c.y, c.z)}`); return false; }
       if (c.x === bot.x && c.z === bot.z && (c.y === bot.y || c.y === bot.y + 1)) { log.violations.push(`on the bot ${key(c.x, c.y, c.z)}`); return false; }
-      const face = DIRS.some(([a, b, d]) => { const n = { x: c.x + a, y: c.y + b, z: c.z + d }; return !FREE.has(idAt(n.x, n.y, n.z)) && facing(bot, c, n); });
-      if (!face) { log.violations.push(`no face to click for ${key(c.x, c.y, c.z)} from ${key(bot.x, bot.y, bot.z)}`); return false; }
+      // (A slab only on the top of the block under it: anywhere else it could come out a top slab.)
+      const face = (id === SLAB ? [[0, -1, 0]] : DIRS).some(([a, b, d]) => { const n = { x: c.x + a, y: c.y + b, z: c.z + d }; return !FREE.has(idAt(n.x, n.y, n.z)) && facing(bot, c, n); });
+      if (!face) { log.violations.push(`no face to click for ${key(c.x, c.y, c.z)} (${id}) from ${key(bot.x, bot.y, bot.z)}`); return false; }
       if (!((inv[id] ?? 0) > 0)) { log.violations.push(`out of ${id}`); return false; }
       if (rand() < miss) return false;
       inv[id]--; world.set(key(c.x, c.y, c.z), id);
+      // (A slip of the hand: a second block in the free cell in front of the face, toward the bot.)
+      if (slip && rand() < slip) {
+        const dx = Math.sign(bot.x - c.x), dz = Math.sign(bot.z - c.z);
+        const k = key(c.x + dx, c.y, c.z + dz);
+        if ((dx || dz) && idAt(c.x + dx, c.y, c.z + dz) === 'air' && !(c.x + dx === bot.x && c.z + dz === bot.z)) { world.set(k, id); log.slips.push(k); }
+      }
       return true;
     },
     set(c, id) { world.set(key(c.x, c.y, c.z), id); log.sets++; return true; },
+    ...(tidy ? { clear(c) { world.delete(key(c.x, c.y, c.z)); log.cleared++; return true; } } : {}),
     stock(id, n) { inv[id] = Math.max(inv[id] ?? 0, n); },
     now: () => tick,
     check() {},
@@ -169,6 +177,24 @@ test('stopped halfway and run again on the same world: it carries on, placing on
   assert.deepEqual(sameAsPlan(plan, world), []);
   assert.ok(stats.already >= had, `${stats.already} already there`);
   assert.ok(stats.hand < stats.cells - had + 5);
+});
+
+test('slabs go only on the top of the block under them (anywhere else a click can make a top slab, which mobs spawn on)', async () => {
+  const plan = ironFarmPlan();
+  const f = fake(plan);
+  const stats = await runBuild(plan, f.hands, { after: afterFor(plan, f.world) });
+  assert.deepEqual(f.log.violations, []);
+  assert.ok(stats.handById[SLAB] > 100, `${stats.handById[SLAB]} slabs by hand`);
+});
+
+test('slips of the hand (a second block where the plan has none): the tidy at the end takes every one out, and the farm is the plan', async () => {
+  const plan = ironFarmPlan();
+  const f = fake(plan, { slip: 0.05, seed: 3, tidy: true });
+  const stats = await runBuild(plan, f.hands, { after: afterFor(plan, f.world) });
+  assert.ok(f.log.slips.length > 10, `${f.log.slips.length} slips`);
+  assert.deepEqual(sameAsPlan(plan, f.world), []);
+  assert.ok(stats.strays > 0 && stats.strays <= f.log.slips.length, `${stats.strays} strays for ${f.log.slips.length} slips`);
+  assert.equal(stats.hand + stats.command + stats.already, stats.cells);
 });
 
 test('the pack always has what the layer needs, and never more than a layer\'s worth is asked for (a bot has 36 slots)', async () => {

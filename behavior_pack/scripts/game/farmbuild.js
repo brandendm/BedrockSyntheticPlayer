@@ -8,6 +8,8 @@
 //   !bot buildfarm              build it (carries on where it stopped, if it was stopped)
 //   !bot buildfarm new          a new pad and a new farm, whatever was there
 //   !bot buildfarm cobble       with cobblestone walls instead of dirt
+//   !bot buildfarm held|quick|real   which hand (MODES below; by default the held button if a test on the pad shows the game paces it like
+//                               yours, else the quick hand)
 //   !bot buildfarm status       how far it has got, how much by hand
 //   !bot buildfarm stop         stop (the bot's own things go back in its pack)
 //   !bot buildfarm clearpad     take the pad away again (after "ironfarm clear")
@@ -30,8 +32,23 @@ const PAD_TORCHES = (() => {
   return out;
 })();
 const MAX_TICKS = 40 * 60 * 20;   // forty minutes of placing by hand, then the rest by command
+/**
+ * How the bot's hand puts a block down (u216). The game gives a simulated player one item use every 10 ticks (measured: 9 refused), a block every
+ * half second; a player building fast places one every 3 to 4 ticks (your house runs: 11 blocks in 2 s).
+ *   held   the game's own held use button (SimulatedPlayer.startBuild, undocumented): started once the crosshair is on the face, stopped as soon as
+ *          the block is in. Legitimate if the game paces it like a player's held button: tried first on the pad (heldProbe) and used only if it is.
+ *   quick  a cheat: the bot does everything a placement takes (stands within reach, the crosshair on a solid neighbour's face, the block in hand
+ *          and one taken from its pack, a player's pace between blocks), and the block is put in by command instead of by the game's item use.
+ *   real   the game's own item use, as in u215 (a block every 10 ticks at best).
+ */
+export const MODES = Object.freeze(['held', 'quick', 'real']);
+export const QUICK_GAP = 3;        // ticks between blocks: a player's 3.4
+const HELD_OK_TICKS = 5;           // the held probe's ticks a block (aim included) to count as a player's pace
+const SOUND = { dirt: 'use.gravel', cobblestone: 'use.stone', glass: 'use.stone', composter: 'use.wood', [SLAB]: 'use.stone' };
+const HAND_NAME = { held: 'with the game\'s held button', quick: 'with the quick hand (aimed by the bot, put in by command)', real: 'with the game\'s own item use' };
+const modeArg = (args) => MODES.find((m) => args.some((a) => a.toLowerCase() === m)) ?? null;
 
-/** @type {null | { running: boolean, finished: boolean, dim: any, off: {x:number,y:number,z:number}, shell: string|undefined, stats: any, started: number, phase: string, report: string, stop: boolean }} */
+/** @type {null | { running: boolean, finished: boolean, dim: any, off: {x:number,y:number,z:number}, shell: string|undefined, stats: any, started: number, phase: string, report: string, stop: boolean, mode: string, probed: null | { ok: boolean, line: string } }} */
 let job = null;
 
 const strip = (id) => id.replace('minecraft:', '');
@@ -60,7 +77,8 @@ function status() {
   if (!job) return say('No bot build yet: "!bot buildfarm" starts one.');
   const s = job.stats;
   const line = `${s.hand} of ${s.cells} blocks placed by the bot, ${s.command} by command (${s.footing} to have something to stand on, ${s.fallback + s.repaired} that would not go down), ${s.already} already there`;
-  if (job.running) return say(`Building (${job.phase}), layer ${s.layer}: ${line}; ${mins(system.currentTick - job.started)} so far.${s.gaveUp ? ` Placing by hand was given up: ${s.gaveUp}.` : ''}`);
+  const rate = s.handTicks ? ` (${((20 * s.hand) / s.handTicks).toFixed(1)} a second while placing)` : '';
+  if (job.running) return say(`Building (${job.phase}, ${HAND_NAME[job.mode] ?? job.mode}${rate}), layer ${s.layer}: ${line}; ${mins(system.currentTick - job.started)} so far.${s.gaveUp ? ` Placing by hand was given up: ${s.gaveUp}.` : ''}`);
   say(`${job.finished ? 'Finished' : 'Stopped'}: ${line}. ${job.report}`);
 }
 
@@ -140,6 +158,49 @@ async function clearPad(player) {
   say('Pad taken away.');
 }
 
+// ---- the held button, tried ----
+/**
+ * Does the game's held use button (startBuild) put blocks down at a player's pace, and only where the crosshair is? Five blocks in a row on the pad's
+ * north-west corner (outside the tower, away from its torches), each started with the crosshair on the top of the pad block under it and stopped as
+ * soon as it is in; the corner is read before and after, and anything that is not one of the five is a stray. Everything put there is taken away.
+ * { ok, line }: ok only if all five went in, nothing else did, and it took HELD_OK_TICKS a block or less.
+ */
+async function heldProbe(agent, gen, dim, off, id) {
+  const sim = agent.sim, S = agent.skills, H = agent.homestead;
+  if (typeof (/** @type {any} */ (sim).startBuild) !== 'function') return { ok: false, line: 'this version has no held button for a simulated player (startBuild)' };
+  const box = { x1: PAD.x1 - 1, x2: PAD.x1 + 6, y1: PAD.y + 1, y2: PAD.y + 4, z1: PAD.z1 - 1, z2: PAD.z1 + 5 };
+  const read = () => { const m = new Map(); for (let x = box.x1; x <= box.x2; x++) for (let y = box.y1; y <= box.y2; y++) for (let z = box.z1; z <= box.z2; z++) m.set(`${x},${y},${z}`, idAt(dim, W(off, { x, y, z }))); return m; };
+  const before = read();
+  const targets = [0, 1, 2, 3, 4].map((i) => ({ x: PAD.x1 + i, y: PAD.y + 1, z: PAD.z1 }));
+  const stand = { x: PAD.x1 + 2, y: PAD.y + 1, z: PAD.z1 + 2 };
+  try { sim.teleport({ x: off.x + stand.x + 0.5, y: off.y + stand.y, z: off.z + stand.z + 0.5 }, { dimension: dim }); sim.clearVelocity(); } catch { /* */ }
+  await S.wait(gen, 4);
+  let placed = 0, extra = 0;
+  const t0 = system.currentTick;
+  for (const c of targets) {
+    const r = await H.placeHeld(gen, W(off, c), id, { below: true, aimTicks: 4, maxTicks: 14 });
+    if (r.ok) placed++;
+    extra += r.extra;
+  }
+  const ticks = system.currentTick - t0;
+  const after = read();
+  const want = new Set(targets.map((c) => `${c.x},${c.y},${c.z}`));
+  let strays = 0;
+  for (const [k, v] of after) {
+    if (v === before.get(k) || (want.has(k) && v === id)) continue;
+    strays++;
+  }
+  // (Everything back as it was.)
+  for (const [k, v] of after) {
+    if (v === before.get(k)) continue;
+    const [x, y, z] = k.split(',').map(Number), q = W(off, { x, y, z });
+    run(dim, `setblock ${q.x} ${q.y} ${q.z} ${before.get(k) === 'air' ? 'air' : before.get(k)}`);
+  }
+  const per = placed ? ticks / placed : Infinity;
+  const ok = placed === targets.length && strays === 0 && extra === 0 && per <= HELD_OK_TICKS;
+  return { ok, line: `${placed} of ${targets.length} blocks went in${placed ? `, ${per.toFixed(1)} ticks a block with the aim (a player: about 3.5)` : ''}${strays || extra ? `, ${Math.max(strays, extra)} where they should not have` : ''}` };
+}
+
 // ---- the build ----
 async function start(agent, player, args) {
   if (job?.running) return say('Already building: "!bot buildfarm status", or "!bot buildfarm stop".');
@@ -164,7 +225,9 @@ async function start(agent, player, args) {
     if (!pad.ok) return say(`No pad: ${pad.why}.`);
   }
   const stats = newStats();
-  job = { running: true, finished: false, dim, off, shell, stats, started: system.currentTick, phase: 'starting', report: '', stop: false };
+  const asked = modeArg(args);
+  const probed = again ? job.probed : null;
+  job = { running: true, finished: false, dim, off, shell, stats, started: system.currentTick, phase: 'starting', report: '', stop: false, mode: asked ?? 'held', probed };
   const J = job;
   const gen = agent.newTask({ kind: 'farmbuild' });
   agent.suspended = null;
@@ -176,6 +239,16 @@ async function start(agent, player, args) {
   const saved = kitOf(sim);
   try { container(sim)?.clearAll(); } catch { /* */ }
   topUp(sim);
+  // No fighting or running of its own while it builds (a fight took the build over and stopped it), and no monsters on the site to fight: anything
+  // hostile that turns up round the pad is taken away every two seconds (the tower is dark inside until it is finished).
+  const testHeld = agent.testHold;
+  agent.testHold = true;
+  agent.homestead.placedLenient = 0;
+  const siteCentre = W(off, { x: 7.5, y: 0, z: 7.5 });
+  let swept = 0;
+  const sweeper = system.runInterval(() => {
+    try { for (const e of dim.getEntities({ location: siteCentre, maxDistance: 48, families: ['monster'] })) { try { e.remove(); swept++; } catch { /* */ } } } catch { /* */ }
+  }, 40);
   const view = { x: 7.5, y: BASE_Y, z: PAD.z1 + 2.5 };
   const where = (pt) => W(off, pt);
   try { p.teleport(where(view), { facingLocation: where({ x: 7.5, y: 1, z: 7.5 }), dimension: dim }); } catch (e) { say(`Could not move you to the pad: ${e}`); }
@@ -192,22 +265,48 @@ async function start(agent, player, args) {
     // The farm's blocks as the bot will meet them.
     const { rest } = splitPlan(plan);
     const special = new Set(['sign', 'gate', 'door', 'lava', 'cwater', 'water']);
-    const norm = (id) => (id.includes('slab') ? SLAB : id);
+    // (A slab as the bot meets it: a bottom one is SLAB; a top one (mobs spawn on it) and a double one are not.)
+    const norm = (b) => {
+      const id = strip(b.typeId);
+      if (!id.includes('slab')) return id;
+      if (id.includes('double')) return id;
+      let top = false;
+      try { top = b.permutation.getState('minecraft:vertical_half') === 'top' || b.permutation.getState('top_slot_bit') === true; } catch { /* */ }
+      return top ? `${SLAB}:top` : SLAB;
+    };
+    let mode = J.mode, heldMisses = 0, heldSlips = 0;
+    const fast = () => mode !== 'real';
     const hands = {
-      blockAt: (c) => { const q = W(off, c); try { const b = dim.getBlock(q); return b ? norm(strip(b.typeId)) : null; } catch { return null; } },
+      blockAt: (c) => { const q = W(off, c); try { const b = dim.getBlock(q); return b ? norm(b) : null; } catch { return null; } },
       where: () => { const l = sim.location; return { x: Math.floor(l.x) - off.x, y: Math.floor(l.y + 0.05) - off.y, z: Math.floor(l.z) - off.z }; },
       async stand(s) {
         const loc = { x: off.x + s.x + 0.5, y: off.y + s.y, z: off.z + s.z + 0.5 };
         agent.motor.stop();
         try { sim.teleport(loc, { dimension: dim }); sim.clearVelocity(); } catch (e) { S.log(`farmbuild: teleport ${s.x} ${s.y} ${s.z}: ${e}`); return false; }
-        await S.wait(gen, 3);
+        await S.wait(gen, fast() ? 2 : 3);
         const q = sim.location;
         return Math.abs(q.x - loc.x) < 1.2 && Math.abs(q.z - loc.z) < 1.2 && Math.abs(q.y - loc.y) < 1.5;
       },
       async place(c, id) {
         if (noItem.has(id)) return false;
+        const q = W(off, c), below = id === SLAB;
         let ok = false;
-        try { ok = await agent.homestead.placeAt(gen, W(off, c), id, null, null, { lenient: true, stay: true }); } catch (e) { if (aborted(e)) throw e; S.log(`farmbuild: place ${id}: ${e}`); }
+        try {
+          if (mode === 'held') {
+            const r = await agent.homestead.placeHeld(gen, q, id, { below });
+            ok = r.ok;
+            heldMisses = ok ? 0 : heldMisses + 1;
+            if (r.extra) heldSlips++;
+            // (The held button putting blocks where they should not go, or not putting them where they should: the quick hand for the rest.)
+            if (heldSlips >= 3 || heldMisses >= 4) {
+              mode = 'quick'; J.mode = mode;
+              const why = heldSlips >= 3 ? `it put a second block down before it was let go ${heldSlips} times` : `it missed ${heldMisses} blocks in a row`;
+              notes.push(`The held button was dropped part way (${why}): the quick hand did the rest.`);
+              say(`The held button is not working out (${why}): the rest with the quick hand.`);
+            }
+          } else if (mode === 'quick') ok = await agent.homestead.placeQuick(gen, q, id, () => hands.set(c, id), { gap: QUICK_GAP, below, sound: SOUND[id] ?? null });
+          else ok = await agent.homestead.placeAt(gen, q, id, below ? W(off, { x: c.x, y: c.y - 1, z: c.z }) : null, null, { lenient: true, stay: true });
+        } catch (e) { if (aborted(e)) throw e; S.log(`farmbuild: place ${id}: ${e}`); }
         return ok && hands.blockAt(c) === id;
       },
       set(c, id) {
@@ -215,6 +314,7 @@ async function start(agent, player, args) {
         if (id === SLAB) { if (!slabSpell) return false; return run(dim, `setblock ${q.x} ${q.y} ${q.z} ${slabSpell}`) === ''; }
         return run(dim, `setblock ${q.x} ${q.y} ${q.z} ${id}`) === '';
       },
+      clear(c) { const q = W(off, c); return run(dim, `setblock ${q.x} ${q.y} ${q.z} air`) === ''; },
       stock(id, n) {
         const have = invCounts(sim)[id] ?? 0;
         if (have >= n) return;
@@ -225,9 +325,29 @@ async function start(agent, player, args) {
       yield: () => S.wait(gen, 1),
       say: (m) => say(m),
     };
-    await hands.stand({ x: 7, y: BASE_Y, z: PAD.z1 + 6 });
+    // Which hand: the held button if the game paces it like a player's (tried on the pad first), else the quick hand; "real" is the u215 way.
+    if (mode === 'held') {
+      if (J.probed && !asked) mode = J.probed.ok ? 'held' : 'quick';   // (carrying on: the verdict it came to before)
+      else {
+        J.phase = 'trying the held button';
+        hands.stock(plan.shell, 8);
+        const pr = await heldProbe(agent, gen, dim, off, plan.shell);
+        J.probed = pr;
+        if (pr.ok) say(`Held-button test: ${pr.line}. The bot builds with the game's own held button: no cheat.`);
+        else if (asked === 'held') say(`Held-button test: ${pr.line}. Using it anyway, as asked (the quick hand takes over if it keeps missing).`);
+        else { mode = 'quick'; say(`Held-button test: ${pr.line}. So the quick hand: the bot stands in reach, aims at the face and holds the block as you would, at your pace, and the block is put in by command (the cheat: the game lets a simulated player place only once every 10 ticks).`); }
+      }
+      J.mode = mode;
+    }
+    const PARK = { x: 7, y: BASE_Y, z: PAD.z1 + 6 };
+    await hands.stand(PARK);
     const plain = (y) => rest.filter((o) => o.y === y && !special.has(o.tag));
     const after = async (y, st) => {
+      // (Off any cell a command is about to fill: a bed or a chest set where the bot stands has it inside a block.)
+      if (y !== 'slabs') {
+        const at = hands.where();
+        if (at && rest.some((o) => (o.y === y || o.y === y - 1) && o.x === at.x && o.z === at.z && (o.y === at.y || o.y === at.y + 1))) await hands.stand(PARK);
+      }
       if (y === 'slabs') {
         J.phase = 'lava, water, the rest';
         const lava = rest.find((o) => o.tag === 'lava');
@@ -257,7 +377,12 @@ async function start(agent, player, args) {
     J.phase = 'finishing';
     const slabCells = (stats.handById[SLAB] ?? 0) + (stats.commandById[SLAB] ?? 0);
     const byHand = Math.round((100 * stats.hand) / Math.max(1, stats.cells - stats.already));
-    const lead = `The bot placed ${stats.hand} of ${stats.cells - stats.already} blocks itself (${byHand}%) in ${mins(system.currentTick - J.started)}; ${stats.command} were set by command (${stats.footing} to have something to stand on${stats.fallback + stats.repaired ? `, ${stats.fallback + stats.repaired} that would not go down by hand` : ''}${stats.gaveUp ? `; it gave up placing by hand: ${stats.gaveUp}` : ''}). `;
+    const rate = stats.handTicks ? (20 * stats.hand) / stats.handTicks : 0;
+    const lead = `The bot placed ${stats.hand} of ${stats.cells - stats.already} blocks itself (${byHand}%) in ${mins(system.currentTick - J.started)}, ${HAND_NAME[mode]}, ${rate.toFixed(1)} blocks a second while placing (you, building fast: about 5.5); ${stats.command} were set by command (${stats.footing} to have something to stand on${stats.fallback + stats.repaired ? `, ${stats.fallback + stats.repaired} that would not go down by hand` : ''}${stats.gaveUp ? `; it gave up placing by hand: ${stats.gaveUp}` : ''}). `;
+    if (stats.strays) notes.push(`${stats.strays} blocks were where the plan has none (put down by a slip of the hand) and were taken out again.`);
+    const lenient = agent.homestead.placedLenient ?? 0;
+    if (lenient) notes.push(`${lenient} of the quick hand's blocks went in on a clear line to the face though the crosshair had not reported settling on it.`);
+    if (swept) notes.push(`${swept} monsters that turned up round the site were taken away while it built.`);
     J.report = lead;
     await finishBuild({ p, dim, off, plan, found: { cols: [] }, fails, notes, slab: slabSpell, slabCells, signs, door, gates, lead, extra: `Standing on a pad at y ${off.y + PAD.y} (${PAD.x2 - PAD.x1 + 1} x ${PAD.z2 - PAD.z1 + 1}); "!bot buildfarm clearpad" takes it away once the farm is cleared.` });
     J.finished = true;
@@ -273,6 +398,9 @@ async function start(agent, player, args) {
     }
   } finally {
     J.running = false;
+    try { system.clearRun(sweeper); } catch { /* */ }
+    agent.testHold = testHeld;
+    try { /** @type {any} */ (sim).stopBuild?.(); } catch { /* */ }
     try { agent.motor.setFocus(null); } catch { /* */ }
     try { container(sim)?.clearAll(); restoreKit(sim, { slots: saved.slots, worn: {} }); } catch (e) { say(`Could not put the bot's things back: ${e}. They are in the world's memory and come back at the next spawn.`); }
     agent.kitHeld = false;

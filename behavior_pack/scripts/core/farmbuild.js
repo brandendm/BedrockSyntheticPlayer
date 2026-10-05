@@ -22,6 +22,7 @@ export const MAX_TICKS_PER_BLOCK = 240;   // on average, once enough have been t
 
 const key = (x, y, z) => `${x},${y},${z}`;
 const DIRS = [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]];
+const BELOW = [[0, -1, 0]];
 /** What the bot walks through (and a block can be put into): no collision. */
 export const FREE = new Set(['air', 'wall_sign', 'torch', 'fence_gate', 'water', 'flowing_water', 'lava']);
 /** What the bot can stand on (full blocks it can also click against). */
@@ -58,7 +59,7 @@ export function facing(s, t, n) {
 
 /** The counts a build keeps (pass your own to runBuild to read them while it runs). */
 export const newStats = () => ({
-  cells: 0, hand: 0, command: 0, already: 0, footing: 0, fallback: 0, repaired: 0, gaveUp: '', standMoves: 0, standFails: 0, attempts: 0, hits: 0, handTicks: 0, ticks: 0,
+  cells: 0, hand: 0, command: 0, already: 0, footing: 0, fallback: 0, repaired: 0, gaveUp: '', standMoves: 0, standFails: 0, attempts: 0, hits: 0, handTicks: 0, ticks: 0, strays: 0,
   layer: /** @type {number|string|null} */ (null),
   handById: /** @type {Record<string, number>} */ ({}), commandById: /** @type {Record<string, number>} */ ({}), layers: /** @type {any[]} */ ([]),
 });
@@ -76,7 +77,7 @@ export const newStats = () => ({
  * @param {any} plan @param {any} hands @param {{ after?: (y: number|string, stats: any) => Promise<void>, maxTicks?: number, stats?: any }} [opts]
  */
 export async function runBuild(plan, hands, { after = null, maxTicks = Infinity, stats = newStats() } = {}) {
-  const { cells } = splitPlan(plan);
+  const { cells, final } = splitPlan(plan);
   const finalId = new Map(cells.map((c) => [key(c.x, c.y, c.z), c.id]));
   const bd = plan.bounds;
   stats.cells = cells.length;
@@ -95,12 +96,14 @@ export async function runBuild(plan, hands, { after = null, maxTicks = Infinity,
     if (hands.set(c, id)) { W.set(key(c.x, c.y, c.z), id); stats.command++; bump(stats.commandById, id); if (why) stats[why]++; return true; }
     return false;
   };
-  const supportedNow = (c) => DIRS.some(([a, b, d]) => clickable(idAt(c.x + a, c.y + b, c.z + d)));
+  // (A slab goes only on the top of the block under it: clicked on a side face's upper half it would be a top slab, on which mobs spawn.)
+  const dirsOf = (c) => (c.id === SLAB ? BELOW : DIRS);
+  const supportedNow = (c) => dirsOf(c).some(([a, b, d]) => clickable(idAt(c.x + a, c.y + b, c.z + d)));
   /** Placeable from s right now: in reach, free, and some neighbour to click that has the eye on its open side. */
   const placeableFrom = (s, c) => {
     if (!reaches(s, c)) return false;
     if (c.x === s.x && c.z === s.z && (c.y === s.y || c.y === s.y + 1)) return false;
-    return DIRS.some(([a, b, d]) => { const n = { x: c.x + a, y: c.y + b, z: c.z + d }; return clickable(idAt(n.x, n.y, n.z)) && facing(s, c, n); });
+    return dirsOf(c).some(([a, b, d]) => { const n = { x: c.x + a, y: c.y + b, z: c.z + d }; return clickable(idAt(n.x, n.y, n.z)) && facing(s, c, n); });
   };
 
   /** The best spot to stand to place c: c placeable from it, the most of `near` in reach; null if there is none. */
@@ -214,6 +217,22 @@ export async function runBuild(plan, hands, { after = null, maxTicks = Infinity,
     await hands.yield();
   }
   for (let y = bd.y1; y <= bd.y2; y++) { stats.layer = `slabs ${y}`; await layer(y, true); await hands.yield(); }
+  // Tidy: a block of the hand kinds anywhere in (or just round) the farm where the plan has none (a held button that put down a second block before
+  // it was let go, a slip of the hand) is taken out again. A layer of the box a tick.
+  if (hands.clear) {
+    stats.layer = 'tidy';
+    const hand = handSet(plan.shell ?? 'cobblestone');
+    for (let y = bd.y1; y <= bd.y2 + 2; y++) {
+      hands.check();
+      for (let x = bd.x1 - 2; x <= bd.x2 + 2; x++) for (let z = bd.z1 - 2; z <= bd.z2 + 2; z++) {
+        const want = final.at(x, y, z)?.id;
+        if (want && want !== 'air' && !/water/.test(want)) continue;
+        const id = hands.blockAt({ x, y, z });
+        if (id && (hand.has(id) || id.startsWith(SLAB)) && hands.clear({ x, y, z })) stats.strays++;
+      }
+      await hands.yield();
+    }
+  }
   stats.layer = 'slabs';
   if (after) { await after('slabs', stats); W = new Map(); }
   stats.ticks = hands.now() - t0;

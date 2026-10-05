@@ -83,6 +83,22 @@ export class MotorController {
     this.focus = point;
   }
 
+  /**
+   * The head straight onto the point this instant, no spring (u216: a fast builder's flick from one block to the next, a block's width apart; the
+   * spring takes 4 to 6 ticks to settle, and a stiffer one is unstable at 20 ticks a second). It stays there as the focus.
+   */
+  snap(point) {
+    const pos = this.body.getPos();
+    const eye = { x: pos.x, y: pos.y + EYE_HEIGHT, z: pos.z };
+    this.yaw = yawTo(eye, point);
+    this.pitch = clamp(pitchTo(eye, point), -89, 89);
+    this.yawV = 0;
+    this.pitchV = 0;
+    this.focus = point;
+    this.body.look(this.yaw, this.pitch);
+    this.lastOutput = { yaw: this.yaw, pitch: this.pitch, moveYaw: null };
+  }
+
   /** Points the gaze must steer clear of (enderman heads). */
   setAvoid(points) {
     this.avoid = points || [];
