@@ -366,7 +366,8 @@ export async function runBuild(plan, hands, { after = null, maxTicks = Infinity,
           continue;
         }
         if (here && STAND_ON.has(idAt(s.x, s.y - 1, s.z)) && !walkable(here).has(key(s.x, s.y, s.z))) stats.climbs = (stats.climbs ?? 0) + 1;
-        if (!(await goStand(s, round > 0 || !STAND_ON.has(idAt(s.x, s.y - 1, s.z))))) {
+        // (u225: climbing only on the last pass over the leftovers, or to a spot with nothing under it yet; the earlier passes find another spot on foot)
+        if (!(await goStand(s, round + 1 >= ROUNDS || (!s.up && !STAND_ON.has(idAt(s.x, s.y - 1, s.z)))))) {
           stats.standFails++;
           unreachable.add(key(s.x, s.y, s.z));
           fail(c0);

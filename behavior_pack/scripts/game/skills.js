@@ -466,7 +466,8 @@ export class Skills {
    */
   async walkTo(gen, cell, { escape = null, actions = true } = {}) {
     const out = { ok: false, placed: /** @type {any[]} */ ([]), broke: /** @type {any[]} */ ([]) };
-    const at = () => { const f = this.feet(); return f.x === cell.x && f.y === cell.y && f.z === cell.z; };
+    // (On a bottom slab the feet are half a block up in the slab's own cell; the pathfinder counts that spot as the cell above the slab, u225.)
+    const at = () => { const f = this.feet(); return f.x === cell.x && f.z === cell.z && (f.y === cell.y || (f.y === cell.y - 1 && /_slab$/.test(this.blockAt(f) ?? '') && this.sim.location.y - f.y > 0.3)); };
     if (at()) { out.ok = true; return out; }
     const pos = { x: cell.x + 0.5, y: cell.y, z: cell.z + 0.5 };
     const goal = (x, y, z) => x === cell.x && y === cell.y && z === cell.z;

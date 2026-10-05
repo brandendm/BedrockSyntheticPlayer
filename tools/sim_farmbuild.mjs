@@ -43,7 +43,9 @@ function makeAgent(knobs = {}) {
         if (knobs.unreach && knobs.unreach(cell)) return { ok: false, placed: [], broke: [] };
         const placed = [];
         const under = { x: cell.x, y: cell.y - 1, z: cell.z };
-        const onSlab = idAt(cell.x, cell.y, cell.z) === SLAB;   // (on a slab it has laid: half a block up, u224)
+        // (on a slab it has laid: half a block up in the slab's cell; asked for as the cell above it, as the game's pathfinder counts it, u225)
+        if (idAt(cell.x, cell.y - 1, cell.z) === SLAB) cell = { x: cell.x, y: cell.y - 1, z: cell.z };
+        const onSlab = idAt(cell.x, cell.y, cell.z) === SLAB;
         if (!onSlab && idAt(under.x, under.y, under.z) === 'air') {
           const c = container(agent.sim);
           const slot = [...Array(c.size).keys()].find((i) => /dirt|cobblestone$/.test(c.getItem(i)?.typeId ?? ''));
@@ -316,7 +318,8 @@ t('a held button the game paces like a player\'s: the test on the pad passes, th
   const msgs = await run(agent, [], { held: true });
   ok(msgs.some((l) => /Held-button test: 5 of 5 blocks went in, 3\.0 ticks a block.*no cheat/.test(l)), msgs.find((l) => /Held-button/.test(l)));
   const line = msgs.find((l) => /Built\. The bot placed/.test(l));
-  ok(/held button/.test(line) && rateOf(line) >= 5, line);
+  // (the floors bridged from their edge go in with the game's own click, 10 ticks apart: a little under 5 overall, u225)
+  ok(/held button/.test(line) && rateOf(line) >= 4.5, line);
   // (the edge blocks of the floors are bridged with the game's own click, "real": u220)
   ok(agent.byWay.held > 900 && (agent.byWay.held + (agent.byWay.real ?? 0)) > 1150 && !agent.byWay.quick, JSON.stringify(agent.byWay));
   ok(!matches(ironFarmPlan(), originOf(ironFarmPlan())).length, 'not the plan (the test blocks left on the pad?)');

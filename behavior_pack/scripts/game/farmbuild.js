@@ -15,7 +15,7 @@
 //   !bot buildfarm clearpad     take the pad away again (after "ironfarm clear")
 // The farm is then the same one `!bot ironfarm` makes: status, view, golem, time, bill and the rest of its commands work on it.
 import { system, world } from '@minecraft/server';
-import { ironFarmPlan, checkPlan, blockArg, BASE_Y, GATES, OUT_VIEW, SLAB, STAIR_ID, SHAFT, SIGNS, LAVA, CAMPFIRES, CHAMBER_WATER, PLATFORM, WATER_Y, waterSources } from '../core/ironfarm.js';
+import { ironFarmPlan, checkPlan, blockArg, BASE_Y, GATES, OUT_VIEW, SLAB, STAIR_ID, SHAFT, SIGNS, LAVA, HALL, CAMPFIRES, CHAMBER_WATER, PLATFORM, WATER_Y, waterSources } from '../core/ironfarm.js';
 import { runBuild, newStats, splitPlan, handSet, edge } from '../core/farmbuild.js';
 import { render } from '../core/ironfarm_grid.js';
 import { Cell } from '../core/pathfinder.js';
@@ -293,7 +293,9 @@ async function start(agent, player, args) {
     // The beds' cells (both halves): never walked on or stood on while it builds (u221; the pathfinder takes them as walls).
     const bedCells = new Set([...render({ ops: rest.filter((o) => o.id === 'bed') }).cells.keys()]);
     const bedWorld = new Set([...bedCells].map((k) => { const [x, y, z] = k.split(',').map(Number); const w = W(off, { x, y, z }); return `${w.x},${w.y},${w.z}`; }));
-    agent.planWrap = (cl) => (x, y, z) => (bedWorld.has(`${x},${y},${z}`) ? Cell.DANGER : cl(x, y, z));
+    // (u225: only where a bed IS: walls to its pathfinder once they are in, open floor to build from before. Keeping out of the planned cells from
+    // the start left no spot over the bed rows to lay the pod floor from, and it put scaffolding under it.)
+    agent.planWrap = (cl) => (x, y, z) => { const c = cl(x, y, z); return c === Cell.SOLID && bedWorld.has(`${x},${y},${z}`) ? Cell.DANGER : c; };
     // (A slab as the bot meets it: a bottom one is SLAB; a top one (mobs spawn on it) and a double one are not.)
     const norm = (b) => {
       const id = strip(b.typeId);
@@ -333,7 +335,9 @@ async function start(agent, player, args) {
         // (u218 live: "no route, 0 blocks to build with": the layer's blocks and the spare went on scaffolding. Never under 32 of the shell to pillar and
         // bridge with when it sets off.)
         { const have = invCounts(sim)[plan.shell] ?? 0; if (have < 32 && !noItem.has(plan.shell)) { try { give(sim, plan.shell, 64 - have); } catch { /* */ } } }
-        const r = await S.walkTo(gen, W(off, s), { escape: (on) => { escaping = on; }, actions: climb });
+        // (A spot on a slab it has laid: the pathfinder's cell for standing there is the one above the slab, u225 live: "no route" to every
+        // slab spot on the room's roof, again and again, standing still.)
+        const r = await S.walkTo(gen, W(off, s.up ? { x: s.x, y: s.y + 1, z: s.z } : s), { escape: (on) => { escaping = on; }, actions: climb });
         for (const c of r.placed) { const q = rel(c); scaffold.set(`${q.x},${q.y},${q.z}`, q); stats.scaffoldUp = (stats.scaffoldUp ?? 0) + 1; }
         if (r.broke.length) stats.escapes = (stats.escapes ?? 0) + 1;
         if (!r.ok) S.log(`farmbuild: could not get to ${s.x} ${s.y} ${s.z} (from ${JSON.stringify(hands.where())})`);
@@ -527,7 +531,11 @@ async function start(agent, player, args) {
       if (!r.ok) notes.push(r.note);
       hallDone = true;
     };
-    const plain = (y) => rest.filter((o) => o.y === y && !special.has(o.tag));
+    // (u225: the campfires, the hallway water and the lava go in last of the hallway, from the top of its walls (HALL.y2), not as soon as their
+    // own layer is down: a campfire or lava beside the wall tops it builds from made its pathfinder keep off them, and it climbed round instead.)
+    const HALL_TOP = HALL.y2;
+    const when = (o) => (o.tag === 'campfire' ? HALL_TOP : o.y);
+    const plain = (y) => rest.filter((o) => when(o) === y && !special.has(o.tag));
     /** Every cell a list of ops fills (a bed's foot too). */
     const cellsOf = (ops) => new Set([...render({ ops }).cells.keys()]);
     const after = async (y, st) => {
@@ -559,13 +567,15 @@ async function start(agent, player, args) {
       }
       J.phase = `layer ${y}: the parts`;
       // (carrying on after a stop: what is in already is left as it is)
-      for (const o of plain(y)) if (hands.blockAt(o) !== o.id) await byHand(o, o.id, setOp(o));
+      for (const o of plain(y)) if (hands.blockAt(o) !== o.id) await byHand(o, o.id, setOp(o), o.tag === 'campfire' ? { reach: 5.5 } : {});
       // The hallway water once the campfires are in (they keep it in its four cells).
-      if (y === CHAMBER_WATER.y) await hallWater();
+      if (y === HALL_TOP) await hallWater();
       // The signs that hold the lava, and the lava, once the hallway walls are up to the lava's height (later it cannot get to them).
       if (y === LAVA.y && !signs) {
         const signsIn = SIGNS.every((q) => /wall_sign$/.test(hands.blockAt(q) ?? ''));
         signs = signsIn ? { ok: true, lavaOk: true, id: hands.blockAt(SIGNS[0]) } : await placeSigns(dim, off, notes, visit);
+      }
+      if (y === HALL_TOP) {
         const lava = rest.find((o) => o.tag === 'lava');
         if (lava) {
           if (!signs?.lavaOk) notes.push('The lava was NOT placed: the signs that hold it would not stay on their wall (see above).');
@@ -597,7 +607,7 @@ async function start(agent, player, args) {
     };
     J.phase = 'placing';
     say(`The bot is placing the farm (${plan.shell}: it has what it needs). "!bot buildfarm status" says how far it has got, "!bot buildfarm stop" stops it. Watch from the pad.`);
-    await runBuild(plan, hands, { after, maxTicks: MAX_TICKS, stats, avoid: bedCells });
+    await runBuild(plan, hands, { after, maxTicks: MAX_TICKS, stats });
     agent.motor.setFocus(null);
     J.phase = 'finishing';
     const slabCells = (stats.handById[SLAB] ?? 0) + (stats.commandById[SLAB] ?? 0);
