@@ -131,13 +131,14 @@ export async function runBuild(plan, hands, { after = null, maxTicks = Infinity,
    */
   /** Spots the bot could not get to in this pass over the layer (u218): not offered again until the next pass. */
   let unreachable = new Set();
-  const bestStand = (c, near, from, { scaffold = false } = {}) => {
+  const bestStand = (c, near, from, { scaffold = false, inside = true } = {}) => {
     let best = null, bestScore = -Infinity;
     for (let dy = -3; dy <= 2; dy++) {
       const sy = c.y + dy;
       for (let dx = -4; dx <= 4; dx++) for (let dz = -4; dz <= 4; dz++) {
         const s = { x: c.x + dx, y: sy, z: c.z + dz };
         if (unreachable.has(key(s.x, sy, s.z))) continue;
+        if (!inside && enclosed.has(key(s.x, sy, s.z))) continue;
         if (!FREE.has(idAt(s.x, sy, s.z)) || !FREE.has(idAt(s.x, sy + 1, s.z))) continue;
         const under = idAt(s.x, sy - 1, s.z);
         let cost = 0;
@@ -261,7 +262,9 @@ export async function runBuild(plan, hands, { after = null, maxTicks = Infinity,
         }
         const near = [];
         for (const t of T.values()) if (Math.abs(t.x - c0.x) <= 9 && Math.abs(t.z - c0.z) <= 9 && Math.abs(t.y - c0.y) <= 6) near.push(t);
-        const s = bestStand(c0, near, here) ?? bestStand(c0, near, here, { scaffold: true });
+        // (u218 live: a spot inside the pod, the room or the shaft is taken only when there is none outside, even one it has to bridge or pillar
+        // to: inside, it gets shut in by its own walls.)
+        const s = bestStand(c0, near, here, { inside: false }) ?? bestStand(c0, near, here, { scaffold: true, inside: false }) ?? bestStand(c0, near, here) ?? bestStand(c0, near, here, { scaffold: true });
         if (!s) {
           // No spot left to try: for later if it failed to reach some this pass, else there is none at all and a command sets it (a footing).
           if (unreachable.size) { tried.set(key(c0.x, c0.y, c0.z), TRIES - 1); fail(c0); continue; }

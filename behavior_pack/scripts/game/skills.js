@@ -762,6 +762,15 @@ export class Skills {
     try { return use(); } finally { if (!was) { try { this.sim.isSneaking = false; } catch { /* */ } } }
   }
 
+  /** A plain solid block beside cell f (not one that opens when clicked), and its face toward f: somewhere to put a block into f from the side. */
+  sideFace(f) {
+    for (const [dx, dz, face] of [[1, 0, Direction.West], [-1, 0, Direction.East], [0, 1, Direction.North], [0, -1, Direction.South]]) {
+      const n = { x: f.x + dx, y: f.y, z: f.z + dz }, id = this.blockAt(n) ?? 'air';
+      if (!OPEN.test(id) && !USABLE.test(id) && !/water|lava|slab|stairs|fence|wall|torch|sign|glass_pane|bars/.test(id)) return { n, face };
+    }
+    return null;
+  }
+
   async stepUp(gen) {
     // Landed first: asked again straight after a placement it was still in the air above the new block, the jump was ignored, nothing
     // went down in the 12 ticks and it returned failed (a pillar race: 1.3 s a block against a player's 0.5).
@@ -776,7 +785,14 @@ export class Skills {
       await this.wait(gen, 1);
       if (this.sim.location.y >= f.y + 1.05) {
         try { this.sim.lookAtBlock({ x: f.x, y: f.y - 1, z: f.z }); } catch {}
-        try { const under = { x: f.x, y: f.y - 1, z: f.z }; this.useCrouched(under, () => this.sim.useItemInSlotOnBlock(slot, under, Direction.Up)); } catch {}
+        try {
+          const under = { x: f.x, y: f.y - 1, z: f.z };
+          // (u218 live: standing on a hopper the click under it went nowhere, crouched or not. Off something that opens, the block goes against the
+          // side of a wall beside the feet instead, as a player tucks it in.)
+          const side = USABLE.test(this.blockAt(under) ?? '') ? this.sideFace(f) : null;
+          if (side) this.sim.useItemInSlotOnBlock(slot, side.n, side.face);
+          else this.useCrouched(under, () => this.sim.useItemInSlotOnBlock(slot, under, Direction.Up));
+        } catch {}
         placed = !OPEN.test(this.blockAt(f) ?? 'air');
       }
     }

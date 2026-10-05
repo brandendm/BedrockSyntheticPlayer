@@ -17,6 +17,7 @@
 import { system, world } from '@minecraft/server';
 import { ironFarmPlan, checkPlan, blockArg, BASE_Y, FLOOR_Y, DOOR, GATES, OUT_VIEW, SLAB } from '../core/ironfarm.js';
 import { runBuild, newStats, splitPlan, handSet } from '../core/farmbuild.js';
+import { render } from '../core/ironfarm_grid.js';
 import { say, wait, W, run, idAt } from './ironfarm_world.js';
 import { findSlab, placeSigns, placeGates, placeDoor } from './ironfarm_parts.js';
 import { finishBuild, clearFarm, farmStands, shellArg } from './ironfarm.js';
@@ -307,6 +308,9 @@ async function start(agent, player, args) {
       // what of the farm it broke goes back to the core to be put back by hand.
       async stand(s) {
         agent.motor.stop();
+        // (u218 live: "no route, 0 blocks to build with": the layer's blocks and the spare went on scaffolding. Never under 32 of the shell to pillar and
+        // bridge with when it sets off.)
+        { const have = invCounts(sim)[plan.shell] ?? 0; if (have < 32 && !noItem.has(plan.shell)) { try { give(sim, plan.shell, 64 - have); } catch { /* */ } } }
         const r = await S.walkTo(gen, W(off, s), { escape: (on) => { escaping = on; } });
         for (const c of r.placed) { const q = rel(c); scaffold.set(`${q.x},${q.y},${q.z}`, q); stats.scaffoldUp = (stats.scaffoldUp ?? 0) + 1; }
         if (r.broke.length) stats.escapes = (stats.escapes ?? 0) + 1;
@@ -392,12 +396,18 @@ async function start(agent, player, args) {
       }
       J.mode = mode;
     }
-    const plain = (y) => rest.filter((o) => o.y === y && !special.has(o.tag));
+    // (u218 live: the beds went in under the bot as it built the pod, it stood on them and could not walk off. The beds and torches go in at the
+    // very end now, when the bot is outside; nothing it walks over changes under it while it builds.)
+    const LATE = (o) => o.id === 'bed' || o.id === 'torch';
+    const plain = (y) => rest.filter((o) => o.y === y && !special.has(o.tag) && !LATE(o));
+    /** Every cell a list of ops fills (a bed's foot too). */
+    const cellsOf = (ops) => new Set([...render({ ops }).cells.keys()]);
     const after = async (y, st) => {
       // (Off any cell a command is about to fill: a bed or a chest set where the bot stands has it inside a block.)
       if (y !== 'slabs') {
         const at = hands.where();
-        const hit = (q) => rest.some((o) => (o.y === y || o.y === y - 1) && o.x === q.x && o.z === q.z && (o.y === q.y || o.y === q.y + 1));
+        const filled = cellsOf(plain(y));
+        const hit = (q) => filled.has(`${q.x},${q.y},${q.z}`) || filled.has(`${q.x},${q.y + 1},${q.z}`);
         if (at && hit(at)) {
           // (A step aside, to a cell next to it that nothing is about to be set in; the pad if there is none.)
           const side = [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [-1, -1], [1, -1], [-1, 1]].map(([dx, dz]) => ({ x: at.x + dx, y: at.y, z: at.z + dz })).find((q) => !hit(q) && FREE_ID.test(hands.blockAt(q) ?? '') && FREE_ID.test(hands.blockAt({ ...q, y: q.y + 1 }) ?? '') && !FREE_ID.test(hands.blockAt({ ...q, y: q.y - 1 }) ?? 'air'));
@@ -406,6 +416,17 @@ async function start(agent, player, args) {
       }
       if (y === 'slabs') {
         J.phase = 'lava, water, the rest';
+        // The beds and the torches (see LATE), the bot off them first.
+        const late = rest.filter(LATE);
+        const lateCells = cellsOf(late);
+        const at0 = hands.where();
+        if (at0 && (lateCells.has(`${at0.x},${at0.y},${at0.z}`) || lateCells.has(`${at0.x},${at0.y + 1},${at0.z}`))) await hands.stand(PARK);
+        for (const o of late) {
+          const q = W(off, o);
+          const cmd = `setblock ${q.x} ${q.y} ${q.z} ${blockArg(o.id, o.states)}`;
+          const why = run(dim, cmd);
+          if (why) fails.push(`${o.note || o.id}: ${why} (${cmd})`);
+        }
         // The door last of all (u218): until now the doorway was the room's way out (the bot could be shut in there, and the pathfinder does not
         // open doors). Off the doorway first.
         if (!door) {

@@ -2,7 +2,7 @@
 export const CONFIG = {
   // Which copy of the pack is running: said on spawn, at every test and to `!bot version`. (The
   // manifest's version never changes, so an old copy left in the world looked like the new one.)
-  build: 'u218',
+  build: 'u219',
   debug: false,               // toggled with `!bot debug`
   brainUrl: 'http://127.0.0.1:8765',
   brainTimeoutSec: 4,
