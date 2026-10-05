@@ -7,11 +7,14 @@
 // hoppers, chests, signs, gates, the door, torches, campfires, lava, water, villagers. Those take a particular state (which way a bed or a hopper
 // faces, a gate open, a sign on its wall, a campfire lit) and the project has always set them with commands (game/ironfarm_parts.js).
 //
-// The bot is put on a spot (teleported: this tests how it places blocks, not how it climbs) and places every cell that is in reach and has something
-// solid beside it to click; then it is put on the next. A spot is any cell with a full block under it and room for the bot, with the most unplaced cells
-// of the layer in reach. Nothing to stand on yet (the first block of a floating floor): that block is set by command and the bot stands on it. A block
-// that will not go down by hand is set by command and counted. If the hand keeps missing, or is far too slow, the rest is done by command and it says so.
-import { render } from './ironfarm_grid.js';
+// The bot goes to a spot (u217: on its own feet, walking, jumping up onto the course it has just laid, dropping down, pillaring or bridging with a
+// block of the shell where there is nothing to stand on; never teleported) and places every cell that is in reach and has something solid beside it
+// to click; then it goes to the next. A spot is a cell with room for the bot and a full block under it (or, failing that, one it can make a floor
+// for), with the most unplaced cells of the layer in reach, near where it is, and not in the air the farm closes in. If it has walled itself in, it
+// breaks its way out and the blocks it broke are put back by hand. Each layer ends with the bot taking its scaffolding down. A block with nowhere at
+// all to stand to place it is set by command and counted, as is one that will not go down by hand. If the hand keeps missing, is far too slow, or the
+// bot keeps failing to get to its spots, the rest is done by command and it says so.
+import { render, outsideAir } from './ironfarm_grid.js';
 import { SLAB } from './ironfarm_geo.js';
 
 export const REACH = 4.0;          // (the game's is 4.5: a margin for where in the cell the eye is)
@@ -60,6 +63,7 @@ export function facing(s, t, n) {
 /** The counts a build keeps (pass your own to runBuild to read them while it runs). */
 export const newStats = () => ({
   cells: 0, hand: 0, command: 0, already: 0, footing: 0, fallback: 0, repaired: 0, gaveUp: '', standMoves: 0, standFails: 0, attempts: 0, hits: 0, handTicks: 0, ticks: 0, strays: 0,
+  broken: 0, putBack: 0,
   layer: /** @type {number|string|null} */ (null),
   handById: /** @type {Record<string, number>} */ ({}), commandById: /** @type {Record<string, number>} */ ({}), layers: /** @type {any[]} */ ([]),
 });
@@ -106,18 +110,44 @@ export async function runBuild(plan, hands, { after = null, maxTicks = Infinity,
     return dirsOf(c).some(([a, b, d]) => { const n = { x: c.x + a, y: c.y + b, z: c.z + d }; return clickable(idAt(n.x, n.y, n.z)) && facing(s, c, n); });
   };
 
-  /** The best spot to stand to place c: c placeable from it, the most of `near` in reach; null if there is none. */
-  const bestStand = (c, near, from) => {
+  // Air the finished farm closes in (the pod, the room, the shaft, the hallway): a spot there is taken only when there is no other, since the bot could
+  // wall itself in (it then breaks its way out and puts the block back, but a player would not stand there to start with).
+  const enclosed = (() => {
+    const out = outsideAir(final, bd), s = new Set();
+    for (let x = bd.x1; x <= bd.x2; x++) for (let y = bd.y1; y <= bd.y2; y++) for (let z = bd.z1; z <= bd.z2; z++) {
+      const k = key(x, y, z);
+      if (!out.has(k) && !final.cells.has(k)) s.add(k);
+    }
+    return s;
+  })();
+  /**
+   * The best spot to stand to place c: c placeable from it, the most of `near` in reach, near where the bot is (it walks there), not in the farm's
+   * closed-in air; with `scaffold`, also a spot with nothing under it yet (the bot pillars or bridges to it with a block of the shell), at a cost.
+   * null if there is none.
+   */
+  const bestStand = (c, near, from, { scaffold = false } = {}) => {
     let best = null, bestScore = -Infinity;
     for (let dy = -3; dy <= 2; dy++) {
       const sy = c.y + dy;
       for (let dx = -4; dx <= 4; dx++) for (let dz = -4; dz <= 4; dz++) {
         const s = { x: c.x + dx, y: sy, z: c.z + dz };
-        if (!STAND_ON.has(idAt(s.x, sy - 1, s.z)) || !FREE.has(idAt(s.x, sy, s.z)) || !FREE.has(idAt(s.x, sy + 1, s.z))) continue;
+        if (!FREE.has(idAt(s.x, sy, s.z)) || !FREE.has(idAt(s.x, sy + 1, s.z))) continue;
+        const under = idAt(s.x, sy - 1, s.z);
+        let cost = 0;
+        if (!STAND_ON.has(under)) {
+          if (!scaffold || under !== 'air') continue;
+          // (A floor to make: one block under it, bridged from a neighbour that is solid, or a short pillar from what is below.)
+          let h = 1;
+          while (h <= 4 && idAt(s.x, sy - 1 - h, s.z) === 'air') h++;
+          const side = DIRS.some(([a, b, d]) => b === 0 && clickable(idAt(s.x + a, sy - 1, s.z + d)));
+          if (!side && h > 4) continue;
+          cost = side ? 120 : 120 * h;
+        }
         if (!placeableFrom(s, c)) continue;
         let n = 0;
         for (const t of near) if (reaches(s, t) && !(t.x === s.x && t.z === s.z && (t.y === s.y || t.y === s.y + 1))) n++;
-        const score = n * 100 - Math.abs(dx) - Math.abs(dz) - Math.abs(dy) * 2 - (from ? Math.hypot(s.x - from.x, s.y - from.y, s.z - from.z) * 0.1 : 0);
+        const walk = from ? Math.abs(s.x - from.x) + Math.abs(s.z - from.z) + Math.abs(s.y - from.y) * 2 : 0;
+        const score = n * 100 - Math.abs(dx) - Math.abs(dz) - Math.abs(dy) * 2 - walk * 4 - cost - (enclosed.has(key(s.x, s.y, s.z)) ? 2000 : 0);
         if (score > bestScore) { bestScore = score; best = s; }
       }
     }
@@ -132,6 +162,20 @@ export async function runBuild(plan, hands, { after = null, maxTicks = Infinity,
     if (stats.gaveUp) hands.say(`Placing by hand is not working well enough (${stats.gaveUp}): the rest I set with commands.`);
   };
 
+  /** Hand cells the bot broke to get out of somewhere (stand reports them): put back by hand in the layer it is on. */
+  const redo = new Map();
+  /** Put the bot on s (walking, climbing, bridging: the hands decide how). True when it is there; what it broke on the way is queued to put back. */
+  const goStand = async (s) => {
+    const r = await hands.stand(s);
+    const ok = typeof r === 'object' ? !!r?.ok : !!r;
+    for (const c of (typeof r === 'object' && r?.broke) || []) {
+      const id = finalId.get(key(c.x, c.y, c.z));
+      if (id) { redo.set(key(c.x, c.y, c.z), { x: c.x, y: c.y, z: c.z, id }); stats.broken++; }
+    }
+    W = new Map();   // (it walked, climbed or broke its way: what the cache knew may have changed)
+    return ok;
+  };
+
   /** One layer's cells (those not there yet), by hand where it can be. */
   async function layer(y, slabs) {
     const mine = cells.filter((c) => c.y === y && (c.id === SLAB) === slabs);
@@ -144,9 +188,16 @@ export async function runBuild(plan, hands, { after = null, maxTicks = Infinity,
     for (const c of T.values()) bump(need, c.id);
     for (const [id, n] of Object.entries(need)) hands.stock(id, n);
     let guard = 0;
+    const back = [];
+    const takeRedo = () => {
+      for (const [k, c] of redo) { if (!T.has(k)) { T.set(k, c); back.push(c); hands.stock(c.id, 1 + (need[c.id] ?? 0)); } }
+      redo.clear();
+    };
+    takeRedo();
     while (T.size) {
       hands.check();
-      if (++guard > mine.length * 3 + 20) throw new Error(`the build loop did not end on layer ${y}`);
+      takeRedo();
+      if (++guard > (mine.length + back.length) * 3 + 40) throw new Error(`the build loop did not end on layer ${y}`);
       if (stats.gaveUp) { for (const c of [...T.values()]) { commandPlace(c, 'fallback'); T.delete(key(c.x, c.y, c.z)); } break; }
       const here = hands.where();
       // The next block: one with something to click, nearest to where the bot is.
@@ -164,16 +215,16 @@ export async function runBuild(plan, hands, { after = null, maxTicks = Infinity,
       }
       const near = [];
       for (const t of T.values()) if (Math.abs(t.x - c0.x) <= 9 && Math.abs(t.z - c0.z) <= 9 && Math.abs(t.y - c0.y) <= 6) near.push(t);
-      const s = bestStand(c0, near, here);
+      const s = bestStand(c0, near, here) ?? bestStand(c0, near, here, { scaffold: true });
       if (!s) {                        // no spot to stand where it can be placed from: by command, and it is a block to stand on from now on
         commandPlace(c0, 'footing'); T.delete(key(c0.x, c0.y, c0.z));
         await hands.yield();
         continue;
       }
-      if (!(await hands.stand(s))) {
+      if (!(await goStand(s))) {
         stats.standFails++;
         commandPlace(c0, 'fallback'); T.delete(key(c0.x, c0.y, c0.z));
-        if (stats.standFails >= 6 && !stats.gaveUp) { stats.gaveUp = 'the bot could not be put on its spots'; hands.say(`Could not put the bot on its spots (${stats.standFails} times): the rest I set with commands.`); }
+        if (stats.standFails >= 12 && !stats.gaveUp) { stats.gaveUp = 'the bot could not get to its spots'; hands.say(`The bot could not get to where it had to stand (${stats.standFails} times): the rest I set with commands.`); }
         continue;
       }
       stats.standMoves++;
@@ -188,7 +239,7 @@ export async function runBuild(plan, hands, { after = null, maxTicks = Infinity,
         }
         if (!k) break;
         const now = hands.where();
-        if (now && (now.x !== s.x || now.y !== s.y || now.z !== s.z)) { if (!(await hands.stand(s))) break; stats.standMoves++; }
+        if (now && (now.x !== s.x || now.y !== s.y || now.z !== s.z)) { if (!(await goStand(s))) break; stats.standMoves++; }
         const id = finalId.get(key(k.x, k.y, k.z));
         stats.attempts++;
         const a = hands.now();
@@ -196,7 +247,7 @@ export async function runBuild(plan, hands, { after = null, maxTicks = Infinity,
         if (!ok) ok = await hands.place(k, id);
         stats.handTicks += hands.now() - a;
         T.delete(key(k.x, k.y, k.z));
-        if (ok) { stats.hand++; stats.hits++; bump(stats.handById, id); W.set(key(k.x, k.y, k.z), id); } else commandPlace(k, 'fallback');
+        if (ok) { stats.hand++; stats.hits++; bump(stats.handById, id); W.set(key(k.x, k.y, k.z), id); if (back.includes(k)) stats.putBack++; } else commandPlace(k, 'fallback');
         judge();
         if (stats.gaveUp) break;
         if (inner % 8 === 7) await hands.yield();
@@ -204,9 +255,10 @@ export async function runBuild(plan, hands, { after = null, maxTicks = Infinity,
       // c0 itself must have gone (it was placeable from s): if it did not, it must not be asked for again.
       if (T.has(key(c0.x, c0.y, c0.z))) { commandPlace(c0, 'fallback'); T.delete(key(c0.x, c0.y, c0.z)); }
     }
-    // Read it all back: whatever is not there is set.
+    // Read it all back: whatever is not there is set. Then the bot's scaffolding comes down (by its own hand).
     W = new Map();
-    for (const c of mine) if (idAt(c.x, c.y, c.z) !== c.id) commandPlace(c, 'repaired');
+    for (const c of [...mine, ...back]) if (idAt(c.x, c.y, c.z) !== c.id) commandPlace(c, 'repaired');
+    if (hands.tidy) { await hands.tidy(); W = new Map(); }
     stats.layers.push({ y, slabs, cells: mine.length, hand: stats.hand - before.hand, command: stats.command - before.command });
   }
 

@@ -2,7 +2,7 @@
 // it on the plan and then breaks the plan in each way to see that the check notices.
 import {
   PLATFORM, CORNERS, HOLE, POD, SHAFT, HALL, CHAMBER, ROOM, DOOR, STEP, CAMPFIRES, LAVA, CHAMBER_WATER, CHAMBER_WET, CHAMBER_FLOOR_Y, GATES, GATE_ID,
-  HOPPERS, CHESTS, CHEST_FACING, STAND, SIGNS, SLAB, SHELLS, DOOR_ID, ALLOWED, WATER_Y, FLOOR_Y, ROOM_SHELL, signSupport, waterSources, opBox, inBox,
+  HOPPERS, CHESTS, CHEST_FACING, STAIR, STAIR_ID, STAND, SIGNS, SLAB, SHELLS, DOOR_ID, ALLOWED, WATER_Y, FLOOR_Y, ROOM_SHELL, signSupport, waterSources, opBox, inBox,
 } from './ironfarm_geo.js';
 import {
   SPAWN_VOLUME, render, passable, solid, outsideAir, exposedTops, golemSpots, settleWater, pushBox, supported, lightField, walkable,
@@ -264,7 +264,7 @@ export function checkPlan(plan, { deep = true } = {}) {
   // other hopper, the chests side by side and facing the same way, with room over them to open, in reach of the viewer.
   const hopperCells = [...g.cells].filter(([, v]) => v.id === 'hopper').length;
   if (hopperCells !== HOPPERS.length) bad.push(`${hopperCells} hoppers in the plan, ${HOPPERS.length} listed`);
-  if (HOPPERS.length !== 3) bad.push(`${HOPPERS.length} hoppers listed, 3 wanted`);
+  if (HOPPERS.length !== 2) bad.push(`${HOPPERS.length} hoppers listed, 2 wanted (one under each campfire)`);
   const FACE = { 2: [0, -1], 3: [0, 1], 4: [-1, 0], 5: [1, 0] };
   for (const h of HOPPERS) {
     const here = g.at(h.x, h.y, h.z);
@@ -279,7 +279,10 @@ export function checkPlan(plan, { deep = true } = {}) {
     const ch = g.at(c.x, c.y, c.z);
     if (ch?.id !== 'chest') bad.push(`no chest at ${c.x},${c.y},${c.z}`);
     else if (ch.states?.['minecraft:cardinal_direction'] !== CHEST_FACING) bad.push('the chests do not face the same way: they would not make a double chest');
-    if (id(c.x, c.y + 1, c.z) !== 'air') bad.push(`something is on top of the chest at ${c.x},${c.z}`);
+    // (Air over it, or the upside-down stair: a chest opens under either.)
+    const top = g.at(c.x, c.y + 1, c.z);
+    const stairOk = c.x === STAIR.x && c.y + 1 === STAIR.y && c.z === STAIR.z && top?.id === STAIR_ID && top.states?.upside_down_bit === true;
+    if (id(c.x, c.y + 1, c.z) !== 'air' && !stairOk) bad.push(`something is on top of the chest at ${c.x},${c.z} that it would not open under`);
     const reach = Math.hypot(STAND.x - (c.x + 0.5), STAND.y + 1.62 - (c.y + 0.5), STAND.z - (c.z + 0.5));
     if (reach > 3.5) bad.push(`the chest at ${c.x},${c.z} is ${reach.toFixed(1)} blocks from the viewer's eyes`);
   }
@@ -288,7 +291,8 @@ export function checkPlan(plan, { deep = true } = {}) {
   const sx = Math.floor(STAND.x), sz = Math.floor(STAND.z);
   if (id(sx, STAND.y, sz) !== 'air' || id(sx, STAND.y + 1, sz) !== 'air' || !solid(id(sx, STAND.y - 1, sz))) bad.push('the viewer has no room to stand');
   if (!inBox(ROOM, sx, STAND.y, sz)) bad.push('the viewer is not in the room');
-  for (const [x, y, z] of [[10, -6, 7], [10, -5, 8], [10, -4, 7]]) if (id(x, y, z) !== 'glass') bad.push(`no window at ${x},${y},${z}`);
+  for (const [x, y, z] of [[10, -6, 8], [10, -5, 8], [10, -4, 7]]) if (id(x, y, z) !== 'glass') bad.push(`no window at ${x},${y},${z}`);
+  if (g.at(STAIR.x, STAIR.y, STAIR.z)?.id !== STAIR_ID) bad.push('no upside-down stair over the first chest');
   const lower = g.at(DOOR.x, DOOR.y, DOOR.z), upper = g.at(DOOR.x, DOOR.y + 1, DOOR.z);
   if (lower?.id !== DOOR_ID || upper?.id !== DOOR_ID || lower.states?.upper_block_bit !== false || upper.states?.upper_block_bit !== true) bad.push('no door (both halves) in the room wall');
   if (DOOR.x !== ROOM_SHELL.x2) bad.push('the door is not in the room\'s outer wall');

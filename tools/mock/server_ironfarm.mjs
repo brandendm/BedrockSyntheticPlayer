@@ -5,7 +5,7 @@
 const G = (globalThis.__ifw ??= { grid: new Map(), log: [], tick: 0, knobs: {}, entities: [], players: [], intervals: new Map(), nextInterval: 1, awake: new Set(), time: 0 });
 const key = (x, y, z) => `${x},${y},${z}`;
 const SUPPORT = { 2: [0, 1], 3: [0, -1], 4: [1, 0], 5: [-1, 0] };
-const KNOWN = new Set(['air', 'cobblestone', 'dirt', 'stone', 'glass', 'composter', 'bed', 'hopper', 'chest', 'wall_sign', 'oak_wall_sign', 'spruce_wall_sign', 'torch', 'lava', 'water', 'flowing_water', 'cobblestone_slab', 'stone_block_slab', 'oak_slab', 'wooden_slab', 'campfire', 'wooden_door', 'oak_door', 'fence_gate', 'oak_fence_gate']);
+const KNOWN = new Set(['air', 'stone_stairs', 'cobblestone', 'dirt', 'stone', 'glass', 'composter', 'bed', 'hopper', 'chest', 'wall_sign', 'oak_wall_sign', 'spruce_wall_sign', 'torch', 'lava', 'water', 'flowing_water', 'cobblestone_slab', 'stone_block_slab', 'oak_slab', 'wooden_slab', 'campfire', 'wooden_door', 'oak_door', 'fence_gate', 'oak_fence_gate']);
 
 function parseBlock(text) {
   const m = /^(?:minecraft:)?([a-z_]+)\s*(?:\[(.*)\])?$/.exec(text.trim());

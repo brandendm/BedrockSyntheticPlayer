@@ -32,7 +32,7 @@
 // to be (the platform is symmetrical about the average); the village may want a day or two before it counts the villagers as working.
 import {
   box, PLATFORM, CORNER_BOXES, POD, POD_SHELL, SHAFT_SHELL, ROOM, ROOM_SHELL, WINDOW, DOOR, STEP, HALL, LAVA, CAMPFIRES, CHAMBER_WATER, GATES,
-  GATE_ID, HOPPERS, CHESTS, CHEST_FACING, SIGNS, SLAB, SHELL, DOOR_ID, FLOOR_Y, WATER_Y, waterSources, villageCentre, hull, opBox,
+  GATE_ID, HOPPERS, CHESTS, CHEST_FACING, STAIR, STAIR_ID, STAIR_STATES, SIGNS, SLAB, SHELL, DOOR_ID, FLOOR_Y, WATER_Y, waterSources, villageCentre, hull, opBox,
 } from './ironfarm_geo.js';
 import { render, exposedTops, runs } from './ironfarm_grid.js';
 
@@ -91,9 +91,10 @@ export function ironFarmPlan({ shell = SHELL } = {}) {
   for (const [x, z] of POD_TORCHES) set(x, 1, z, 'torch', undefined, 'pod light');
   set(ROOM_TORCH.x, ROOM_TORCH.y, ROOM_TORCH.z, 'torch', undefined, 'room light');
 
-  // The collection: hoppers under every cell of the hallway, then east into a double chest in the room.
+  // The collection: a hopper under each campfire, the first feeding the double chest straight east (u217: no third hopper), an upside-down stair over it.
   for (const h of HOPPERS) set(h.x, h.y, h.z, 'hopper', { facing_direction: h.facing }, 'hopper');
   for (const c of CHESTS) set(c.x, c.y, c.z, 'chest', { 'minecraft:cardinal_direction': CHEST_FACING }, 'chest (two side by side make the double chest)', 'chest');
+  set(STAIR.x, STAIR.y, STAIR.z, STAIR_ID, { ...STAIR_STATES }, 'upside-down stair over the first chest, in the window (the chest opens under it; the hallway stays closed off)', 'stair');
 
   // The signs go in first (they only stay on their wall, and they close the shaft off from the sky, which matters to what counts as outside
   // below), then the gates over the hole, the slabs, then the lava, the campfire and the water.
@@ -140,6 +141,7 @@ export function materials(plan) {
     `${n.composter ?? 0} composters (7 wood slabs each)`,
     `${n.bed ?? 0} beds (3 wool + 3 planks each)`,
     `${n.hopper ?? 0} hoppers (5 iron each = ${(n.hopper ?? 0) * 5} iron) and ${n.chest ?? 0} chests (a double chest)`,
+    `${n[STAIR_ID] ?? 0} cobblestone stair, upside down over the chest (6 cobblestone make 4)`,
     `${n.wall_sign ?? 0} signs`,
     `${n.fence_gate ?? 0} fence gates (any wood; 4 sticks and 2 planks each), set open`,
     `${n.campfire ?? 0} campfires (3 sticks, 1 coal, 3 logs each)`,

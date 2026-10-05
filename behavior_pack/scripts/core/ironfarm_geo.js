@@ -67,10 +67,19 @@ export const GATE_ID = 'fence_gate';
  * west of the campfires is carried by the water to them (checked), so nothing is under the four cells of the shaft's foot.
  */
 export const HOPPERS = Object.freeze([
-  { x: 9, y: -7, z: 7, facing: 5 }, { x: 9, y: -7, z: 8, facing: 2 }, { x: 10, y: -7, z: 7, facing: 5 },
+  { x: 9, y: -7, z: 7, facing: 5 }, { x: 9, y: -7, z: 8, facing: 2 },
 ]);
-/** The two chests side by side that make the double chest, in the room's floor layer; both face the same way so they pair. */
-export const CHESTS = Object.freeze([{ x: 11, y: -7, z: 7 }, { x: 12, y: -7, z: 7 }]);
+/**
+ * The two chests side by side that make the double chest, in the floor layer; both face the same way so they pair. u217 (the player's idea): the first
+ * is right against the hallway, under the window's lower north cell, so the first hopper feeds it directly and the third hopper is gone; over it, in
+ * place of that pane of glass, an upside-down stair (a chest opens under one; its full top half and its lower step on the hallway side close the
+ * hallway off as the glass did, the open quarter is on the room side).
+ */
+export const CHESTS = Object.freeze([{ x: 10, y: -7, z: 7 }, { x: 11, y: -7, z: 7 }]);
+/** The upside-down stair over the first chest. Bedrock's cobblestone stair is `stone_stairs`; weirdo_direction 1 puts its lower step on the west (hallway) side. */
+export const STAIR = Object.freeze({ x: 10, y: -6, z: 7 });
+export const STAIR_ID = 'stone_stairs';
+export const STAIR_STATES = Object.freeze({ weirdo_direction: 1, upside_down_bit: true });
 export const CHEST_FACING = 'south';
 export const STAND = Object.freeze({ x: 12.5, y: -6, z: 8.5 });   // where the viewer is put: in the room, the window ahead
 export const POD_VIEW = Object.freeze({ x: 2.5, y: 1, z: 8.5 });
@@ -106,7 +115,7 @@ export const SHELLS = Object.freeze(['cobblestone', 'dirt']);
 export const DOOR_ID = 'wooden_door';
 
 /** Everything the plan may be made of: all of it is there before the Nether. */
-export const ALLOWED = Object.freeze(['air', 'cobblestone', 'dirt', SLAB, 'glass', 'composter', 'bed', 'hopper', 'chest', 'wall_sign', 'torch', 'lava', 'water', 'campfire', GATE_ID, DOOR_ID]);
+export const ALLOWED = Object.freeze(['air', 'cobblestone', 'dirt', SLAB, 'glass', 'composter', 'bed', 'hopper', 'chest', 'wall_sign', 'torch', 'lava', 'water', 'campfire', GATE_ID, DOOR_ID, STAIR_ID]);
 
 /** Where a wall sign hangs: the offset from the sign to the block it is attached to, by the way it faces. */
 export const signSupport = (facing) => ({ 2: [0, 1], 3: [0, -1], 4: [1, 0], 5: [-1, 0] })[facing] ?? null;

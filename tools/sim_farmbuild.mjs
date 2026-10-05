@@ -35,6 +35,16 @@ function makeAgent(knobs = {}) {
       check(gen) { if (gen !== agent.taskGen) throw new Aborted(); },
       async wait(gen, n) { await MC.system.waitTicks(n); this.check(gen); },
       log() {},
+      // (The fake bot's feet: it gets to any spot with a block under it and room for it, as the real one walks; the walking itself is the game's.)
+      async walkTo(gen, cell) {
+        await MC.system.waitTicks(4);
+        this.check(gen);
+        agent.sim.location = { x: cell.x + 0.5, y: cell.y, z: cell.z + 0.5 }; agent.standing++;
+        return { ok: true, placed: [], broke: [] };
+      },
+      inReach() { return true; },
+      async goNear() { return true; },
+      async mine() { return true; },
     },
     /** One placement under a player's rules (throws on a rule the build should never ask to break); `drop` puts the block in. */
     rules(gen, cell, id, below, drop) {

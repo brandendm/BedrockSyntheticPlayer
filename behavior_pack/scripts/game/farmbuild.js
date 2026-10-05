@@ -16,7 +16,7 @@
 // The farm is then the same one `!bot ironfarm` makes: status, view, golem, time, bill and the rest of its commands work on it.
 import { system, world } from '@minecraft/server';
 import { ironFarmPlan, checkPlan, blockArg, BASE_Y, FLOOR_Y, DOOR, GATES, OUT_VIEW, SLAB } from '../core/ironfarm.js';
-import { runBuild, newStats, splitPlan } from '../core/farmbuild.js';
+import { runBuild, newStats, splitPlan, handSet } from '../core/farmbuild.js';
 import { say, wait, W, run, idAt } from './ironfarm_world.js';
 import { findSlab, placeSigns, placeGates, placeDoor } from './ironfarm_parts.js';
 import { finishBuild, clearFarm, farmStands, shellArg } from './ironfarm.js';
@@ -31,7 +31,8 @@ const PAD_TORCHES = (() => {
   for (const x of [-9, -1, 8, 17, 25]) for (const z of [-9, -1, 8, 17, 25]) if (!(x >= -2 && x <= 17 && z >= -2 && z <= 17)) out.push({ x, z });
   return out;
 })();
-const MAX_TICKS = 40 * 60 * 20;   // forty minutes of placing by hand, then the rest by command
+const MAX_TICKS = 75 * 60 * 20;   // seventy-five minutes of building by hand (walking and climbing included), then the rest by command
+const SCAFFOLD_SPARE = 48;        // shell blocks over a layer's count: what it pillars and bridges with
 /**
  * How the bot's hand puts a block down (u216). The game gives a simulated player one item use every 10 ticks (measured: 9 refused), a block every
  * half second; a player building fast places one every 3 to 4 ticks (your house runs: 11 blocks in 2 s).
@@ -54,6 +55,8 @@ let job = null;
 const strip = (id) => id.replace('minecraft:', '');
 /** The bot's way of being told to stop (game/skills.js throws it from every check): matched by name, so this file does not pull the whole skill set in. */
 const aborted = (e) => e?.constructor?.name === 'Aborted';
+/** What the bot can stand in (feet or head). */
+const FREE_ID = /^(air|torch|wall_sign|fence_gate|.*_wall_sign)$/;
 /** Health and food back to full (the build is long; nothing in it is meant to hurt). */
 function topUp(ent) {
   try { ent.getComponent('minecraft:health')?.resetToMaxValue(); } catch { /* */ }
@@ -165,7 +168,7 @@ async function clearPad(player) {
  * soon as it is in; the corner is read before and after, and anything that is not one of the five is a stray. Everything put there is taken away.
  * { ok, line }: ok only if all five went in, nothing else did, and it took HELD_OK_TICKS a block or less.
  */
-async function heldProbe(agent, gen, dim, off, id) {
+async function heldProbe(agent, gen, dim, off, id, go) {
   const sim = agent.sim, S = agent.skills, H = agent.homestead;
   if (typeof (/** @type {any} */ (sim).startBuild) !== 'function') return { ok: false, line: 'this version has no held button for a simulated player (startBuild)' };
   const box = { x1: PAD.x1 - 1, x2: PAD.x1 + 6, y1: PAD.y + 1, y2: PAD.y + 4, z1: PAD.z1 - 1, z2: PAD.z1 + 5 };
@@ -173,8 +176,8 @@ async function heldProbe(agent, gen, dim, off, id) {
   const before = read();
   const targets = [0, 1, 2, 3, 4].map((i) => ({ x: PAD.x1 + i, y: PAD.y + 1, z: PAD.z1 }));
   const stand = { x: PAD.x1 + 2, y: PAD.y + 1, z: PAD.z1 + 2 };
-  try { sim.teleport({ x: off.x + stand.x + 0.5, y: off.y + stand.y, z: off.z + stand.z + 0.5 }, { dimension: dim }); sim.clearVelocity(); } catch { /* */ }
-  await S.wait(gen, 4);
+  if (!(await go(stand))) return { ok: false, line: 'the bot could not walk to the corner of the pad to try it' };
+  await S.wait(gen, 2);
   let placed = 0, extra = 0;
   const t0 = system.currentTick;
   for (const c of targets) {
@@ -238,6 +241,8 @@ async function start(agent, player, args) {
   agent.kitHeld = true;
   const saved = kitOf(sim);
   try { container(sim)?.clearAll(); } catch { /* */ }
+  // (Tools to take its scaffolding down with, and to break its way out if it walls itself in.)
+  for (const t of ['iron_shovel', 'iron_pickaxe']) { try { give(sim, t, 1); } catch { /* */ } }
   topUp(sim);
   // No fighting or running of its own while it builds (a fight took the build over and stopped it), and no monsters on the site to fight: anything
   // hostile that turns up round the pad is taken away every two seconds (the tower is dark inside until it is finished).
@@ -263,7 +268,25 @@ async function start(agent, player, args) {
     slabSpell = await findSlab(dim, probe, probe, notes);
     run(dim, `setblock ${probe.x} ${probe.y} ${probe.z} air`);
     // The farm's blocks as the bot will meet them.
-    const { rest } = splitPlan(plan);
+    const { rest, final } = splitPlan(plan);
+    const hand = handSet(plan.shell);
+    const rel = (q) => ({ x: q.x - off.x, y: q.y - off.y, z: q.z - off.z });
+    const finalAt = (c) => final.at(c.x, c.y, c.z)?.id ?? 'air';
+    /** Scaffolding the bot has put down (plan coordinates), until it takes it down. */
+    const scaffold = new Map();
+    let escaping = false;
+    // What it may break on its way about: never the pad or a block of the farm, but when it has walled itself in (escaping), a plain block of the
+    // farm (shell, glass, composter, slab) at a high price, which it then puts back. Its own scaffolding, as anything else, the usual rules.
+    agent.digCost = (p) => {
+      const c = rel({ x: Math.floor(p.x), y: Math.floor(p.y), z: Math.floor(p.z) });
+      if (c.y === PAD.y && c.x >= PAD.x1 && c.x <= PAD.x2 && c.z >= PAD.z1 && c.z <= PAD.z2) return Infinity;
+      const want = final.at(c.x, c.y, c.z)?.id;
+      if (!want || want === 'air' || /water/.test(want)) return undefined;
+      if (scaffold.has(`${c.x},${c.y},${c.z}`) && hands.blockAt(c) !== want) return undefined;
+      return escaping && hand.has(want) ? 30 : Infinity;
+    };
+    // (It pillars and bridges with the shell: the glass, composters and slabs are kept for the farm.)
+    agent.reserveExtra = (inv) => ({ glass: inv.glass ?? 0, composter: inv.composter ?? 0, [SLAB]: inv[SLAB] ?? 0 });
     const special = new Set(['sign', 'gate', 'door', 'lava', 'cwater', 'water']);
     // (A slab as the bot meets it: a bottom one is SLAB; a top one (mobs spawn on it) and a double one are not.)
     const norm = (b) => {
@@ -279,13 +302,34 @@ async function start(agent, player, args) {
     const hands = {
       blockAt: (c) => { const q = W(off, c); try { const b = dim.getBlock(q); return b ? norm(b) : null; } catch { return null; } },
       where: () => { const l = sim.location; return { x: Math.floor(l.x) - off.x, y: Math.floor(l.y + 0.05) - off.y, z: Math.floor(l.z) - off.z }; },
+      // On its own feet (u217: never teleported once it is on the pad): walking, jumping up onto what it has laid, pillaring and bridging with the
+      // shell, breaking its way out (and so back in) only when walled in. What it put down is scaffolding (taken down at the end of the layer);
+      // what of the farm it broke goes back to the core to be put back by hand.
       async stand(s) {
-        const loc = { x: off.x + s.x + 0.5, y: off.y + s.y, z: off.z + s.z + 0.5 };
         agent.motor.stop();
-        try { sim.teleport(loc, { dimension: dim }); sim.clearVelocity(); } catch (e) { S.log(`farmbuild: teleport ${s.x} ${s.y} ${s.z}: ${e}`); return false; }
-        await S.wait(gen, fast() ? 2 : 3);
-        const q = sim.location;
-        return Math.abs(q.x - loc.x) < 1.2 && Math.abs(q.z - loc.z) < 1.2 && Math.abs(q.y - loc.y) < 1.5;
+        const r = await S.walkTo(gen, W(off, s), { escape: (on) => { escaping = on; } });
+        for (const c of r.placed) { const q = rel(c); scaffold.set(`${q.x},${q.y},${q.z}`, q); stats.scaffoldUp = (stats.scaffoldUp ?? 0) + 1; }
+        if (r.broke.length) stats.escapes = (stats.escapes ?? 0) + 1;
+        if (!r.ok) S.log(`farmbuild: could not get to ${s.x} ${s.y} ${s.z} (from ${JSON.stringify(hands.where())})`);
+        return { ok: r.ok, broke: r.broke.map(rel) };
+      },
+      /** Its scaffolding down, by its own hand, top first: every block it pillared or bridged with that is not the farm's own. */
+      async tidy() {
+        const todo = [...scaffold.values()].sort((a, b) => b.y - a.y);
+        for (const c of todo) {
+          S.check(gen);
+          const k = `${c.x},${c.y},${c.z}`;
+          const want = finalAt(c), now = hands.blockAt(c);
+          if (!now || now === 'air' || want === now) { scaffold.delete(k); continue; }   // gone, or the farm's own block now
+          if (!hand.has(now) && !now.startsWith(SLAB)) { scaffold.delete(k); continue; }
+          const q = W(off, c);
+          let ok = false;
+          try {
+            if (!S.inReach(q)) await S.goNear(gen, { x: q.x + 0.5, y: q.y + 1, z: q.z + 0.5 }, 2.5, 2);
+            ok = await S.mine(gen, q, { collect: true, allowBelow: true });
+          } catch (e) { if (aborted(e)) throw e; }
+          if (ok) { scaffold.delete(k); stats.scaffoldDown = (stats.scaffoldDown ?? 0) + 1; }
+        }
       },
       async place(c, id) {
         if (noItem.has(id)) return false;
@@ -316,6 +360,7 @@ async function start(agent, player, args) {
       },
       clear(c) { const q = W(off, c); return run(dim, `setblock ${q.x} ${q.y} ${q.z} air`) === ''; },
       stock(id, n) {
+        if (id === plan.shell) n += SCAFFOLD_SPARE;
         const have = invCounts(sim)[id] ?? 0;
         if (have >= n) return;
         try { give(sim, id, n - have); } catch (e) { noItem.add(id); notes.push(`The bot cannot be given ${id} (${String(e).slice(0, 60)}): those are set by command.`); }
@@ -325,13 +370,21 @@ async function start(agent, player, args) {
       yield: () => S.wait(gen, 1),
       say: (m) => say(m),
     };
+    // The one time the bot is put anywhere: on the pad at the start (the flat place to build on, as asked), unless it is already on the site;
+    // from here on it goes on foot.
+    const PARK = { x: 7, y: BASE_Y, z: PAD.z1 + 6 };
+    {
+      const h = hands.where();
+      const onSite = h.x >= PAD.x1 && h.x <= PAD.x2 && h.z >= PAD.z1 && h.z <= PAD.z2 && h.y >= PAD.y + 1 && h.y <= plan.bounds.y2 + 3;
+      if (!onSite) { try { sim.teleport(W(off, { x: PARK.x + 0.5, y: PARK.y, z: PARK.z + 0.5 }), { dimension: dim }); sim.clearVelocity(); } catch { /* */ } await S.wait(gen, 3); }
+    }
     // Which hand: the held button if the game paces it like a player's (tried on the pad first), else the quick hand; "real" is the u215 way.
     if (mode === 'held') {
       if (J.probed && !asked) mode = J.probed.ok ? 'held' : 'quick';   // (carrying on: the verdict it came to before)
       else {
         J.phase = 'trying the held button';
         hands.stock(plan.shell, 8);
-        const pr = await heldProbe(agent, gen, dim, off, plan.shell);
+        const pr = await heldProbe(agent, gen, dim, off, plan.shell, (c) => hands.stand(c).then((r) => r.ok));
         J.probed = pr;
         if (pr.ok) say(`Held-button test: ${pr.line}. The bot builds with the game's own held button: no cheat.`);
         else if (asked === 'held') say(`Held-button test: ${pr.line}. Using it anyway, as asked (the quick hand takes over if it keeps missing).`);
@@ -339,14 +392,17 @@ async function start(agent, player, args) {
       }
       J.mode = mode;
     }
-    const PARK = { x: 7, y: BASE_Y, z: PAD.z1 + 6 };
-    await hands.stand(PARK);
     const plain = (y) => rest.filter((o) => o.y === y && !special.has(o.tag));
     const after = async (y, st) => {
       // (Off any cell a command is about to fill: a bed or a chest set where the bot stands has it inside a block.)
       if (y !== 'slabs') {
         const at = hands.where();
-        if (at && rest.some((o) => (o.y === y || o.y === y - 1) && o.x === at.x && o.z === at.z && (o.y === at.y || o.y === at.y + 1))) await hands.stand(PARK);
+        const hit = (q) => rest.some((o) => (o.y === y || o.y === y - 1) && o.x === q.x && o.z === q.z && (o.y === q.y || o.y === q.y + 1));
+        if (at && hit(at)) {
+          // (A step aside, to a cell next to it that nothing is about to be set in; the pad if there is none.)
+          const side = [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [-1, -1], [1, -1], [-1, 1]].map(([dx, dz]) => ({ x: at.x + dx, y: at.y, z: at.z + dz })).find((q) => !hit(q) && FREE_ID.test(hands.blockAt(q) ?? '') && FREE_ID.test(hands.blockAt({ ...q, y: q.y + 1 }) ?? '') && !FREE_ID.test(hands.blockAt({ ...q, y: q.y - 1 }) ?? 'air'));
+          if (!(side && (await hands.stand(side)).ok)) await hands.stand(PARK);
+        }
       }
       if (y === 'slabs') {
         J.phase = 'lava, water, the rest';
@@ -379,14 +435,15 @@ async function start(agent, player, args) {
     const byHand = Math.round((100 * stats.hand) / Math.max(1, stats.cells - stats.already));
     const rate = stats.handTicks ? (20 * stats.hand) / stats.handTicks : 0;
     const lead = `The bot placed ${stats.hand} of ${stats.cells - stats.already} blocks itself (${byHand}%) in ${mins(system.currentTick - J.started)}, ${HAND_NAME[mode]}, ${rate.toFixed(1)} blocks a second while placing (you, building fast: about 5.5); ${stats.command} were set by command (${stats.footing} to have something to stand on${stats.fallback + stats.repaired ? `, ${stats.fallback + stats.repaired} that would not go down by hand` : ''}${stats.gaveUp ? `; it gave up placing by hand: ${stats.gaveUp}` : ''}). `;
-    if (stats.strays) notes.push(`${stats.strays} blocks were where the plan has none (put down by a slip of the hand) and were taken out again.`);
+    notes.push(`On its own feet the whole build: ${stats.standMoves} places to build from, ${stats.scaffoldUp ?? 0} blocks of scaffolding pillared or bridged and ${stats.scaffoldDown ?? 0} taken down again${stats.escapes ? `; it walled itself in ${stats.escapes} times and broke its way out (${stats.broken} blocks, ${stats.putBack} put back by hand, the rest by command)` : ''}.`);
+    if (stats.strays) notes.push(`${stats.strays} blocks were left where the plan has none (a slip of the hand, scaffolding it could not get to) and were taken out by command.`);
     const lenient = agent.homestead.placedLenient ?? 0;
     if (lenient) notes.push(`${lenient} of the quick hand's blocks went in on a clear line to the face though the crosshair had not reported settling on it.`);
     if (swept) notes.push(`${swept} monsters that turned up round the site were taken away while it built.`);
     J.report = lead;
     await finishBuild({ p, dim, off, plan, found: { cols: [] }, fails, notes, slab: slabSpell, slabCells, signs, door, gates, lead, extra: `Standing on a pad at y ${off.y + PAD.y} (${PAD.x2 - PAD.x1 + 1} x ${PAD.z2 - PAD.z1 + 1}); "!bot buildfarm clearpad" takes it away once the farm is cleared.` });
     J.finished = true;
-    try { sim.teleport(W(off, OUT_VIEW), { dimension: dim }); } catch { /* */ }
+    try { await S.goNear(gen, W(off, OUT_VIEW), 2, 2); } catch (e) { if (aborted(e)) throw e; }
   } catch (e) {
     if (aborted(e) || J.stop) {
       const s = J.stats;
@@ -400,6 +457,8 @@ async function start(agent, player, args) {
     J.running = false;
     try { system.clearRun(sweeper); } catch { /* */ }
     agent.testHold = testHeld;
+    agent.digCost = undefined;
+    agent.reserveExtra = undefined;
     try { /** @type {any} */ (sim).stopBuild?.(); } catch { /* */ }
     try { agent.motor.setFocus(null); } catch { /* */ }
     try { container(sim)?.clearAll(); restoreKit(sim, { slots: saved.slots, worn: {} }); } catch (e) { say(`Could not put the bot's things back: ${e}. They are in the world's memory and come back at the next spawn.`); }

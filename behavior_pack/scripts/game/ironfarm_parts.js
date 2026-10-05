@@ -2,7 +2,7 @@
 // another name, signs that hang the other way round, fence gates that will not open, a door that will not go in, two chests that do not pair,
 // water that will not flow. Each tries the next thing, reads the result back, and says what it found.
 import {
-  blockArg, settleWater, render, waterSources, SIGNS, HOPPERS, CHESTS, CHEST_FACING, CAMPFIRES, DOOR, DOOR_ID, STEP, WATER_Y, HOLE, GATES, GATE_ID,
+  blockArg, settleWater, render, waterSources, SIGNS, HOPPERS, CHESTS, CHEST_FACING, STAIR, CAMPFIRES, DOOR, DOOR_ID, STEP, WATER_Y, HOLE, GATES, GATE_ID,
   LAVA, CHAMBER_WATER, CHAMBER_WET, CHAMBER_FLOOR_Y,
 } from '../core/ironfarm.js';
 import { wait, run, W, idAt, stateAt, kick, isWater, chestSize } from './ironfarm_world.js';
@@ -288,6 +288,8 @@ export function verify(dim, off, plan) {
     else if (f !== h.facing) bad.push(`the hopper at ${h.x},${h.z} reads facing_direction ${f}, not ${h.facing}`);
   }
   for (const c of CHESTS) if (typeAt(c) !== 'chest') bad.push(`${typeAt(c)} where a chest should be at ${c.x},${c.z}`);
+  if (!typeAt(STAIR).endsWith('stairs')) bad.push(`${typeAt(STAIR)} where the upside-down stair over the chest should be`);
+  else if (stateAt(dim, W(off, STAIR), 'upside_down_bit') !== true) bad.push('the stair over the chest is not upside down (the chest may not open)');
   for (const c of CAMPFIRES) {
     const t = typeAt(c);
     if (t !== 'campfire') bad.push(`${t} where a campfire should be at ${c.x},${c.z}`);

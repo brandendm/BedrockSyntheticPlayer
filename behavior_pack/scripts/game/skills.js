@@ -457,6 +457,56 @@ export class Skills {
     return ok(this.eye());
   }
 
+  /**
+   * Feet into exactly this cell, on foot (u217, the iron farm build: a player going from one place to build from to the next). Walking first (up a
+   * block with a jump, down drops); if that will not get there, a route that also pillars, bridges and digs (what may be dug, and at what price, is
+   * the job's: agent.digCost); with `escape`, a last try in which escape(true) has made the job's own blocks breakable (walled in). Returns
+   * { ok, placed: the cells it put a block in on the way, broke: the cells it broke }.
+   * @param {any} gen @param {{x:number,y:number,z:number}} cell @param {{ escape?: null | ((on: boolean) => void) }} [opts]
+   */
+  async walkTo(gen, cell, { escape = null } = {}) {
+    const out = { ok: false, placed: /** @type {any[]} */ ([]), broke: /** @type {any[]} */ ([]) };
+    const at = () => { const f = this.feet(); return f.x === cell.x && f.y === cell.y && f.z === cell.z; };
+    if (at()) { out.ok = true; return out; }
+    const pos = { x: cell.x + 0.5, y: cell.y, z: cell.z + 0.5 };
+    const goal = (x, y, z) => x === cell.x && y === cell.y && z === cell.z;
+    this.a.motor.setFocus(null);
+    const res = await this.a.plan(this.sim.location, pos, 0, 6000, goal);
+    this.check(gen);
+    if (res.complete && res.path.length >= 2) { await this.a.motor.followPath(smoothPath(this.a.classifier(), res.path)); this.check(gen); }
+    if (at()) { out.ok = true; return out; }
+    for (const dear of escape ? [false, true] : [false]) {
+      if (dear) escape(true);
+      try {
+        const ar = await this.a.plan(this.sim.location, pos, 0, 12000, goal, { actions: this.actionOpts({ force: false }), weight: 1.5 });
+        this.check(gen);
+        if (!ar.complete) continue;
+        // What the route will put down and break, read before and after (a step that did not happen is not counted).
+        const puts = [], breaks = [];
+        for (let i = 1; i < ar.path.length; i++) {
+          const n = ar.path[i], m = n.move;
+          if (!m) continue;
+          if (m.type === 'pillar') { const p = ar.path[i - 1]; puts.push({ x: p.x, y: p.y, z: p.z }); }
+          if (m.type === 'bridge') puts.push({ x: n.x, y: n.y - 1, z: n.z });
+          for (const [x, y, z] of m.breaks ?? []) breaks.push({ x, y, z });
+        }
+        const wasOpen = puts.map((c) => OPEN.test(this.blockAt(c) ?? 'air'));
+        const wasSolid = breaks.map((c) => !OPEN.test(this.blockAt(c) ?? 'air'));
+        await this.followActionPath(gen, ar.path, { sweep: false });
+        puts.forEach((c, i) => { if (wasOpen[i] && !OPEN.test(this.blockAt(c) ?? 'air')) out.placed.push(c); });
+        breaks.forEach((c, i) => { if (wasSolid[i] && OPEN.test(this.blockAt(c) ?? 'air')) out.broke.push(c); });
+        // (Within a step of it on the same level: the last step.)
+        const f = this.feet();
+        if (!at() && f.y === cell.y && Math.abs(f.x - cell.x) <= 1 && Math.abs(f.z - cell.z) <= 1) {
+          await this.a.motor.followPath([{ x: this.sim.location.x, y: this.sim.location.y, z: this.sim.location.z }, pos]);
+          this.check(gen);
+        }
+        if (at()) { out.ok = true; return out; }
+      } finally { if (dear) escape(false); }
+    }
+    return out;
+  }
+
   /** Take down what goSee built to see from (a pillar): top first, standing on it. */
   async takeDownBuilt(gen) {
     const cells = (this.builtUp ?? []).splice(0).sort((a, b) => b.y - a.y);
@@ -732,6 +782,9 @@ export class Skills {
         const id = this.blockAt(p) ?? 'air';
         if (OPEN.test(id)) return 0;
         if (/water|lava/.test(id) || this.isProtected(p)) return Infinity;
+        // (A job can price blocks itself: the iron farm build (game/farmbuild.js) makes its farm unbreakable, or dear when the bot has to break its way out.)
+        const own = this.a.digCost?.(p);
+        if (own !== undefined) return own;
         // Never our own house: its walls, roof and furniture, or the ground it stands on. Blocks we
         // put down ourselves count as diggable, and the house is ours: one route in with the door
         // shut and a wall down went under the floor and up through it.
@@ -4419,7 +4472,7 @@ export class Skills {
     // The house's cobblestone too, until it's built (walls, corners and filler under the floor).
     const H = this.a.homestead;
     const house = H?.house ? 0 : 27;
-    return { ...plankReserve(inv), cobblestone: (better('pickaxe') ? 0 : 3) + (better('sword') ? 0 : 2) + (better('axe') ? 0 : 3) + (better('shovel') ? 0 : 1) + (furnace ? 0 : 8) + house };
+    return { ...plankReserve(inv), ...(this.a.reserveExtra?.(inv) ?? {}), cobblestone: (better('pickaxe') ? 0 : 3) + (better('sword') ? 0 : 2) + (better('axe') ? 0 : 3) + (better('shovel') ? 0 : 1) + (furnace ? 0 : 8) + house };
   }
 
   /** Placeable blocks we can spend (all of them if `all`, else without touching the reserve). */
