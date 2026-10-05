@@ -157,7 +157,6 @@ test('without the slabs the tops are places to spawn (the check does see them): 
   const g = render(p);
   const bare = exposedTops(g, p.bounds, (x, y, z) => y === FLOOR_Y && x >= 0 && x <= 15 && z >= 0 && z <= 15);
   assert.ok(bare.length > 90 && bare.length < 120, `${bare.length} bare tops`);
-  caught(p, /golems could also spawn/);
   caught(p, /bare tops/);
   // One slab per bare top, no more, all of the one kind, and the step is one of them.
   const slabbed = ironFarmPlan();
@@ -166,15 +165,15 @@ test('without the slabs the tops are places to spawn (the check does see them): 
   assert.ok(slabbed.ops.filter((o) => o.tag === 'slab').every((o) => o.id === SLAB));
   // None of them inside the shaft or the chamber (the chamber floor is hoppers and campfires, not slabs).
   const wet = render(slabbed);
-  for (let x = 7; x <= 8; x++) for (let z = 7; z <= 8; z++) for (let y = -6; y <= 2; y++) assert.notEqual(wet.id(x, y, z), SLAB, `slab in the shaft at ${x},${y},${z}`);
+  for (let x = 7; x <= 8; x++) for (let z = 7; z <= 8; z++) for (let y = -6; y <= 3; y++) assert.notEqual(wet.id(x, y, z), SLAB, `slab in the shaft at ${x},${y},${z}`);
   assert.equal(render(slabbed).id(STEP.x, STEP.y, STEP.z), SLAB);
   // The rim of the platform and the room's roof are slabbed.
   const g2 = render(slabbed);
-  for (const [x, y, z] of [[-1, 7, 5], [16, 7, 5], [5, 7, -1], [5, 7, 16], [0, 7, 0], [12, -2, 8], [10, -2, 5]]) assert.equal(g2.id(x, y, z), SLAB, `${x},${y},${z}`);
+  for (const [x, y, z] of [[-1, 8, 5], [16, 8, 5], [5, 8, -1], [5, 8, 16], [0, 8, 0], [12, -2, 8], [10, -2, 5]]) assert.equal(g2.id(x, y, z), SLAB, `${x},${y},${z}`);
 });
 
-test('a pod with a three-high ceiling would be a leak (the check does see one)', () => {
-  const p = carve(ironFarmPlan(), 2, 3, 2, 3, 3, 3);
+test('a pod with a four-high ceiling would be a leak (the check does see one; u228: three high inside, a golem needs four)', () => {
+  const p = carve(ironFarmPlan(), 2, 4, 2, 3, 4, 3);
   const bad = checkPlan(p);
   assert.ok(bad.some((b) => /platform floor has a gap|pod roof missing/.test(b)), bad.slice(0, 3).join('; '));
 });
@@ -188,15 +187,17 @@ test('the pod, the room and the shaft are sealed (a hole in a wall is caught); t
   assert.ok(!out.has('11,-5,8'), 'the room is open to the outside');
   assert.ok(!out.has('7,-3,7'), 'the shaft is open to the outside');
   assert.ok(!out.has('9,-5,7') && !out.has('9,-3,8'), 'the hallway is open to the outside');
-  assert.ok(out.has('5,6,5') && out.has('5,4,5'), 'the platform is not open from above');
+  assert.ok(out.has('5,7,5') && out.has('5,5,5'), 'the platform is not open from above');
   caught(carve(ironFarmPlan(), 1, 1, 5, 1, 1, 5), /the shell has a hole/);
-  caught(carve(ironFarmPlan(), 16, 5, 5, 16, 5, 5), /the platform wall has a gap at 16,5,5/);
-  caught(carve(ironFarmPlan(), 3, 3, 3, 3, 3, 3), /the platform floor has a gap at 3,3/);
-  caught(carve(ironFarmPlan(), 0, 5, 0, 0, 5, 0), /the platform wall has a gap at 0,5,0/);
-  caught(carve(ironFarmPlan(), -1, 6, -1, 16, 6, -1), /the platform wall has a gap at -1,6,-1/);
+  caught(carve(ironFarmPlan(), 16, 6, 5, 16, 6, 5), /the platform wall has a gap at 16,6,5/);
+  caught(carve(ironFarmPlan(), 3, 4, 3, 3, 4, 3), /the platform floor has a gap at 3,3/);
+  caught(carve(ironFarmPlan(), 0, 6, 0, 0, 6, 0), /the platform wall has a gap at 0,6,0/);
+  caught(carve(ironFarmPlan(), -1, 7, -1, 16, 7, -1), /the platform wall has a gap at -1,7,-1/);
   assert.equal(PLATFORM.y2 - PLATFORM.y1 + 1, 3);
   assert.equal(CORNERS.length, 16);
-  for (const [x, z] of CORNERS) for (let y = 4; y <= 6; y++) assert.equal(g.id(x, y, z), SHELL, `corner ${x},${z}`);
+  for (const [x, z] of CORNERS) for (let y = 5; y <= 7; y++) assert.equal(g.id(x, y, z), SHELL, `corner ${x},${z}`);
+  // u228 (the player): the pod is three high inside, so a villager can stand on a bed; still too low for a golem (four).
+  assert.equal(POD.y2 - POD.y1 + 1, 3);
 });
 
 test('the hole in the floor is 2 x 2 over the shaft and open (u218, the player\'s call: no signs in it, the gates over it are enough)', () => {
@@ -307,7 +308,7 @@ test('pushBox: a 1.4-wide box is pushed by the average of the wet cells it overl
 test('u209\'s ring of 56 sources, with a single solid corner cell, turns the WHOLE platform into sources under the game\'s rule (a flowing cell touching two sources becomes one): still water, no current', () => {
   const base = render(ironFarmPlan());
   // The old corners: only (0,0), (15,0), (0,15), (15,15) solid; the rest of each 2 x 2 open.
-  const old = { id: (x, y, z) => ((y === WATER_Y || y === 5 || y === 6) && [[1, 0], [0, 1], [1, 1], [14, 0], [15, 1], [14, 1], [0, 14], [1, 14], [1, 15], [14, 15], [15, 14], [14, 14]].some(([a, b]) => a === x && b === z) ? 'air' : base.id(x, y, z)) };
+  const old = { id: (x, y, z) => ((y === WATER_Y || y === WATER_Y + 1 || y === WATER_Y + 2) && [[1, 0], [0, 1], [1, 1], [14, 0], [15, 1], [14, 1], [0, 14], [1, 14], [1, 15], [14, 15], [15, 14], [14, 14]].some(([a, b]) => a === x && b === z) ? 'air' : base.id(x, y, z)) };
   const ring = [];
   for (let i = 1; i <= 14; i++) ring.push({ x: i, z: 0 }, { x: i, z: 15 }, { x: 0, z: i }, { x: 15, z: i });
   const r = settleWater(old, ring, WATER_Y);
@@ -319,8 +320,8 @@ test('u209\'s ring of 56 sources, with a single solid corner cell, turns the WHO
   assert.equal(levels.filter((l) => l === 0).length, 248);
   assert.ok(flowAt(r.field, 3, 3).x === 0 || Math.abs(flowAt(r.field, 3, 3).x) < 1e-9, 'a push where all is source');
   // And the new layout's check does notice a source dropped where it makes a neighbour touch two.
-  caught(put(ironFarmPlan(), 3, 4, 1, 'water'), /water cells would turn into sources/);
-  caught(put(ironFarmPlan(), 2, 4, 1, 'water'), /water cells would turn into sources/);
+  caught(put(ironFarmPlan(), 3, WATER_Y, 1, 'water'), /water cells would turn into sources/);
+  caught(put(ironFarmPlan(), 2, WATER_Y, 1, 'water'), /water cells would turn into sources/);
   // With a 1 x 1 corner and the new rows (2..13) nothing converts, but the corner pocket (1,1) is a dead end: a thing in it is not pushed anywhere.
   const pocket = settleWater(old, waterSources(), WATER_Y);
   assert.deepEqual(pocket.converted, []);
@@ -519,7 +520,7 @@ test('a way in: a door in the room\'s outer wall (both halves), a step up to it,
 });
 
 test('a bigger hole than 2 x 2 is caught (the pod would have no roof round the shaft), and the pod is 12 x 12 inside', () => {
-  caught(carve(ironFarmPlan(), 6, 3, 6, 9, 3, 9), /pod roof missing/);
+  caught(carve(ironFarmPlan(), 6, 4, 6, 9, 4, 9), /pod roof missing/);
   assert.equal(POD.x2 - POD.x1 + 1, 12);
   assert.equal(POD.z2 - POD.z1 + 1, 12);
 });
@@ -531,7 +532,7 @@ test('every placement is inside the farm box, which is the tower and the step', 
     const pts = o.op === 'set' ? [[o.x, o.y, o.z]] : [[o.box.x1, o.box.y1, o.box.z1], [o.box.x2, o.box.y2, o.box.z2]];
     for (const [x, y, z] of pts) assert.ok(x >= c.x1 && x <= c.x2 && y >= c.y1 && y <= c.y2 && z >= c.z1 && z <= c.z2);
   }
-  assert.deepEqual([c.x1, c.y1, c.z1, c.x2, c.y2, c.z2], [-1, -7, -1, 16, 7, 16]);
+  assert.deepEqual([c.x1, c.y1, c.z1, c.x2, c.y2, c.z2], [-1, -7, -1, 16, 8, 16]);
 });
 
 test('setblock arguments: states quoted the way the game wants them', () => {

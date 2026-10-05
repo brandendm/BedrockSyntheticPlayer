@@ -9,7 +9,7 @@ import { register } from 'node:module';
 register('./mock/hooks_ironfarm.mjs', import.meta.url);
 const MC = await import('@minecraft/server');
 const { ironFarmCommand } = await import('../behavior_pack/scripts/game/ironfarm.js');
-const { ironFarmPlan, render, settleWater, waterSources, PLATFORM, WATER_Y, SIGNS, CAMPFIRES, CHESTS, DOOR, BASE_Y, GATES, LAVA, CHAMBER_WATER, CHAMBER_WET } = await import('../behavior_pack/scripts/core/ironfarm.js');
+const { ironFarmPlan, render, settleWater, waterSources, PLATFORM, WATER_Y, SIGNS, CAMPFIRES, CHESTS, DOOR, BASE_Y, GATES, LAVA, CHAMBER_WATER, CHAMBER_WET, TOP_VIEW } = await import('../behavior_pack/scripts/core/ironfarm.js');
 const VERBOSE = process.argv.includes('-v');
 const G = globalThis.__ifw;
 const plan = ironFarmPlan();
@@ -134,8 +134,10 @@ t('no slab name accepted: it builds the rest, says the tops are bare, and the sp
   const o = await built({ noSlabName: ['cobblestone_slab', 'stone_block_slab', 'oak_slab', 'wooden_slab'] });
   ok(o, 'it did not build');
   ok(chat().some((l) => /NO slab spelling/.test(l)), 'no word about the slabs');
-  ok(at(o, 3, 1, 3)?.id === 'torch' && at(o, 3, 4, 0)?.id === 'water' && at(o, 6, 1, 5)?.id === 'bed', 'the rest did not get built');
-  ok(chat().some((l) => /Golem spawn spots.*[1-9]\d* elsewhere/.test(l)), `the scan should have found stray spots: ${chat().filter((l) => /Golem spawn spots/.test(l))}`);
+  ok(at(o, 3, 1, 3)?.id === 'torch' && at(o, 3, WATER_Y, 0)?.id === 'water' && at(o, 6, 1, 5)?.id === 'bed', 'the rest did not get built');
+  // (u228: with the pod three high the platform's rim is above the spawn volume (the village centre is at the beds, six up at most): bare, it is no
+  // place to spawn, and the scan says so)
+  ok(chat().some((l) => /Golem spawn spots.* 0 elsewhere/.test(l)), `the scan: ${chat().filter((l) => /Golem spawn spots/.test(l))}`);
 });
 
 t('a door the game will not take: an open doorway is left, and it says so', async () => {
@@ -202,8 +204,8 @@ t('view top / pod / out / the room put you on the platform wall, among the villa
   await settle(/room at the bottom\.$/);
   ok(tele.length === 4, `${tele.length} teleports`);
   const [top, pod, out, room] = tele;
-  ok(top.x === o.x - 0.5 && top.y === o.y + 7.5 && top.z === o.z + 7.5, 'top view is not on the wall');
-  ok(at(o, -1, 6, 7)?.id === 'dirt' && at(o, -1, 7, 7)?.id === 'cobblestone_slab', 'nothing to stand on at the top view');
+  ok(top.x === o.x - 0.5 && top.y === o.y + TOP_VIEW.y && top.z === o.z + 7.5, 'top view is not on the wall');
+  ok(at(o, -1, TOP_VIEW.y - 1.5, 7)?.id === 'dirt' && at(o, -1, TOP_VIEW.y - 0.5, 7)?.id === 'cobblestone_slab', 'nothing to stand on at the top view');
   ok(pod.y === o.y + 1 && pod.x === o.x + 2.5 && pod.z === o.z + 8.5 && !at(o, 2, 1, 8) && at(o, 2, 0, 8)?.id === 'dirt', 'pod view');
   ok(out.x === o.x + 17.5 && out.y === o.y - 7 && !at(o, 17, -7, 7), 'out view is not on open ground');
   ok(room.y === o.y - 6 && !at(o, 11, -6, 8) && at(o, 11, -7, 8)?.id === 'dirt', 'room view');

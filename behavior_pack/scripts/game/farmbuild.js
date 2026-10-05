@@ -475,6 +475,17 @@ async function start(agent, player, args) {
     // (Not at the lip of the hole up on the platform: a slip there is a fall down the shaft onto the campfires and the lava.)
     const nearShaft = (q) => q.x >= SHAFT.x1 - 1 && q.x <= SHAFT.x2 + 1 && q.z >= SHAFT.z1 - 1 && q.z <= SHAFT.z2 + 1 && q.y > SHAFT.y2;
     /** A spot to put a part in from: room for the bot, something solid under it, the cell in reach, near where it is, not at the lip of the shaft. */
+    /** Nothing solid between the eye and the cell (sampled every quarter block; the cell itself and its last quarter not counted). */
+    const clearLine = (e, c) => {
+      const t = { x: c.x + 0.5, y: c.y + 0.5, z: c.z + 0.5 };
+      const n = Math.ceil(Math.hypot(t.x - e.x, t.y - e.y, t.z - e.z) * 4);
+      for (let i = 1; i < n - 2; i++) {
+        const f = i / n, q = { x: Math.floor(e.x + (t.x - e.x) * f), y: Math.floor(e.y + (t.y - e.y) * f), z: Math.floor(e.z + (t.z - e.z) * f) };
+        if (q.x === c.x && q.y === c.y && q.z === c.z) continue;
+        if (!FREE_ID.test(hands.blockAt(q) ?? 'air') && !/water|lava|slab|campfire|sign|torch|gate/.test(hands.blockAt(q) ?? '')) return false;
+      }
+      return true;
+    };
     const partStand = (c, reach, skip = new Set()) => {
       const from = hands.where();
       let best = null, bs = Infinity;
@@ -489,7 +500,12 @@ async function start(agent, player, args) {
         const under = hands.blockAt({ ...q, y: q.y - 1 }) ?? 'air';
         if (FREE_ID.test(under) || /water|lava|campfire|magma/.test(under)) continue;
         if (nearShaft(q)) continue;
-        const d = from ? Math.abs(q.x - from.x) + Math.abs(q.z - from.z) + Math.abs(q.y - from.y) * 2 + (q.y < from.y ? 6 : 0) : 0;
+        // (never down in the shaft or the hallway: no way in or out of there on foot, u228)
+        if (q.x >= SHAFT.x1 && q.x <= HALL.x2 && q.z >= SHAFT.z1 && q.z <= SHAFT.z2 && q.y >= SHAFT.y1 && q.y <= SHAFT.y2 + 1) continue;
+        // (a clear line from the eye to the cell: u228 sim, it went down to the pad to pour the hallway's water through the shaft's wall)
+        if (!clearLine({ x: q.x + 0.5, y: q.y + 1.52, z: q.z + 0.5 }, c)) continue;
+        // (near, and not below where it is: down is a climb back up later)
+        const d = from ? Math.abs(q.x - from.x) + Math.abs(q.z - from.z) + Math.abs(q.y - from.y) * 2 + (q.y < from.y ? 20 * (from.y - q.y) : 0) : 0;
         if (d < bs) { bs = d; best = q; }
       }
       return best;
@@ -545,7 +561,7 @@ async function start(agent, player, args) {
       const camps = CAMPFIRES.every((c) => hands.blockAt(c) === 'campfire');
       const cw = rest.find((o) => o.tag === 'cwater');
       if (!camps || !cw) return;
-      if (!/water/.test(hands.blockAt(cw) ?? '') && !(await byHand(cw, 'water', setOp(cw), { reach: 5, bucket: true, last: hallLast }))) return;
+      if (!/water/.test(hands.blockAt(cw) ?? '') && !(await byHand(cw, 'water', setOp(cw), { reach: 5.5, bucket: true, last: hallLast }))) return;
       // (u220 live: the water it poured did not flow. Water set by a command may not know it should spread: the hallway routine from the
       // command build, at once: a block update beside it, else the three flowing cells laid at their depths.)
       const r = await chamberWater(dim, off);
@@ -600,7 +616,7 @@ async function start(agent, player, args) {
         const lava = rest.find((o) => o.tag === 'lava');
         if (lava) {
           if (!signs?.lavaOk) notes.push('The lava was NOT placed: the signs that hold it would not stay on their wall (see above).');
-          else if (hands.blockAt(lava) !== 'lava') await byHand(lava, 'lava', setOp(lava), { reach: 5, bucket: true });
+          else if (hands.blockAt(lava) !== 'lava') await byHand(lava, 'lava', setOp(lava), { reach: 5.5, bucket: true });
         }
       }
       if (y === GATES[0].y && !gates) {

@@ -5,12 +5,12 @@
 // head height over one of them (u214: the second campfire and the shape of the hallway are the player's own redesign of u212). What it drops goes
 // through the hoppers into a double chest in a small room behind glass, with a door: you stand at the bottom, not up in the sky. Layers (y):
 //
-//   y 7        slabs on the tops of the platform's walls (golems do not spawn on slabs)
-//   y 4-6      the platform: 16 x 16, open to the sky, walls 3 high (a golem cannot climb out); water sources along the middle of each edge make
+//   y 8        slabs on the tops of the platform's walls (golems do not spawn on slabs)
+//   y 5-7      the platform: 16 x 16, open to the sky, walls 3 high (a golem cannot climb out); water sources along the middle of each edge make
 //              the water run toward the middle; the four 2 x 2 corners are solid (see waterSources for why). In its middle, at y 4, the four gates
-//   y 3        the platform's floor (also the pod's roof); in its middle the 2 x 2 hole, open (u218: the player's call, the gates over it are enough)
-//   y 1-2      the pod (12 x 12 inside, 2 high): 20 beds in two rows, 10 composters in the walls, 10 villagers, torches; the shaft goes through it
-//   y -6..2    the shaft (2 x 2) and, at the bottom of it, the kill hallway (x 7-9, z 7-8, y -6..-3): one water source; the two campfires in its east
+//   y 4        the platform's floor (also the pod's roof); in its middle the 2 x 2 hole, open (u218: the player's call, the gates over it are enough)
+//   y 1-3      the pod (12 x 12 inside, 3 high, u228: a villager stands on a bed): 20 beds in two rows, 10 composters in the walls, 10 villagers, torches; the shaft goes through it
+//   y -6..3    the shaft (2 x 2) and, at the bottom of it, the kill hallway (x 7-9, z 7-8, y -6..-3): one water source; the two campfires in its east
 //              column (they stop the water, so it runs on to the north-east corner), the lava over the north-east one
 //   y -7       the tower's floor, on the ground; hoppers in it under the hallway, a double chest in the room
 //   y -6..-4   the room (3 x 3, 3 high) east of the hallway: glass window onto it, the chests at your feet, a door in the east wall
@@ -21,22 +21,22 @@
 
 export const box = (x1, y1, z1, x2, y2, z2) => ({ x1, y1, z1, x2, y2, z2 });
 
-export const FLOOR_Y = 3;                                 // the platform's floor layer (and the pod's roof)
-export const WATER_Y = 4;                                 // the platform's water layer: feet level of what spawns there
-export const RIM_Y = 7;                                   // slabs on the tops of the walls
+export const FLOOR_Y = 4;                                 // the platform's floor layer (and the pod's roof; u228: a block higher, the pod 3 high inside)
+export const WATER_Y = 5;                                 // the platform's water layer: feet level of what spawns there
+export const RIM_Y = 8;                                   // slabs on the tops of the walls
 export const BASE_Y = -7;                                 // the tower's floor layer, on the ground
-export const PLATFORM = box(0, 4, 0, 15, 6, 15);          // inside the walls
-export const PLATFORM_SHELL = box(-1, 3, -1, 16, 6, 16);
+export const PLATFORM = box(0, 5, 0, 15, 7, 15);          // inside the walls
+export const PLATFORM_SHELL = box(-1, 4, -1, 16, 7, 16);
 /** The four 2 x 2 corners of the platform, solid to the walls' top (the water cannot make a dead pocket there, and nothing stands in one). */
-export const CORNER_BOXES = Object.freeze([box(0, 4, 0, 1, 6, 1), box(14, 4, 0, 15, 6, 1), box(0, 4, 14, 1, 6, 15), box(14, 4, 14, 15, 6, 15)]);
+export const CORNER_BOXES = Object.freeze([box(0, 5, 0, 1, 7, 1), box(14, 5, 0, 15, 7, 1), box(0, 5, 14, 1, 7, 15), box(14, 5, 14, 15, 7, 15)]);
 /** Every platform cell in a corner: [[x, z], ...]. */
 export const CORNERS = Object.freeze(CORNER_BOXES.flatMap((b) => { const o = []; for (let x = b.x1; x <= b.x2; x++) for (let z = b.z1; z <= b.z2; z++) o.push([x, z]); return o; }));
-export const HOLE = box(7, 3, 7, 8, 3, 8);                // the 2 x 2 hole in the floor
+export const HOLE = box(7, 4, 7, 8, 4, 8);                // the 2 x 2 hole in the floor
 export const HOLE_CENTRE = Object.freeze({ x: 8, z: 8 });
-export const POD = box(2, 1, 2, 13, 2, 13);               // inside
-export const POD_SHELL = box(1, 0, 1, 14, 2, 14);
-export const SHAFT = box(7, -6, 7, 8, 2, 8);              // the 2 x 2 shaft, chamber at its foot
-export const SHAFT_SHELL = box(6, -7, 6, 9, 2, 9);
+export const POD = box(2, 1, 2, 13, 3, 13);               // inside (u228, the player: 3 high, so a villager can stand on a bed)
+export const POD_SHELL = box(1, 0, 1, 14, 3, 14);
+export const SHAFT = box(7, -6, 7, 8, 3, 8);              // the 2 x 2 shaft, chamber at its foot
+export const SHAFT_SHELL = box(6, -7, 6, 9, 3, 9);
 export const ROOM = box(11, -6, 6, 13, -4, 9);           // inside
 export const ROOM_SHELL = box(10, -7, 5, 14, -3, 10);
 export const WINDOW = box(10, -6, 7, 10, -4, 8);          // glass between the room and the hallway
@@ -59,7 +59,7 @@ export const CHAMBER_WATER = Object.freeze({ x: 7, y: -6, z: 8 });
 /** The hallway's water cells in all: the source, the two it feeds and the cell they both feed (north-west of the first campfire, where the current ends). */
 export const CHAMBER_WET = Object.freeze([{ x: 7, y: -6, z: 8, level: 0 }, { x: 7, y: -6, z: 7, level: 1 }, { x: 8, y: -6, z: 8, level: 1 }, { x: 8, y: -6, z: 7, level: 2 }]);
 /** The four open fence gates over the hole, at the platform's water layer: water cannot go into them, so the currents end there; a golem walks through. */
-export const GATES = Object.freeze([{ x: 7, y: 4, z: 7 }, { x: 8, y: 4, z: 7 }, { x: 7, y: 4, z: 8 }, { x: 8, y: 4, z: 8 }]);
+export const GATES = Object.freeze([{ x: 7, y: 5, z: 7 }, { x: 8, y: 5, z: 7 }, { x: 7, y: 5, z: 8 }, { x: 8, y: 5, z: 8 }]);
 export const GATE_ID = 'fence_gate';
 /**
  * The hoppers (u214: three, the player's count; u212 had seven under every cell): one under each campfire, the south one feeding the north one, and the
@@ -86,7 +86,7 @@ export const STAIR_STATES = Object.freeze({ weirdo_direction: 1, upside_down_bit
 export const CHEST_FACING = 'south';
 export const STAND = Object.freeze({ x: 12.5, y: -6, z: 8.5 });   // where the viewer is put: in the room, the window ahead
 export const POD_VIEW = Object.freeze({ x: 2.5, y: 1, z: 8.5 });
-export const TOP_VIEW = Object.freeze({ x: -0.5, y: 7.5, z: 7.5 }); // on the platform's west wall (slab on top)
+export const TOP_VIEW = Object.freeze({ x: -0.5, y: 8.5, z: 7.5 }); // on the platform's west wall (slab on top)
 export const OUT_VIEW = Object.freeze({ x: 17.5, y: -7, z: 7.5 });  // on the ground outside the door
 export const SPAWN_COLUMNS = box(-3, 0, -3, 18, 0, 18);           // the ground within reach of the spawn volume, in x and z
 

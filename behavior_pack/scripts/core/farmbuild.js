@@ -140,11 +140,15 @@ export async function runBuild(plan, hands, { after = null, maxTicks = Infinity,
   };
   // (A slab goes only on the top of the block under it: clicked on a side face's upper half it would be a top slab, on which mobs spawn.)
   const dirsOf = (c) => (c.id === SLAB ? BELOW : DIRS);
-  const supportedNow = (c) => FREE.has(idAt(c.x, c.y, c.z)) && dirsOf(c).some(([a, b, d]) => clickable(idAt(c.x + a, c.y + b, c.z + d)));
+  /** The cells of the layer being laid (and any carried up into it): one with one of them under it waits for it (u228). */
+  let curT = new Map();
+  const waitsBelow = (c) => curT.has(key(c.x, c.y - 1, c.z));
+  const supportedNow = (c) => FREE.has(idAt(c.x, c.y, c.z)) && !waitsBelow(c) && dirsOf(c).some(([a, b, d]) => clickable(idAt(c.x + a, c.y + b, c.z + d)));
   /** Placeable from s right now: in reach, free, and some neighbour to click that has the eye on its open side. */
   const placeableFrom = (s, c) => {
     if (!reaches(s, c)) return false;
     if (!FREE.has(idAt(c.x, c.y, c.z))) return false;   // (something there already: scaffolding of its own, taken down at the end)
+    if (waitsBelow(c)) return false;
     if (!s.up && c.id !== SLAB && edge(s, c) && clickable(idAt(s.x, s.y - 1, s.z))) return true;
     if (c.x === s.x && c.z === s.z && (c.y === s.y || c.y === s.y + 1 || (s.up && c.y === s.y + 2))) return false;
     return dirsOf(c).some(([a, b, d]) => { const n = { x: c.x + a, y: c.y + b, z: c.z + d }; return clickable(idAt(n.x, n.y, n.z)) && facing(s, c, n); });
@@ -276,12 +280,22 @@ export async function runBuild(plan, hands, { after = null, maxTicks = Infinity,
   };
 
   /** One layer's cells (those not there yet), by hand where it can be. */
-  async function layer(y, slabs) {
-    const mine = cells.filter((c) => c.y === y && (c.id === SLAB) === slabs);
+  /**
+   * u228: blocks of a layer it cannot get to on foot (the top course of the shaft inside the three-high pod, once it is up on the pod's walls) are
+   * carried up into the next layer and laid from it (from the pod's roof as it bridges in over them), not climbed to or set by command; only the
+   * top layer climbs or commands. Returns what it carries up.
+   */
+  async function layer(y, slabs, carried = []) {
+    const mine = [...cells.filter((c) => c.y === y && (c.id === SLAB) === slabs), ...carried];
+    const canCarry = !slabs && y < bd.y2;
+    const carryOut = [];
+    /** Blocks that would not go down by hand (as against spots it could not get to): those are not carried up, u228. */
+    const handMissed = new Set();
     W = new Map();
     const T = new Map();
+    curT = T;
     for (const c of mine) { if (idAt(c.x, c.y, c.z) === c.id) stats.already++; else T.set(key(c.x, c.y, c.z), c); }
-    if (!T.size) return;
+    if (!T.size) return carryOut;
     const before = { hand: stats.hand, command: stats.command };
     const need = {};
     for (const c of T.values()) bump(need, c.id);
@@ -357,6 +371,12 @@ export async function runBuild(plan, hands, { after = null, maxTicks = Infinity,
             const st = bestStand(c, [c], here);
             if (st && (!reachHere || reachHere.has(key(st.x, st.y, st.z)))) { c0 = c; break; }
           }
+          // (none of those from where it can walk: if the layer can carry them up, the rest that can be clicked are left for later at once, without
+          // asking for spots it cannot reach, u228)
+          if (!c0 && cand.length && canCarry && reachHere && !cand.slice(16).some(({ c }) => { const st = bestStand(c, [c], here); return st && reachHere.has(key(st.x, st.y, st.z)); })) {
+            for (const { c } of cand) { tried.set(key(c.x, c.y, c.z), TRIES - 1); fail(c); }
+            continue;
+          }
           if (!c0 && cand.length) c0 = cand[0].c;
           if (c0) { line = lineThrough(T, c0, here); c0 = line.find((c) => supportedNow(c)) ?? c0; }
         }
@@ -369,7 +389,8 @@ export async function runBuild(plan, hands, { after = null, maxTicks = Infinity,
           continue;
         }
         const near = line && line.length ? line.slice(line.indexOf(c0)) : [c0];
-        const s = bestStand(c0, near, here) ?? bestStand(c0, near, here, { scaffold: true });
+        // (scaffolding only when there is no plain spot at all, not when the plain ones are ones it failed to reach this pass, u228)
+        const s = bestStand(c0, near, here) ?? (unreachable.size && canCarry ? null : bestStand(c0, near, here, { scaffold: true }));
         if (!s) {
           // No spot left to try: for later if it failed to reach some this pass, else there is none at all and a command sets it (a footing).
           if (unreachable.size) { tried.set(key(c0.x, c0.y, c0.z), TRIES - 1); fail(c0); continue; }
@@ -379,7 +400,7 @@ export async function runBuild(plan, hands, { after = null, maxTicks = Infinity,
         }
         if (here && STAND_ON.has(idAt(s.x, s.y - 1, s.z)) && !walkable(here).has(key(s.x, s.y, s.z))) stats.climbs = (stats.climbs ?? 0) + 1;
         // (u225: climbing only on the last pass over the leftovers, or to a spot with nothing under it yet; the earlier passes find another spot on foot)
-        if (!(await goStand(s, round + 1 >= ROUNDS || (!s.up && !STAND_ON.has(idAt(s.x, s.y - 1, s.z)))))) {
+        if (!(await goStand(s, (round + 1 >= ROUNDS && !canCarry) || (!s.up && !STAND_ON.has(idAt(s.x, s.y - 1, s.z)))))) {
           stats.standFails++;
           unreachable.add(key(s.x, s.y, s.z));
           fail(c0);
@@ -415,7 +436,7 @@ export async function runBuild(plan, hands, { after = null, maxTicks = Infinity,
           if (ok) {
             T.delete(key(k.x, k.y, k.z));
             stats.hand++; stats.hits++; bump(stats.handById, id); W.set(key(k.x, k.y, k.z), id); reach = null; if (back.includes(k)) stats.putBack++;
-          } else { missed.add(key(k.x, k.y, k.z)); stats.misses = (stats.misses ?? 0) + 1; fail(k); W = new Map(); }
+          } else { missed.add(key(k.x, k.y, k.z)); handMissed.add(key(k.x, k.y, k.z)); stats.misses = (stats.misses ?? 0) + 1; fail(k); W = new Map(); }
           judge();
           if (stats.gaveUp) break;
           if (inner % 8 === 7) await hands.yield();
@@ -425,8 +446,10 @@ export async function runBuild(plan, hands, { after = null, maxTicks = Infinity,
       }
       if (!later.size) break;
       if (round + 1 >= ROUNDS) {
-        for (const c of later.values()) commandPlace(c, 'fallback');
-        forced += later.size;
+        const up = canCarry ? [...later.values()].filter((c) => !handMissed.has(key(c.x, c.y, c.z))) : [];
+        if (up.length) { for (const c of up) carryOut.push(c); stats.carried = (stats.carried ?? 0) + up.length; hands.note?.(`CARRY ${up.length} of layer ${y} up to the next: ${up.map((c) => `${c.x} ${c.y} ${c.z}`).join(', ')}`); }
+        const upK = new Set(up.map((c) => key(c.x, c.y, c.z)));
+        for (const c of later.values()) if (!upK.has(key(c.x, c.y, c.z))) { commandPlace(c, 'fallback'); forced++; }
         later.clear();
         if (!T.size) break;
         continue;   // (what was waiting on them)
@@ -441,15 +464,19 @@ export async function runBuild(plan, hands, { after = null, maxTicks = Infinity,
     if (forced) hands.say(`${forced} blocks of layer ${y}${slabs ? ' (slabs)' : ''} would not go down by hand after ${ROUNDS} passes: set by command.`);
     // Read it all back: whatever is not there is set. Then the bot's scaffolding comes down (by its own hand).
     W = new Map();
-    for (const c of [...mine, ...back]) if (idAt(c.x, c.y, c.z) !== c.id) commandPlace(c, 'repaired');
+    const out = new Set(carryOut.map((c) => key(c.x, c.y, c.z)));
+    for (const c of [...mine, ...back]) if (!out.has(key(c.x, c.y, c.z)) && idAt(c.x, c.y, c.z) !== c.id) commandPlace(c, 'repaired');
     stats.layers.push({ y, slabs, cells: mine.length, hand: stats.hand - before.hand, command: stats.command - before.command });
+    curT = new Map();
+    return carryOut;
   }
 
   // Layer by layer, each one's slabs with it (u224, the player: "it didn't remember the layer when it was at that layer": the slabs on the room's
   // roof left to the end meant a trip back down from the top of the platform, pillars and all). It walks over the slabs it has laid.
+  let carry = [];
   for (let y = bd.y1; y <= bd.y2; y++) {
     stats.layer = y;
-    await layer(y, false);
+    carry = await layer(y, false, carry);
     stats.layer = `slabs ${y}`;
     await layer(y, true);
     if (after) { await after(y, stats); W = new Map(); }

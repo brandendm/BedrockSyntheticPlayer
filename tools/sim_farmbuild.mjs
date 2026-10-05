@@ -34,7 +34,7 @@ function makeAgent(knobs = {}) {
     skills: {
       check(gen) { if (gen !== agent.taskGen) throw new Aborted(); },
       async wait(gen, n) { await MC.system.waitTicks(n); this.check(gen); },
-      log() {},
+      log(m) { if (process.env.SIMLOG && /COMMAND|CARRY/.test(m)) console.log("LOG", m); },
       // (The fake bot's feet: it gets to any spot with a block under it and room for it, as the real one walks; the walking itself is the game's.)
       // A spot over air: a block of what it carries put under it first (a bridge or the top of a pillar), as the real one does; scaffolding.
       async walkTo(gen, cell) {
@@ -286,7 +286,8 @@ t('spots it cannot get to the first time (u218, the live run: "could not get to"
   const bad = matches(plan, originOf(plan));
   ok(!bad.length, bad.slice(0, 3).join(' | '));
   const line = msgs.find((l) => /Built\. The bot placed/.test(l));
-  ok(/placed 1193 of 1193 blocks itself \(100%\)/.test(line ?? ''), line);
+  const n = (/placed (\d+) of (\d+) blocks itself/.exec(line ?? '') ?? []);
+  ok(n[1] && n[1] === n[2], line);
   ok(!msgs.some((l) => /set with commands|by command after/.test(l)), msgs.filter((l) => /command/.test(l)).join(' | '));
 });
 
