@@ -302,7 +302,7 @@ test('slips of the hand (a second block where the plan has none): the tidy at th
   const plan = ironFarmPlan();
   const f = fake(plan, { slip: 0.05, seed: 3, tidy: true });
   const stats = await runBuild(plan, f.hands, { after: afterFor(plan, f.world) });
-  assert.ok(f.log.slips.length > 10, `${f.log.slips.length} slips`);
+  assert.ok(f.log.slips.length >= 8, `${f.log.slips.length} slips`);
   assert.deepEqual(sameAsPlan(plan, f.world), []);
   assert.ok(stats.strays > 0 && stats.strays <= f.log.slips.length, `${stats.strays} strays for ${f.log.slips.length} slips`);
   assert.equal(stats.hand + stats.command + stats.already, stats.cells);

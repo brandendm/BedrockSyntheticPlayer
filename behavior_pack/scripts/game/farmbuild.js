@@ -35,6 +35,7 @@ const PAD_TORCHES = (() => {
 })();
 const MAX_TICKS = 3 * 60 * 60 * 20;   // three hours of building by hand (walking and climbing included), then the rest by command (u218: was 75 minutes)
 const SCAFFOLD_SPARE = 48;        // shell blocks over a layer's count: what it pillars and bridges with
+const STOCK_MAX = 256;           // the most of one block it is handed at once (u231): walking tops the shell up
 /**
  * How the bot's hand puts a block down (u216). The game gives a simulated player one item use every 10 ticks (measured: 9 refused), a block every
  * half second; a player building fast places one every 3 to 4 ticks (your house runs: 11 blocks in 2 s).
@@ -336,6 +337,7 @@ async function start(agent, player, args) {
         return await agent.homestead.placeAt(gen, q, id, floor, null, { lenient: true, stay: true });
       } finally { if (!was) { try { sim.isSneaking = false; } catch { /* */ } } }
     };
+    let missLogs = 0;
     const hands = {
       blockAt: (c) => { const q = W(off, c); try { const b = dim.getBlock(q); return b ? norm(b) : null; } catch { return null; } },
       where: () => { const l = sim.location; return { x: Math.floor(l.x) - off.x, y: Math.floor(l.y + 0.05) - off.y, z: Math.floor(l.z) - off.z }; },
@@ -418,7 +420,10 @@ async function start(agent, player, args) {
           } else if (mode === 'quick') ok = await agent.homestead.placeQuick(gen, q, id, () => hands.set(c, id), { gap: QUICK_GAP, below, sound: SOUND[id] ?? null });
           else ok = await agent.homestead.placeAt(gen, q, id, below ? W(off, { x: c.x, y: c.y - 1, z: c.z }) : null, null, { lenient: true, stay: true });
         } catch (e) { if (aborted(e)) throw e; S.log(`farmbuild: place ${id}: ${e}`); }
-        return ok && hands.blockAt(c) === id;
+        const done = ok && hands.blockAt(c) === id;
+        // (u231: why a block would not go down by hand, for the log: the corners that went in by command said nothing)
+        if (!done && missLogs++ < 150) S.log(`farmbuild: MISS ${id} at ${c.x} ${c.y} ${c.z} from ${JSON.stringify(ft)} (${mode}): ${ok ? `read back ${hands.blockAt(c)}` : agent.homestead.placeWhy ?? '?'}`);
+        return done;
       },
       set(c, id) {
         const q = W(off, c);
@@ -428,9 +433,19 @@ async function start(agent, player, args) {
       clear(c) { const q = W(off, c); return run(dim, `setblock ${q.x} ${q.y} ${q.z} air`) === ''; },
       stock(id, n) {
         if (id === plan.shell) n += SCAFFOLD_SPARE;
+        // (u231 live: the platform floor's 320 blocks and the spare asked for at once, one stack of 370: the game refused it, dirt was taken for
+        // something the bot cannot be given, and every block of the floor "missed": it paced the wall tops placing nothing. At most four stacks
+        // at a time; walking tops it up as it goes.)
+        n = Math.min(n, STOCK_MAX);
         const have = invCounts(sim)[id] ?? 0;
         if (have >= n) return;
-        try { give(sim, id, n - have); } catch (e) { noItem.add(id); notes.push(`The bot cannot be given ${id} (${String(e).slice(0, 60)}): those are set by command.`); }
+        try { give(sim, id, n - have); } catch (e) {
+          // (only an item the game has no such thing as is given up on: a second try of one)
+          let none = false;
+          try { give(sim, id, 1); } catch { none = true; }
+          S.log(`farmbuild: could not be given ${n - have} ${id}: ${String(e).slice(0, 80)}${none ? ' (not even one: set by command)' : ''}`);
+          if (none) { noItem.add(id); notes.push(`The bot cannot be given ${id} (${String(e).slice(0, 60)}): those are set by command.`); }
+        }
       },
       now: () => system.currentTick,
       check: () => S.check(gen),
@@ -489,6 +504,8 @@ async function start(agent, player, args) {
       }
       return true;
     };
+    /** A cell a part (not a block of the shell) still has to go in: empty now. */
+    const partGap = (q) => { const f = finalAt(q); return f !== 'air' && !hand.has(f) && !/water|lava|torch|sign|gate/.test(f) && FREE_ID.test(hands.blockAt(q) ?? 'air'); };
     const partStand = (c, reach, skip = new Set()) => {
       const from = hands.where();
       let best = null, bs = Infinity;
@@ -497,6 +514,8 @@ async function start(agent, player, args) {
         const q = { x: c.x + dx, y: c.y + dy, z: c.z + dz };
         if (skip.has(`${q.x},${q.y},${q.z}`) || bedCells.has(`${q.x},${q.y},${q.z}`) || bedCells.has(`${q.x},${q.y - 1},${q.z}`)) continue;
         if (q.x === c.x && q.z === c.z && (q.y === c.y || q.y + 1 === c.y)) continue;
+        // (u231, the player: in the gap the next composter of the row goes in, it had to step out again before that one went in)
+        if ((partGap(q) || partGap({ ...q, y: q.y + 1 })) && !(q.x === c.x && q.z === c.z)) continue;
         const ex = q.x + 0.5 - (c.x + 0.5), ey = q.y + 1.52 - (c.y + 0.5), ez = q.z + 0.5 - (c.z + 0.5);
         if (ex * ex + ey * ey + ez * ez > reach * reach) continue;
         if (!FREE_ID.test(hands.blockAt(q) ?? 'x') || !FREE_ID.test(hands.blockAt({ ...q, y: q.y + 1 }) ?? 'x')) continue;

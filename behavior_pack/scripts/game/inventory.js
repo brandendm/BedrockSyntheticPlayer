@@ -63,8 +63,13 @@ export function take(sim, id, n) {
 
 export function give(sim, id, n) {
   const c = container(sim);
-  const left = c?.addItem(new ItemStack(`minecraft:${id}`, n));
-  if (left) sim.dimension.spawnItem(left, sim.location); // full inventory: drop it, like the game does
+  // (u231 live: an ItemStack of more than a stack's worth is refused by the game (370 dirt at once): a stack at a time)
+  let max = 64;
+  try { max = new ItemStack(`minecraft:${id}`, 1).maxAmount || 64; } catch (e) { throw e; }
+  for (let left = n; left > 0; left -= max) {
+    const rest = c?.addItem(new ItemStack(`minecraft:${id}`, Math.min(max, left)));
+    if (rest) sim.dimension.spawnItem(rest, sim.location); // full inventory: drop it, like the game does
+  }
 }
 
 /** Uses left in all the tools matching `pred` we carry (their durability, minus the wear). */

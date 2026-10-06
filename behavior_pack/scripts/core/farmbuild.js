@@ -120,6 +120,11 @@ export async function runBuild(plan, hands, { after = null, maxTicks = Infinity,
   const finalId = new Map(cells.map((c) => [key(c.x, c.y, c.z), c.id]));
   const bd = plan.bounds;
   const shellId = plan.shell ?? 'cobblestone';
+  // (u231, the player: "when making the line with the composters it walks on top of where it's going to place": the gap a part (a composter,
+  // a bed, a hopper, a chest) waits in is no place to stand, nor the cell over it.)
+  const handIds = handSet(shellId);
+  const partAt = new Set();
+  for (const [k, v] of final.cells) if (v.id !== 'air' && !handIds.has(v.id) && !/water|lava|torch|sign|gate/.test(v.id)) partAt.add(k);
   stats.cells = cells.length;
   const t0 = hands.now();
   let W = new Map();
@@ -214,6 +219,7 @@ export async function runBuild(plan, hands, { after = null, maxTicks = Infinity,
         const s = { x: c.x + dx, y: sy, z: c.z + dz };
         if (unreachable.has(key(s.x, sy, s.z))) continue;
         if (avoid.has(key(s.x, sy, s.z)) || avoid.has(key(s.x, sy + 1, s.z)) || avoid.has(key(s.x, sy - 1, s.z))) continue;   // (the beds' cells, u223)
+        if ((partAt.has(key(s.x, sy, s.z)) || partAt.has(key(s.x, sy + 1, s.z))) && FREE.has(idAt(s.x, sy, s.z))) continue;   // (a part's empty cell, u231)
         // (u224: on a bottom slab it has laid, half a block up, as a player walks the rim it has slabbed)
         if (idAt(s.x, sy, s.z) === SLAB && FREE.has(idAt(s.x, sy + 1, s.z)) && FREE.has(idAt(s.x, sy + 2, s.z))) s.up = 0.5;
         else if (!FREE.has(idAt(s.x, sy, s.z)) || !FREE.has(idAt(s.x, sy + 1, s.z))) continue;

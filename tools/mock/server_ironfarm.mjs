@@ -197,7 +197,7 @@ export const dimension = new Dimension();
 
 // ---- what game/inventory.js needs of the module (the bot's pack), for tools/sim_farmbuild.mjs ----
 export class ItemStack {
-  constructor(typeId, amount = 1) { this.typeId = typeId.startsWith('minecraft:') ? typeId : `minecraft:${typeId}`; this.amount = amount; this.maxAmount = this.typeId.endsWith('bucket') ? 1 : 64; }
+  constructor(typeId, amount = 1) { if (amount < 1 || amount > 255) throw new RangeError(`ItemStack amount ${amount} out of range`); this.typeId = typeId.startsWith('minecraft:') ? typeId : `minecraft:${typeId}`; this.amount = amount; this.maxAmount = this.typeId.endsWith('bucket') ? 1 : 64; }
   getComponent() { return undefined; }
   clone() { return new ItemStack(this.typeId, this.amount); }
 }
