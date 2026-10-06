@@ -117,7 +117,7 @@ function fake(plan, { miss = 0, seed = 1, noStand = false, unreach = null, fallA
     say: (m) => log.said.push(m),
 
   };
-  return { hands, world, log, inv };
+  return { hands, world, log, inv, put(p) { bot = { ...p }; } };
 }
 
 /** The commands the game runs after each layer, in the fake: the `set` ops at that layer (as the plan makes their cells). */
@@ -233,6 +233,17 @@ test('a fall (u229 live: off the pod\'s wall to the pad, nine down): it climbs b
   assert.deepEqual(sameAsPlan(plan, f.world), []);
   assert.equal(stats.command, 0, `${stats.command} by command`);
   assert.ok(f.log.pillars > 0, 'it should have climbed back');
+});
+
+test('stranded on the shaft top in the middle of the pod (u230 live: it carried the pod walls\' top course up, then set the platform floor by command in a checkerboard)', async () => {
+  const plan = ironFarmPlan();
+  const f = fake(plan);
+  const base = afterFor(plan, f.world);
+  const stats = await runBuild(plan, f.hands, { after: async (y, st) => { await base(y, st); if (y === 2) f.put({ x: 6, y: 3, z: 6 }); } });
+  assert.deepEqual(sameAsPlan(plan, f.world), []);
+  assert.equal(stats.footing, 0, `${stats.footing} footings by command`);
+  assert.ok(stats.command <= 2, `${stats.command} by command`);
+  assert.ok((stats.carried ?? 0) <= 16, `${stats.carried} carried up`);
 });
 
 test('hands that never work: it says so after two dozen tries and sets the rest by command; the farm is the same', async () => {

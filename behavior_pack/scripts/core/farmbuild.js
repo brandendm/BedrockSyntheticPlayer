@@ -351,6 +351,7 @@ export async function runBuild(plan, hands, { after = null, maxTicks = Infinity,
         if (!T.size) break;
         if (stats.gaveUp) { for (const c of [...T.values(), ...later.values(), ...blocked.values()]) commandPlace(c, 'fallback'); T.clear(); later.clear(); blocked.clear(); break; }
         const here = hands.where();
+        let climbNow = false;
         // The next block: the next one of the line it is laying; else the start of a new line, at the block with something to click nearest to
         // where the bot is (so one line leads on to the next round a corner).
         let c0 = null;
@@ -378,10 +379,15 @@ export async function runBuild(plan, hands, { after = null, maxTicks = Infinity,
           // (u229 live: from the pad at the start, 14 blocks off, every block of the first layer was "out of reach" of its 12-block look round and
           // all of it went up a layer. Only when they are all close to it and it is up at the layer, not fallen off below it.)
           const close = here && cand.every(({ c }) => Math.abs(c.x - here.x) <= 9 && Math.abs(c.z - here.z) <= 9 && Math.abs(c.y - here.y) <= 3);
-          if (!c0 && cand.length && canCarry && reachHere && close && !cand.slice(16).some(({ c }) => { const st = bestStand(c, [c], here); return st && reachHere.has(key(st.x, st.y, st.z)); })) {
+          const stranded = !c0 && cand.length && reachHere && !cand.slice(16).some(({ c }) => { const st = bestStand(c, [c], here); return st && reachHere.has(key(st.x, st.y, st.z)); });
+          // (u230 live: stranded on the shaft's top in the middle of the pod, it carried the whole top course of the pod's walls up; the platform
+          // floor then had nothing to rest on and went in by command a block at a time, a checkerboard. Carried up only when it is all that is
+          // left of the layer and a small part of it; otherwise it climbs over to the rest, as a player would.)
+          if (stranded && canCarry && close && cand.length === T.size && cand.length * 3 <= mine.length) {
             for (const { c } of cand) { tried.set(key(c.x, c.y, c.z), TRIES - 1); fail(c); }
             continue;
           }
+          if (stranded) climbNow = true;
           if (!c0 && cand.length) c0 = cand[0].c;
           if (c0) { line = lineThrough(T, c0, here); c0 = line.find((c) => supportedNow(c)) ?? c0; }
         }
@@ -408,7 +414,7 @@ export async function runBuild(plan, hands, { after = null, maxTicks = Infinity,
         // (climbing: on the last pass of the top layer, to a spot with nothing under it yet, or when it has fallen off well below the layer it
         // is laying (u229 live: it fell off the pod's wall to the pad, nine down, and could only get back up by climbing))
         const fallen = !!here && here.y < y - 3;
-        if (!(await goStand(s, fallen || (round + 1 >= ROUNDS && !canCarry) || (!s.up && !STAND_ON.has(idAt(s.x, s.y - 1, s.z)))))) {
+        if (!(await goStand(s, climbNow || fallen || round + 1 >= ROUNDS || (!s.up && !STAND_ON.has(idAt(s.x, s.y - 1, s.z)))))) {
           stats.standFails++;
           unreachable.add(key(s.x, s.y, s.z));
           fail(c0);
