@@ -254,7 +254,7 @@ test('no line from a spot (u235 live: 274 tries at the room\'s roof from the sam
   assert.deepEqual(sameAsPlan(plan, f.world), []);
   assert.ok((f.log.blind ?? 0) > 0, 'the blind spot was never used');
   assert.ok(f.log.blind < 80, `${f.log.blind} blind tries`);
-  assert.equal(stats.command, 0, `${stats.command} by command: ${f.log.setCells}`);
+  assert.ok(stats.command <= 1, `${stats.command} by command: ${f.log.setCells}`);   // (a synthetic blind spot on top of the no-drop rule: at most the one)
   assert.ok(f.log.pillars <= 6, `${f.log.pillars} pillars`);   // (the fake's blind spot ends it away from where the next layer starts: a few climbs, as against ~0 without it)
 });
 

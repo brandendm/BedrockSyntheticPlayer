@@ -229,6 +229,37 @@ export async function runBuild(plan, hands, { after = null, maxTicks = Infinity,
     }
     return true;
   };
+  /** A short search from s0 for `to` on foot (the same steps as walkable: one up with a jump, up to three down): false when it is not found within a few hundred spots. */
+  const walksTo = (s0, to, cap = 700) => {
+    const tk = key(to.x, to.y, to.z), k0 = key(s0.x, s0.y, s0.z);
+    if (tk === k0) return true;
+    const seen = new Set([k0]), q = [{ x: s0.x, y: s0.y, z: s0.z }];
+    for (let i = 0; i < q.length && seen.size < cap; i++) {
+      const c = q[i];
+      for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+        for (let dy = 1; dy >= -3; dy--) {
+          const n = { x: c.x + dx, y: c.y + dy, z: c.z + dz };
+          if (Math.abs(n.x - to.x) > 12 || Math.abs(n.z - to.z) > 12) continue;
+          if (dy === 1 && !FREE.has(idAt(c.x, c.y + 2, c.z))) continue;
+          if (dy < 0 && !(FREE.has(idAt(n.x, c.y, n.z)) && FREE.has(idAt(n.x, c.y + 1, n.z)))) continue;
+          if (!standable(n.x, n.y, n.z) || avoid.has(key(n.x, n.y, n.z)) || avoid.has(key(n.x, n.y - 1, n.z))) continue;
+          const kk = key(n.x, n.y, n.z);
+          if (kk === tk) return true;
+          if (!seen.has(kk)) { seen.add(kk); q.push(n); }
+          break;
+        }
+      }
+    }
+    return false;
+  };
+  const retMemo = new Map();
+  /** Can the bot walk from spot s back to `from`? (memo: until the world or the bot moves) */
+  const canReturn = (s, from) => {
+    const k = `${key(s.x, s.y, s.z)}|${key(from.x, from.y, from.z)}`;
+    let r = retMemo.get(k);
+    if (r === undefined) { r = walksTo(s, from); retMemo.set(k, r); }
+    return r;
+  };
   /** Spots the bot could not get to in this pass over the layer (u218): not offered again until the next pass. */
   let unreachable = new Set();
   /** Pairs (spot > block) the game said it had no line from (u235 live: 274 tries at the room's roof from the one spot the plan thought could see them). */
@@ -276,6 +307,9 @@ export async function runBuild(plan, hands, { after = null, maxTicks = Infinity,
         const low = sy < c.y ? (c.y - sy) * LOW_COST : 0;
         const pend = curT.has(key(s.x, sy, s.z)) || curT.has(key(s.x, sy + 1, s.z)) ? PEND_COST : 0;
         const score = n * 40 - pend - Math.abs(dx) - Math.abs(dz) - walk * 6 - down * 60 - cost + onBuild * 20 - low - (enclosed.has(key(s.x, s.y, s.z)) ? ENCLOSED_COST : 0);
+        // (u239 live: it walked off the wall two blocks down to a spot for one block, and could not get back up: it jumped at the wall for ever.
+        // A spot two or more below where it is is taken only if it can walk back to where it was from there.)
+        if (score > bestScore && from && sy <= from.y - 2 && !canReturn(s, from)) continue;
         if (score > bestScore) { bestScore = score; best = s; }
       }
     }
@@ -306,7 +340,7 @@ export async function runBuild(plan, hands, { after = null, maxTicks = Infinity,
       if (id) { redo.set(key(c.x, c.y, c.z), { x: c.x, y: c.y, z: c.z, id }); stats.broken++; }
     }
     W = new Map();   // (it walked, climbed or broke its way: what the cache knew may have changed)
-    reach = null;
+    reach = null; retMemo.clear();
     return ok;
   };
 
@@ -362,7 +396,7 @@ export async function runBuild(plan, hands, { after = null, maxTicks = Infinity,
       // The second pass: just the blocks of its own in the way taken out (u222: not all its scaffolding, which sent it down for its pillars and up
       // on new ones), and those cells built.
       for (const c of blocked.values()) { if (hands.unblock) await hands.unblock(c); else if (hands.tidy) { await hands.tidy(); break; } }
-      W = new Map(); reach = null;
+      W = new Map(); reach = null; retMemo.clear();
       for (const [k, c] of blocked) T.set(k, c);
       blocked.clear();
       if (!T.size) break;
@@ -450,7 +484,7 @@ export async function runBuild(plan, hands, { after = null, maxTicks = Infinity,
         // (u225: climbing only on the last pass over the leftovers, or to a spot with nothing under it yet; the earlier passes find another spot on foot)
         // (climbing: on the last pass of the top layer, to a spot with nothing under it yet, or when it has fallen off well below the layer it
         // is laying (u229 live: it fell off the pod's wall to the pad, nine down, and could only get back up by climbing))
-        const fallen = !!here && here.y < y - 3;
+        const fallen = !!here && here.y < y - 1;
         if (fallen && !stats.fallNoted) { stats.fallNoted = 1; hands.note?.(`FELL to ${here.x} ${here.y} ${here.z}, ${y - here.y} below layer ${y}; climbing back up (a fall is a walking failure)`); }
         if (!(await goStand(s, climbNow || fallen || round + 1 >= ROUNDS || (!s.up && !STAND_ON.has(idAt(s.x, s.y - 1, s.z)))))) {
           stats.standFails++;
@@ -479,7 +513,7 @@ export async function runBuild(plan, hands, { after = null, maxTicks = Infinity,
           stats.handTicks += hands.now() - a;
           if (ok) {
             T.delete(key(k.x, k.y, k.z));
-            stats.hand++; stats.hits++; bump(stats.handById, id); W.set(key(k.x, k.y, k.z), id); reach = null; if (back.includes(k)) stats.putBack++;
+            stats.hand++; stats.hits++; bump(stats.handById, id); W.set(key(k.x, k.y, k.z), id); reach = null; retMemo.clear(); if (back.includes(k)) stats.putBack++;
           } else { missed.add(key(k.x, k.y, k.z)); handMissed.add(key(k.x, k.y, k.z)); stats.misses = (stats.misses ?? 0) + 1; badStand.add(`${key(s.x, s.y, s.z)}|${key(k.x, k.y, k.z)}`); fail(k); W = new Map(); }
           judge();
           return true;
