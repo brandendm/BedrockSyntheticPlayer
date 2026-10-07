@@ -264,7 +264,14 @@ export class LeadTow {
             const r = await this.sling(gen, boat, { ride: false, target: stretchFor(3) + t * 0.8, guard, dir: rw?.dir ?? null });
             trace(`tow: sling ${bg.built ? 'on the half bridge' : 'before bridging'}: stretch ${r.stretch}, ${r.ok ? 'it came' : r.snapped ? 'LEAD BROKE' : 'it did not come'}, boat peaked ${r.peak} b/s, climbed ${r.climbed}`);
             if (r.snapped) { m.snapped = true; m.why = 'the lead broke in a sling'; return null; }
-            if (r.ok) { m.slingOk++; mark('plan'); return plan(target); }
+            if (r.ok) {
+              m.slingOk++; mark('plan');
+              // (u260 live: the runway took us 5 cells over a 6-wide pit and the route search then called the one cell left walkable (a jump), so the walker stepped into it: the
+              // bridge is finished first)
+              const b2 = await this.bridgeGap(gen, boat, target, guard);
+              if (b2.built) { m.built += b2.built; note(`bridged the rest of the gap (${b2.built})`); }
+              return plan(target);
+            }
           }
         }
         if (bg.jam) { note('the boat is jammed: sling it before bridging'); { const at = subject().location; return [{ x: at.x, y: at.y, z: at.z, hold: true, fresh: true }]; } }
