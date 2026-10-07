@@ -451,6 +451,7 @@ export async function runBuild(plan, hands, { after = null, maxTicks = Infinity,
         // (climbing: on the last pass of the top layer, to a spot with nothing under it yet, or when it has fallen off well below the layer it
         // is laying (u229 live: it fell off the pod's wall to the pad, nine down, and could only get back up by climbing))
         const fallen = !!here && here.y < y - 3;
+        if (fallen && !stats.fallNoted) { stats.fallNoted = 1; hands.note?.(`FELL to ${here.x} ${here.y} ${here.z}, ${y - here.y} below layer ${y}; climbing back up (a fall is a walking failure)`); }
         if (!(await goStand(s, climbNow || fallen || round + 1 >= ROUNDS || (!s.up && !STAND_ON.has(idAt(s.x, s.y - 1, s.z)))))) {
           stats.standFails++;
           unreachable.add(key(s.x, s.y, s.z));
@@ -460,6 +461,8 @@ export async function runBuild(plan, hands, { after = null, maxTicks = Infinity,
           continue;
         }
         stats.standMoves++;
+        // (u238: a fall is a failure of the walk: logged where it was meant to be and where it is, so the next report shows how it came off)
+        { const at = hands.where(); if (at && (at.y < s.y - 1 || Math.abs(at.x - s.x) > 2 || Math.abs(at.z - s.z) > 2)) { stats.offSpot = (stats.offSpot ?? 0) + 1; hands.note?.(`OFF SPOT wanted ${s.x} ${s.y} ${s.z} for ${c0.id} at ${c0.x} ${c0.y} ${c0.z}, is at ${at.x} ${at.y} ${at.z} (${at.y < s.y - 1 ? 'fell' : 'short'}), layer ${stats.layer}, was at ${here ? `${here.x} ${here.y} ${here.z}` : '?'}`); } }
         // (u235: logged, the player: "it walks where it is trying to place the next block": a spot in a cell the layer still has to fill)
         if (curT.has(key(s.x, s.y, s.z)) || curT.has(key(s.x, s.y + 1, s.z))) { stats.onTarget = (stats.onTarget ?? 0) + 1; hands.note?.(`ON TARGET stood in a cell still to fill (${s.x} ${s.y} ${s.z}) to place ${c0.id} at ${c0.x} ${c0.y} ${c0.z}, layer ${stats.layer}, ${[...T.values()].filter((t) => t.x === s.x && t.z === s.z && (t.y === s.y || t.y === s.y + 1)).length} of its own cells still to fill, no better spot`); }
         // Along the line from this spot, in order, as far as it reaches (one that would not go down is tried again later; the cell it stands in

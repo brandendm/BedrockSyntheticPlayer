@@ -771,3 +771,5 @@ Say (in chat to the bot, `!bot ...`, or the dashboard box) things like **"make i
 - u236: buildfarm (any plan): when the game says there is no line to a block from a spot, that spot is not asked for that block again (u235 live: 274 tries at the room's roof from one spot, then commands); another spot is tried, such as up on the slabs just laid. The same block is not retried at once from the same spot after a "no line".
 
 - u237: buildfarm (any plan): it does not start a line from a spot that would maroon it (u236 live: the shaft's top course first, then stuck on the shaft in the middle of the open pod with the wall tops out of reach: one block of scaffolding to climb out, left inside the sealed pod). A start is taken only where it can still walk to a spot for the rest of the layer; ones that would strand it wait.
+
+- u238: report: OFF SPOT lines (it ended up off the spot it walked to: fell or stopped short, with where it started) and a FELL line when it is more than three below its layer; the build verdict counts both. For finding why it falls and climbs back.
