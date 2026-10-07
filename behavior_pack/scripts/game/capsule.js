@@ -12,12 +12,12 @@ const MAX_PER_SESSION = 8, MIN_GAP_TICKS = 300;
 export class Capsules {
   constructor(agent) {
     this.a = agent;
-    this.ring = new Ring(400);
+    this.ring = new Ring(1300);
     /** @type {{tick:number,msg:string}[]} */ this.traces = [];
     this.count = 0; this.lastTick = -1e9; this.last = null;
     /** What the tow is watching right now (set by game/leadtow.js each tick it runs): the boat, the goal, the waypoint. */
     this.watch = null;
-    onTrace((tick, msg) => { this.traces.push({ tick, msg: String(msg) }); if (this.traces.length > 120) this.traces.splice(0, this.traces.length - 120); });
+    onTrace((tick, msg) => { this.traces.push({ tick, msg: String(msg) }); if (this.traces.length > 200) this.traces.splice(0, this.traces.length - 200); });
   }
 
   /** Every 5 ticks, from the agent's tick. Cheap: a few reads. */
@@ -30,10 +30,14 @@ export class Capsules {
     let boat = null;
     try { if (w?.boat?.isValid) boat = pt(w.boat.location); } catch { /* */ }
     this.ring.push({ tick: t, p: pt(p), held, ...(boat ? { boat } : {}), ...(w?.note ? { note: w.note } : {}) });
+    // (u252) Any stall while a tow is on, wherever in the tow's code it waits (a bridge, a sling, a walk): 8 s without moving 0.4 and not holding at the end of the route.
+    if (!this.towOn) { this.stillAt = t; this.stillP = null; return; }
+    if (!this.stillP || Math.hypot(p.x - this.stillP.x, p.z - this.stillP.z) > 0.4) { this.stillP = { x: p.x, z: p.z }; this.stillAt = t; return; }
+    if (t - this.stillAt > 160 && !(this.watch?.hold && t - this.watch.tick < 400)) { this.stillAt = t + 400; this.snap('stalled 8 s in the tow', { secs: 20 }); }
   }
 
   /** The world and everything near, as a capsule, sent to the brain. Rate limited; returns it (or null). */
-  snap(why, { force = false } = {}) {
+  snap(why, { force = false, secs = 12 } = {}) {
     const t = system.currentTick;
     if (!force && (this.count >= MAX_PER_SESSION || t - this.lastTick < MIN_GAP_TICKS)) return null;
     try {
@@ -59,7 +63,7 @@ export class Capsules {
       const cap = makeCapsule({
         why, build: CONFIG.build, tick: t, at: p,
         bot: { hp: a.health?.(), task: a.task?.kind ?? 'idle', step: a.autoStep, mode: a.mode, yaw: r1(a.sim.getRotation().y), vel: (() => { try { const v = a.sim.getVelocity(); return [r1(v.x), r1(v.y), r1(v.z)]; } catch { return null; } })(), inv },
-        ring: this.ring, traces: this.traces, slice, entities, watch: w,
+        ring: this.ring, traces: this.traces, slice, entities, watch: w, secs, maxTrace: secs > 20 ? 150 : 60,
       });
       this.count++; this.lastTick = t; this.last = cap;
       sendEvent({ type: 'capsule', capsule: cap, lines: capsuleLines(cap, { json: false }) }).catch(() => {});

@@ -2895,6 +2895,8 @@ async function runOne(agent, player, name, arg, human = false) {
   } finally {
     if (!human && !pass) { try { agent.capsule?.snap(`test ${name} failed: ${detail}`.slice(0, 200)); } catch { /* */ } }
     runSummary = rec.stop(); runTrace = rec.trace();
+    // (u252) A pass much slower than yours is looked at too: the last minute of it, and the tow's ledger of where the time went.
+    { const hs = agent.memory.data.testRuns?.[name]?.human?.secs; if (!human && pass && hs && (runSummary?.secs ?? 0) > hs * 1.5 + 5) { try { agent.capsule?.snap(`test ${name}: passed in ${Math.round(runSummary.secs)}s against your ${Math.round(hs)}s`, { force: true, secs: 60 }); } catch { /* */ } } }
     if (legSummary) runSummary = legSummary;
     for (const [id, n] of handed) { try { take(player, id, Math.min(n, invCountsOf(player)[id] ?? 0)); } catch { /* */ } }
     agent.testHold = false;
@@ -3129,7 +3131,7 @@ function leashTo(sim, e) {
 function towLine(m, goal) {
   const f = (v) => (v == null ? '?' : Number(v).toFixed(1));
   const off = m.boatEnd ? Math.hypot(m.boatEnd.x - goal.x, m.boatEnd.z - goal.z) : null;
-  return `${m.arrived ? 'got there' : `DID NOT get there (${m.why || 'out of time'})`} in ${m.secs}s (efficiency ${m.efficiency}, 1 = walking the straight line), boat ${off == null ? 'gone' : `${f(off)} from the goal`}; boat first moved at ${f(m.pullAt)} apart, furthest ${f(m.maxSep)}, ${m.snapped ? 'lead SNAPPED' : 'lead held'}, slung ${m.slingOk}/${m.slings}, unstuck ${m.tugs}x, rerouted ${m.reroutes}x, jumped ${m.steps}x (limits soft ${m.soft}, hard ${m.hard}, max ${m.max}; guard ${f(m.holdAt)})`;
+  return `${m.arrived ? 'got there' : `DID NOT get there (${m.why || 'out of time'})`} in ${m.secs}s (efficiency ${m.efficiency}, 1 = walking the straight line), boat ${off == null ? 'gone' : `${f(off)} from the goal`}; boat first moved at ${f(m.pullAt)} apart, furthest ${f(m.maxSep)}, ${m.snapped ? 'lead SNAPPED' : 'lead held'}, slung ${m.slingOk}/${m.slings}, unstuck ${m.tugs}x, rerouted ${m.reroutes}x, jumped ${m.steps}x (limits soft ${m.soft}, hard ${m.hard}, max ${m.max}; guard ${f(m.holdAt)}); where the time went: ${Object.entries(m.ledger ?? {}).sort((x, y) => y[1] - x[1]).map(([k, v]) => `${k} ${v}s`).join(', ') || '?'}`;
 }
 
 /** A grown horse: babies can't be ridden. One that spawns young is grown up by its own event, else replaced (up to 8 tries). */

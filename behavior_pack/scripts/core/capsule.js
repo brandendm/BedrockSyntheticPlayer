@@ -101,7 +101,7 @@ export function makeCapsule(o) {
   const from = o.tick - (o.secs ?? 12) * 20;
   return {
     v: 1, why: String(o.why).slice(0, 300), build: o.build, tick: o.tick, at: pt(o.at), bot: o.bot,
-    samples: o.ring.since(from), trace: o.traces.filter((t) => t.tick >= from - 200).map((t) => ({ tick: t.tick, msg: String(t.msg).slice(0, 240) })).slice(-60),
+    samples: o.ring.since(from), trace: o.traces.filter((t) => t.tick >= from - 200).map((t) => ({ tick: t.tick, msg: String(t.msg).slice(0, 240) })).slice(-(o.maxTrace ?? 60)),
     slice: o.slice, entities: o.entities, watch: o.watch ?? null,
   };
 }
