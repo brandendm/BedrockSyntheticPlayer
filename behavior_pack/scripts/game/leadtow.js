@@ -147,6 +147,9 @@ export class LeadTow {
     const width = land ? land - 1 : 0;
     if (!land) return { built: 0, width: 0, why: 'no far side within 10' };
     if (S.blockCount() < width) return { built: 0, width, why: `${S.blockCount()} blocks for a gap ${width} wide` };
+    // (u259 live, leadledge: the bridge was begun with the boat still below the wall, climbing it; it jammed after five cells and no sling would come across the half bridge.
+    // Sling it up from solid ground first: it is the loop's jam handling that does that, with nothing built yet.)
+    if (f.y - boat.location.y >= 0.9 && flat(sim.location, boat.location) > 2) return { built: 0, width, why: 'the boat is still below the lip', jam: true };
     let cur = { x: f.x, y: f.y, z: f.z }, built = 0;
     for (let k = 1; k <= land; k++) {
       S.check(gen);
@@ -252,13 +255,14 @@ export class LeadTow {
         // stepped off the missing 6th cell into the pit. A jam means a stop, whatever was built.)
         if (bg.built) { m.built += bg.built; note(`bridged ${bg.jam ? 'part of ' : ''}a gap ${bg.width} wide${bg.jam ? ` (${bg.built})` : ''}`); if (!bg.jam) return plan(target); }
         // (the boat is jammed behind us: stand and let the loop's own jam handling sling it free, with a runway if need be, then take a new route)
-        // (u258 live, leadledge: the half bridge was held on, and the loop's jam handling then walked the bot off it into the pit (a straight walk to a flank spot or a step): 40 s.
-        // With a bridge begun, the sling is done HERE, on the bridge, as often as it takes, and the bridging goes on from where it stopped.)
-        if (bg.jam && bg.built) {
+        // (u259 live, leadledge: the half bridge was held on, and the loop's jam handling then walked the bot off it into the pit. With a bridge begun, or the boat still below the lip, the sling is done HERE.)
+        if (bg.jam && (bg.built || bg.why === 'the boat is still below the lip')) {
           for (let t = 0; t < 3; t++) {
             m.slings++; mark('sling');
-            const r = await this.sling(gen, boat, { ride: false, target: stretchFor(3) + t * 0.8, guard, dir: null });
-            trace(`tow: sling on the half bridge: stretch ${r.stretch}, ${r.ok ? 'it came' : r.snapped ? 'LEAD BROKE' : 'it did not come'}, boat peaked ${r.peak} b/s, climbed ${r.climbed}`);
+            const rw = bg.built ? null : await this.runway(gen, boat, stretchFor(3) + t * 0.8, guard);
+            if (rw?.built) { note(`runway: ${rw.built} blocks`); m.built += rw.built; }
+            const r = await this.sling(gen, boat, { ride: false, target: stretchFor(3) + t * 0.8, guard, dir: rw?.dir ?? null });
+            trace(`tow: sling ${bg.built ? 'on the half bridge' : 'before bridging'}: stretch ${r.stretch}, ${r.ok ? 'it came' : r.snapped ? 'LEAD BROKE' : 'it did not come'}, boat peaked ${r.peak} b/s, climbed ${r.climbed}`);
             if (r.snapped) { m.snapped = true; m.why = 'the lead broke in a sling'; return null; }
             if (r.ok) { m.slingOk++; mark('plan'); return plan(target); }
           }
