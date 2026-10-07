@@ -213,6 +213,22 @@ export async function runBuild(plan, hands, { after = null, maxTicks = Infinity,
     reach = seen; reachFrom = k0;
     return seen;
   };
+  /** Standing at st to lay c: would what is left of the layer (beyond what st reaches) have no spot the bot can walk to from st? (the island it would maroon itself on) */
+  const strands = (st, c) => {
+    const rest = [];
+    for (const t of curT.values()) {
+      if (t === c || !supportedNow(t) || reaches(st, t)) continue;
+      rest.push({ t, d: Math.hypot(t.x - st.x, (t.y - st.y) * 2, t.z - st.z) });
+    }
+    if (!rest.length) return false;
+    rest.sort((a, b) => a.d - b.d);
+    const wk = walkable(st);
+    for (const { t } of rest.slice(0, 12)) {
+      const s2 = bestStand(t, [t], st);
+      if (s2 && wk.has(key(s2.x, s2.y, s2.z))) return false;
+    }
+    return true;
+  };
   /** Spots the bot could not get to in this pass over the layer (u218): not offered again until the next pass. */
   let unreachable = new Set();
   /** Pairs (spot > block) the game said it had no line from (u235 live: 274 tries at the room's roof from the one spot the plan thought could see them). */
@@ -384,10 +400,17 @@ export async function runBuild(plan, hands, { after = null, maxTicks = Infinity,
           }
           cand.sort((a, b) => a.d - b.d);
           const reachHere = here ? walkable(here) : null;
+          // (u236 live: it laid the shaft's top course first and stood up on the shaft in the middle of the open pod, with the pod's wall tops out of
+          // reach all round: a block of scaffolding to get out. A start is taken only where the rest of the layer can still be walked to from there;
+          // the ones that would maroon it wait, as a player builds the way out before the island.)
+          let fallback = null;
           for (const { c } of cand.slice(0, 16)) {
             const st = bestStand(c, [c], here);
-            if (st && (!reachHere || reachHere.has(key(st.x, st.y, st.z)))) { c0 = c; break; }
+            if (!(st && (!reachHere || reachHere.has(key(st.x, st.y, st.z))))) continue;
+            if (here && strands(st, c)) { fallback ??= c; continue; }
+            c0 = c; break;
           }
+          if (!c0 && fallback) c0 = fallback;
           // (none of those from where it can walk: if the layer can carry them up, the rest that can be clicked are left for later at once, without
           // asking for spots it cannot reach, u228)
           // (u229 live: from the pad at the start, 14 blocks off, every block of the first layer was "out of reach" of its 12-block look round and
