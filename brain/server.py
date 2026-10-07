@@ -86,6 +86,8 @@ _recent: collections.deque = collections.deque(maxlen=400)
 _traces: collections.deque = collections.deque(maxlen=5000)
 _trace_seq = 0
 _flights: collections.deque = collections.deque(maxlen=12)
+# (u250) The repro capsules the bot sends when something goes wrong (game/capsule.js), newest last; also kept whole in logs/capsules.jsonl.
+_capsules: collections.deque = collections.deque(maxlen=8)
 _paths: collections.deque = collections.deque(maxlen=6000)  # the pathfinding log (searches and walks)
 _why: collections.deque = collections.deque(maxlen=3000)  # the planner's reasons, one per step chosen (brain/logs/why.jsonl)
 _tests: dict = {"batch": None, "results": {}, "stats": {}}
@@ -466,6 +468,9 @@ def make_handler(engine: DecisionEngine, key: str | None = None):
                         lines = lines[-300:]
                     nxt = _trace_seq
                 return self._send(200, {"next": nxt, "lines": lines})
+            if self.path == "/api/capsules":
+                with _lock:
+                    return self._send(200, {"capsules": list(_capsules)})
             if self.path == "/api/flight":
                 with _lock:
                     return self._send(200, {"reports": list(_flights)})
@@ -584,6 +589,20 @@ def make_handler(engine: DecisionEngine, key: str | None = None):
                 return self._send(200, {"actions": []})
             if evt.get("type") == "learned_house":
                 store_house(evt)
+                return self._send(200, {"actions": []})
+            if evt.get("type") == "capsule" and isinstance(evt.get("capsule"), dict):
+                cap = evt["capsule"]
+                with _lock:
+                    _capsules.append({"t": time.strftime("%Y-%m-%d %H:%M:%S"), "capsule": cap, "lines": [str(x)[:400] for x in (evt.get("lines") or [])][:400]})
+                try:
+                    LOG_DIR.mkdir(exist_ok=True)
+                    f = LOG_DIR / "capsules.jsonl"
+                    if f.exists() and f.stat().st_size > 20_000_000:
+                        f.replace(f.with_suffix(".old.jsonl"))
+                    with f.open("a", encoding="utf-8") as fh:
+                        fh.write(json.dumps({"t": time.strftime("%Y-%m-%d %H:%M:%S"), "capsule": cap}) + "\n")
+                except OSError:
+                    pass
                 return self._send(200, {"actions": []})
             if evt.get("type") in ("log", "test_result", "test_batch", "test_run", "flight"):
                 # What the bot said and test results, kept on disk so they can be read later

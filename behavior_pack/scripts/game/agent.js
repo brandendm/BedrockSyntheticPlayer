@@ -31,6 +31,7 @@ import { LeadTow } from './leadtow.js';
 import { Boating } from './boating.js';
 import { waterReflex, airFloor, ownsWater } from '../core/water.js';
 import { TowLearn } from './towlearn.js';
+import { Capsules } from './capsule.js';
 import { Portals } from './portal.js';
 import { FULL_SLOTS } from '../core/storage.js';
 import { itemValue, armorUpgrades, armorTotal } from '../core/wants.js';
@@ -122,6 +123,7 @@ export class Agent {
     this.tow = new LeadTow(this);
     this.boating = new Boating(this);
     this.towlearn = new TowLearn(this);
+    this.capsule = new Capsules(this);
     this.portal = new Portals(this);
     /** @type {Set<string>} Far places already looked at for a village (game/villages.js scout). */
     this.villageScouted = new Set();
@@ -425,6 +427,7 @@ export class Agent {
     // (Not while the job is already out picking things up, and not more than once in ten seconds: a
     // restart every two seconds meant it never got there, and each one used up a try at getting our
     // own gear back. The same item that's had three restarts is left to the ordinary pickup.)
+    if (t % 5 === 3) { try { this.capsule.sample(t); } catch { /* recording never breaks the tick */ } }
     if (t % 5 === 2 && this.towlearn.on) { try { this.towlearn.sample(t); } catch { /* watching never breaks the tick */ } }
     if (t % 4 === 1) { try { this.skills.heldSweep(); } catch { /* a stale hand is cosmetic */ } }
     if (t % 40 === 10 && this.mode === 'none' && this.autoEnabled && (this.task?.kind === 'auto' || !this.task) && !this.pickingUp &&

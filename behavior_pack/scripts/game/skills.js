@@ -769,6 +769,7 @@ export class Skills {
             const f = this.sim.location;
             this.log(`bridge: the block would not go at ${cell.x},${cell.y},${cell.z} from ${from.x},${from.y},${from.z}: slot ${slot} (${container(this.sim)?.getItem(slot)?.typeId ?? 'empty'}), in hand ${held}, floor ${this.blockAt(floor)}, cell ${this.blockAt(cell)}, entities there [${ents.join(',')}], we are at ${f.x.toFixed(2)},${f.y.toFixed(2)},${f.z.toFixed(2)}, sneaking ${this.sim.isSneaking}`);
           } catch (e) { this.log(`bridge: the block would not go (${e})`); }
+          try { this.a.capsule?.snap('bridge: the block would not go'); } catch { /* */ }
           this.restHands();
           return false;
         }

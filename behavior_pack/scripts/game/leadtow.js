@@ -19,6 +19,7 @@ import { isWalkMove } from '../core/pathfinder.js';
 import { slingCame, stuckTrack, learnedStretch } from '../core/towlearn.js';
 import { pullPath, flankSpots, climbSpot, LEAD_SLACK } from '../core/towline.js';
 
+const pt3 = (p) => (p ? [Math.round(p.x * 10) / 10, Math.round(p.y * 10) / 10, Math.round(p.z * 10) / 10] : null);
 const flat = (p, q) => Math.hypot(p.x - q.x, p.z - q.z);
 const WALK_BPS = 4.3, RIDE_BPS = 9; // blocks per second at full speed, on foot and on a horse (for the "ideal" time)
 
@@ -289,15 +290,18 @@ export class LeadTow {
       { const bd = flat(boat.location, goal); if (bd < bestGoal - 1.5) { bestGoal = bd; bestAt = system.currentTick; } else if (system.currentTick - bestAt > 500) {
         // (What it was doing, so the next report says why: where we are, the waypoint, how far along the route, whether the boat counts as jammed.)
         const wpn = route?.[wi], dbg = `me ${pos.x.toFixed(0)},${pos.z.toFixed(0)} y${pos.y.toFixed(1)}, waypoint ${route ? `${wi}/${route.length}` : 'none'}${wpn ? ` at ${wpn.x.toFixed(0)},${wpn.z.toFixed(0)} y${wpn.y.toFixed(1)}` : ''}, jam over ${(lo + 0.5).toFixed(1)} apart, boat still ${Math.round((system.currentTick - lastBoatMoveTick) / 20)}s`;
+        if (noProg >= 1) { try { a.capsule.snap('tow: no progress for 25 s'); } catch { /* */ } }
         if (noProg++ >= 1) { m.why = `no progress for 25 s (boat ${bd.toFixed(0)} from the goal, ${d.toFixed(1)} from me; ${dbg})`; break; }
         note(`no progress: new route (${dbg})`); route = null; bestAt = system.currentTick; continue; } }
       const wp = route[wi];
+      try { a.capsule.watch = { tick: system.currentTick, boat, goal: pt3(goal), wp: pt3(wp), wi, n: route.length, d: Math.round(d * 10) / 10, guard: Math.round(guard * 10) / 10, stuck: stuckCount, still: Math.round((system.currentTick - lastBoatMoveTick) / 20), act: !!wp.act, hold: !!wp.hold }; } catch { /* */ }
       // (u247 live, leadledge: the bot stood on the first step for 20 s, nothing logged, the boat 4.1 behind, and the run was stopped by hand. A walker that has not moved
       // for 4 s, while not waiting for the boat at the end of its route, says where it is and why it might be, hops, and after 8 s takes a new route.)
       if (flat(pos, lastPos) > 0.4) { lastPos = { ...pos }; stillSince = system.currentTick; }
       else if (!(wp.hold && flat(pos, wp) < 1.1) && system.currentTick - stillSince > 80 && system.currentTick - stillSaid > 80) {
         stillSaid = system.currentTick;
         trace(`tow: standing still ${Math.round((system.currentTick - stillSince) / 20)}s at ${pos.x.toFixed(1)},${pos.y.toFixed(1)},${pos.z.toFixed(1)}: waypoint ${wi}/${route.length} at ${wp.x.toFixed(1)},${wp.y.toFixed(1)},${wp.z.toFixed(1)}${wp.act ? ' (a building step)' : ''}, boat ${d.toFixed(1)} away and ${system.currentTick - lastBoatMoveTick > 10 ? 'still' : 'moving'}, guard ${guard.toFixed(1)}`);
+        try { a.capsule.snap('tow: standing still'); } catch { /* */ }
         try { a.body.jump(); } catch { /* */ }
         if (system.currentTick - stillSince > 160) { note('standing still: new route'); route = null; stillSince = system.currentTick; continue; }
       }

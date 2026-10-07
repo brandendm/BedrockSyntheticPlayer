@@ -2887,10 +2887,13 @@ async function runOne(agent, player, name, arg, human = false) {
   } catch (e) {
     // Where it broke: the first line of the stack in our code.
     const at = String(e?.stack ?? '').split('\n').slice(1, 4).map((l) => l.trim()).join(' < ');
+    // (u250: what was there when it stopped or broke, before the clean-up below puts everything back)
+    if (!human) { try { agent.capsule?.snap(`test ${name}: ${e?.constructor?.name === 'Aborted' ? 'stopped' : `error ${e}`}`, { force: true }); } catch { /* */ } }
     // (u244: a stopped tow course still says what the bot did: its slings, unsticks, how far apart, where the boat was)
     if (TOW_META[name] && !human && agent.towLast) { const t = agent.towLast; detail = `${detail ? `${detail}; ` : ''}the bot's tow before it was stopped: ${t.secs}s, ${t.slingOk}/${t.slings} slings, ${t.tugs} unsticks, ${t.reroutes} reroutes, apart ${t.maxSep.toFixed(1)} at most; ${(t.notes ?? []).join('; ')}`; }
     detail = e?.constructor?.name === 'Aborted' ? `${detail ? `${detail}; ` : ''}interrupted: the task was replaced (mode ${agent.mode}${agent.lastTaskSwap ? `; ${agent.lastTaskSwap.from} -> ${agent.lastTaskSwap.to} ${Math.round((system.currentTick - agent.lastTaskSwap.tick) / 20)} s ago by ${agent.lastTaskSwap.where}` : ''})` : `${detail ? `${detail}; ` : ''}error: ${e}${at ? ` (${at})` : ''}`;
   } finally {
+    if (!human && !pass) { try { agent.capsule?.snap(`test ${name} failed: ${detail}`.slice(0, 200)); } catch { /* */ } }
     runSummary = rec.stop(); runTrace = rec.trace();
     if (legSummary) runSummary = legSummary;
     for (const [id, n] of handed) { try { take(player, id, Math.min(n, invCountsOf(player)[id] ?? 0)); } catch { /* */ } }
