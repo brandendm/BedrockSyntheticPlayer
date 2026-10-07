@@ -259,7 +259,9 @@ export class LeadTow {
       return out;
     };
 
-    let wetTicks = 0;
+    let wetTicks = 0, stopErr = null; a.towLast = null;
+    // (u244: a run stopped by hand, or replaced, is recorded like any other: what it did so far, and where the boat and we were)
+    try {
     for (let tick = 0; tick < (opts.maxS ?? 120) * 20; tick++) {
       S.check(gen);
       if (!boat.isValid || !this.isLeashed(boat)) { m.snapped = true; m.why = 'the lead broke'; break; }
@@ -393,6 +395,7 @@ export class LeadTow {
       if (wp.y - pos.y > 0.6 && flat(pos, wp) < 1.7 && system.currentTick - lastJump > 8) { try { a.body.jump(); m.steps++; lastJump = system.currentTick; } catch { /* */ } } // (body.jump: afloat, a hop out onto the bank, where sim.jump does nothing)
       await S.wait(gen, 1);
     }
+    } catch (e) { stopErr = e; m.why = m.why || 'the run was stopped'; }
     if (m.snapped && m.maxSep > 3) {
       // Where it broke is kept for the next tows in this world (and the guard stays under it).
       const c0 = a.memory.data.leadCal ?? {}, sl0 = c0.sling ?? {};
@@ -400,6 +403,7 @@ export class LeadTow {
       a.memory.data.leadCal = { ...c0, sling: { ...sl0, snapAt, guard: Math.max(5, snapAt - 0.8) } };
       note(`the lead broke at ${snapAt}`);
     }
+    try { if (stopErr && boat.isValid) note(`stopped with the boat ${flat(boat.location, goal).toFixed(1)} from the goal (y ${boat.location.y.toFixed(1)}), us ${flat(subject().location, goal).toFixed(1)} from it, ${sep().toFixed(1)} apart`); } catch { /* */ }
     m.secs = Math.round((system.currentTick - t0) / 20);
     m.boatMoved = boat.isValid ? flat(boat.location, b0) : 0;
     m.boatEnd = boat.isValid ? { x: Math.round(boat.location.x), z: Math.round(boat.location.z) } : null;
@@ -409,6 +413,8 @@ export class LeadTow {
     const cal2 = a.memory.data.leadCal ?? {};
     a.memory.data.leadCal = { ...cal2, pullAt: m.pullAt ?? cal2.pullAt, lastTow: { ...m }, at: Date.now() };
     a.memory.save();
+    a.towLast = m;
+    if (stopErr) throw stopErr;
     return m;
   }
 
