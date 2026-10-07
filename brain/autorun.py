@@ -80,6 +80,13 @@ def build_result(req: dict, *, started: str, build: Optional[str], outcome: str,
            f"why: {req.get('note') or '-'}", f"outcome: {outcome}"]
     for n in notes:
         out.append(f"  note: {n}")
+    # (u258: one line a test first, so the answer is on screen before the detail: pass or fail, seconds, and the time ledger when there is one)
+    for e in events:
+        if e.get("type") == "test_result":
+            d = str(e.get("detail", ""))
+            m = re.search(r"where the time went: ([^\[]*)", d)
+            out.append(f"  SUMMARY {e.get('name')}: {'PASS' if e.get('pass') else 'FAIL'}{' (your turn)' if e.get('who') == 'human' else ''}"
+                       f"{' in ' + str(e.get('secs')) + 's' if e.get('secs') else ''}{'; ' + m.group(1).strip() if m else ''}")
     out.append("")
     out.append("RESULTS (the bot's runs; yours are marked)")
     seen = False
@@ -98,10 +105,10 @@ def build_result(req: dict, *, started: str, build: Optional[str], outcome: str,
     out.extend(f"  {t}" for t in traces[-250:])
     out.append("")
     out.append(f"REPRO CAPSULES ({len(capsules)})")
-    for c in capsules:
+    for i, c in enumerate(capsules):
         out.append(f"--- {c.get('t')}")
         out.extend(c.get("lines") or [])
-        out.append(f"CAPSULE JSON: {json.dumps(c.get('capsule'))}")
+        out.append(f"CAPSULE JSON: not here (it is long): entry {i} of brain/inbox/capsules.json")
     return "\n".join(out) + "\n"
 
 
@@ -258,6 +265,8 @@ class AutoRun:
         events = self.test_events(started)
         text = build_result(req, started=started, build=build, outcome=outcome, events=events, traces=traces, capsules=caps, notes=notes)
         (self.inbox / "result.txt").write_text(text, encoding="utf-8")
+        try: (self.inbox / "capsules.json").write_text(json.dumps([c.get("capsule") for c in caps]), encoding="utf-8")
+        except (OSError, TypeError, ValueError): pass
         self._finish(req_file, stamp, req, outcome, build)
 
     def _finish(self, req_file: Path, stamp: str, req: dict, outcome: str, build: Optional[str]) -> None:
