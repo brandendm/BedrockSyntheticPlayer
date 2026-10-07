@@ -217,6 +217,7 @@ export class LeadTow {
     let bestGoal = Infinity, bestAt = t0, noProg = 0, waitAct = -9999;
     let route = null, wi = 0, lastBoat = { ...boat.location }, lastBoatMoveTick = t0, stuckAt = null, stuckCount = 0, lastJump = 0, replans = 0;
     const ride = !!mount;
+    const walkTo = opts.walkTo ?? goal;   // where the walker's route ends (the boat's goal is `goal`)
     const move = (to, speed) => { try { sim.moveToLocation(to, { speed }); } catch { /* */ } };
     const sep = () => flat(subject().location, boat.location);
 
@@ -246,6 +247,8 @@ export class LeadTow {
       }
       if (!res.path || res.path.length < 2) return null;
       m.pathLen += res.path.length;
+      // (u241: so the report says where it meant to go: the u241 ledge run stood at the foot of the wall for a minute)
+      { const a0 = res.path[0], a1 = res.path[res.path.length - 1]; trace(`tow: route ${res.path.length} cells from ${a0.x},${a0.y},${a0.z} to ${a1.x},${a1.y},${a1.z} (${res.complete ? 'complete' : 'partial'}${built ? ', with building steps' : ''}), aimed at ${target.x.toFixed(0)},${target.y.toFixed(0)},${target.z.toFixed(0)}`); }
       const out = [];
       res.path.forEach((c, i) => {
         const pt = { x: c.x + 0.5, y: c.y, z: c.z + 0.5, node: c, act: built && i > 0 && !isWalkMove(c) };
@@ -263,14 +266,18 @@ export class LeadTow {
       const pos = subject().location, d = sep();
       m.maxSep = Math.max(m.maxSep, d);
       if (flat(boat.location, lastBoat) > 0.05) { if (m.pullAt === null) m.pullAt = d; lastBoat = { ...boat.location }; lastBoatMoveTick = system.currentTick; }
-      if (flat(pos, goal) < 2.5) { m.arrived = true; break; }
+      // (u241 live: the walker reached the gold block with the boat left jammed 5.5 short, and that was "arrived". With `boatZone` the tow is
+      // over only when the boat is in the zone; the walker then waits at its end of the route, slinging and unsticking as ever.)
+      const walkerThere = flat(pos, walkTo) < 2.5;
+      if (opts.boatZone) { if (flat(boat.location, goal) <= opts.boatZone && boat.location.y >= goal.y - 1.3) { m.arrived = true; break; } }
+      else if (walkerThere) { m.arrived = true; break; }
       // (A pond is part of the leadboat course, and a lead drags the boat into it: swum out of, not given up on at the first stroke; the u204 bot
       // went in after the boat it had dragged there and the test was lost to the swim-out reflex. Ten seconds in all ends the tow.)
       if (sim.isInWater && !ride) { m.wet = true; if (++wetTicks > 200) { m.why = 'in water for 10 s (the route should never go there)'; break; } }
       if (!route || wi >= route.length) {
         try { sim.stopMoving(); } catch { /* */ }
         if (replans++ > 12) { m.why = 'could not find a way on'; break; }
-        route = await plan(goal); wi = 0;
+        if (opts.boatZone && walkerThere) { route = [{ x: pos.x, y: pos.y, z: pos.z, hold: true }]; wi = 0; } else { route = await plan(walkTo); wi = 0; }
         if (!route) { m.why = 'no land route to the goal'; break; }
         if (!m.idealS) m.idealS = flat(pos, goal) / (ride ? RIDE_BPS : WALK_BPS);
       }
@@ -299,7 +306,9 @@ export class LeadTow {
         wi = k; lastBoatMoveTick = system.currentTick;
         continue;
       }
-      if (flat(pos, wp) < 1.1) { wi++; continue; }
+      // (the end of the route, with the boat still short of its zone: wait here, unless the boat is stuck, which is handled below)
+      if (wp.hold && flat(pos, wp) < 1.1 && !stuck) { await S.wait(gen, 2); continue; }
+      if (!wp.hold && flat(pos, wp) < 1.1) { wi++; continue; }
       // Stuck: the boat hasn't moved while the lead is taut, or the lead is nearly at the guard distance.
       if (stuck) {
         try { sim.stopMoving(); } catch { /* */ }
@@ -355,7 +364,7 @@ export class LeadTow {
         }
         // (u241) Jammed with no step to lift it over (a corner, the edge of a gate), and the player was seen to jump and yank the boat free at
         // such a place (the tow courses): stretch the lead the way they did and jump, before going back to it.
-        if (!ride && L?.sling?.flat && rise < 0.4 && stuckCount <= 2 && d >= 3) {
+        if (!ride && L?.sling?.flat && rise < 0.4 && stuckCount <= 2 && d >= 3 && !this.wallBetween(boat, pos)) {
           m.slings++;
           const target = L.sling.flat.stretch + (stuckCount - 1) * 0.8;
           const r = await this.sling(gen, boat, { ride, target, guard });
@@ -398,6 +407,17 @@ export class LeadTow {
     a.memory.data.leadCal = { ...cal2, pullAt: m.pullAt ?? cal2.pullAt, lastTow: { ...m }, at: Date.now() };
     a.memory.save();
     return m;
+  }
+
+  /** (u241) Is there a solid block on the straight line from the boat to us (at the boat's height)? A jump cannot pull a boat through a wall. */
+  wallBetween(boat, p) {
+    const S = this.a.skills, b = boat.location, n = Math.max(2, Math.ceil(flat(b, p) / 0.5));
+    const OPEN = /^(air|cave_air|void_air|short_grass|tall_grass|fern|snow_layer|water|flowing_water)$/;
+    for (let i = 1; i < n; i++) {
+      const x = b.x + (p.x - b.x) * i / n, z = b.z + (p.z - b.z) * i / n;
+      for (const dy of [0.5, 1.2]) { const id = S.blockAt({ x: Math.floor(x), y: Math.floor(b.y + dy), z: Math.floor(z) }); if (id && !OPEN.test(id)) return true; }
+    }
+    return false;
   }
 
   /** Walk (or ride) straight to a near point, a few seconds at most. */
