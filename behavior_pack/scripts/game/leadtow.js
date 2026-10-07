@@ -121,6 +121,8 @@ export class LeadTow {
       peak = Math.max(peak, Math.hypot(boat.location.x - last.x, boat.location.y - last.y, boat.location.z - last.z) * 20);
       best = Math.max(best, boat.location.y);
       last = { ...boat.location };
+      // (u258: it is clear it came once it has climbed or travelled toward us: no need to watch the other two seconds)
+      if (i >= 10 && (best - y0 >= 0.8 || flat(boat.location, start) >= 2.5)) break;
     }
     // It came if it travelled toward us, or went up (see slingCame): not "it is level with us / near", which a boat that never moved can be.
     const ok = slingCame({ snapped, valid: boat.isValid, moved: boat.isValid ? flat(boat.location, start) : 0, closer: boat.isValid ? stretch - flat(subj().location, boat.location) : 0, climbed: best - y0 });
@@ -250,6 +252,17 @@ export class LeadTow {
         // stepped off the missing 6th cell into the pit. A jam means a stop, whatever was built.)
         if (bg.built) { m.built += bg.built; note(`bridged ${bg.jam ? 'part of ' : ''}a gap ${bg.width} wide${bg.jam ? ` (${bg.built})` : ''}`); if (!bg.jam) return plan(target); }
         // (the boat is jammed behind us: stand and let the loop's own jam handling sling it free, with a runway if need be, then take a new route)
+        // (u258 live, leadledge: the half bridge was held on, and the loop's jam handling then walked the bot off it into the pit (a straight walk to a flank spot or a step): 40 s.
+        // With a bridge begun, the sling is done HERE, on the bridge, as often as it takes, and the bridging goes on from where it stopped.)
+        if (bg.jam && bg.built) {
+          for (let t = 0; t < 3; t++) {
+            m.slings++; mark('sling');
+            const r = await this.sling(gen, boat, { ride: false, target: stretchFor(3) + t * 0.8, guard, dir: null });
+            trace(`tow: sling on the half bridge: stretch ${r.stretch}, ${r.ok ? 'it came' : r.snapped ? 'LEAD BROKE' : 'it did not come'}, boat peaked ${r.peak} b/s, climbed ${r.climbed}`);
+            if (r.snapped) { m.snapped = true; m.why = 'the lead broke in a sling'; return null; }
+            if (r.ok) { m.slingOk++; mark('plan'); return plan(target); }
+          }
+        }
         if (bg.jam) { note('the boat is jammed: sling it before bridging'); { const at = subject().location; return [{ x: at.x, y: at.y, z: at.z, hold: true, fresh: true }]; } }
         if (bg.why && bg.why !== 'no gap straight on') note(`gap: ${bg.why}`);
         const ar = await a.plan(from, target, 1.5, 20000, null, { actions: S.actionOpts(), weight: 2 });
