@@ -10,38 +10,38 @@
 //   leadturn   a corridor 4 wide with four corners: the boat is pulled straight at you and clips the inside of each one.
 //   leadgate   two walls with a gate in each, on opposite sides of the lane: the boat has to be lined up with each gate before it is pulled.
 
-/** @typedef {{ cmds: string[], boat: {x:number,y:number,z:number}, start: {x:number,y:number,z:number}, goal: {x:number,y:number,z:number}, zone: number }} Course */
+/** @typedef {{ room?: number, cmds: string[], boat: {x:number,y:number,z:number}, start: {x:number,y:number,z:number}, goal: {x:number,y:number,z:number}, zone: number }} Course */
 
 export const TOW_META = {
   leadstep: {
     short: 'Lead a boat up three steps',
     kit: [['lead', 2]],
     ext: { w: 10, e: 30, r: 8 },
-    text: 'A boat at the west end and a course of three steps up, each with a flat top: 1 high, then 2, then 3, wall to wall (no way round). Put a lead on the boat (use the lead on it) and lead it up all three to the gold block on the top: the boat has to end within 3 blocks of it. A boat on a lead is jammed by a step: stand above it, walk away until the lead is taut, and jump.',
+    text: 'A boat at the west end and a course of three steps up, each with a flat top: 1 high, then 2, then 3, wall to wall (no way round). Put a lead on the boat (use the lead on it) and lead it up all three to the gold block on the top: the boat has to end within 3.5 blocks of it. A boat on a lead is jammed by a step: stand above it, walk away until the lead is taut, and jump.',
   },
   leadstair: {
     short: 'Lead a boat up a staircase',
     kit: [['lead', 2]],
     ext: { w: 10, e: 30, r: 8 },
-    text: 'A boat at the west end and a staircase of four steps up, each tread only 2 deep (little room to stretch the lead on any of them), then a flat top with the gold block. Put a lead on the boat and lead it up to the gold block: the boat has to end within 3 blocks of it.',
+    text: 'A boat at the west end and a staircase of four steps up, each tread only 2 deep (little room to stretch the lead on any of them), then a flat top with the gold block. Put a lead on the boat and lead it up to the gold block: the boat has to end within 3.5 blocks of it.',
   },
   leadledge: {
     short: 'Lead a boat up a short ledge, then across a pit',
     kit: [['lead', 2], ['dirt', 32]],
     ext: { w: 10, e: 30, r: 8 },
-    text: 'A boat at the west end, then a 3-high wall (you can climb it by two steps at its north side; the boat cannot) whose top is only 2 deep, then a pit 6 wide and 6 deep across the whole width, then a flat top with the gold block. The top of the wall is too short to stretch the lead on: build forward over the pit to get the room, jump to pull the boat up, then bridge the rest with the boat following. You have 32 dirt. The boat has to end within 3 blocks of the gold block.',
+    text: 'A boat at the west end, then a 3-high wall (you can climb it by two steps at its north side; the boat cannot) whose top is only 2 deep, then a pit 6 wide and 6 deep across the whole width, then a flat top with the gold block. The top of the wall is too short to stretch the lead on: build forward over the pit to get the room, jump to pull the boat up, then bridge the rest with the boat following. You have 32 dirt. The boat has to end within 3.5 blocks of the gold block.',
   },
   leadturn: {
     short: 'Lead a boat round four corners',
     kit: [['lead', 2]],
     ext: { w: 10, e: 36, r: 16 },
-    text: 'A boat at the west end of a stone corridor 4 wide with four corners (south, east, north, east). The boat is pulled straight at you, so it catches on the inside of each corner: go wide, past the corner, and pull it round. Put a lead on the boat and lead it to the gold block at the end: the boat has to end within 3 blocks of it.',
+    text: 'A boat at the west end of a stone corridor 4 wide with four corners (south, east, north, east). The boat is pulled straight at you, so it catches on the inside of each corner: go wide, past the corner, and pull it round. Put a lead on the boat and lead it to the gold block at the end: the boat has to end within 3.5 blocks of it.',
   },
   leadgate: {
     short: 'Lead a boat through two offset gates',
     kit: [['lead', 2]],
     ext: { w: 10, e: 36, r: 10 },
-    text: 'A boat at the west end of a lane with two walls across it, a gate 3 wide in each, the first at the south side and the second at the north. The boat goes straight at you and the gate is only a little wider than it: line it up with the gate before you pull it through. Put a lead on the boat and lead it to the gold block: the boat has to end within 3 blocks of it.',
+    text: 'A boat at the west end of a lane with two walls across it, a gate 3 wide in each, the first at the south side and the second at the north. The boat goes straight at you and the gate is only a little wider than it: line it up with the gate before you pull it through. Put a lead on the boat and lead it to the gold block: the boat has to end within 3.5 blocks of it.',
   },
 };
 export const TOW_NAMES = Object.keys(TOW_META);
@@ -119,6 +119,7 @@ export function towCourse(name, x, gy, z) {
     boat: { x: x - 7.5, y: gy + 1, z: z + 0.5 },
     start: { x: x - 6, y: gy + 1, z: z + 0.5 },
     goal: { x: x + goalDx + 0.5, y: gy + goalH + 1, z: z + 0.5 },
-    zone: 3,
+    zone: 3.6,                  // (u246 live: the lead's slack leaves the boat 3.1-3.4 behind a walker who stands 1.5 past the gold block: 3 was a hair too tight)
+    room: goalDx >= 28 && goalDx < 29 ? 1.5 : 2.5,   // how far past the gold block the walker may stand (the turn course ends 2 beyond it)
   };
 }

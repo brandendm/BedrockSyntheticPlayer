@@ -2660,7 +2660,7 @@ async function runOne(agent, player, name, arg, human = false) {
         rec.reset(); t0 = system.currentTick;
         // The walker goes a little past the gold block, so the boat on its lead ends near it.
         // (The boat is what has to get there: the walker goes a little past the gold block and waits, slinging, until it does.)
-        const m = await agent.tow.run(gen, boat, C.goal, { maxS: 200, walkTo: { x: C.goal.x + 1.5, y: C.goal.y, z: C.goal.z }, boatZone: C.zone });
+        const m = await agent.tow.run(gen, boat, C.goal, { maxS: 200, walkTo: { x: C.goal.x + (C.room ?? 1.5), y: C.goal.y, z: C.goal.z }, boatZone: C.zone });
         // The boat catches up while it stands (a lead's slack): up to 8 s.
         for (let i = 0; i < 160 && boat.isValid && !inZone(boat) && !m.snapped; i++) {
           const sep = Math.hypot(sim.location.x - boat.location.x, sim.location.z - boat.location.z);
