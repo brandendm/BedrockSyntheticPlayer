@@ -370,6 +370,7 @@ def authorized(client_ip: str, cookie: str, query_key: str, key: str | None) -> 
 
 
 _server = {"proc": None, "jobs": None}
+_auto: dict = {"run": None}   # (u253) brain/autorun.py: Claude starts bot tests while you are away (off until switched on in the dashboard)
 
 
 def make_handler(engine: DecisionEngine, key: str | None = None):
@@ -468,6 +469,9 @@ def make_handler(engine: DecisionEngine, key: str | None = None):
                         lines = lines[-300:]
                     nxt = _trace_seq
                 return self._send(200, {"next": nxt, "lines": lines})
+            if self.path == "/api/autorun":
+                ar = _auto["run"]
+                return self._send(200, ar.info() if ar else {"enabled": False, "state": "not available"})
             if self.path == "/api/capsules":
                 with _lock:
                     return self._send(200, {"capsules": list(_capsules)})
@@ -529,6 +533,20 @@ def make_handler(engine: DecisionEngine, key: str | None = None):
                 except (OSError, ValueError) as e:
                     return self._send(500, {"error": str(e)})
                 return self._send(200, {"bytes": len(text)})
+            if self.path == "/api/autorun":
+                ar = _auto["run"]
+                if ar is None:
+                    return self._send(500, {"error": "not available"})
+                try:
+                    on = bool(self._read_json().get("on"))
+                except ValueError:
+                    return self._send(400, {"error": "bad json"})
+                try:
+                    (ar.inbox / "STOP").unlink()
+                except OSError:
+                    pass
+                ar.set_enabled(on)
+                return self._send(200, ar.info())
             if self.path == "/api/command":
                 try:
                     text = str(self._read_json().get("text", "")).strip()[:200]
@@ -620,6 +638,62 @@ def make_handler(engine: DecisionEngine, key: str | None = None):
     return Handler
 
 
+def _setup_autorun() -> None:
+    """(u253) Auto runs: see brain/autorun.py. Off until switched on in the dashboard."""
+    from .autorun import AutoRun
+
+    def status():
+        with _lock:
+            return _status["data"], time.time() - (_status["at"] or 0)
+
+    def queue(text):
+        with _lock:
+            _commands.append(text)
+            _recent.append({"t": time.strftime("%Y-%m-%d %H:%M:%S"), "type": "command", "text": text})
+
+    def server_send():
+        sp = _server["proc"]
+        return sp.send if sp is not None and sp.alive() else None
+
+    def batch():
+        with _lock:
+            return _tests.get("batch")
+
+    def capsules():
+        with _lock:
+            return list(_capsules)
+
+    def trace_mark():
+        with _lock:
+            return _trace_seq
+
+    keep = ("tow", "bridge", "Test", "test ", "capsule", "stuck", "sling")
+
+    def traces_since(mark):
+        with _lock:
+            return [f"{t.get('t', '')[11:]} t{t.get('tick')} {t.get('msg', '')}" for t in _traces if t["id"] > mark and any(k in str(t.get("msg", "")) for k in keep)]
+
+    def test_events(since):
+        out = []
+        try:
+            with (LOG_DIR / "tests.jsonl").open(encoding="utf-8") as fh:
+                for line in fh.readlines()[-600:]:
+                    try:
+                        e = json.loads(line)
+                    except ValueError:
+                        continue
+                    if e.get("t", "") >= since and e.get("type") in ("test_result", "test_run"):
+                        out.append(e)
+        except OSError:
+            pass
+        return out
+
+    ar = AutoRun(ROOT, LOG_DIR, status=status, queue=queue, server_send=server_send, batch=batch, capsules=capsules,
+                 traces_since=traces_since, trace_mark=trace_mark, test_events=test_events)
+    _auto["run"] = ar
+    ar.start()
+
+
 def main():
     _load_test_stats()
     _load_test_runs()
@@ -639,6 +713,7 @@ def main():
     if key:
         log.info("PHONE: on the same Wi-Fi, open  http://%s:%d/?key=%s", lan_ip(), port, key)
         log.info("(first time only: allow Python through the Windows firewall for Private networks)")
+    _setup_autorun()
     httpd = ThreadingHTTPServer((host, port), make_handler(engine, key))
     if "--server" in sys.argv:
         # The Bedrock server as our child (its console is this window): needed for /locate answers.

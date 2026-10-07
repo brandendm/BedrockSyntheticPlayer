@@ -7,3 +7,6 @@ brain/logs/
 brain/access_key.txt
 brain/profile.json
 brain/settings.json
+
+# (u253) auto runs: requests and answers
+brain/inbox/

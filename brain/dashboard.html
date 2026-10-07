@@ -136,6 +136,13 @@
     <div class="toggles" id="toggles"></div>
   </section>
 
+  <section class="wide" id="autosec">
+    <h2>Auto runs <span class="muted" id="autostate"></span></h2>
+    <p class="muted" style="margin:4px 0 8px">When this is <b>ON</b>, Claude can start bot tests while you are away and read what happened. It can only do two things: reload the game's scripts and run <code>test &lt;names&gt;</code>. At most 8 tests per request and 24 an hour. It is OFF every time the brain starts. Turn it OFF to stop a run at once.</p>
+    <button id="autotoggle">Turn on</button>
+    <span class="muted" id="autolast"></span>
+  </section>
+
   <section class="wide" id="healthsec">
     <h2>Health check</h2>
     <div class="health"><span class="dot" id="hdot"></span><span id="htext">—</span></div>
@@ -609,6 +616,21 @@ $('tcopy').onclick = () => copyText(drawTrace().map((l) => `${l.t.slice(11)} ${l
 const section = (title, body) => `\n===== ${title} =====\n${body}`;
 const j = (o) => (JSON.stringify(o, null, 1) ?? 'null').replace(/\n\s+/g, ' ').replace(/\n/g, ' ');
 async function getJSON(u) { try { return await (await fetch(u, { cache: 'no-store' })).json(); } catch { return null; } }
+
+// Auto runs (brain/autorun.py): the switch and what it did last.
+async function autoRefresh() {
+  const i = await getJSON('/api/autorun'); if (!i) return;
+  const on = !!i.enabled;
+  document.getElementById('autostate').textContent = on ? `ON: ${i.state}` : 'OFF';
+  document.getElementById('autotoggle').textContent = on ? 'Turn OFF (stops a run)' : 'Turn on';
+  document.getElementById('autolast').textContent = `  ${i.tests_this_hour ?? 0}/${i.limit_per_hour ?? 24} test runs this hour. ` + ((i.last || []).slice(-3).map((r) => `${r.t} ${(r.tests || []).join(',')}: ${r.outcome}`).join(' | ') || 'nothing run yet');
+}
+document.getElementById('autotoggle').addEventListener('click', async () => {
+  const on = !/OFF$/.test(document.getElementById('autostate').textContent);
+  await fetch('/api/autorun', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ on: !on }) });
+  autoRefresh();
+});
+autoRefresh(); setInterval(autoRefresh, 3000);
 async function fullReport() {
   const [st, about, tr, ev, fl, ts, house] = await Promise.all([getJSON('/api/status'), getJSON('/api/about'), getJSON('/api/trace?since=0&all=1'), getJSON('/api/events'), getJSON('/api/flight'), getJSON('/api/tests'), getJSON('/api/house')]);
   const s = st?.status || {}, dg = s.diag || {};
