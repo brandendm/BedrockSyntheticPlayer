@@ -73,3 +73,21 @@ test('the corners and gates are real obstacles: a straight line from the boat to
     assert.ok(blocked, `${name}: the straight line is blocked`);
   }
 });
+
+test('u242 live: nothing beside the lane can be walked along on the outside (the bot walked round the walls and left the boat behind)', () => {
+  for (const name of TOW_NAMES) {
+    const c = towCourse(name, 100, 64, 200), id = world(c), { r } = TOW_META[name].ext;
+    // ground-level walk (no climbing) from the start, over the open start area
+    const s = { x: Math.floor(c.start.x), y: Math.floor(c.start.y), z: Math.floor(c.start.z) };
+    const seen = new Set([`${s.x},${s.z}`]), q = [s];
+    const ok = (x, z) => !solid(id(x, s.y, z)) && !solid(id(x, s.y + 1, z)) && solid(id(x, s.y - 1, z));
+    for (let i = 0; i < q.length; i++) for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+      const n = { x: q[i].x + dx, z: q[i].z + dz };
+      if (!ok(n.x, n.z) || seen.has(`${n.x},${n.z}`)) continue;
+      seen.add(`${n.x},${n.z}`); q.push(n);
+    }
+    const outside = [...seen].map((k) => k.split(',').map(Number)).filter(([x, z]) => x >= 100 && (z - 200 >= 5 || z - 200 <= -5) && !(name === 'leadturn'));
+    assert.equal(outside.length, 0, `${name}: ${outside.length} ground cells beside the lane, e.g. ${outside[0]}`);
+    if (name === 'leadturn') assert.ok([...seen].every((k) => { const [x, z] = k.split(',').map(Number); return x < 100 || (z - 200 >= -1 && z - 200 <= 9); }), 'leadturn: only the corridor can be walked');
+  }
+});

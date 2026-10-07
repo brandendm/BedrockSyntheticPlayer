@@ -265,7 +265,8 @@ export class LeadTow {
       if (!boat.isValid || !this.isLeashed(boat)) { m.snapped = true; m.why = 'the lead broke'; break; }
       const pos = subject().location, d = sep();
       m.maxSep = Math.max(m.maxSep, d);
-      if (flat(boat.location, lastBoat) > 0.05) { if (m.pullAt === null) m.pullAt = d; lastBoat = { ...boat.location }; lastBoatMoveTick = system.currentTick; }
+      // (u242 live, leadstair: a boat rocking at a step moved more than 0.05 every tick, so it was always "moving" and the bot waited 43 s at the guard distance: it has moved when it is 0.4 from where it was last counted)
+      if (flat(boat.location, lastBoat) > 0.4) { if (m.pullAt === null) m.pullAt = d; lastBoat = { ...boat.location }; lastBoatMoveTick = system.currentTick; }
       // (u241 live: the walker reached the gold block with the boat left jammed 5.5 short, and that was "arrived". With `boatZone` the tow is
       // over only when the boat is in the zone; the walker then waits at its end of the route, slinging and unsticking as ever.)
       const walkerThere = flat(pos, walkTo) < 2.5;
@@ -324,7 +325,8 @@ export class LeadTow {
         const rise = Math.max(this.riseAhead(boat, pos), stepRise);
         const above = pos.y - bl.y >= 0.4;
         trace(`tow: stuck #${stuckCount}: boat ${bl.x.toFixed(1)},${bl.y.toFixed(1)},${bl.z.toFixed(1)}, me ${pos.x.toFixed(1)},${pos.y.toFixed(1)},${pos.z.toFixed(1)} (${d.toFixed(1)} apart); the pull ${pp.clear ? 'is clear' : pp.at ? `stops at ${pp.at.x.toFixed(1)},${pp.at.z.toFixed(1)} against ${Number.isFinite(pp.rise) ? `a step of ${pp.rise}` : 'no floor'}` : 'is stuck'}${above ? ', we are above it' : ''}`);
-        if (!ride && !above && !pp.clear && stepRise >= 0.4 && stuckCount <= 6) {
+        // (u242 live, leadturn/leadgate: a boat clipping the inside of a corner is stopped by a wall, not a step (rise 0): the same way round: stand where the pull clears it)
+        if (!ride && !above && !pp.clear && stuckCount <= 6) {
           // A step in the boat's way and we are level with it (we went round, or are on the far side): not a sling (that is lifted from
           // above). Round it by standing where the pull clears it, else up onto it, and pull again.
           const standable = this.standableAt(level);
@@ -338,7 +340,7 @@ export class LeadTow {
             if (flat(subject().location, wp) > 8) route = null;
             continue;
           }
-          const cs = climbSpot({ surf, standable, boat: bl, level, toward: pos });
+          const cs = stepRise >= 0.4 ? climbSpot({ surf, standable, boat: bl, level, toward: pos }) : null;
           if (cs) {
             m.tugs++;
             note(`up onto the step at ${cs.x.toFixed(0)},${cs.z.toFixed(0)} (${(cs.y - level).toFixed(1)} up)`);

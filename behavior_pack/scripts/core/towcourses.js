@@ -60,7 +60,10 @@ export function towCourse(name, x, gy, z) {
   // The floor and the air over it, the same everywhere; the start end is open grass.
   fill(-w, 0, -r, e, 0, r, 'grass_block');
   fill(-w, 1, -r, e, 9, r, 'air');
-  const lane = (x1, x2) => { fill(x1, 1, -4, x2, 8, -4, 'stone'); fill(x1, 1, 4, x2, 8, 4, 'stone'); };
+  // (u242 live: the lane was thin walls, and the walker went along the OUTSIDE of them (the route search takes the nearest it can get to
+  // the goal) while the boat stayed jammed at the west end: everything beside the lane, out to the edge of the site, is solid, and the east end
+  // is closed.)
+  const lane = (x1, x2) => { fill(x1, 1, -r, x2, 8, -4, 'stone'); fill(x1, 1, 4, x2, 8, r, 'stone'); fill(x2, 1, -4, x2, 8, 4, 'stone'); };
   let goalDx = 0, goalH = 0;
   switch (name) {
     case 'leadstep': {
@@ -90,7 +93,7 @@ export function towCourse(name, x, gy, z) {
     }
     case 'leadturn': {
       // Solid block, the corridor cut out of it (4 wide): east along z-1..z+2, south at x+4..x+7 down to z+9, east along z+6..z+9, north at x+16..x+19, east.
-      fill(-1, 1, -4, 33, 4, 13, 'stone');
+      fill(-1, 1, -r, 33, 4, r, 'stone');
       fill(-1, 1, -1, 7, 4, 2, 'air');
       fill(4, 1, -1, 7, 4, 9, 'air');
       fill(4, 1, 6, 19, 4, 9, 'air');
