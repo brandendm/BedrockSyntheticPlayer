@@ -22,6 +22,8 @@ import { SLAB } from './ironfarm_geo.js';
 export const REACH = 4.0;          // (the game's is 4.5: a margin for where in the cell the eye is)
 export const EYE = 1.52;
 export const JUDGE_AFTER = 24;     // hand attempts before the hit rate is judged
+/** Blocks lower than a full block: one just laid hides the top face of the next from the eye, so a row of them is laid farthest-first (u233), whatever is being built. */
+export const LOW = /slab|stairs|carpet|trapdoor|plate|button|rail|snow_layer|lever|torch|sign|candle/;
 export const ROUNDS = 5;           // passes over a layer's leftovers (blocks it could not get to or that would not go down) before a command does them
 export const TRIES = 3;
 export const SCAFFOLD_COST = 200;  // a block of scaffolding to stand on (u220: it pillared where it could have stayed put)
@@ -452,7 +454,7 @@ export async function runBuild(plan, hands, { after = null, maxTicks = Infinity,
         };
         // (u232 live: a row of slabs laid nearest-first, each one just laid hid the face of the next from the eye ("no line to the Up face", 236 tries
         // at the room's roof). Slabs go farthest-first from the spot, back toward it, as a player lays a row of them walking backward.)
-        const farFirst = c0.id === SLAB;
+        const farFirst = LOW.test(c0.id);
         const dist = (t) => Math.hypot(t.x - s.x, t.z - s.z) + Math.abs(t.y - s.y) * 0.5;
         const order = farFirst ? [...(line ?? [c0])].sort((a, b) => dist(b) - dist(a)) : (line ?? [c0]);
         let at = farFirst ? 0 : Math.max(0, order.indexOf(c0));
@@ -483,7 +485,7 @@ export async function runBuild(plan, hands, { after = null, maxTicks = Infinity,
             if (missed.has(tk) || tk === key(c0.x, c0.y, c0.z)) continue;
             if (t.x === s.x && t.z === s.z && (t.y === s.y || t.y === s.y + 1)) continue;
             const near = Math.abs(t.x - last.x) + Math.abs(t.y - last.y) * 2 + Math.abs(t.z - last.z);
-            const slabFar = farFirst && t.id === SLAB;
+            const slabFar = farFirst && LOW.test(t.id);
             const d = slabFar ? -dist(t) : near;
             if (d >= pd || (!slabFar && near > 3) || !supportedNow(t) || !placeableFrom(s, t)) continue;
             pick = t; pd = d;

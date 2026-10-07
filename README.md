@@ -763,3 +763,5 @@ Say (in chat to the bot, `!bot ...`, or the dashboard box) things like **"make i
 - u232: buildfarm: from each spot it now places everything of the layer within reach (nearest first), not only the line it was laying, so the rim no longer comes out patchy and it does not come back; a cell the layer still has to fill is a worse place to stand; five passes before a command; the final report says FAILED if any block went by command or any pillar was built, PASSED otherwise; the platform walls are two high (a golem cannot climb two), the rim slabs on top at y 7; the miss log holds 400.
 
 - u233: buildfarm: slabs are laid farthest-first from the spot (u232 live: each slab just laid hid the face of the next one: "no line to the Up face", 236 tries on the room's roof, then commands); a miss is logged once per block.
+
+- u234: buildfarm (core/farmbuild.js, any plan): the farthest-first rule is now for every low block (slabs, stairs, carpet, trapdoors, plates, buttons, rails, torches, signs, candles), not only the farm's slabs.
