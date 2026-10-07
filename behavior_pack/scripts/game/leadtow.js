@@ -246,9 +246,11 @@ export class LeadTow {
         // with the boat left behind, and the lead broke at 11.6 apart); the building search is only for what that does not cover, and
         // only bridging and pillaring (never a drop, a dig).
         const bg = await this.bridgeGap(gen, boat, target, guard);
-        if (bg.built) { m.built += bg.built; note(`bridged a gap ${bg.width} wide`); return plan(target); }
+        // (u255 live, leadledge: the boat jammed after 5 of the 6 cells, and the half bridge was taken for a whole one: a new route was planned from its end, the walker
+        // stepped off the missing 6th cell into the pit. A jam means a stop, whatever was built.)
+        if (bg.built) { m.built += bg.built; note(`bridged ${bg.jam ? 'part of ' : ''}a gap ${bg.width} wide${bg.jam ? ` (${bg.built})` : ''}`); if (!bg.jam) return plan(target); }
         // (the boat is jammed behind us: stand and let the loop's own jam handling sling it free, with a runway if need be, then take a new route)
-        if (bg.jam) { note('the boat is jammed: sling it before bridging'); return [{ x: from.x, y: from.y, z: from.z, hold: true, fresh: true }]; }
+        if (bg.jam) { note('the boat is jammed: sling it before bridging'); { const at = subject().location; return [{ x: at.x, y: at.y, z: at.z, hold: true, fresh: true }]; } }
         if (bg.why && bg.why !== 'no gap straight on') note(`gap: ${bg.why}`);
         const ar = await a.plan(from, target, 1.5, 20000, null, { actions: S.actionOpts(), weight: 2 });
         S.check(gen);
@@ -293,7 +295,7 @@ export class LeadTow {
         try { sim.stopMoving(); } catch { /* */ }
         if (replans++ > 12) { m.why = 'could not find a way on'; break; }
         // (u244 live, leadstep: it held 1.8 short of the end of its walk, so the lead's slack left the boat 4.5 from the gold block, outside the zone, and it waited there 20 s: it holds at the very end)
-        if (opts.boatZone && walkerThere) { route = [{ x: walkTo.x, y: pos.y, z: walkTo.z, hold: true }]; wi = 0; } else { mark('plan'); route = await plan(walkTo); mark('walk'); wi = 0; }
+        if (opts.boatZone && walkerThere) { route = [{ x: walkTo.x, y: pos.y, z: walkTo.z, hold: true }]; wi = 0; } else { mark('plan'); route = await plan(walkTo); mark('walk'); wi = 0; stillSince = system.currentTick; lastPos = { ...subject().location }; /* (u255: planning, a bridge in it, took seconds: that is not standing still) */ }
         if (!route) { m.why = 'no land route to the goal'; break; }
         if (!m.idealS) m.idealS = flat(pos, goal) / (ride ? RIDE_BPS : WALK_BPS);
       }
