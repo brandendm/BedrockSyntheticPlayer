@@ -767,3 +767,5 @@ Say (in chat to the bot, `!bot ...`, or the dashboard box) things like **"make i
 - u234: buildfarm (core/farmbuild.js, any plan): the farthest-first rule is now for every low block (slabs, stairs, carpet, trapdoors, plates, buttons, rails, torches, signs, candles), not only the farm's slabs.
 
 - u235: report: a BUILD VERDICT section at the top (commands, pillars, stalls, times it stood in a cell still to fill); an ON TARGET line each time the bot stands in a cell the layer still has to fill; every COMMAND line says the last reason the block would not go down by hand; the LAYER line counts that layer's misses by reason; TIDY lines for the scaffold cleanup. Nothing removed.
+
+- u236: buildfarm (any plan): when the game says there is no line to a block from a spot, that spot is not asked for that block again (u235 live: 274 tries at the room's roof from one spot, then commands); another spot is tried, such as up on the slabs just laid. The same block is not retried at once from the same spot after a "no line".

@@ -37,7 +37,7 @@ function walkable(idAt, a, b) {
   return false;
 }
 
-function fake(plan, { miss = 0, seed = 1, noStand = false, unreach = null, fallAt = 0, stopAfter = Infinity, world = new Map(), inv = {}, slip = 0, tidy = false } = {}) {
+function fake(plan, { miss = 0, seed = 1, noStand = false, unreach = null, fallAt = 0, stopAfter = Infinity, world = new Map(), inv = {}, slip = 0, tidy = false, blind = null } = {}) {
   let bot = null, tick = 0, rnd = seed, placeCalls = 0, grid = null;
   const scaffold = new Set();
   const final = () => (grid ??= render(plan));
@@ -96,6 +96,7 @@ function fake(plan, { miss = 0, seed = 1, noStand = false, unreach = null, fallA
       const face = bridged || (id === SLAB ? [[0, -1, 0]] : DIRS).some(([a, b, d]) => { const n = { x: c.x + a, y: c.y + b, z: c.z + d }; return !FREE.has(idAt(n.x, n.y, n.z)) && facing(bot, c, n); });
       if (!face) { log.violations.push(`no face to click for ${key(c.x, c.y, c.z)} (${id}) from ${key(bot.x, bot.y, bot.z)}`); return false; }
       if (!((inv[id] ?? 0) > 0)) { log.violations.push(`out of ${id}`); return false; }
+      if (blind && blind(bot, c, id)) { log.blind = (log.blind ?? 0) + 1; return false; }
       if (rand() < miss) return false;
       inv[id]--; world.set(key(c.x, c.y, c.z), id);
       if (log.last && log.last.y === c.y) { log.pairs++; if (Math.abs(log.last.x - c.x) + Math.abs(log.last.z - c.z) === 1) log.inLine++; }
@@ -108,7 +109,7 @@ function fake(plan, { miss = 0, seed = 1, noStand = false, unreach = null, fallA
       }
       return true;
     },
-    set(c, id) { world.set(key(c.x, c.y, c.z), id); log.sets++; return true; },
+    set(c, id) { world.set(key(c.x, c.y, c.z), id); log.sets++; (log.setCells ??= []).push(`${key(c.x, c.y, c.z)} ${id}`); return true; },
     ...(tidy ? { clear(c) { world.delete(key(c.x, c.y, c.z)); log.cleared++; return true; } } : {}),
     stock(id, n) { inv[id] = Math.max(inv[id] ?? 0, n); },
     now: () => tick,
@@ -244,6 +245,17 @@ test('stranded on the shaft top in the middle of the pod (u230 live: it carried 
   assert.equal(stats.footing, 0, `${stats.footing} footings by command`);
   assert.ok(stats.command <= 2, `${stats.command} by command`);
   assert.ok((stats.carried ?? 0) <= 16, `${stats.carried} carried up`);
+});
+
+test('no line from a spot (u235 live: 274 tries at the room\'s roof from the same spot): that spot is not asked for that block again; another is, and nothing goes by command', async () => {
+  const plan = ironFarmPlan();
+  const f = fake(plan, { blind: (bot, c, id) => id === SLAB && !bot.up && Math.abs(c.x - bot.x) === 2 });
+  const stats = await runBuild(plan, f.hands, { after: afterFor(plan, f.world) });
+  assert.deepEqual(sameAsPlan(plan, f.world), []);
+  assert.ok((f.log.blind ?? 0) > 0, 'the blind spot was never used');
+  assert.ok(f.log.blind < 80, `${f.log.blind} blind tries`);
+  assert.equal(stats.command, 0, `${stats.command} by command: ${f.log.setCells}`);
+  assert.ok(f.log.pillars <= 6, `${f.log.pillars} pillars`);   // (the fake's blind spot ends it away from where the next layer starts: a few climbs, as against ~0 without it)
 });
 
 test('hands that never work: it says so after two dozen tries and sets the rest by command; the farm is the same', async () => {

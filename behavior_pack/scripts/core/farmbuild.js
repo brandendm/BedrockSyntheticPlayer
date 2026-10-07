@@ -156,6 +156,7 @@ export async function runBuild(plan, hands, { after = null, maxTicks = Infinity,
   const supportedNow = (c) => FREE.has(idAt(c.x, c.y, c.z)) && !waitsBelow(c) && dirsOf(c).some(([a, b, d]) => clickable(idAt(c.x + a, c.y + b, c.z + d)));
   /** Placeable from s right now: in reach, free, and some neighbour to click that has the eye on its open side. */
   const placeableFrom = (s, c) => {
+    if (badStand.has(`${key(s.x, s.y, s.z)}|${key(c.x, c.y, c.z)}`)) return false;
     if (!reaches(s, c)) return false;
     if (!FREE.has(idAt(c.x, c.y, c.z))) return false;   // (something there already: scaffolding of its own, taken down at the end)
     if (waitsBelow(c)) return false;
@@ -214,6 +215,8 @@ export async function runBuild(plan, hands, { after = null, maxTicks = Infinity,
   };
   /** Spots the bot could not get to in this pass over the layer (u218): not offered again until the next pass. */
   let unreachable = new Set();
+  /** Pairs (spot > block) the game said it had no line from (u235 live: 274 tries at the room's roof from the one spot the plan thought could see them). */
+  let badStand = new Set();
   const bestStand = (c, near, from, { scaffold = false } = {}) => {
     let best = null, bestScore = -Infinity;
     for (let dy = -3; dy <= 2; dy++) {
@@ -304,6 +307,7 @@ export async function runBuild(plan, hands, { after = null, maxTicks = Infinity,
     /** Blocks that would not go down by hand (as against spots it could not get to): those are not carried up, u228. */
     const handMissed = new Set();
     W = new Map();
+    badStand = new Set();
     const T = new Map();
     curT = T;
     for (const c of mine) { if (idAt(c.x, c.y, c.z) === c.id) stats.already++; else T.set(key(c.x, c.y, c.z), c); }
@@ -445,12 +449,12 @@ export async function runBuild(plan, hands, { after = null, maxTicks = Infinity,
           stats.attempts++;
           const a = hands.now();
           let ok = await hands.place(k, id);
-          if (!ok) ok = await hands.place(k, id);
+          if (!ok && !/^no line/.test(hands.why?.(k) ?? '')) ok = await hands.place(k, id);
           stats.handTicks += hands.now() - a;
           if (ok) {
             T.delete(key(k.x, k.y, k.z));
             stats.hand++; stats.hits++; bump(stats.handById, id); W.set(key(k.x, k.y, k.z), id); reach = null; if (back.includes(k)) stats.putBack++;
-          } else { missed.add(key(k.x, k.y, k.z)); handMissed.add(key(k.x, k.y, k.z)); stats.misses = (stats.misses ?? 0) + 1; fail(k); W = new Map(); }
+          } else { missed.add(key(k.x, k.y, k.z)); handMissed.add(key(k.x, k.y, k.z)); stats.misses = (stats.misses ?? 0) + 1; badStand.add(`${key(s.x, s.y, s.z)}|${key(k.x, k.y, k.z)}`); fail(k); W = new Map(); }
           judge();
           return true;
         };
