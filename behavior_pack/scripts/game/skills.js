@@ -762,6 +762,13 @@ export class Skills {
         // No side face to build against (it's the start of a bridge off a slab, say): try from below.
         const under = { x: cell.x, y: cell.y - 1, z: cell.z };
         if (OPEN.test(this.blockAt(under) ?? 'air') || !(await this.placeOn(gen, slot, under, Direction.Up, { x: 0.5, y: 1, z: 0.5 }, cell))) {
+          // (u249: a bridge that "would not go" said nothing of why: what is in hand, what is at the cell, what is standing in it, where we are against it)
+          try {
+            const ents = this.dim.getEntities({ location: { x: cell.x + 0.5, y: cell.y + 0.5, z: cell.z + 0.5 }, maxDistance: 1.6 }).filter((e) => e.id !== this.sim.id).map((e) => e.typeId.replace('minecraft:', ''));
+            const held = container(this.sim)?.getItem(this.sim.selectedSlotIndex)?.typeId ?? 'nothing';
+            const f = this.sim.location;
+            this.log(`bridge: the block would not go at ${cell.x},${cell.y},${cell.z} from ${from.x},${from.y},${from.z}: slot ${slot} (${container(this.sim)?.getItem(slot)?.typeId ?? 'empty'}), in hand ${held}, floor ${this.blockAt(floor)}, cell ${this.blockAt(cell)}, entities there [${ents.join(',')}], we are at ${f.x.toFixed(2)},${f.y.toFixed(2)},${f.z.toFixed(2)}, sneaking ${this.sim.isSneaking}`);
+          } catch (e) { this.log(`bridge: the block would not go (${e})`); }
           this.restHands();
           return false;
         }
