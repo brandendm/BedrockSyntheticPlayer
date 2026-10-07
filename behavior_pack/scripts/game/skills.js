@@ -556,6 +556,9 @@ export class Skills {
     // `!bot test placerate` measures other ways to put a block down and how soon after the last each is taken: the fastest that never
     // failed is used (memory.data.placeCal { method, gap }); without it, the plain way with the game's measured gap.
     const cal = this.a.memory?.data?.placeCal;
+    // (u257 live, leadledge: the dirt sat in inventory slot 19 (the hotbar was full of tools) and not one block went down, with a sword in hand: a slot
+    // outside the hotbar is brought into it first, as hold() does)
+    if (slot >= 9) { try { const c = container(this.sim); if (c) { c.swapItems(slot, 8, c); slot = 8; } } catch { /* */ } }
     for (let attempt = 0; attempt < 3; attempt++) {
       // First go: from where the crosshair already is (the aim before this got it near), no snap.
       // Didn't take: look straight at the face and try once more, the plain way.

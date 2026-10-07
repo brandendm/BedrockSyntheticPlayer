@@ -338,11 +338,11 @@ export async function runTests(agent, player, args) {
     agent.autoEnabled = autoWas;
     running = false;
   }
-  if (results.length > 1) {
+  if (results.length >= 1) {   // (u257: a batch of one ends with its summary too: the auto run waits for it, and sat 20 minutes after a single test)
     const total = Math.round((system.currentTick - tAll) / 20);
     const failed = results.filter((r) => !r.pass);
     const slowest = [...results].sort((a, b) => b.secs - a.secs).slice(0, 5).map((r) => `${r.name} ${r.secs}s`).join(', ');
-    agent.say(`Tests done: ${results.length - failed.length}/${results.length} passed in ${Math.floor(total / 60)}m${total % 60}s. Slowest: ${slowest}.${failed.length ? ` FAILED: ${failed.map((r) => r.name).join(', ')}.` : ''}`);
+    if (results.length > 1) agent.say(`Tests done: ${results.length - failed.length}/${results.length} passed in ${Math.floor(total / 60)}m${total % 60}s. Slowest: ${slowest}.${failed.length ? ` FAILED: ${failed.map((r) => r.name).join(', ')}.` : ''}`);
     sendEvent({ type: 'test_batch', build: CONFIG.build, passed: results.length - failed.length, total: results.length, secs: total, results: results.map((r) => ({ name: r.name, pass: r.pass, secs: r.secs, detail: String(r.detail).slice(0, 300) })) }).catch(() => {});
   }
 }
