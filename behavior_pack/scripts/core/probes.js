@@ -25,6 +25,23 @@ export const PROBES = {
       }
     },
   },
+  // sim.move (the bot's fine steering): east at full, half, then 0.4; then a turn south from full speed; then diagonal; each stopped with stopMoving.
+  probemove: {
+    ext: { w: 4, e: 24, r: 8 }, floor: floor(4, 24, 8), secs: 14,
+    async run(ctx) {
+      ctx.sim.teleport(at(ctx, -2, 0, -4)); await ctx.wait(10);
+      for (const speed of [1, 0.5, 0.4]) {
+        ctx.mark(`move east ${speed}`); ctx.sim.move(1, 0, speed); await ctx.wait(40);
+        ctx.mark('stop'); ctx.sim.stopMoving(); await ctx.wait(20);
+        ctx.sim.teleport(at(ctx, -2, 0, -4)); await ctx.wait(5);
+      }
+      ctx.mark('east then south'); ctx.sim.move(1, 0, 1); await ctx.wait(25); ctx.sim.move(0, 1, 1); await ctx.wait(25);
+      ctx.mark('stop'); ctx.sim.stopMoving(); await ctx.wait(20);
+      ctx.sim.teleport(at(ctx, -2, 0, -6)); await ctx.wait(5);
+      ctx.mark('diagonal'); ctx.sim.move(1, 1, 1); await ctx.wait(40);
+      ctx.mark('stop'); ctx.sim.stopMoving(); await ctx.wait(20);
+    },
+  },
   // A jump on the spot, and a jump while walking.
   probejump: {
     ext: { w: 4, e: 24, r: 4 }, floor: floor(4, 24, 4), secs: 8,
@@ -85,17 +102,35 @@ export const PROBES = {
       ctx.sim.stopMoving(); await ctx.wait(40);
     },
   },
-  // A sling on the flat: the walker stretches the lead to 6.3, 8.4, then jumps.
+  // A sling on the flat: the boat put 5.5, 7, 8.4, 9.5 away from a standing walker, left 30 ticks (does it pull without the walker moving?), then the walker jumps.
   probesling: {
-    ext: { w: 4, e: 28, r: 4 }, floor: floor(4, 28, 4), secs: 12,
+    ext: { w: 4, e: 28, r: 4 }, floor: floor(4, 28, 4), secs: 24,
     async run(ctx) {
-      for (const d of [6.3, 8.4]) {
+      for (const d of [5.5, 7, 8.4, 9.5]) {
         ctx.sim.teleport(at(ctx, 14, 0, 0)); await ctx.wait(5);
         const boat = ctx.spawn('minecraft:boat', at(ctx, 14 - d, 0, 0)); ctx.watch(boat); await ctx.wait(5);
         if (!ctx.leash(boat)) return;
-        ctx.mark(`stretch ${d}`); boat.teleport(at(ctx, 14 - d, 0, 0)); await ctx.wait(3);
-        ctx.mark('jump'); ctx.sim.jump(); await ctx.wait(50);
-        boat.unleash?.(); try { boat.remove(); } catch { /* */ }
+        ctx.mark(`stretch ${d}`); boat.teleport(at(ctx, 14 - d, 0, 0)); await ctx.wait(30);
+        ctx.mark('jump'); ctx.sim.jump(); await ctx.wait(40);
+        try { boat.remove(); } catch { /* */ }
+      }
+    },
+  },
+  // The sling up a lip: a boat jammed at the foot of a platform 1, 2, 3 high, the walker on top at 6.5, 8, 9.5 from it; held 20 ticks, then the walker jumps (how high does the boat come, how fast).
+  probelift: {
+    ext: { w: 4, e: 28, r: 4 }, floor: floor(4, 28, 4), secs: 40,
+    async run(ctx) {
+      for (const rise of [1, 2, 3]) {
+        ctx.cmd(`fill ${ctx.x} ${ctx.gy + 1} ${ctx.z - 2} ${ctx.x + 13} ${ctx.gy + rise} ${ctx.z + 2} stone`);
+        for (const d of [6.5, 8, 9.5]) {
+          ctx.sim.teleport({ x: ctx.x - 2.5, y: ctx.gy + 1, z: ctx.z + 0.5 }); await ctx.wait(5);
+          const boat = ctx.spawn('minecraft:boat', { x: ctx.x - 0.9, y: ctx.gy + 1, z: ctx.z + 0.5 }); ctx.watch(boat); await ctx.wait(5);
+          if (!ctx.leash(boat)) return;
+          ctx.sim.teleport({ x: ctx.x - 0.9 + d, y: ctx.gy + 1 + rise, z: ctx.z + 0.5 }); ctx.mark(`rise ${rise} stretch ${d}`); await ctx.wait(20);
+          ctx.mark('jump'); ctx.sim.jump(); await ctx.wait(35);
+          try { boat.remove(); } catch { /* */ }
+        }
+        ctx.cmd(`fill ${ctx.x} ${ctx.gy + 1} ${ctx.z - 2} ${ctx.x + 13} ${ctx.gy + rise} ${ctx.z + 2} air`);
       }
     },
   },
@@ -106,12 +141,12 @@ export const PROBES = {
     async run(ctx) {
       // 1 high, on the north half (z - 3): the walker well beyond it
       for (const [dz, rise] of [[-3, 1], [3, 3]]) {
-        ctx.sim.teleport(at(ctx, 12, 0, dz)); await ctx.wait(5);
-        const boat = ctx.spawn('minecraft:boat', at(ctx, -1, 0, dz)); ctx.watch(boat); await ctx.wait(5);
+        ctx.sim.teleport(at(ctx, 9, 0, dz)); await ctx.wait(5);
+        const boat = ctx.spawn('minecraft:boat', at(ctx, 1, 0, dz)); ctx.watch(boat); await ctx.wait(5);
         if (!ctx.leash(boat)) return;
         ctx.mark(`level, wall ${rise}`); await ctx.wait(60);
         ctx.mark(`walker on top ${rise}`); ctx.sim.teleport(at(ctx, 6, rise, dz)); await ctx.wait(10);
-        go(ctx, 12, dz, 0.5); await ctx.wait(40);
+        go(ctx, 11, dz, 0.5); await ctx.wait(40);
         ctx.sim.stopMoving(); ctx.mark('jump'); ctx.sim.jump(); await ctx.wait(40);
         ctx.mark('end'); boat.unleash?.(); try { boat.remove(); } catch { /* */ }
       }

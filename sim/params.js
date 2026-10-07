@@ -16,9 +16,11 @@ export const PARAMS = {
     step: 0.45,                                            // (core/towline.js BOAT_CLIMB, measured)
     landFriction: 0.5, airFriction: 0.98, gravity: 0.04,
     waterBuoyancy: 0.5,
+    wallKeep: 0.9, spawnDx: 0.2, spawnDz: 0.2,                                          // (probes: a boat spawned at z.5 sits at z.7)
+    impulse: 0.3,                                          // (fit: applyImpulse on a boat moves it about a third as far as on a free body)
   },
   leash: {
-    rest: 4.2, k: 0.15, kVertical: 0.3, maxPull: 1.4,      // (fit: rest = LEAD_SLACK; k from the sling peak 25 b/s at stretch 8.4)
+    rest: 4.7, k: 0.14, pow: 1, blend: 0.5, yank: 0, yankAt: 6, kVertical: 0.3, maxPull: 1.4,      // (fit: rest = LEAD_SLACK; k from the sling peak 25 b/s at stretch 8.4)
     soft: 2, hard: 4, max: 12, snap: 10,                   // (the leashable component's own numbers)
   },
   item: { pickupRange: 1.0, useGapTicks: 10 },

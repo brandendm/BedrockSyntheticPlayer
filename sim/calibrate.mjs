@@ -13,8 +13,8 @@ import { PROBE_NAMES } from '../behavior_pack/scripts/core/probes.js';
 /** The constants the fit may move: path, lower bound, upper bound. */
 export const FIT = [
   ['player.groundAccel', 0.04, 0.2], ['player.groundFriction', 0.3, 0.8], ['player.airAccel', 0.005, 0.05], ['player.jump', 0.3, 0.55], ['player.step', 0.3, 1.0],
-  ['boat.landFriction', 0.2, 0.9], ['boat.step', 0.2, 0.8], ['boat.gravity', 0.02, 0.08],
-  ['leash.rest', 2.5, 6], ['leash.k', 0.02, 0.5], ['leash.kVertical', 0.0, 1.5], ['leash.maxPull', 0.4, 3],
+  ['boat.landFriction', 0.2, 0.9], ['boat.wallKeep', 0, 1], ['boat.impulse', 0.05, 1], ['boat.step', 0.2, 0.8], ['boat.gravity', 0.02, 0.08],
+  ['leash.rest', 2.5, 6], ['leash.k', 0.02, 0.6], ['leash.pow', 0.8, 3.5], ['leash.blend', 0.1, 1], ['leash.kVertical', 0.0, 3], ['leash.maxPull', 0.4, 3],
 ];
 const get = (o, p) => p.split('.').reduce((a, k) => a?.[k], o);
 const toOverrides = (vec) => { const o = {}; FIT.forEach(([p], i) => { const [a, b] = p.split('.'); (o[a] ??= {})[b] = vec[i]; }); return o; };
@@ -31,24 +31,30 @@ export function loadReal(file) {
   return out;
 }
 
-/** RMS of the position difference (blocks) between two traces over their common length, bot and each watched entity apart. A null cell counts as 5 blocks off. */
-export function distance(real, sim) {
+/** RMS of the position difference (blocks) between two traces, the bot and each watched entity apart. Each real row is matched to the sim row within +-2 ticks that is
+ *  nearest (the game's waits land a tick or two off the sim's: a teleport one tick early is not a physics error); a speed error still shows, it grows past 2 ticks of travel. */
+export function distance(real, sim, slack = 2) {
   const n = Math.min(real.length, sim.length);
   if (!n) return { rms: 99, parts: [] };
-  const cols = Math.max(real[0].length, sim[0].length);
+  const cols = Math.max(...real.map((r) => r.length), ...sim.map((r) => r.length));
   const parts = [];
   for (let g = 0; g * 6 < cols; g++) {
     let s = 0, c = 0;
-    for (let i = 0; i < n; i++) for (let k = 0; k < 3; k++) {
-      const a = real[i][g * 6 + k], b = sim[i][g * 6 + k];
-      const d = a == null || b == null ? 5 : a - b;
-      s += d * d; c++;
+    for (let i = 0; i < n; i++) {
+      const a = real[i].slice(g * 6, g * 6 + 3);
+      if (a.some((v) => v == null)) continue; // not there yet / gone
+      let best = Infinity;
+      for (let d = -slack; d <= slack; d++) {
+        const b = sim[i + d]?.slice(g * 6, g * 6 + 3);
+        if (!b || b.some((v) => v == null)) continue;
+        best = Math.min(best, (a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2 + (a[2] - b[2]) ** 2);
+      }
+      if (best < Infinity) { s += best; c++; }
     }
-    parts.push(Math.sqrt(s / c));
+    parts.push(c ? Math.sqrt(s / c) : 0);
   }
-  // a trace of a different length is a different story: the missing ticks count as 2 blocks off
-  const miss = Math.abs(real.length - sim.length);
-  const rms = Math.sqrt((parts.reduce((a, p) => a + p * p, 0) / parts.length) + (miss ? (miss / Math.max(real.length, sim.length)) * 4 : 0));
+  const miss = Math.max(0, Math.abs(real.length - sim.length) - 2); // a trace of a different length: the missing ticks count as 2 blocks off
+  const rms = Math.sqrt(parts.reduce((a, p) => a + p * p, 0) / Math.max(1, parts.length) + (miss ? (miss / Math.max(real.length, sim.length)) * 4 : 0));
   return { rms, parts };
 }
 
@@ -58,8 +64,8 @@ async function simTraces(names, params) {
   return out;
 }
 
-export async function score(real, params) {
-  const names = Object.keys(real).filter((n) => PROBE_NAMES.includes(n));
+export async function score(real, params, only = null) {
+  const names = Object.keys(real).filter((n) => PROBE_NAMES.includes(n) && (!only || only.includes(n)));
   const sim = await simTraces(names, params);
   const per = {};
   let tot = 0;
@@ -67,33 +73,37 @@ export async function score(real, params) {
   return { total: names.length ? tot / names.length : 99, per };
 }
 
-/** Nelder-Mead over the FIT constants (in units of each one's range, so the steps are comparable). */
-export async function fit(real, { start = null, iters = 400, log = console.log } = {}) {
-  const dim = FIT.length, base = loadParams();
-  const x0 = (start ?? FIT.map(([p]) => get(base, p))).map((v, i) => clamp(v, FIT[i]));
-  const f = async (v) => (await score(real, toOverrides(v.map((c, i) => clamp(c, FIT[i]))))).total;
-  const span = FIT.map(([, lo, hi]) => hi - lo);
-  let simplex = [x0, ...x0.map((_, i) => { const v = [...x0]; v[i] = clamp(v[i] + span[i] * 0.08 * (v[i] + span[i] * 0.08 > FIT[i][2] ? -1 : 1), FIT[i]); return v; })];
+/** Nelder-Mead over the FIT constants named in `free` (path prefixes; the rest stay as they are), scored on the probes in `only` (all when null); in units of each one's range. */
+export async function fit(real, { start = null, iters = 400, log = console.log, free = null, only = null } = {}) {
+  const base = loadParams();
+  const full = (start ?? FIT.map(([p]) => get(base, p))).map((v, i) => clamp(v, FIT[i]));
+  const idx = FIT.map((_, i) => i).filter((i) => !free || free.some((f) => FIT[i][0].startsWith(f)));
+  const dim = idx.length;
+  const build = (v) => { const out = [...full]; idx.forEach((gi, k) => { out[gi] = clamp(v[k], FIT[gi]); }); return out; };
+  const f = async (v) => (await score(real, toOverrides(build(v)), only)).total;
+  const x0 = idx.map((i) => full[i]), span = idx.map((i) => FIT[i][2] - FIT[i][1]);
+  let simplex = [x0, ...x0.map((_, k) => { const v = [...x0]; v[k] = clamp(v[k] + span[k] * 0.08 * (v[k] + span[k] * 0.08 > FIT[idx[k]][2] ? -1 : 1), FIT[idx[k]]); return v; })];
   let vals = [];
   for (const v of simplex) vals.push(await f(v));
+  const cl = (v, k) => clamp(v, FIT[idx[k]]);
   for (let it = 0; it < iters; it++) {
     const order = vals.map((v, i) => i).sort((a, b) => vals[a] - vals[b]);
     simplex = order.map((i) => simplex[i]); vals = order.map((i) => vals[i]);
     if (it % 25 === 0) log(`  fit ${it}/${iters}: residual ${vals[0].toFixed(4)} blocks`);
     if (vals[0] < 0.005 || vals[dim] - vals[0] < 1e-5) break;
     const cen = x0.map((_, j) => simplex.slice(0, dim).reduce((a, s) => a + s[j], 0) / dim);
-    const at = (t) => cen.map((c, j) => clamp(c + t * (simplex[dim][j] - c), FIT[j]));
+    const at = (t) => cen.map((c, j) => cl(c + t * (simplex[dim][j] - c), j));
     const xr = at(-1), fr = await f(xr);
     if (fr < vals[0]) { const xe = at(-2), fe = await f(xe); if (fe < fr) { simplex[dim] = xe; vals[dim] = fe; } else { simplex[dim] = xr; vals[dim] = fr; } }
     else if (fr < vals[dim - 1]) { simplex[dim] = xr; vals[dim] = fr; }
     else {
       const xc = at(fr < vals[dim] ? -0.5 : 0.5), fc = await f(xc);
       if (fc < Math.min(fr, vals[dim])) { simplex[dim] = xc; vals[dim] = fc; }
-      else for (let i = 1; i <= dim; i++) { simplex[i] = simplex[i].map((c, j) => clamp(simplex[0][j] + 0.5 * (c - simplex[0][j]), FIT[j])); vals[i] = await f(simplex[i]); }
+      else for (let i = 1; i <= dim; i++) { simplex[i] = simplex[i].map((c, j) => cl(simplex[0][j] + 0.5 * (c - simplex[0][j]), j)); vals[i] = await f(simplex[i]); }
     }
   }
   const b = vals.indexOf(Math.min(...vals));
-  return { vec: simplex[b], residual: vals[b] };
+  return { vec: build(simplex[b]), residual: vals[b] };
 }
 
 function describe(res) {
@@ -104,7 +114,16 @@ const CAL_FILE = new URL('./calibration.json', import.meta.url);
 
 if (process.argv[1].endsWith('calibrate.mjs')) {
   const arg = (k, d) => { const i = process.argv.indexOf(k); return i > 0 ? process.argv[i + 1] : d; };
-  if (process.argv.includes('--selftest')) {
+  if (process.argv.includes('--trace')) {
+    // real vs sim, every 10th tick, of one probe: where they part
+    const name = arg('--trace'), real = loadReal(arg('--real', new URL('../brain/logs/probes.jsonl', import.meta.url).pathname))[name];
+    const sim = await runProbe(name, {});
+    const f = (r, i) => (r?.[i] == null ? '   -  ' : r[i].toFixed(2).padStart(6));
+    for (let t = 0; t < Math.min(real.rows.length, sim.rows.length); t += Number(arg('--step', 10))) {
+      const a = real.rows[t], b = sim.rows[t], m = real.marks.filter((k) => k.tick === t).map((k) => k.label).join();
+      console.log(`t${String(t).padStart(3)} bot x ${f(a, 0)}|${f(b, 0)} y ${f(a, 1)}|${f(b, 1)} vx ${f(a, 3)}|${f(b, 3)}   ent x ${f(a, 6)}|${f(b, 6)} y ${f(a, 7)}|${f(b, 7)} z ${f(a, 8)}|${f(b, 8)}  ${m}`);
+    }
+  } else if (process.argv.includes('--selftest')) {
     // fabricate the game: other constants than the defaults
     const truth = { player: { groundAccel: 0.081, groundFriction: 0.58, jump: 0.44 }, boat: { landFriction: 0.42, step: 0.5 }, leash: { rest: 4.8, k: 0.21, kVertical: 0.55, maxPull: 1.1 } };
     const fake = {};
@@ -122,7 +141,11 @@ if (process.argv[1].endsWith('calibrate.mjs')) {
     const before = await score(real, {});
     console.log(`sim vs real now: ${before.total.toFixed(3)} blocks rms on average\n${describe(before)}`);
     if (process.argv.includes('--fit')) {
-      const r = await fit(real, { iters: Number(arg('--iters', 400)) });
+      // two stages: the walker's own physics from the probes that need no boat, then the boat and the lead with the walker's frozen (one fit trading them off bent the walker to suit the boat)
+      const n = Number(arg('--iters', 400));
+      const s1 = await fit(real, { iters: n, free: ['player.'], only: ['probewalk', 'probejump', 'probestep'] });
+      console.log(`  stage 1 (the walker): ${s1.residual.toFixed(4)} blocks`);
+      const r = await fit(real, { iters: n, start: s1.vec, free: ['boat.', 'leash.'] });
       const params = toOverrides(r.vec);
       const after = await score(real, params);
       writeFileSync(CAL_FILE, JSON.stringify({ fittedAt: new Date().toISOString(), builds: [...new Set(names.map((n) => real[n].build))], residual: after.total, perProbe: Object.fromEntries(Object.entries(after.per).map(([k, v]) => [k, v.rms])), params }, null, 1));

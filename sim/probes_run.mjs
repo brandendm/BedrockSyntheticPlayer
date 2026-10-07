@@ -47,7 +47,7 @@ export async function runProbe(name, { params = {}, x = 100, gy = 150, z = 100 }
   return { name, ticks: rows.length, marks, rows, error, unimplemented: Object.fromEntries(engine.unimplemented) };
 }
 
-if (process.argv[1].endsWith('probes_run.mjs')) {
+if ((process.argv[1] ?? '').endsWith('probes_run.mjs')) {
   const names = process.argv.slice(2).filter((a) => !a.startsWith('-'));
   for (const n of names.length ? names : PROBE_NAMES) {
     const r = await runProbe(n);

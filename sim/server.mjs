@@ -20,7 +20,7 @@ export const engine = {
   /** One tick: bodies move, then what was due runs. */
   step() {
     system.currentTick++;
-    for (const e of this.entities) if (e.isValid && e.physics) e.physics();
+    for (const e of this.entities) if (e.isValid && e.physics) { const p = [e.x, e.y, e.z]; e.physics(); e.dv = { x: e.x - p[0], y: e.y - p[1], z: e.z - p[2] }; }
     for (const t of [...this.intervals]) if (system.currentTick % t.every === 0) t.fn();
     for (let k = this.timeouts.length - 1; k >= 0; k--) if (this.timeouts[k].at <= system.currentTick) { const t = this.timeouts.splice(k, 1)[0]; try { t.fn(); } catch (e) { console.warn('[sim] timeout:', e); } }
     for (let k = this.waiters.length - 1; k >= 0; k--) if (this.waiters[k].at <= system.currentTick) { const w = this.waiters.splice(k, 1)[0]; w.resolve(); }
@@ -96,8 +96,10 @@ export class Container {
 // ---------- blocks ----------
 class Block {
   constructor(x, y, z) { this.x = x; this.y = y; this.z = z; this.dimension = dimension; }
-  get location() { return { x: this.x, y: this.y, z: this.z }; }
+  get location() { if (!this.isValid) throw new Error('Failed to get property location: the entity is not valid'); return { x: this.x, y: this.y, z: this.z }; }
   get typeId() { return `minecraft:${engine.world.id(this.x, this.y, this.z)}`; }
+  get isValid() { return true; }
+  get isWaterlogged() { return false; }
   get isAir() { return engine.world.id(this.x, this.y, this.z) === 'air'; }
   get isLiquid() { return engine.world.isLiquid(this.x, this.y, this.z); }
   get isSolid() { return engine.world.height(this.x, this.y, this.z) > 0; }
@@ -114,14 +116,14 @@ const blockAt = (p) => unimpl('Block', new Block(Math.floor(p.x), Math.floor(p.y
 // ---------- entities ----------
 class Entity {
   constructor(typeId, loc) {
-    this.id = `e${engine.nextId++}`; this.typeId = typeId; this.x = loc.x; this.y = loc.y; this.z = loc.z; this.vx = 0; this.vy = 0; this.vz = 0; this.isValid = true;
+    this.id = `e${engine.nextId++}`; this.typeId = typeId; this.x = loc.x; this.y = loc.y; this.z = loc.z; this.vx = 0; this.vy = 0; this.vz = 0; this.isValid = true; this.dv = null;
     this.tags = new Set(); this.dimension = dimension; this.onGround = false; this.rot = { x: 0, y: 0 };
   }
   get location() { return { x: this.x, y: this.y, z: this.z }; }
   set location(l) { this.x = l.x; this.y = l.y; this.z = l.z; }
   get isInWater() { return engine.world.isWater(this.x, this.y + 0.2, this.z); }
   get isOnGround() { return this.onGround; }
-  getVelocity() { return { x: this.vx * 20 / 20, y: this.vy, z: this.vz }; }
+  getVelocity() { if (!this.isValid) throw new Error('the entity is not valid'); return this.dv ? { ...this.dv } : { x: this.vx, y: this.vy, z: this.vz }; } // (what the game reports: the last tick's movement)
   addTag(t) { this.tags.add(t); return true; } hasTag(t) { return this.tags.has(t); } removeTag(t) { return this.tags.delete(t); } getTags() { return [...this.tags]; }
   teleport(l) { this.x = l.x; this.y = l.y; this.z = l.z; this.vx = this.vy = this.vz = 0; }
   remove() { this.isValid = false; engine.entities = engine.entities.filter((e) => e !== this); }
@@ -135,7 +137,7 @@ class Entity {
 }
 
 export class Boat extends Entity {
-  constructor(loc) { super('minecraft:boat', loc); this.holder = null; this.riders = []; this.peak = 0; }
+  constructor(loc) { super('minecraft:boat', { ...loc, x: loc.x + engine.params.boat.spawnDx, z: loc.z + engine.params.boat.spawnDz }); this.holder = null; this.riders = []; this.peak = 0; }
   physics() {
     const P = engine.params, B = P.boat, L = P.leash, w = engine.world;
     const wet = w.isWater(this.x, this.y + 0.1, this.z);
@@ -144,19 +146,23 @@ export class Boat extends Entity {
       const h = this.holder, dx = h.x - this.x, dy = (h.y + 0.9) - (this.y + 0.25), dz = h.z - this.z, len = Math.hypot(dx, dy, dz);
       if (len > L.snap && this.snapOk !== false) { this.holder = null; engine.events.push([system.currentTick, 'lead-snapped', len]); }
       else if (len > L.rest) {
-        const a = Math.min(L.maxPull, L.k * (len - L.rest)) / len;
-        this.vx += dx * a; this.vz += dz * a; this.vy += dy * a * L.kVertical;
+        // (probesling, real game: a boat pulled in goes at a speed proportional to how far past `rest` the lead is, reaching it over a couple of ticks, and ends at rest; it does not overshoot)
+        const t = Math.min(L.maxPull, L.k * Math.pow(len - L.rest, L.pow));
+        this.vx += (dx / len * t - this.vx) * L.blend; this.vz += (dz / len * t - this.vz) * L.blend; this.vy += (dy / len * t * L.kVertical - this.vy) * L.blend;
       }
+      // past `yankAt` the lead also yanks (the Java game's: 0.4 times the square of each axis's share of the distance, toward the holder): what a sling is made of
+      if (len > L.yankAt) { const ux = dx / len, uy = dy / len, uz = dz / len; this.vx += Math.sign(ux) * ux * ux * L.yank; this.vz += Math.sign(uz) * uz * uz * L.yank; this.vy += Math.sign(uy) * uy * uy * L.yank * L.kVertical; }
     }
     if (wet) { this.vy += (B.waterBuoyancy - (this.y - Math.floor(this.y + 0.1))) * 0.1; this.vy *= 0.8; this.vx *= 0.9; this.vz *= 0.9; }
     else if (!this.onGround) this.vy = (this.vy - B.gravity) * 0.98;
     const r = move(w, this, this.vx, this.vy, this.vz, { hw: B.halfWidth, h: B.height, step: B.step });
-    if (r.hitX) this.vx = 0; if (r.hitZ) this.vz = 0; if (r.hitY) this.vy = 0;
+    if (r.hitX) this.vx *= B.wallKeep; if (r.hitZ) this.vz *= B.wallKeep; if (r.hitY) this.vy = 0; // (probelift: pressed against a wall the boat keeps the speed the lead gives it, and shoots off when it clears the lip)
     this.onGround = r.onGround;
     const f = this.onGround ? B.landFriction : B.airFriction;
     this.vx *= f; this.vz *= f;
     this.peak = Math.max(this.peak, Math.hypot(this.vx, this.vy, this.vz) * 20);
   }
+  applyImpulse(i) { const k = engine.params.boat.impulse; this.vx += i.x * k; this.vy += i.y * k; this.vz += i.z * k; } // (a pushed boat moves about a third as far as the number says: probeslide)
   getComponent(c) {
     const self = this;
     if (c === 'minecraft:leashable') return {
@@ -176,7 +182,7 @@ export class SimPlayer extends Entity {
   constructor(loc, name = 'Scout') {
     super('minecraft:player', loc);
     this.name = name; this.inv = new Container(36); this.selectedSlotIndex = 0; this.isSneaking = false; this.isSprinting = false;
-    this.target = null; this.speed = 1; this.lastUse = -100; this.hp = 20; this.jumpQueued = false;
+    this.target = null; this.dir = null; this.speed = 1; this.lastUse = -100; this.hp = 20; this.jumpQueued = false;
     return unimpl('SimPlayer', this);
   }
   getComponent(c) {
@@ -188,10 +194,13 @@ export class SimPlayer extends Entity {
   hasComponent(c) { return c === 'minecraft:inventory'; }
   moveToLocation(l, o = {}) { this.target = { x: l.x, z: l.z }; this.speed = o.speed ?? 1; }
   navigateToLocation(l, s = 1) { this.moveToLocation(l, { speed: s }); return { isFullPath: true }; }
-  stopMoving() { this.target = null; }
+  stopMoving() { this.target = null; this.dir = null; }
+  /** sim.move(westEast, northSouth, speed): keeps walking that way (+x east, +z south) until stopMoving or the next order. */
+  move(wx, nz, speed = 1) { this.target = null; const h = Math.hypot(wx, nz); this.dir = h > 1e-6 ? { x: wx / h, z: nz / h, speed: 1 /* (probemove, real game: the speed argument changes nothing, move() always walks at full speed) */ } : null; }
+  get isSleeping() { return false; } get isClimbing() { return false; } get isFalling() { return !this.onGround && this.vy < 0; }
   jump() { if (this.onGround) this.jumpQueued = true; }
   lookAtLocation() {} lookAtBlock() {} lookAtEntity() {}
-  teleport(l) { super.teleport(l); this.target = null; }
+  teleport(l) { super.teleport(l); this.target = null; this.dir = null; }
   runCommand(c) { return dimension.runCommand(c); }
   get isInWater() { return super.isInWater; }
   interactWithEntity(e) {
@@ -236,6 +245,11 @@ export class SimPlayer extends Entity {
         this.vx += dx / d * a; this.vz += dz / d * a;
         this.rot.y = Math.atan2(-dx, dz) * 180 / Math.PI;
       }
+    }
+    if (this.dir) {
+      const a = (ground ? P.groundAccel : wet ? P.waterAccel : P.airAccel) * this.dir.speed;
+      this.vx += this.dir.x * a; this.vz += this.dir.z * a;
+      this.rot.y = Math.atan2(-this.dir.x, this.dir.z) * 180 / Math.PI;
     }
     if (this.jumpQueued && ground) { this.vy = P.jump; this.jumpQueued = false; } else this.jumpQueued = false;
     if (wet) { this.vy = this.vy * P.waterDrag - P.waterGravity; }
