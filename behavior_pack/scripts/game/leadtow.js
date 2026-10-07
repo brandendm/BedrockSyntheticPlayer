@@ -278,7 +278,8 @@ export class LeadTow {
       if (!route || wi >= route.length) {
         try { sim.stopMoving(); } catch { /* */ }
         if (replans++ > 12) { m.why = 'could not find a way on'; break; }
-        if (opts.boatZone && walkerThere) { route = [{ x: pos.x, y: pos.y, z: pos.z, hold: true }]; wi = 0; } else { route = await plan(walkTo); wi = 0; }
+        // (u244 live, leadstep: it held 1.8 short of the end of its walk, so the lead's slack left the boat 4.5 from the gold block, outside the zone, and it waited there 20 s: it holds at the very end)
+        if (opts.boatZone && walkerThere) { route = [{ x: walkTo.x, y: pos.y, z: walkTo.z, hold: true }]; wi = 0; } else { route = await plan(walkTo); wi = 0; }
         if (!route) { m.why = 'no land route to the goal'; break; }
         if (!m.idealS) m.idealS = flat(pos, goal) / (ride ? RIDE_BPS : WALK_BPS);
       }
