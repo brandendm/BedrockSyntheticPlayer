@@ -292,7 +292,15 @@ def append_log(evt: dict) -> None:
     with _lock:
         # (The dashboard's Recent list gets a light copy: the full flight report and batch go to
         # their own endpoints, not into the status poll every second.)
-        _recent.append({k: v for k, v in rec.items() if k not in ("report", "results", "trace")})
+        _recent.append({k: v for k, v in rec.items() if k not in ("report", "results", "trace", "rows")})
+    if evt.get("type") == "probe":
+        # a physics probe's per-tick trace (the simulator's calibration data): its own file, not the event log
+        f = LOG_DIR / "probes.jsonl"
+        if f.exists() and f.stat().st_size > 60_000_000:
+            f.replace(f.with_suffix(".old.jsonl"))
+        with f.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(rec) + "\n")
+        return
     names = ["events.jsonl"] + (["tests.jsonl"] if evt.get("type") in ("test_result", "test_batch", "test_run") else []) + (["flight.jsonl"] if evt.get("type") == "flight" else [])
     for name in names:
         f = LOG_DIR / name
@@ -622,7 +630,7 @@ def make_handler(engine: DecisionEngine, key: str | None = None):
                 except OSError:
                     pass
                 return self._send(200, {"actions": []})
-            if evt.get("type") in ("log", "test_result", "test_batch", "test_run", "flight"):
+            if evt.get("type") in ("log", "test_result", "test_batch", "test_run", "flight", "probe"):
                 # What the bot said and test results, kept on disk so they can be read later
                 # without watching the server window. No decisions, no API calls.
                 append_log(evt)

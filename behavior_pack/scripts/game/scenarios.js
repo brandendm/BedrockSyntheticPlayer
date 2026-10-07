@@ -68,15 +68,17 @@ import { passRates, addStat } from '../core/testrun.js';
 import { compare } from '../core/testrun.js';
 import { boatToMob } from '../core/towline.js';
 import { TOW_META, TOW_NAMES, towCourse } from '../core/towcourses.js';
+import { PROBES, PROBE_NAMES } from '../core/probes.js';
 import { ARENAS, testArena, arenaCommand } from './arenas.js';
 
 /** How far the slab reaches round the site (west, east, to each side) for a test; the backed-up box is the same (a structure is 64 across at most). */
 function extFor(name) {
   if (TOW_META[name]) return TOW_META[name].ext;
+  if (PROBES[name]) return PROBES[name].ext;
   return name === 'farm' || name === 'farmrace' ? { w: 22, e: 36, r: 24 } : name === 'horserace' || name === 'elytra' || name === 'boatcross' ? { w: 8, e: 54, r: 10 } : name === 'bow' ? { w: 14, e: 34, r: 14 }
     : name === 'leadboat' || name === 'villagerhaul' ? { w: 12, e: 44, r: 12 } : name === 'forest' ? { w: 6, e: 34, r: 20 } : { w: 14, e: 18, r: 12 };
 }
-const NAMES = ['roof', 'tower', 'hole', 'pit', 'trap', 'climb', 'ledge', 'ladder', 'husk', 'creeper', 'sheep', 'pen', 'smelt', 'smeltlogs', 'shelter', 'house', 'resume', 'ghostlog', 'quarry', 'dark', 'replant', 'litter', 'trader', 'iron', 'farm', 'equip', 'water', 'bucketfarm', 'treetop', 'corner', 'leap', 'bridge', 'fall', 'vines', 'stairgap', 'loot', 'shield', 'skel', 'rest', 'nights', 'calibrate', 'portal', 'horse', 'leadboat', 'leadsling', 'bow', 'duel', 'horserace', 'pillarrace', 'woodrace', 'lavacross', 'obsidian', 'mineore', 'enderman', 'blaze', 'ghast', 'witherskeleton', 'placerate', 'farmrace', 'creepers', 'ravine', 'elytra', 'villagerhaul', 'forest', 'vineclimb', 'boatcross', ...TOW_NAMES];
+const NAMES = ['roof', 'tower', 'hole', 'pit', 'trap', 'climb', 'ledge', 'ladder', 'husk', 'creeper', 'sheep', 'pen', 'smelt', 'smeltlogs', 'shelter', 'house', 'resume', 'ghostlog', 'quarry', 'dark', 'replant', 'litter', 'trader', 'iron', 'farm', 'equip', 'water', 'bucketfarm', 'treetop', 'corner', 'leap', 'bridge', 'fall', 'vines', 'stairgap', 'loot', 'shield', 'skel', 'rest', 'nights', 'calibrate', 'portal', 'horse', 'leadboat', 'leadsling', 'bow', 'duel', 'horserace', 'pillarrace', 'woodrace', 'lavacross', 'obsidian', 'mineore', 'enderman', 'blaze', 'ghast', 'witherskeleton', 'placerate', 'farmrace', 'creepers', 'ravine', 'elytra', 'villagerhaul', 'forest', 'vineclimb', 'boatcross', ...TOW_NAMES, ...PROBE_NAMES];
 let running = false;
 /** The bot's last forest turn (its logs and trees), for your turn to be compared with. @type {{logs: number, trees: number, cut: number, build: string} | null} */
 let forestBot = null;
@@ -86,7 +88,7 @@ let siteCounter = 0;
 // Tests that wait out real time (a 5 minute despawn, a night, a furnace, a long walk): left out of
 // `!bot test all quick`. Their real durations are in the batch report (`secs`), so this list can be
 // corrected from data: anything over QUICK_S in the last report belongs here.
-const SLOW = new Set(['villagerhaul', 'forest', 'loot', 'nights', 'rest', 'shelter', 'house', 'resume', 'quarry', 'farm', 'bucketfarm', 'iron', 'sheep', 'pen', 'smelt', 'smeltlogs', 'trader', 'ghostlog', 'stairgap', 'portal', 'horse', 'leadboat', 'leadsling', 'duel', 'horserace', ...TOW_NAMES]);
+const SLOW = new Set(['villagerhaul', 'forest', 'loot', 'nights', 'rest', 'shelter', 'house', 'resume', 'quarry', 'farm', 'bucketfarm', 'iron', 'sheep', 'pen', 'smelt', 'smeltlogs', 'trader', 'ghostlog', 'stairgap', 'portal', 'horse', 'leadboat', 'leadsling', 'duel', 'horserace', ...TOW_NAMES, ...PROBE_NAMES]);
 /** Tests that need you there (you are the opponent). */
 const PLAYER_ONLY = new Set(['duel', 'horserace', 'pillarrace', 'woodrace', 'farmrace']);
 const QUICK_S = 60;
@@ -2452,6 +2454,47 @@ async function runOne(agent, player, name, arg, human = false) {
         const ride = await rideAcross(agent, gen, horse, 8);
         pass = ride.mounted && ride.moved >= 4;
         detail = `${r.detail}; ${ride.detail}`;
+        break;
+      }
+      case 'probewalk': case 'probejump': case 'probestep': case 'probeslide': case 'probepull': case 'probefollow': case 'probesling': case 'probeblock': {
+        // A physics probe (core/probes.js): a scripted experiment, every tick recorded, sent to the brain as a 'probe' event. The simulator runs the same
+        // probe (sim/probes_run.mjs) and sim/calibrate.mjs makes its numbers agree with these.
+        const pr = PROBES[name];
+        giveItem('lead', 4);
+        const build = [...pr.floor(x, gy, z), ...(pr.cmds ? pr.cmds(x, gy, z) : [])];
+        for (const c of build) cmd(c);
+        await system.waitTicks(10);
+        const rows = [], marks = [], watched = [];
+        const spawned = [];
+        const ctx = {
+          sim, dim, x, gy, z, cmd,
+          wait: (n) => system.waitTicks(n),
+          spawn: (type, loc) => { const e = dim.spawnEntity(type, loc); spawned.push(e); cleanup.push(() => { try { e.remove(); } catch {} }); return e; },
+          leash: (e) => !!leashTo(sim, e),
+          give: giveItem,
+          mark: (label) => marks.push({ tick: rows.length, label }),
+          watch: (e) => watched.push(e),
+        };
+        const t00 = system.currentTick;
+        let live = true;
+        const r3 = (v) => Math.round(v * 1000) / 1000;
+        const sampler = (async () => {
+          while (live) {
+            const l = sim.location, v = sim.getVelocity();
+            const row = [r3(l.x - x), r3(l.y - gy), r3(l.z - z), r3(v.x), r3(v.y), r3(v.z)];
+            for (const e of watched) { try { const p = e.location, w = e.getVelocity(); row.push(r3(p.x - x), r3(p.y - gy), r3(p.z - z), r3(w.x), r3(w.y), r3(w.z)); } catch { row.push(null, null, null, null, null, null); } }
+            rows.push(row);
+            await system.waitTicks(1);
+          }
+        })();
+        let err = '';
+        try { await pr.run(ctx); } catch (e) { err = String(e); }
+        live = false; await system.waitTicks(2);
+        for (const e of spawned) { try { e.remove(); } catch {} }
+        sendEvent({ type: 'probe', name, build: CONFIG.build, ticks: rows.length, marks, rows, error: err }).catch(() => {});
+        pass = !err && rows.length > 20;
+        detail = err || `${rows.length} ticks recorded, ${marks.length} marks, ${watched.length} entities watched`;
+        void t00; void sampler;
         break;
       }
       case 'leadsling': {
