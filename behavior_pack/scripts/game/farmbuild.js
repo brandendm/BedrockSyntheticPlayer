@@ -422,7 +422,7 @@ async function start(agent, player, args) {
         } catch (e) { if (aborted(e)) throw e; S.log(`farmbuild: place ${id}: ${e}`); }
         const done = ok && hands.blockAt(c) === id;
         // (u231: why a block would not go down by hand, for the log: the corners that went in by command said nothing)
-        if (!done && missLogs++ < 150) S.log(`farmbuild: MISS ${id} at ${c.x} ${c.y} ${c.z} from ${JSON.stringify(ft)} (${mode}): ${ok ? `read back ${hands.blockAt(c)}` : agent.homestead.placeWhy ?? '?'}`);
+        if (!done && missLogs++ < 400) S.log(`farmbuild: MISS ${id} at ${c.x} ${c.y} ${c.z} from ${JSON.stringify(ft)} (${mode}): ${ok ? `read back ${hands.blockAt(c)}` : agent.homestead.placeWhy ?? '?'}`);
         return done;
       },
       set(c, id) {
@@ -673,7 +673,8 @@ async function start(agent, player, args) {
     const slabCells = (stats.handById[SLAB] ?? 0) + (stats.commandById[SLAB] ?? 0);
     const pctHand = Math.round((100 * stats.hand) / Math.max(1, stats.cells - stats.already));
     const rate = stats.handTicks ? (20 * stats.hand) / stats.handTicks : 0;
-    const lead = `The bot placed ${stats.hand} of ${stats.cells - stats.already} blocks itself (${pctHand}%) in ${mins(system.currentTick - J.started)}, ${HAND_NAME[mode]}, ${rate.toFixed(1)} blocks a second while placing (you, building fast: about 5.5); ${stats.command} were set by command (${stats.footing} to have something to stand on${stats.fallback + stats.repaired ? `, ${stats.fallback + stats.repaired} that would not go down by hand` : ''}${stats.gaveUp ? `; it gave up placing by hand: ${stats.gaveUp}` : ''}). `;
+    const verdict = stats.command > 0 || (stats.scaffoldUp ?? 0) > 0 ? `FAILED (by your rule: no commands, no pillars): ${stats.command} blocks by command, ${stats.scaffoldUp ?? 0} pillared or bridged. ` : 'PASSED: all by hand, no pillars. ';
+    const lead = `${verdict}The bot placed ${stats.hand} of ${stats.cells - stats.already} blocks itself (${pctHand}%) in ${mins(system.currentTick - J.started)}, ${HAND_NAME[mode]}, ${rate.toFixed(1)} blocks a second while placing (you, building fast: about 5.5); ${stats.command} were set by command (${stats.footing} to have something to stand on${stats.fallback + stats.repaired ? `, ${stats.fallback + stats.repaired} that would not go down by hand` : ''}${stats.gaveUp ? `; it gave up placing by hand: ${stats.gaveUp}` : ''}). `;
     notes.push(`On its own feet the whole build: ${stats.standMoves} places to build from, ${stats.scaffoldUp ?? 0} blocks of scaffolding pillared or bridged and ${stats.scaffoldDown ?? 0} taken down again${stats.escapes ? `; it walled itself in ${stats.escapes} times and broke its way out (${stats.broken} blocks, ${stats.putBack} put back by hand, the rest by command)` : ''}.`);
     if (stats.strays) notes.push(`${stats.strays} blocks were left where the plan has none (a slip of the hand, scaffolding it could not get to) and were taken out by command.`);
     const lenient = agent.homestead.placedLenient ?? 0;

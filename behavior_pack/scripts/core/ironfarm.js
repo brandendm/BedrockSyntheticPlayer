@@ -66,12 +66,12 @@ export function ironFarmPlan({ shell = SHELL } = {}) {
   const c1 = villageCentre(beds, stations), c2 = villageCentre(beds, stations, true);
   const centre = { x: Math.floor((c1.x + c2.x) / 2), y: Math.floor((c1.y + c2.y) / 2), z: Math.floor((c1.z + c2.z) / 2) };
 
-  // The platform: floor (which is also the pod's roof), walls three high all round, the four 2 x 2 inside corners solid, then the hole in the floor.
+  // The platform: floor (which is also the pod's roof), walls two high all round (a golem climbs one block, and cannot jump), the four 2 x 2 inside corners solid, then the hole in the floor.
   fill(box(-1, FLOOR_Y, -1, 16, FLOOR_Y, 16), shell, 'platform floor / pod roof');
-  fill(box(-1, FLOOR_Y + 1, -1, 16, FLOOR_Y + 3, -1), shell, 'platform wall, north');
-  fill(box(-1, FLOOR_Y + 1, 16, 16, FLOOR_Y + 3, 16), shell, 'platform wall, south');
-  fill(box(-1, FLOOR_Y + 1, 0, -1, FLOOR_Y + 3, 15), shell, 'platform wall, west');
-  fill(box(16, FLOOR_Y + 1, 0, 16, FLOOR_Y + 3, 15), shell, 'platform wall, east');
+  fill(box(-1, FLOOR_Y + 1, -1, 16, FLOOR_Y + 2, -1), shell, 'platform wall, north');
+  fill(box(-1, FLOOR_Y + 1, 16, 16, FLOOR_Y + 2, 16), shell, 'platform wall, south');
+  fill(box(-1, FLOOR_Y + 1, 0, -1, FLOOR_Y + 2, 15), shell, 'platform wall, west');
+  fill(box(16, FLOOR_Y + 1, 0, 16, FLOOR_Y + 2, 15), shell, 'platform wall, east');
   for (const c of CORNER_BOXES) fill(c, shell, 'solid 2 x 2 corner (the water makes a dead pocket in a corner, and a golem pushed into one would stay there)');
   // The pod, the shaft through it and down to the chamber, the room beside the chamber.
   fill(POD_SHELL, shell, 'pod shell');

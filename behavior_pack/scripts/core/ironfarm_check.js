@@ -93,10 +93,10 @@ export function checkPlan(plan, { deep = true } = {}) {
     if (out.has(`${x},${y},${z}`)) bad.push(`the shell has a hole: ${x},${y},${z} is open to the outside`);
   }
 
-  // The platform: 16 x 16, open to the sky, so its walls hold the water and the golems in: solid all round, three high from the floor (a golem climbs one
+  // The platform: 16 x 16, open to the sky, so its walls hold the water and the golems in: solid all round, two high above the floor (a golem climbs one
   // block, not three), the floor under it all (but the hole), the four 2 x 2 corners solid.
   if (PLATFORM.x2 - PLATFORM.x1 + 1 !== 16 || PLATFORM.z2 - PLATFORM.z1 + 1 !== 16) bad.push('the platform is not 16 x 16');
-  if (PLATFORM.y2 - PLATFORM.y1 + 1 < 3) bad.push('the platform walls are less than three high: a golem could climb out');
+  if (PLATFORM.y2 - PLATFORM.y1 + 1 < 2) bad.push('the platform walls are less than two high: a golem could climb out');
   for (let x = PLATFORM.x1 - 1; x <= PLATFORM.x2 + 1; x++) for (let z = PLATFORM.z1 - 1; z <= PLATFORM.z2 + 1; z++) {
     const inside = x >= PLATFORM.x1 && x <= PLATFORM.x2 && z >= PLATFORM.z1 && z <= PLATFORM.z2;
     for (let y = PLATFORM.y1; y <= PLATFORM.y2; y++) {

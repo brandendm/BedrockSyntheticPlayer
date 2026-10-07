@@ -22,10 +22,11 @@ import { SLAB } from './ironfarm_geo.js';
 export const REACH = 4.0;          // (the game's is 4.5: a margin for where in the cell the eye is)
 export const EYE = 1.52;
 export const JUDGE_AFTER = 24;     // hand attempts before the hit rate is judged
-export const ROUNDS = 3;           // passes over a layer's leftovers (blocks it could not get to or that would not go down) before a command does them
+export const ROUNDS = 5;           // passes over a layer's leftovers (blocks it could not get to or that would not go down) before a command does them
 export const TRIES = 3;
 export const SCAFFOLD_COST = 200;  // a block of scaffolding to stand on (u220: it pillared where it could have stayed put)
 export const ENCLOSED_COST = 400;
+export const PEND_COST = 20;       // a spot in a cell the layer still has to fill (u232: standing where the next block goes)
 export const LOW_COST = 200;        // per level its feet are below the course it lays (u224)
 export const CLIMB_COST = 100;     // a spot it cannot walk to from where it is: a climb (u222)  // a spot in air the farm closes in (the pod, the room, the shaft)            // spots tried for one block in a pass before it is left for the next pass
 
@@ -252,7 +253,8 @@ export async function runBuild(plan, hands, { after = null, maxTicks = Infinity,
         // (u224: up on the course below the one it lays, feet level with it, not under it: from below, the next layer up is out of a jump's
         // reach and it pillars to it.)
         const low = sy < c.y ? (c.y - sy) * LOW_COST : 0;
-        const score = n * 40 - Math.abs(dx) - Math.abs(dz) - walk * 6 - down * 60 - cost + onBuild * 20 - low - (enclosed.has(key(s.x, s.y, s.z)) ? ENCLOSED_COST : 0);
+        const pend = curT.has(key(s.x, sy, s.z)) || curT.has(key(s.x, sy + 1, s.z)) ? PEND_COST : 0;
+        const score = n * 40 - pend - Math.abs(dx) - Math.abs(dz) - walk * 6 - down * 60 - cost + onBuild * 20 - low - (enclosed.has(key(s.x, s.y, s.z)) ? ENCLOSED_COST : 0);
         if (score > bestScore) { bestScore = score; best = s; }
       }
     }
@@ -432,6 +434,22 @@ export async function runBuild(plan, hands, { after = null, maxTicks = Infinity,
         // Along the line from this spot, in order, as far as it reaches (one that would not go down is tried again later; the cell it stands in
         // is skipped and comes round again once it has moved on).
         const missed = new Set();
+        const tryPlace = async (k) => {
+          const now = hands.where();
+          if (now && (now.x !== s.x || now.y !== s.y || now.z !== s.z)) { if (!(await goStand(s))) return false; stats.standMoves++; }
+          const id = finalId.get(key(k.x, k.y, k.z));
+          stats.attempts++;
+          const a = hands.now();
+          let ok = await hands.place(k, id);
+          if (!ok) ok = await hands.place(k, id);
+          stats.handTicks += hands.now() - a;
+          if (ok) {
+            T.delete(key(k.x, k.y, k.z));
+            stats.hand++; stats.hits++; bump(stats.handById, id); W.set(key(k.x, k.y, k.z), id); reach = null; if (back.includes(k)) stats.putBack++;
+          } else { missed.add(key(k.x, k.y, k.z)); handMissed.add(key(k.x, k.y, k.z)); stats.misses = (stats.misses ?? 0) + 1; fail(k); W = new Map(); }
+          judge();
+          return true;
+        };
         const order = line ?? [c0];
         let at = Math.max(0, order.indexOf(c0));
         for (let inner = 0; inner < 400; inner++) {
@@ -445,21 +463,28 @@ export async function runBuild(plan, hands, { after = null, maxTicks = Infinity,
             break;
           }
           if (!k) break;
-          const now = hands.where();
-          if (now && (now.x !== s.x || now.y !== s.y || now.z !== s.z)) { if (!(await goStand(s))) break; stats.standMoves++; }
-          const id = finalId.get(key(k.x, k.y, k.z));
-          stats.attempts++;
-          const a = hands.now();
-          let ok = await hands.place(k, id);
-          if (!ok) ok = await hands.place(k, id);
-          stats.handTicks += hands.now() - a;
-          if (ok) {
-            T.delete(key(k.x, k.y, k.z));
-            stats.hand++; stats.hits++; bump(stats.handById, id); W.set(key(k.x, k.y, k.z), id); reach = null; if (back.includes(k)) stats.putBack++;
-          } else { missed.add(key(k.x, k.y, k.z)); handMissed.add(key(k.x, k.y, k.z)); stats.misses = (stats.misses ?? 0) + 1; fail(k); W = new Map(); }
-          judge();
+          if (!(await tryPlace(k))) break;
           if (stats.gaveUp) break;
           if (inner % 8 === 7) await hands.yield();
+        }
+        // (u232, the player: "it places them so inefficiently it has to come back"): everything else of the layer in reach from this spot, with a
+        // line to a face, is put down while it is here, not only the line it was laying.
+        let last = order.length ? order[Math.min(at, order.length - 1)] : c0;
+        for (;;) {
+          if (stats.gaveUp) break;
+          let pick = null, pd = Infinity;
+          for (const t of T.values()) {
+            const tk = key(t.x, t.y, t.z);
+            if (missed.has(tk) || tk === key(c0.x, c0.y, c0.z)) continue;
+            if (t.x === s.x && t.z === s.z && (t.y === s.y || t.y === s.y + 1)) continue;
+            const d = Math.abs(t.x - last.x) + Math.abs(t.y - last.y) * 2 + Math.abs(t.z - last.z);
+            if (d >= pd || d > 3 || !supportedNow(t) || !placeableFrom(s, t)) continue;
+            pick = t; pd = d;
+          }
+          if (!pick) break;
+          hands.check();
+          if (!(await tryPlace(pick))) break;
+          last = pick;
         }
         // c0 itself should have gone (it was placeable from s): if not, it counts as a try from here.
         if (T.has(key(c0.x, c0.y, c0.z)) && !missed.has(key(c0.x, c0.y, c0.z))) fail(c0);

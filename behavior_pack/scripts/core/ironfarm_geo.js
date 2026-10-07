@@ -23,12 +23,12 @@ export const box = (x1, y1, z1, x2, y2, z2) => ({ x1, y1, z1, x2, y2, z2 });
 
 export const FLOOR_Y = 4;                                 // the platform's floor layer (and the pod's roof; u228: a block higher, the pod 3 high inside)
 export const WATER_Y = 5;                                 // the platform's water layer: feet level of what spawns there
-export const RIM_Y = 8;                                   // slabs on the tops of the walls
+export const RIM_Y = 7;                                   // slabs on the tops of the walls
 export const BASE_Y = -7;                                 // the tower's floor layer, on the ground
-export const PLATFORM = box(0, 5, 0, 15, 7, 15);          // inside the walls
-export const PLATFORM_SHELL = box(-1, 4, -1, 16, 7, 16);
+export const PLATFORM = box(0, 5, 0, 15, 6, 15);          // inside the walls
+export const PLATFORM_SHELL = box(-1, 4, -1, 16, 6, 16);
 /** The four 2 x 2 corners of the platform, solid to the walls' top (the water cannot make a dead pocket there, and nothing stands in one). */
-export const CORNER_BOXES = Object.freeze([box(0, 5, 0, 1, 7, 1), box(14, 5, 0, 15, 7, 1), box(0, 5, 14, 1, 7, 15), box(14, 5, 14, 15, 7, 15)]);
+export const CORNER_BOXES = Object.freeze([box(0, 5, 0, 1, 6, 1), box(14, 5, 0, 15, 6, 1), box(0, 5, 14, 1, 6, 15), box(14, 5, 14, 15, 6, 15)]);
 /** Every platform cell in a corner: [[x, z], ...]. */
 export const CORNERS = Object.freeze(CORNER_BOXES.flatMap((b) => { const o = []; for (let x = b.x1; x <= b.x2; x++) for (let z = b.z1; z <= b.z2; z++) o.push([x, z]); return o; }));
 export const HOLE = box(7, 4, 7, 8, 4, 8);                // the 2 x 2 hole in the floor
@@ -86,7 +86,7 @@ export const STAIR_STATES = Object.freeze({ weirdo_direction: 1, upside_down_bit
 export const CHEST_FACING = 'south';
 export const STAND = Object.freeze({ x: 12.5, y: -6, z: 8.5 });   // where the viewer is put: in the room, the window ahead
 export const POD_VIEW = Object.freeze({ x: 2.5, y: 1, z: 8.5 });
-export const TOP_VIEW = Object.freeze({ x: -0.5, y: 8.5, z: 7.5 }); // on the platform's west wall (slab on top)
+export const TOP_VIEW = Object.freeze({ x: -0.5, y: 7.5, z: 7.5 }); // on the platform's west wall (slab on top)
 export const OUT_VIEW = Object.freeze({ x: 17.5, y: -7, z: 7.5 });  // on the ground outside the door
 export const SPAWN_COLUMNS = box(-3, 0, -3, 18, 0, 18);           // the ground within reach of the spawn volume, in x and z
 

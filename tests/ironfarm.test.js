@@ -169,7 +169,7 @@ test('without the slabs the tops are places to spawn (the check does see them): 
   assert.equal(render(slabbed).id(STEP.x, STEP.y, STEP.z), SLAB);
   // The rim of the platform and the room's roof are slabbed.
   const g2 = render(slabbed);
-  for (const [x, y, z] of [[-1, 8, 5], [16, 8, 5], [5, 8, -1], [5, 8, 16], [0, 8, 0], [12, -2, 8], [10, -2, 5]]) assert.equal(g2.id(x, y, z), SLAB, `${x},${y},${z}`);
+  for (const [x, y, z] of [[-1, 7, 5], [16, 7, 5], [5, 7, -1], [5, 7, 16], [0, 7, 0], [12, -2, 8], [10, -2, 5]]) assert.equal(g2.id(x, y, z), SLAB, `${x},${y},${z}`);
 });
 
 test('a pod with a four-high ceiling would be a leak (the check does see one; u228: three high inside, a golem needs four)', () => {
@@ -192,10 +192,10 @@ test('the pod, the room and the shaft are sealed (a hole in a wall is caught); t
   caught(carve(ironFarmPlan(), 16, 6, 5, 16, 6, 5), /the platform wall has a gap at 16,6,5/);
   caught(carve(ironFarmPlan(), 3, 4, 3, 3, 4, 3), /the platform floor has a gap at 3,3/);
   caught(carve(ironFarmPlan(), 0, 6, 0, 0, 6, 0), /the platform wall has a gap at 0,6,0/);
-  caught(carve(ironFarmPlan(), -1, 7, -1, 16, 7, -1), /the platform wall has a gap at -1,7,-1/);
-  assert.equal(PLATFORM.y2 - PLATFORM.y1 + 1, 3);
+  caught(carve(ironFarmPlan(), -1, 6, -1, 16, 6, -1), /the platform wall has a gap at -1,6,-1/);
+  assert.equal(PLATFORM.y2 - PLATFORM.y1 + 1, 2);
   assert.equal(CORNERS.length, 16);
-  for (const [x, z] of CORNERS) for (let y = 5; y <= 7; y++) assert.equal(g.id(x, y, z), SHELL, `corner ${x},${z}`);
+  for (const [x, z] of CORNERS) for (let y = 5; y <= 6; y++) assert.equal(g.id(x, y, z), SHELL, `corner ${x},${z}`);
   // u228 (the player): the pod is three high inside, so a villager can stand on a bed; still too low for a golem (four).
   assert.equal(POD.y2 - POD.y1 + 1, 3);
 });
@@ -532,7 +532,7 @@ test('every placement is inside the farm box, which is the tower and the step', 
     const pts = o.op === 'set' ? [[o.x, o.y, o.z]] : [[o.box.x1, o.box.y1, o.box.z1], [o.box.x2, o.box.y2, o.box.z2]];
     for (const [x, y, z] of pts) assert.ok(x >= c.x1 && x <= c.x2 && y >= c.y1 && y <= c.y2 && z >= c.z1 && z <= c.z2);
   }
-  assert.deepEqual([c.x1, c.y1, c.z1, c.x2, c.y2, c.z2], [-1, -7, -1, 16, 8, 16]);
+  assert.deepEqual([c.x1, c.y1, c.z1, c.x2, c.y2, c.z2], [-1, -7, -1, 16, 7, 16]);
 });
 
 test('setblock arguments: states quoted the way the game wants them', () => {
