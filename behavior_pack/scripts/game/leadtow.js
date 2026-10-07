@@ -149,9 +149,14 @@ export class LeadTow {
     for (let k = 1; k <= land; k++) {
       S.check(gen);
       // The boat close enough that the next cell will not stretch the lead past the guard.
+      // (u251 live, leadledge: the boat sat jammed at the wall's foot 8 away and the bot stood at the lip of the pit for 20 s waiting for it to
+      // come, before the first block: a boat that does not move in 2 s is jammed, and is for the sling to free, not for waiting on)
+      const b0 = { x: boat.location.x, z: boat.location.z };
       for (let w = 0; w < 100; w++) {
         const sepNow = flat(sim.location, boat.location);
         if (sepNow <= guard - 2 || !boat.isValid) break;
+        if (w >= 20 && flat(boat.location, b0) < 0.4) return { built, width, why: 'the boat is jammed', jam: true };
+        if (flat(boat.location, b0) >= 0.4) { b0.x = boat.location.x; b0.z = boat.location.z; w = Math.min(w, 10); }
         try { sim.stopMoving(); } catch { /* */ }
         await S.wait(gen, 2);
       }
@@ -239,6 +244,8 @@ export class LeadTow {
         // only bridging and pillaring (never a drop, a dig).
         const bg = await this.bridgeGap(gen, boat, target, guard);
         if (bg.built) { m.built += bg.built; note(`bridged a gap ${bg.width} wide`); return plan(target); }
+        // (the boat is jammed behind us: stand and let the loop's own jam handling sling it free, with a runway if need be, then take a new route)
+        if (bg.jam) { note('the boat is jammed: sling it before bridging'); return [{ x: from.x, y: from.y, z: from.z, hold: true, fresh: true }]; }
         if (bg.why && bg.why !== 'no gap straight on') note(`gap: ${bg.why}`);
         const ar = await a.plan(from, target, 1.5, 20000, null, { actions: S.actionOpts(), weight: 2 });
         S.check(gen);
@@ -379,6 +386,7 @@ export class LeadTow {
           if (r.ok) { m.slingOk++; stuckCount = 0; }
           if (r.snapped) { m.snapped = true; m.why = 'the lead broke in a sling'; break; }
           lastBoatMoveTick = system.currentTick;
+          if (wp.fresh) route = null; // (a stand-and-sling waypoint: on with a new route)
           continue;
         }
         // (u241) Jammed with no step to lift it over (a corner, the edge of a gate), and the player was seen to jump and yank the boat free at
