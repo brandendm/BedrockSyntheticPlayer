@@ -213,7 +213,20 @@ class AutoRun:
                 send("reload")
                 self.sleep(3)
                 self._wait(lambda: not self._bot_ready()[0], 10, "reloading the game's scripts")  # it goes away briefly
-        ok = self._wait(lambda: self._bot_ready()[0] and (not req.get("expect_build") or (self._bot_ready()[1] or {}).get("build") == req["expect_build"]), 120, "waiting for the bot to be back")
+        # (A script reload leaves the game with no bot: the new scripts are polling but nobody is spawned, so `spawn` is queued, again every 20 s.)
+        last_spawn = [-1e9]
+
+        def back() -> bool:
+            ready, d = self._bot_ready()
+            if not ready:
+                d2, age = self.status()
+                if d2 is not None and age < 6 and not d2.get("online") and self.clock() - last_spawn[0] > 20:
+                    self.queue("spawn")
+                    last_spawn[0] = self.clock()
+                    self._log({"event": "queued spawn"})
+                return False
+            return not req.get("expect_build") or (d or {}).get("build") == req["expect_build"]
+        ok = self._wait(back, 150, "waiting for the bot to be back")
         _, data = self._bot_ready()
         build = (data or {}).get("build")
         if not ok:

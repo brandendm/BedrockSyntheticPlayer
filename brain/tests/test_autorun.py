@@ -9,7 +9,8 @@ from brain.autorun import AutoRun, RequestError, build_result, parse_request
 class Fake:
     """A pretend brain: a bot that comes back after a reload, runs the tests it is told to, and a clock that the sleeps advance."""
 
-    def __init__(self, build="u253", can_reload=True):
+    def __init__(self, build="u253", can_reload=True, needs_spawn=False):
+        self.needs_spawn = needs_spawn
         self.now = 1000.0
         self.build = build
         self.queued, self.sent = [], []
@@ -29,7 +30,9 @@ class Fake:
             self.batch_v = {"t": "2999-01-01 00:00:00", "passed": 1, "total": 1}
 
     def status(self):
-        return {"online": True, "build": self.build, "tests": {"running": self.running}}, 0.5
+        # (after a reload the game has no bot until `spawn` is queued)
+        online = not (self.needs_spawn and "spawn" not in self.queued)
+        return {"online": online, "build": self.build, "tests": {"running": self.running}}, 0.5
 
     def server_send(self):
         if not self.can_reload:
@@ -80,6 +83,14 @@ class RunTests(unittest.TestCase):
             self.assertIn("outcome: ok", res)
             self.assertFalse((Path(tmp) / "inbox" / "run.json").exists())
             self.assertEqual(len(list((Path(tmp) / "inbox" / "done").iterdir())), 1)
+
+    def test_a_reload_that_leaves_no_bot_is_followed_by_spawn(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            f = Fake(needs_spawn=True); a = make(tmp, f); a.set_enabled(True)
+            (Path(tmp) / "inbox" / "run.json").write_text('{"tests": ["leadledge"], "reload": true, "expect_build": "u253"}')
+            a.poll_once()
+            self.assertIn("spawn", f.queued)
+            self.assertLess(f.queued.index("spawn"), f.queued.index("test leadledge"))
 
     def test_wrong_build_says_so_and_runs_nothing(self):
         with tempfile.TemporaryDirectory() as tmp:
