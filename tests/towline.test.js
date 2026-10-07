@@ -91,3 +91,14 @@ test('boatToMob: stand past the mob on the line from the boat, within the lead\'
   assert.ok(Math.abs(n.stand.x - 7.2) < 1e-9 && Math.abs(n.stand.z) < 1e-9);
   assert.ok(BOAT_CLIMB > 0);
 });
+
+test('flankSpots: a boat jammed on the edge of a gate gets a spot that lines it up with the gate (u255, leadgate live)', () => {
+  const X = -40, Z = -40;
+  const solid = (x, z) => z <= Z - 4 || z >= Z + 4 || x === X + 34 || (x === X + 10 && !(z >= Z + 1 && z <= Z + 3));
+  const surf = (x, z) => (solid(x, z) ? 155 : 151);
+  const standable = (x, z) => (solid(x, z) ? null : 151);
+  const boat = { x: -30.7, z: -39.3 }, wp = { x: -23, z: -40 };
+  const spots = flankSpots({ surf, standable, boat, level: 151, wp, me: { x: -24.3, z: -39.4 } });
+  assert.ok(spots.length > 0, 'a spot was found');
+  assert.ok(spots[0].end.x > -29, 'the boat would end past the wall');
+});

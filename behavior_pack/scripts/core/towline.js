@@ -64,7 +64,7 @@ export function boatEnd(surf, boat, p, level) {
  * us is clear, we can stand (standable(x, z) -> y or null, within `maxDy` of the boat's level), and the boat would end nearer the way
  * on (`wp`) than it is. Best first (the boat ends nearest wp; ties: the shorter walk from `me`). [{ x, z, y, end ({ x, z }), gain }]
  */
-export function flankSpots({ surf, standable, boat, level, wp, me, radii = [6, 7.5], n = 24, maxDy = 1.5, min = 1.8 }) {
+export function flankSpots({ surf, standable, boat, level, wp, me, radii = [5, 5.8, 6.6, 7.4, 8.2], n = 72, maxDy = 1.5, min = 1.8 }) {
   const here = flat(boat, wp), out = [];
   for (const r of radii) {
     for (let i = 0; i < n; i++) {
