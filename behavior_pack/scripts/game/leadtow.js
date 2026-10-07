@@ -259,7 +259,7 @@ export class LeadTow {
       return out;
     };
 
-    let wetTicks = 0, stopErr = null; a.towLast = null;
+    let wetTicks = 0, stopErr = null, lastPos = { ...subject().location }, stillSince = system.currentTick, stillSaid = 0; a.towLast = null;
     // (u244: a run stopped by hand, or replaced, is recorded like any other: what it did so far, and where the boat and we were)
     try {
     for (let tick = 0; tick < (opts.maxS ?? 120) * 20; tick++) {
@@ -292,6 +292,15 @@ export class LeadTow {
         if (noProg++ >= 1) { m.why = `no progress for 25 s (boat ${bd.toFixed(0)} from the goal, ${d.toFixed(1)} from me; ${dbg})`; break; }
         note(`no progress: new route (${dbg})`); route = null; bestAt = system.currentTick; continue; } }
       const wp = route[wi];
+      // (u247 live, leadledge: the bot stood on the first step for 20 s, nothing logged, the boat 4.1 behind, and the run was stopped by hand. A walker that has not moved
+      // for 4 s, while not waiting for the boat at the end of its route, says where it is and why it might be, hops, and after 8 s takes a new route.)
+      if (flat(pos, lastPos) > 0.4 || Math.abs(pos.y - lastPos.y) > 0.4) { lastPos = { ...pos }; stillSince = system.currentTick; }
+      else if (!(wp.hold && flat(pos, wp) < 1.1) && system.currentTick - stillSince > 80 && system.currentTick - stillSaid > 80) {
+        stillSaid = system.currentTick;
+        trace(`tow: standing still ${Math.round((system.currentTick - stillSince) / 20)}s at ${pos.x.toFixed(1)},${pos.y.toFixed(1)},${pos.z.toFixed(1)}: waypoint ${wi}/${route.length} at ${wp.x.toFixed(1)},${wp.y.toFixed(1)},${wp.z.toFixed(1)}${wp.act ? ' (a building step)' : ''}, boat ${d.toFixed(1)} away and ${system.currentTick - lastBoatMoveTick > 10 ? 'still' : 'moving'}, guard ${guard.toFixed(1)}`);
+        try { a.body.jump(); } catch { /* */ }
+        if (system.currentTick - stillSince > 160) { note('standing still: new route'); route = null; stillSince = system.currentTick; continue; }
+      }
       const jammed = d > lo + 0.5 && system.currentTick - lastBoatMoveTick > patience;
       const boatMoving = system.currentTick - lastBoatMoveTick <= 10;
       // The lead nearly at its limit with the boat coming along: stop and let it catch up (no tug). Slower from 2.5 short of it.
