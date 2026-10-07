@@ -450,8 +450,12 @@ export async function runBuild(plan, hands, { after = null, maxTicks = Infinity,
           judge();
           return true;
         };
-        const order = line ?? [c0];
-        let at = Math.max(0, order.indexOf(c0));
+        // (u232 live: a row of slabs laid nearest-first, each one just laid hid the face of the next from the eye ("no line to the Up face", 236 tries
+        // at the room's roof). Slabs go farthest-first from the spot, back toward it, as a player lays a row of them walking backward.)
+        const farFirst = c0.id === SLAB;
+        const dist = (t) => Math.hypot(t.x - s.x, t.z - s.z) + Math.abs(t.y - s.y) * 0.5;
+        const order = farFirst ? [...(line ?? [c0])].sort((a, b) => dist(b) - dist(a)) : (line ?? [c0]);
+        let at = farFirst ? 0 : Math.max(0, order.indexOf(c0));
         for (let inner = 0; inner < 400; inner++) {
           hands.check();
           let k = null;
@@ -460,6 +464,7 @@ export async function runBuild(plan, hands, { after = null, maxTicks = Infinity,
             if (!T.has(key(t.x, t.y, t.z)) || missed.has(key(t.x, t.y, t.z))) { at++; continue; }
             if (t.x === s.x && t.z === s.z && (t.y === s.y || t.y === s.y + 1)) { at++; continue; }
             if (placeableFrom(s, t)) { k = t; break; }
+            if (farFirst) { at++; continue; }
             break;
           }
           if (!k) break;
@@ -477,8 +482,10 @@ export async function runBuild(plan, hands, { after = null, maxTicks = Infinity,
             const tk = key(t.x, t.y, t.z);
             if (missed.has(tk) || tk === key(c0.x, c0.y, c0.z)) continue;
             if (t.x === s.x && t.z === s.z && (t.y === s.y || t.y === s.y + 1)) continue;
-            const d = Math.abs(t.x - last.x) + Math.abs(t.y - last.y) * 2 + Math.abs(t.z - last.z);
-            if (d >= pd || d > 3 || !supportedNow(t) || !placeableFrom(s, t)) continue;
+            const near = Math.abs(t.x - last.x) + Math.abs(t.y - last.y) * 2 + Math.abs(t.z - last.z);
+            const slabFar = farFirst && t.id === SLAB;
+            const d = slabFar ? -dist(t) : near;
+            if (d >= pd || (!slabFar && near > 3) || !supportedNow(t) || !placeableFrom(s, t)) continue;
             pick = t; pd = d;
           }
           if (!pick) break;

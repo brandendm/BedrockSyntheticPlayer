@@ -338,6 +338,7 @@ async function start(agent, player, args) {
       } finally { if (!was) { try { sim.isSneaking = false; } catch { /* */ } } }
     };
     let missLogs = 0;
+    const missSeen = new Set();
     const hands = {
       blockAt: (c) => { const q = W(off, c); try { const b = dim.getBlock(q); return b ? norm(b) : null; } catch { return null; } },
       where: () => { const l = sim.location; return { x: Math.floor(l.x) - off.x, y: Math.floor(l.y + 0.05) - off.y, z: Math.floor(l.z) - off.z }; },
@@ -422,7 +423,7 @@ async function start(agent, player, args) {
         } catch (e) { if (aborted(e)) throw e; S.log(`farmbuild: place ${id}: ${e}`); }
         const done = ok && hands.blockAt(c) === id;
         // (u231: why a block would not go down by hand, for the log: the corners that went in by command said nothing)
-        if (!done && missLogs++ < 400) S.log(`farmbuild: MISS ${id} at ${c.x} ${c.y} ${c.z} from ${JSON.stringify(ft)} (${mode}): ${ok ? `read back ${hands.blockAt(c)}` : agent.homestead.placeWhy ?? '?'}`);
+        if (!done && !missSeen.has(`${id} ${c.x} ${c.y} ${c.z}`) && missSeen.add(`${id} ${c.x} ${c.y} ${c.z}`) && missLogs++ < 400) S.log(`farmbuild: MISS ${id} at ${c.x} ${c.y} ${c.z} from ${JSON.stringify(ft)} (${mode}): ${ok ? `read back ${hands.blockAt(c)}` : agent.homestead.placeWhy ?? '?'}`);
         return done;
       },
       set(c, id) {
