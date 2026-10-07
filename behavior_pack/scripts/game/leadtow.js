@@ -253,7 +253,7 @@ export class LeadTow {
       res.path.forEach((c, i) => {
         const pt = { x: c.x + 0.5, y: c.y, z: c.z + 0.5, node: c, act: built && i > 0 && !isWalkMove(c) };
         const prev = res.path[i - 1], next = res.path[i + 1];
-        const keep = i === 0 || i === res.path.length - 1 || pt.act || (built && next && !isWalkMove(next)) || prev.y !== c.y || (next && next.y !== c.y) || i % 2 === 0;
+        const keep = i === 0 || i === res.path.length - 1 || pt.act || (built && next && !isWalkMove(next)) || prev.y !== c.y || (next && next.y !== c.y) || (next && ((c.x - prev.x) !== (next.x - c.x) || (c.z - prev.z) !== (next.z - c.z))) || i % 2 === 0; // (u248: every corner is a waypoint: the walk is a straight line between them, and cut a corner of a gate's wall)
         if (keep) out.push(pt);
       });
       return out;
@@ -294,7 +294,7 @@ export class LeadTow {
       const wp = route[wi];
       // (u247 live, leadledge: the bot stood on the first step for 20 s, nothing logged, the boat 4.1 behind, and the run was stopped by hand. A walker that has not moved
       // for 4 s, while not waiting for the boat at the end of its route, says where it is and why it might be, hops, and after 8 s takes a new route.)
-      if (flat(pos, lastPos) > 0.4 || Math.abs(pos.y - lastPos.y) > 0.4) { lastPos = { ...pos }; stillSince = system.currentTick; }
+      if (flat(pos, lastPos) > 0.4) { lastPos = { ...pos }; stillSince = system.currentTick; }
       else if (!(wp.hold && flat(pos, wp) < 1.1) && system.currentTick - stillSince > 80 && system.currentTick - stillSaid > 80) {
         stillSaid = system.currentTick;
         trace(`tow: standing still ${Math.round((system.currentTick - stillSince) / 20)}s at ${pos.x.toFixed(1)},${pos.y.toFixed(1)},${pos.z.toFixed(1)}: waypoint ${wi}/${route.length} at ${wp.x.toFixed(1)},${wp.y.toFixed(1)},${wp.z.toFixed(1)}${wp.act ? ' (a building step)' : ''}, boat ${d.toFixed(1)} away and ${system.currentTick - lastBoatMoveTick > 10 ? 'still' : 'moving'}, guard ${guard.toFixed(1)}`);
@@ -321,7 +321,8 @@ export class LeadTow {
       }
       // (the end of the route, with the boat still short of its zone: wait here, unless the boat is stuck, which is handled below)
       if (wp.hold && flat(pos, wp) < 1.1 && !stuck) { await S.wait(gen, 2); continue; }
-      if (!wp.hold && flat(pos, wp) < 1.1) { wi++; continue; }
+      // (u248 live, leadledge: the first step counted as reached from beside it, and the next waypoint, 2 up, was then walked at without a hop: a waypoint above us counts only once we are up on it)
+      if (!wp.hold && flat(pos, wp) < 1.1 && pos.y >= wp.y - 0.6) { wi++; continue; }
       // Stuck: the boat hasn't moved while the lead is taut, or the lead is nearly at the guard distance.
       if (stuck) {
         try { sim.stopMoving(); } catch { /* */ }
