@@ -180,6 +180,9 @@ class AutoRun:
             self._finish(req_file, stamp, req, f"refused: that would be more than {MAX_TESTS_PER_HOUR} test runs in an hour ({len(hour)} so far)", None)
             return True
         self.run_times = hour + [self.clock()] * len(req["tests"])
+        # (u257 live: the request was archived when the run FINISHED, so a newer run.json written while it ran was archived unrun: it moves at the start)
+        try: req_file.replace(self.inbox / "done" / f"{stamp}-run.json")
+        except OSError: pass
         self._run(req_file, stamp, req)
         return True
 
@@ -261,7 +264,8 @@ class AutoRun:
         try:
             if outcome.startswith("refused"):
                 (self.inbox / "result.txt").write_text(f"AUTO RUN {outcome}\n", encoding="utf-8")
-            req_file.replace(self.inbox / "done" / f"{stamp}-run.json")
+            if outcome.startswith("refused"):
+                req_file.replace(self.inbox / "done" / f"{stamp}-run.json")   # (a handled one was archived when it started: u257)
         except OSError:
             pass
         self.history.append({"t": time.strftime("%H:%M:%S"), "tests": req.get("tests"), "outcome": outcome})
