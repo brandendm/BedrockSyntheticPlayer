@@ -34,7 +34,7 @@ function makeAgent(knobs = {}) {
     skills: {
       check(gen) { if (gen !== agent.taskGen) throw new Aborted(); },
       async wait(gen, n) { await MC.system.waitTicks(n); this.check(gen); },
-      log(m) { if (process.env.SIMLOG && /COMMAND|CARRY/.test(m)) console.log("LOG", m); },
+      log(m) { if (process.env.SIMLOG && new RegExp(process.env.SIMLOG).test(m)) console.log("LOG", m); },
       // (The fake bot's feet: it gets to any spot with a block under it and room for it, as the real one walks; the walking itself is the game's.)
       // A spot over air: a block of what it carries put under it first (a bridge or the top of a pillar), as the real one does; scaffolding.
       async walkTo(gen, cell) {

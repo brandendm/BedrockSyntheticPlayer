@@ -765,3 +765,5 @@ Say (in chat to the bot, `!bot ...`, or the dashboard box) things like **"make i
 - u233: buildfarm: slabs are laid farthest-first from the spot (u232 live: each slab just laid hid the face of the next one: "no line to the Up face", 236 tries on the room's roof, then commands); a miss is logged once per block.
 
 - u234: buildfarm (core/farmbuild.js, any plan): the farthest-first rule is now for every low block (slabs, stairs, carpet, trapdoors, plates, buttons, rails, torches, signs, candles), not only the farm's slabs.
+
+- u235: report: a BUILD VERDICT section at the top (commands, pillars, stalls, times it stood in a cell still to fill); an ON TARGET line each time the bot stands in a cell the layer still has to fill; every COMMAND line says the last reason the block would not go down by hand; the LAYER line counts that layer's misses by reason; TIDY lines for the scaffold cleanup. Nothing removed.

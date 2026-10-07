@@ -339,7 +339,10 @@ async function start(agent, player, args) {
     };
     let missLogs = 0;
     const missSeen = new Set();
+    const missWhy = new Map();          // (u235) the last reason a block would not go down by hand, for the command line
+    let missLayer = {};                 // (u235) this layer's misses by reason, in the LAYER line
     const hands = {
+      why: (c) => missWhy.get(`${c.x} ${c.y} ${c.z}`),
       blockAt: (c) => { const q = W(off, c); try { const b = dim.getBlock(q); return b ? norm(b) : null; } catch { return null; } },
       where: () => { const l = sim.location; return { x: Math.floor(l.x) - off.x, y: Math.floor(l.y + 0.05) - off.y, z: Math.floor(l.z) - off.z }; },
       // On its own feet (u217: never teleported once it is on the pad): walking, jumping up onto what it has laid, pillaring and bridging with the
@@ -371,6 +374,7 @@ async function start(agent, player, args) {
       /** Its scaffolding down, by its own hand, top first: every block it pillared or bridged with that is not the farm's own. */
       async tidy() {
         const todo = [...scaffold.values()].sort((a, b) => b.y - a.y);
+        S.log(`farmbuild: TIDY ${todo.length} scaffold blocks to take down: ${todo.map((c) => `${c.x} ${c.y} ${c.z}`).join(', ') || 'none'}; bot at ${JSON.stringify(hands.where())}`);
         for (const c of todo) {
           S.check(gen);
           const k = `${c.x},${c.y},${c.z}`;
@@ -383,7 +387,7 @@ async function start(agent, player, args) {
             if (!S.inReach(q)) await S.goNear(gen, { x: q.x + 0.5, y: q.y + 1, z: q.z + 0.5 }, 2.5, 2);
             ok = await S.mine(gen, q, { collect: true, allowBelow: true });
           } catch (e) { if (aborted(e)) throw e; }
-          if (ok) { scaffold.delete(k); stats.scaffoldDown = (stats.scaffoldDown ?? 0) + 1; }
+          if (ok) { scaffold.delete(k); stats.scaffoldDown = (stats.scaffoldDown ?? 0) + 1; } else S.log(`farmbuild: TIDY could not take down ${k} (reach ${S.inReach(q)}, bot at ${JSON.stringify(hands.where())})`);
         }
       },
       /** One block of its own in a cell the farm wants something else in: broken by hand, nothing else of its scaffolding touched (u222). */
@@ -423,6 +427,12 @@ async function start(agent, player, args) {
         } catch (e) { if (aborted(e)) throw e; S.log(`farmbuild: place ${id}: ${e}`); }
         const done = ok && hands.blockAt(c) === id;
         // (u231: why a block would not go down by hand, for the log: the corners that went in by command said nothing)
+        if (!done) {
+          const why = ok ? `read back ${hands.blockAt(c)}` : (agent.homestead.placeWhy ?? '?');
+          missWhy.set(`${c.x} ${c.y} ${c.z}`, `${why} (${mode}, from ${JSON.stringify(ft)})`);
+          const r = String(why).replace(/\d+/g, '#').slice(0, 60);
+          missLayer[r] = (missLayer[r] ?? 0) + 1;
+        }
         if (!done && !missSeen.has(`${id} ${c.x} ${c.y} ${c.z}`) && missSeen.add(`${id} ${c.x} ${c.y} ${c.z}`) && missLogs++ < 400) S.log(`farmbuild: MISS ${id} at ${c.x} ${c.y} ${c.z} from ${JSON.stringify(ft)} (${mode}): ${ok ? `read back ${hands.blockAt(c)}` : agent.homestead.placeWhy ?? '?'}`);
         return done;
       },
@@ -662,7 +672,8 @@ async function start(agent, player, args) {
         }
       }
       J.phase = `layer ${y} done`;
-      S.log(`farmbuild: LAYER ${y} done ${mins(system.currentTick - J.started)} in: ${st.hand} by hand, ${st.command} by command, ${st.standMoves} spots, ${st.standFails} spots it could not get to, ${st.scaffoldUp ?? 0} scaffolding, ${partStats.hand} parts by hand, ${pending.length} parts waiting`);
+      S.log(`farmbuild: LAYER ${y} done ${mins(system.currentTick - J.started)} in: ${st.hand} by hand, ${st.command} by command, ${st.standMoves} spots, ${st.standFails} spots it could not get to, ${st.scaffoldUp ?? 0} scaffolding, ${partStats.hand} parts by hand, ${pending.length} parts waiting; on a cell to fill ${st.onTarget ?? 0}; misses this layer: ${Object.entries(missLayer).map(([k, v]) => `${v}x ${k}`).join(' | ') || 'none'}`);
+      missLayer = {};
       if ([-4, 0, 3, 6].includes(y)) say(`Layer ${y} done: ${st.hand} of ${st.cells} blocks placed by the bot so far, ${st.command} by command, ${mins(system.currentTick - J.started)} in.`);
       topUp(sim);
     };

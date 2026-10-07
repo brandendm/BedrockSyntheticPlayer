@@ -143,7 +143,7 @@ export async function runBuild(plan, hands, { after = null, maxTicks = Infinity,
     const id = finalId.get(key(c.x, c.y, c.z));
     if (hands.set(c, id)) {
       W.set(key(c.x, c.y, c.z), id); stats.command++; bump(stats.commandById, id); if (why) stats[why]++;
-      hands.note?.(`COMMAND ${id} at ${c.x} ${c.y} ${c.z} (${why || 'set'}), layer ${stats.layer}, bot at ${JSON.stringify(hands.where())}`);
+      hands.note?.(`COMMAND ${id} at ${c.x} ${c.y} ${c.z} (${why || 'set'}; last miss: ${hands.why?.(c) ?? 'none logged'}), layer ${stats.layer}, bot at ${JSON.stringify(hands.where())}`);
       return true;
     }
     return false;
@@ -433,6 +433,8 @@ export async function runBuild(plan, hands, { after = null, maxTicks = Infinity,
           continue;
         }
         stats.standMoves++;
+        // (u235: logged, the player: "it walks where it is trying to place the next block": a spot in a cell the layer still has to fill)
+        if (curT.has(key(s.x, s.y, s.z)) || curT.has(key(s.x, s.y + 1, s.z))) { stats.onTarget = (stats.onTarget ?? 0) + 1; hands.note?.(`ON TARGET stood in a cell still to fill (${s.x} ${s.y} ${s.z}) to place ${c0.id} at ${c0.x} ${c0.y} ${c0.z}, layer ${stats.layer}, ${[...T.values()].filter((t) => t.x === s.x && t.z === s.z && (t.y === s.y || t.y === s.y + 1)).length} of its own cells still to fill, no better spot`); }
         // Along the line from this spot, in order, as far as it reaches (one that would not go down is tried again later; the cell it stands in
         // is skipped and comes round again once it has moved on).
         const missed = new Set();

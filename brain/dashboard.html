@@ -621,6 +621,15 @@ async function fullReport() {
     `world session: ${about?.session?.world ?? '?'} since ${about?.session?.started ?? '?'} (build ${about?.session?.build ?? '?'}; the logs below start there: a new world or a restarted game starts a new one, deaths and reloads don't)`,
     `bot online: ${s.online}  status age: ${st?.age_s ?? '?'} s  game: ${j(dg.game)}`,
   ].join('\n')));
+  { // (u235) the build's verdict first, so it is the first thing read: any command or pillar is a fail
+    const fb = (tr?.lines || []).map((l) => String(l.msg || '')).filter((m) => m.startsWith('farmbuild:'));
+    if (fb.length) {
+      const n = (re) => fb.filter((m) => re.test(m)).length;
+      const lastLayer = [...fb].reverse().find((m) => /LAYER .* done/.test(m)) || 'no layer finished';
+      const cmds = n(/COMMAND /), pillars = n(/SCAFFOLD /), onT = n(/ON TARGET/);
+      out.push(section('BUILD VERDICT', [`${cmds || pillars ? 'FAILED' : 'PASSED so far'}: ${cmds} blocks by command, ${pillars} pillar/bridge events, ${n(/STALL \d+ s/)} stalls, ${onT} times it stood in a cell it still had to fill, ${n(/MISS /)} misses logged`, `last: ${lastLayer}`].join('\n')));
+    }
+  }
   out.push(section('NOW', [
     `pos ${s.pos ? `${s.pos.x} ${s.pos.y} ${s.pos.z}` : '?'} (${s.dim})  biome ${s.biome ?? '?'}  underground ${s.underground}  ravine ${s.ravine ? `yes, walls ${s.ravine} high` : 'no'}  water ${s.underwater ? 'head under' : s.inWater ? 'in it' : 'no'}  day ${s.day} time ${s.time} ${s.night ? '(night)' : ''}`,
     `health ${s.health}  food ${s.hunger}  air ${s.air}%  held ${s.held ?? 'nothing'}  mode ${s.mode}  task ${s.task}  step ${s.step ?? '-'}  (${s.stepLabel ?? ''})`,
