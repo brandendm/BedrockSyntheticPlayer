@@ -39,6 +39,7 @@
 //                 blocks, light it, walk in and arrive in the Nether (then back; the Nether side's portal stays)
 //   horse         a wild horse and a saddle (given): tame it the way a player does (get on, get thrown,
 //                 again), saddle it, ride it a few blocks
+//   leadstep, leadstair, leadledge, leadturn, leadgate   the tow courses (core/towcourses.js): one thing to get right at a time; you first, watched, then the bot
 //   leadsling     calibrates the sling: a boat jammed at the foot of a 1, 2 and 3 high step with the bot on top, the lead
 //                 stretched to 5, 7, 9 and 11 blocks and a jump: the least stretch that brings the boat up each height, and
 //                 where the lead snaps (kept in the world as leadCal.sling)
@@ -66,14 +67,16 @@ import { getPlan } from '../core/learnhouse.js';
 import { passRates, addStat } from '../core/testrun.js';
 import { compare } from '../core/testrun.js';
 import { boatToMob } from '../core/towline.js';
+import { TOW_META, TOW_NAMES, towCourse } from '../core/towcourses.js';
 import { ARENAS, testArena, arenaCommand } from './arenas.js';
 
 /** How far the slab reaches round the site (west, east, to each side) for a test; the backed-up box is the same (a structure is 64 across at most). */
 function extFor(name) {
+  if (TOW_META[name]) return TOW_META[name].ext;
   return name === 'farm' || name === 'farmrace' ? { w: 22, e: 36, r: 24 } : name === 'horserace' || name === 'elytra' || name === 'boatcross' ? { w: 8, e: 54, r: 10 } : name === 'bow' ? { w: 14, e: 34, r: 14 }
     : name === 'leadboat' || name === 'villagerhaul' ? { w: 12, e: 44, r: 12 } : name === 'forest' ? { w: 6, e: 34, r: 20 } : { w: 14, e: 18, r: 12 };
 }
-const NAMES = ['roof', 'tower', 'hole', 'pit', 'trap', 'climb', 'ledge', 'ladder', 'husk', 'creeper', 'sheep', 'pen', 'smelt', 'smeltlogs', 'shelter', 'house', 'resume', 'ghostlog', 'quarry', 'dark', 'replant', 'litter', 'trader', 'iron', 'farm', 'equip', 'water', 'bucketfarm', 'treetop', 'corner', 'leap', 'bridge', 'fall', 'vines', 'stairgap', 'loot', 'shield', 'skel', 'rest', 'nights', 'calibrate', 'portal', 'horse', 'leadboat', 'leadsling', 'bow', 'duel', 'horserace', 'pillarrace', 'woodrace', 'lavacross', 'obsidian', 'mineore', 'enderman', 'blaze', 'ghast', 'witherskeleton', 'placerate', 'farmrace', 'creepers', 'ravine', 'elytra', 'villagerhaul', 'forest', 'vineclimb', 'boatcross'];
+const NAMES = ['roof', 'tower', 'hole', 'pit', 'trap', 'climb', 'ledge', 'ladder', 'husk', 'creeper', 'sheep', 'pen', 'smelt', 'smeltlogs', 'shelter', 'house', 'resume', 'ghostlog', 'quarry', 'dark', 'replant', 'litter', 'trader', 'iron', 'farm', 'equip', 'water', 'bucketfarm', 'treetop', 'corner', 'leap', 'bridge', 'fall', 'vines', 'stairgap', 'loot', 'shield', 'skel', 'rest', 'nights', 'calibrate', 'portal', 'horse', 'leadboat', 'leadsling', 'bow', 'duel', 'horserace', 'pillarrace', 'woodrace', 'lavacross', 'obsidian', 'mineore', 'enderman', 'blaze', 'ghast', 'witherskeleton', 'placerate', 'farmrace', 'creepers', 'ravine', 'elytra', 'villagerhaul', 'forest', 'vineclimb', 'boatcross', ...TOW_NAMES];
 let running = false;
 /** The bot's last forest turn (its logs and trees), for your turn to be compared with. @type {{logs: number, trees: number, cut: number, build: string} | null} */
 let forestBot = null;
@@ -83,7 +86,7 @@ let siteCounter = 0;
 // Tests that wait out real time (a 5 minute despawn, a night, a furnace, a long walk): left out of
 // `!bot test all quick`. Their real durations are in the batch report (`secs`), so this list can be
 // corrected from data: anything over QUICK_S in the last report belongs here.
-const SLOW = new Set(['villagerhaul', 'forest', 'loot', 'nights', 'rest', 'shelter', 'house', 'resume', 'quarry', 'farm', 'bucketfarm', 'iron', 'sheep', 'pen', 'smelt', 'smeltlogs', 'trader', 'ghostlog', 'stairgap', 'portal', 'horse', 'leadboat', 'leadsling', 'duel', 'horserace']);
+const SLOW = new Set(['villagerhaul', 'forest', 'loot', 'nights', 'rest', 'shelter', 'house', 'resume', 'quarry', 'farm', 'bucketfarm', 'iron', 'sheep', 'pen', 'smelt', 'smeltlogs', 'trader', 'ghostlog', 'stairgap', 'portal', 'horse', 'leadboat', 'leadsling', 'duel', 'horserace', ...TOW_NAMES]);
 /** Tests that need you there (you are the opponent). */
 const PLAYER_ONLY = new Set(['duel', 'horserace', 'pillarrace', 'woodrace', 'farmrace']);
 const QUICK_S = 60;
@@ -96,7 +99,7 @@ const NIGHT = new Set(['shelter', 'house', 'resume', 'nights', 'rest', 'dark', '
 const NATURAL = new Set(['water', 'bucketfarm', 'treetop', 'vines', 'ghostlog', 'nights', 'calibrate']);
 const COMBAT = new Set(['husk', 'creeper', 'skel', 'shield', 'dark', 'duel', 'enderman', 'blaze', 'ghast', 'witherskeleton', 'creepers']);
 // The ones a player can do too (`!bot test <name> me`): a goal the player can reach and the test can see.
-const HUMAN_OK = new Set(['tower', 'hole', 'pit', 'climb', 'ladder', 'corner', 'leap', 'bridge', 'ledge', 'bow', 'husk', 'sheep', 'pen', 'replant', 'litter', 'house', 'lavacross', 'obsidian', 'mineore', 'enderman', 'blaze', 'ghast', 'witherskeleton', 'creepers', 'ravine', 'leadboat', 'elytra', 'villagerhaul', 'forest', 'vineclimb', 'boatcross']);
+const HUMAN_OK = new Set(['tower', 'hole', 'pit', 'climb', 'ladder', 'corner', 'leap', 'bridge', 'ledge', 'bow', 'husk', 'sheep', 'pen', 'replant', 'litter', 'house', 'lavacross', 'obsidian', 'mineore', 'enderman', 'blaze', 'ghast', 'witherskeleton', 'creepers', 'ravine', 'leadboat', 'elytra', 'villagerhaul', 'forest', 'vineclimb', 'boatcross', ...TOW_NAMES]);
 // No single test runs longer than this (the task is ended and the test left to report what it has).
 const CAP_S = 240;
 
@@ -138,6 +141,7 @@ HUMAN_HELP.boatcross = { kit: [['oak_boat', 1]], text: 'A lake 40 blocks across 
 HUMAN_HELP.vineclimb = { kit: [], text: 'A shaft one block wide cut into a stone tower 12 high, open at the bottom on the south side, with vines in it on alternating sides (one hangs on the east wall, the next on the west, and so on up). Climb the vines to the top of the tower, the gold block.' };
 HUMAN_HELP.forest = { only: true, kit: [['iron_axe', 1]], text: 'A small forest, built for the test: 54 oak trees on a flat field. You get an iron axe and nothing else, and one minute to cut down as many trees as you can and pick up the logs (a tree counts when its logs are in your pack). The bot gets the same forest, rebuilt, and the same minute, one after the other, never together. Most logs wins.' };
 const SHORT = { boatcross: 'Cross the lake', vineclimb: 'Climb the vines to the top', forest: 'Most logs in one minute', leadboat: 'Lead villagers into the pit', villagerhaul: 'Villagers in a boat to the gold block', elytra: 'Glide to the gold block', creepers: 'Beat 4 creepers, shield up', ravine: 'Get out of the ravine', lavacross: 'Cross the lava', obsidian: 'Make and mine obsidian', mineore: 'One of each ore', enderman: 'Kill the enderman', blaze: 'Kill the blaze', ghast: 'Kill the ghast', witherskeleton: 'Kill the wither skeleton', tower: 'Get down, no fall damage', hole: 'Get out, reach the gold block', pit: 'Get out, reach the gold block', climb: 'Get out of the pit', ladder: 'Reach the gold block', corner: 'Reach the gold block', leap: 'Cross the gap, gold block', bridge: 'Bridge to the gold block', ledge: 'Get near the table', bow: 'Hit the 6 targets', husk: 'Kill the husk', sheep: 'Collect 3 wool', pen: 'Collect 2 raw beef', replant: 'Cut tree, replant sapling', litter: 'Collect 4 leaf litter', house: 'Build a house, then test done' };
+for (const n of TOW_NAMES) { HUMAN_HELP[n] = { kit: TOW_META[n].kit, text: TOW_META[n].text }; SHORT[n] = TOW_META[n].short; }
 const humanHelp = (name) => HUMAN_HELP[name] ?? null;
 /** What you are handed in every test you do: tools, blocks and food; the test's own extras on top. `climb` has no tools, like the bot's run. */
 const STD_KIT = [['stone_pickaxe', 1], ['stone_axe', 1], ['stone_shovel', 1], ['stone_sword', 1], ['cobblestone', 32], ['dirt', 16], ['bread', 8]];
@@ -312,7 +316,7 @@ export async function runTests(agent, player, args) {
       try { player?.removeEffect('slow_falling'); } catch { /* */ }
       // The cap: at the deadline the task ends, so waits on it return and the test reports.
       let capped = false;
-      const capS = ['leadboat', 'leadsling', 'villagerhaul'].includes(n) ? 480 : CAP_S;
+      const capS = ['leadboat', 'leadsling', 'villagerhaul'].includes(n) || TOW_META[n] ? 480 : CAP_S;
       agent.testProgress.deadline = Date.now() + capS * 1000;
       agent.testProgress.limitS = capS;
       const cap = system.runTimeout(() => { capped = true; agent.newTask(null); agent.motor.stop(); }, capS * 20);
@@ -2619,6 +2623,52 @@ async function runOne(agent, player, name, arg, human = false) {
         agent.memory.save();
         pass = walkOk && horseOk;
         detail = lines.join(' | ');
+        break;
+      }
+      case 'leadstep': case 'leadstair': case 'leadledge': case 'leadturn': case 'leadgate': {
+        // The tow courses (core/towcourses.js): a boat, a lead, one thing to get right at a time. You first, the bot watching how you do it
+        // (jumps that pull the boat, blocks put down forward for room, how wide you go round a corner: core/towlearn.js keeps it for the
+        // bot's tow, game/leadtow.js); then the bot.
+        tp(x - 6, gy + 1, z - 8);
+        const C = towCourse(name, x, gy, z);
+        for (const c of C.cmds) cmd(c);
+        const inZone = (b) => { try { return b.isValid && Math.hypot(b.location.x - C.goal.x, b.location.z - C.goal.z) <= C.zone && b.location.y >= C.goal.y - 1.3; } catch { return false; } };
+        tp(C.start.x - 0.5, C.start.y, C.start.z - 0.5);
+        await system.waitTicks(10);
+        const boat = dim.spawnEntity('minecraft:boat', C.boat);
+        boat.addTag('vh_boat');
+        cleanup.push(() => { try { boat.remove(); } catch {} });
+        await system.waitTicks(10);
+        const heldBy = (id) => { try { return boat.getComponent('minecraft:leashable')?.leashHolder?.id === id; } catch { return false; } };
+        if (human) {
+          let learning = false;
+          cleanup.push(() => { if (learning) { try { agent.towlearn.stop(); } catch { /* */ } learning = false; } });
+          pass = await humanTry(() => {
+            // (watching starts at the first lead on the boat, not before: your reading time is not a tow)
+            if (!learning && heldBy(player.id)) learning = agent.towlearn.startFor(player);
+            return inZone(boat);
+          }, 300, { x: C.goal.x, y: C.goal.y, z: C.goal.z }, 'Lead the boat to the gold block');
+          let said = '';
+          if (learning) { learning = false; try { said = agent.towlearn.stop(); } catch { said = ''; } }
+          detail = `you ${pass ? 'got the boat to the gold block' : `did not get the boat there (it is ${boat.isValid ? Math.hypot(boat.location.x - C.goal.x, boat.location.z - C.goal.z).toFixed(1) : '?'} from it)`} in ${secs()}s${said ? `. ${said}` : ''}`;
+          break;
+        }
+        giveItem('lead', 2);
+        const gen = agent.newTask({ kind: 'test' });
+        const via = leashTo(sim, boat);
+        if (!via) { detail = `couldn't put a lead on the boat (leashable: ${!!boat.getComponent('minecraft:leashable')})`; break; }
+        rec.reset(); t0 = system.currentTick;
+        // The walker goes a little past the gold block, so the boat on its lead ends near it.
+        const m = await agent.tow.run(gen, boat, { x: C.goal.x + 1.5, y: C.goal.y, z: C.goal.z }, { maxS: 200 });
+        // The boat catches up while it stands (a lead's slack): up to 8 s.
+        for (let i = 0; i < 160 && boat.isValid && !inZone(boat) && !m.snapped; i++) {
+          const sep = Math.hypot(sim.location.x - boat.location.x, sim.location.z - boat.location.z);
+          if (sep < 6 && sim.location.x < C.goal.x + 2) { try { sim.moveToLocation({ x: C.goal.x + 2, y: C.goal.y, z: C.goal.z }, { speed: 0.4 }); } catch { /* */ } } else { try { sim.stopMoving(); } catch { /* */ } }
+          await system.waitTicks(1);
+        }
+        pass = inZone(boat) && !m.snapped;
+        legSummary = rec.snapshot();
+        detail = `${pass ? 'the boat is at the gold block' : 'the boat did not get to the gold block'}: ${towLine(m, C.goal)}${m.notes.length ? ` [${m.notes.join('; ')}]` : ''}; ${m.slingOk}/${m.slings} slings, ${m.built} blocks built`;
         break;
       }
       case 'forest': {

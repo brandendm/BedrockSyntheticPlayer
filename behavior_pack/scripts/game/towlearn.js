@@ -7,12 +7,26 @@ import { sendEvent, trace } from './bridge.js';
 const MAX_SAMPLES = 4800; // 20 minutes
 
 export class TowLearn {
-  constructor(agent) { this.a = agent; this.name = null; this.samples = []; this.noBoatSince = null; }
+  constructor(agent) {
+    this.a = agent; this.name = null; this.samples = []; this.noBoatSince = null; this.placed = 0; this.auto = false;
+    // (u241) Blocks the watched player puts down: building forward for room to jump is part of what is learned.
+    try {
+      const wa = /** @type {any} */ (world.afterEvents);
+      wa.playerPlaceBlock?.subscribe((e) => { if (this.name && e.player?.name === this.name) this.placed++; });
+    } catch { /* no such event: nothing about building is learned */ }
+  }
 
   get on() { return !!this.name; }
 
+  /** (u241) Started by a test on your turn (the tow courses): the same watching, quiet, and told when it ends. */
+  startFor(player) {
+    if (this.name) return false;
+    this.name = player.name; this.samples = []; this.noBoatSince = null; this.placed = 0; this.auto = true;
+    return true;
+  }
+
   start(player) {
-    this.name = player.name; this.samples = []; this.noBoatSince = null;
+    this.name = player.name; this.samples = []; this.noBoatSince = null; this.placed = 0; this.auto = false;
     return `Watching ${player.name} tow a boat: put a lead on a boat and lead it through the rough ground (on foot, or on a horse). \`!bot learn off\` when done.`;
   }
 
@@ -39,7 +53,7 @@ export class TowLearn {
     const boat = this.boatOf(player);
     if (!boat) {
       this.noBoatSince ??= t;
-      if (!this.samples.length && t - this.noBoatSince > 600) { this.a.say('No boat on your lead after 30 s: say `!bot learn tow` again once one is.', true); this.name = null; }
+      if (!this.samples.length && !this.auto && t - this.noBoatSince > 600) { this.a.say('No boat on your lead after 30 s: say `!bot learn tow` again once one is.', true); this.name = null; }
       return;
     }
     this.noBoatSince = null;
@@ -56,7 +70,7 @@ export class TowLearn {
     } catch { /* unloaded */ }
     let leashed = true;
     try { leashed = !!boat.getComponent('minecraft:leashable')?.isLeashed; } catch { /* */ }
-    this.samples.push({ t, px: p.x, py: p.y, pz: p.z, bx: b.x, bz: b.z, by: b.y, rise, leashed, ride });
+    this.samples.push({ t, px: p.x, py: p.y, pz: p.z, bx: b.x, bz: b.z, by: b.y, rise, leashed, ride, placed: this.placed });
     if (this.samples.length > MAX_SAMPLES) this.samples.shift();
   }
 
@@ -76,6 +90,6 @@ export class TowLearn {
     this.a.memory.save();
     trace(`tow learned (${key}) from ${who}: ${JSON.stringify(res)}`);
     sendEvent({ type: 'tow_learned', who, key, result: res }).catch(() => {});
-    return `Learned from ${who}'s tow (${key}, ${res.secs} s): the boat follows from ${res.pullAt ?? '?'} apart, you wait at ${res.holdAt ?? '?'}, ${res.stuckEvents} stuck moment${res.stuckEvents === 1 ? '' : 's'}${res.flank ? `, freed by going ${res.flank.angle} deg round at ${res.flank.dist} blocks` : ''}${res.sling ? `, ${res.sling.n} sling${res.sling.n === 1 ? '' : 's'} (jumped at ${res.sling.stretch} apart, the boat flew ${res.sling.boatPeak} blocks/s)` : ''}${res.snapped ? ', and the lead snapped' : ''}.`;
+    return `Learned from ${who}'s tow (${key}, ${res.secs} s): the boat follows from ${res.pullAt ?? '?'} apart, you wait at ${res.holdAt ?? '?'}, ${res.stuckEvents} stuck moment${res.stuckEvents === 1 ? '' : 's'}${res.flank ? `, freed by going ${res.flank.angle} deg round at ${res.flank.dist} blocks` : ''}${res.sling ? `, ${res.sling.n} sling${res.sling.n === 1 ? '' : 's'} (jumped at ${res.sling.stretch} apart, the boat flew ${res.sling.boatPeak} blocks/s${res.sling.byRise ? `; stretch by step height ${JSON.stringify(res.sling.byRise)}` : ''})` : ''}${res.runway ? `, built forward ${res.runway.blocks} blocks for room before ${res.runway.n} of them (${res.runway.gain} further apart)` : ''}${res.snapped ? ', and the lead snapped' : ''}.`;
   }
 }

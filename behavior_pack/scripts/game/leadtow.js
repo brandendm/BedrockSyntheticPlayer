@@ -16,7 +16,7 @@ import { system } from '@minecraft/server';
 import { trace } from './bridge.js';
 import { hold } from './inventory.js';
 import { isWalkMove } from '../core/pathfinder.js';
-import { slingCame, stuckTrack } from '../core/towlearn.js';
+import { slingCame, stuckTrack, learnedStretch } from '../core/towlearn.js';
 import { pullPath, flankSpots, climbSpot, LEAD_SLACK } from '../core/towline.js';
 
 const flat = (p, q) => Math.hypot(p.x - q.x, p.z - q.z);
@@ -210,7 +210,8 @@ export class LeadTow {
     // (A lead was seen to break at 10.1 blocks with the stated maximum 12: never past 8.8 unless a calibration in this world found better.)
     const guard = Math.min(SL.guard ?? 8.8, lim.max * 0.95, SL.snapAt ? SL.snapAt - 0.8 : 99);
     const patience = Math.max(12, Math.min(90, Math.round(L?.patience ?? 20)));
-    const stretchFor = (rise) => L?.sling?.stretch ?? SL.byRise?.[Math.min(3, Math.max(1, Math.ceil(rise)))] ?? Math.min(guard - 0.5, lim.max * 0.7);
+    // (u241: the player's own jump at this height of step first, from the tow courses; then the calibration; then a guess)
+    const stretchFor = (rise) => learnedStretch(L?.sling, rise) ?? SL.byRise?.[Math.min(3, Math.max(1, Math.ceil(rise)))] ?? Math.min(guard - 0.5, lim.max * 0.7);
     const m = { arrived: false, snapped: false, why: '', secs: 0, idealS: 0, efficiency: 0, holds: 0, tugs: 0, reroutes: 0, steps: 0, slings: 0, slingOk: 0, maxSep: 0, pullAt: null, boatMoved: 0, boatEnd: null, pathLen: 0, wet: false, notes: [], built: 0, ...lim, holdAt: guard };
     const t0 = system.currentTick, b0 = { ...boat.location };
     let bestGoal = Infinity, bestAt = t0, noProg = 0, waitAct = -9999;
@@ -349,6 +350,19 @@ export class LeadTow {
           note(`sling at rise ${rise}: ${r.ok ? 'it came' : r.snapped ? 'LEAD BROKE' : 'did not come'}`);
           if (r.ok) { m.slingOk++; stuckCount = 0; }
           if (r.snapped) { m.snapped = true; m.why = 'the lead broke in a sling'; break; }
+          lastBoatMoveTick = system.currentTick;
+          continue;
+        }
+        // (u241) Jammed with no step to lift it over (a corner, the edge of a gate), and the player was seen to jump and yank the boat free at
+        // such a place (the tow courses): stretch the lead the way they did and jump, before going back to it.
+        if (!ride && L?.sling?.flat && rise < 0.4 && stuckCount <= 2 && d >= 3) {
+          m.slings++;
+          const target = L.sling.flat.stretch + (stuckCount - 1) * 0.8;
+          const r = await this.sling(gen, boat, { ride, target, guard });
+          trace(`tow: yank on the flat: stretch ${r.stretch}, ${r.ok ? 'it came' : r.snapped ? 'LEAD BROKE' : 'it did not come'}, boat peaked ${r.peak} b/s`);
+          note(`yank (jump with the lead stretched, as you did) at ${here}: ${r.ok ? 'it came' : r.snapped ? 'LEAD BROKE' : 'did not come'}`);
+          if (r.ok) { m.slingOk++; stuckCount = 0; }
+          if (r.snapped) { m.snapped = true; m.why = 'the lead broke in a yank'; break; }
           lastBoatMoveTick = system.currentTick;
           continue;
         }

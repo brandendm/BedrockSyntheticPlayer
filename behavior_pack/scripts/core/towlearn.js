@@ -65,10 +65,25 @@ export function analyseTow(samples) {
     if (S[i].py - S[i - 2].py < 0.35 || S[i - 2].py - (S[i - 3]?.py ?? S[i - 2].py) > 0.2) continue; // (a rise that starts here)
     if (sep[i] < 4.5 || !bv.slice(Math.max(1, i - 4), i).every((v) => v < 0.5)) continue;
     const peak = Math.max(...bv.slice(i, i + 8));
-    slings.push({ stretch: sep[i], peak });
+    // (u241) How high the step was, whether the player had just built forward for room (blocks placed in the 12 s before the jump, and how
+    // much further apart that got them), and whether the boat came.
+    const w0 = Math.max(0, i - 48);
+    const built = Number.isFinite(S[i].placed) && Number.isFinite(S[w0].placed) ? S[i].placed - S[w0].placed : 0;
+    slings.push({ stretch: sep[i], peak, rise: Number.isFinite(S[i].rise) ? Math.max(0, Math.round(S[i].rise)) : null, built, gain: sep[i] - sep[w0], came: peak > 1.5 });
     i += 8;
   }
-  const sling = slings.length ? { n: slings.length, stretch: Math.round(median(slings.map((x) => x.stretch)) * 10) / 10, boatPeak: Math.round(median(slings.map((x) => x.peak)) * 10) / 10 } : null;
+  const came = slings.filter((x) => x.came);
+  const useS = came.length ? came : slings;
+  const r1 = (v) => Math.round(v * 10) / 10;
+  const byRise = {};
+  for (const x of useS) if (x.rise >= 1) (byRise[Math.min(4, x.rise)] ??= []).push(x.stretch);
+  for (const k of Object.keys(byRise)) byRise[k] = r1(median(byRise[k]));
+  const builds = slings.filter((x) => x.built >= 2);
+  // A jump that pulled the boat with no step in the way (jammed on a corner, a gate's edge): yanking it, not lifting it.
+  const flatCame = came.filter((x) => x.rise === 0);
+  const sling = slings.length ? { n: slings.length, came: came.length, stretch: r1(median(useS.map((x) => x.stretch))), boatPeak: r1(median(useS.map((x) => x.peak))), byRise: Object.keys(byRise).length ? byRise : null, flat: flatCame.length ? { n: flatCame.length, stretch: r1(median(flatCame.map((x) => x.stretch))) } : null } : null;
+  // Built forward for room before a jump: how many blocks, and how much further apart it let them get.
+  const runway = builds.length ? { n: builds.length, blocks: Math.round(median(builds.map((x) => x.built))), gain: r1(median(builds.map((x) => x.gain))) } : null;
   const flank = events.length ? { dist: median(events.map((e) => e.dist)), angle: median(events.map((e) => e.round)) } : null;
   const rises = events.map((e) => e.rise).filter(Number.isFinite);
   const last = S[S.length - 1];
@@ -80,7 +95,7 @@ export function analyseTow(samples) {
     patience: events.length ? Math.round(median(events.map((e) => e.patience))) : null,
     flank: flank && { dist: Math.round(flank.dist * 10) / 10, angle: Math.round(flank.angle) },
     blockedRise: rises.length ? Math.round(median(rises) * 10) / 10 : null,
-    sling,
+    sling, runway,
     maxSep: Math.round(Math.max(...sep) * 10) / 10,
     snapped: last.leashed === false && S.slice(0, -1).some((s) => s.leashed !== false),
   };
@@ -105,7 +120,8 @@ export function mergeLearned(old, fresh) {
     blockedRise: mix(old.blockedRise, fresh.blockedRise),
     flank: old.flank && fresh.flank ? { dist: mix(old.flank.dist, fresh.flank.dist), angle: mix(old.flank.angle, fresh.flank.angle) } : fresh.flank ?? old.flank,
     curve: fresh.curve?.length >= (old.curve?.length ?? 0) ? fresh.curve : old.curve,
-    sling: fresh.sling ?? old.sling,
+    sling: fresh.sling ? { ...fresh.sling, byRise: { ...(old.sling?.byRise ?? {}), ...(fresh.sling.byRise ?? {}) }, flat: fresh.sling.flat ?? old.sling?.flat ?? null } : old.sling,
+    runway: fresh.runway ?? old.runway,
     maxSep: Math.max(old.maxSep ?? 0, fresh.maxSep ?? 0),
   };
 }
@@ -131,4 +147,20 @@ export function slingCame(m) {
 export function stuckTrack(prev, p, tol = 1.5) {
   if (prev?.anchor && Math.hypot(prev.anchor.x - p.x, prev.anchor.z - p.z) < tol) return { anchor: prev.anchor, count: prev.count + 1 };
   return { anchor: { x: p.x, z: p.z }, count: 1 };
+}
+
+/**
+ * (u241) The stretch to jump at for a step of this rise, from what was learned: the player's own jumps at that height, else the nearest
+ * height they did (a taller step takes a longer stretch, a lower one no more than that), else their overall median. null if nothing learned.
+ */
+export function learnedStretch(sling, rise) {
+  if (!sling) return null;
+  const by = sling.byRise ?? {};
+  const want = Math.min(4, Math.max(1, Math.ceil(rise)));
+  if (by[want] != null) return by[want];
+  const keys = Object.keys(by).map(Number).sort((a, b) => a - b);
+  const up = keys.find((k) => k > want), down = [...keys].reverse().find((k) => k < want);
+  if (down != null) return by[down] + (up != null ? 0 : 0.5 * (want - down));
+  if (up != null) return by[up];
+  return sling.stretch ?? null;
 }
