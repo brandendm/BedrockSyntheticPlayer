@@ -54,7 +54,7 @@ function fake(plan, { miss = 0, seed = 1, noStand = false, unreach = null, fallA
       // pillar, counted.)
       if (bot && !walksTo(bot, s)) {
         if (!climb) { log.refused++; tick += 10; return false; }
-        log.pillars += Math.max(1, s.y - bot.y);
+        log.pillars += Math.max(1, s.y - bot.y); if (process.env.SHOWP) console.log("PILLAR", JSON.stringify(bot), "->", JSON.stringify(s), "last placed", JSON.stringify(log.last));
       }
       // (On air, as the game's walkTo does: a pillar under it from what is below, or a bridge block from a solid side; scaffolding, tidied later.)
       if (!s.up && idAt(s.x, s.y - 1, s.z) === 'air') {
@@ -70,7 +70,7 @@ function fake(plan, { miss = 0, seed = 1, noStand = false, unreach = null, fallA
       if (!onSlab && (!STAND_ON.has(idAt(s.x, s.y - 1, s.z)) || !FREE.has(idAt(s.x, s.y, s.z)) || !FREE.has(idAt(s.x, s.y + 1, s.z)))) { log.violations.push(`stand at ${key(s.x, s.y, s.z)} on ${idAt(s.x, s.y - 1, s.z)}`); return false; }
       if (bot && s.y < bot.y) { log.down += bot.y - s.y; if (process.env.SHOW2) console.log("down", JSON.stringify(bot), "->", JSON.stringify(s)); }
       if (bot && s.y > bot.y) log.up += s.y - bot.y;
-      bot = { ...s }; tick += 4; log.stands++;
+      if (process.env.SHOWS) console.log("STAND", JSON.stringify(s), "from", JSON.stringify(bot)); bot = { ...s }; tick += 4; log.stands++;
       // (a fall: off the wall to the pad, outside the tower)
       if (fallAt && log.stands === fallAt) { bot = { x: s.x, y: BASE_Y, z: -4 }; log.fell = true; }
       return true;
@@ -116,6 +116,7 @@ function fake(plan, { miss = 0, seed = 1, noStand = false, unreach = null, fallA
     check() {},
     yield: async () => {},
     say: (m) => log.said.push(m),
+    note: (m) => { if (process.env.SHOWN) console.log("NOTE", m.slice(0, 200)); },
 
   };
   return { hands, world, log, inv, put(p) { bot = { ...p }; } };
@@ -355,4 +356,15 @@ test('quick enough to run in the game: the planning for the whole farm in a frac
   const t = Date.now();
   await runBuild(plan, f.hands, { after: afterFor(plan, f.world) });
   assert.ok(Date.now() - t < 4000, `${Date.now() - t} ms`);
+});
+
+test('the notch (u239 live: marooned on the shaft island in the open pod, one pillar and a leftover block): it hops out over the wall, no pillar, nothing by command', async () => {
+  const plan = ironFarmPlan();
+  assert.ok(plan.notch?.length, 'the plan has a notch');
+  const f = fake(plan);
+  const base = afterFor(plan, f.world);
+  const stats = await runBuild(plan, f.hands, { after: async (y, st) => { await base(y, st); if (y === 2) f.put({ x: 6, y: 3, z: 6 }); } });
+  assert.deepEqual(sameAsPlan(plan, f.world), []);
+  assert.equal(stats.command, 0, `${stats.command} by command`);
+  assert.equal(f.log.pillars, 0, `${f.log.pillars} pillars`);
 });

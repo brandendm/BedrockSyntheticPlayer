@@ -119,8 +119,15 @@ export function lineThrough(T, c, from) {
  * @param {any} plan @param {any} hands @param {{ after?: (y: number|string, stats: any) => Promise<void>, maxTicks?: number, stats?: any, avoid?: Set<string> }} [opts]
  */
 export async function runBuild(plan, hands, { after = null, maxTicks = Infinity, stats = newStats(), avoid = new Set() } = {}) {
-  const { cells, final } = splitPlan(plan);
-  const finalId = new Map(cells.map((c) => [key(c.x, c.y, c.z), c.id]));
+  const split = splitPlan(plan);
+  const { final } = split;
+  // (u240) A notch: cells of a wall left out while the bot works in the hollow inside it (a pit it would otherwise be marooned in: it hops out over the
+  // wall's step on foot, no pillar). They are laid last, carried into the layer above the notch, from the wall tops beside them. The plan lists them.
+  const notchKeys = new Set((plan.notch ?? []).map((c) => key(c.x, c.y, c.z)));
+  const notchTop = (plan.notch ?? []).reduce((m, c) => Math.max(m, c.y), -Infinity);
+  const cells = split.cells.filter((c) => !notchKeys.has(key(c.x, c.y, c.z)));
+  const notchCells = split.cells.filter((c) => notchKeys.has(key(c.x, c.y, c.z)));
+  const finalId = new Map(split.cells.map((c) => [key(c.x, c.y, c.z), c.id]));
   const bd = plan.bounds;
   const shellId = plan.shell ?? 'cobblestone';
   // (u231, the player: "when making the line with the composters it walks on top of where it's going to place": the gap a part (a composter,
@@ -128,7 +135,7 @@ export async function runBuild(plan, hands, { after = null, maxTicks = Infinity,
   const handIds = handSet(shellId);
   const partAt = new Set();
   for (const [k, v] of final.cells) if (v.id !== 'air' && !handIds.has(v.id) && !/water|lava|torch|sign|gate/.test(v.id)) partAt.add(k);
-  stats.cells = cells.length;
+  stats.cells = split.cells.length;
   const t0 = hands.now();
   let W = new Map();
   const idAt = (x, y, z) => {
@@ -153,13 +160,16 @@ export async function runBuild(plan, hands, { after = null, maxTicks = Infinity,
   /** The cells of the layer being laid (and any carried up into it): one with one of them under it waits for it (u228). */
   let curT = new Map();
   const waitsBelow = (c) => curT.has(key(c.x, c.y - 1, c.z));
-  const supportedNow = (c) => FREE.has(idAt(c.x, c.y, c.z)) && !waitsBelow(c) && dirsOf(c).some(([a, b, d]) => clickable(idAt(c.x + a, c.y + b, c.z + d)));
+  const supportedRaw = (c) => FREE.has(idAt(c.x, c.y, c.z)) && !waitsBelow(c) && dirsOf(c).some(([a, b, d]) => clickable(idAt(c.x + a, c.y + b, c.z + d)));
+  /** (u240) The notch cells wait for the rest of their layer: the bot hops out over the wall they are cut from, and lays them last. */
+  const held = (c) => notchKeys.has(key(c.x, c.y, c.z)) && [...curT.values()].some((t) => !notchKeys.has(key(t.x, t.y, t.z)) && supportedRaw(t));
+  const supportedNow = (c) => supportedRaw(c) && !held(c);
   /** Placeable from s right now: in reach, free, and some neighbour to click that has the eye on its open side. */
   const placeableFrom = (s, c) => {
     if (badStand.has(`${key(s.x, s.y, s.z)}|${key(c.x, c.y, c.z)}`)) return false;
     if (!reaches(s, c)) return false;
     if (!FREE.has(idAt(c.x, c.y, c.z))) return false;   // (something there already: scaffolding of its own, taken down at the end)
-    if (waitsBelow(c)) return false;
+    if (waitsBelow(c) || held(c)) return false;
     if (!s.up && c.id !== SLAB && edge(s, c) && clickable(idAt(s.x, s.y - 1, s.z))) return true;
     if (c.x === s.x && c.z === s.z && (c.y === s.y || c.y === s.y + 1 || (s.up && c.y === s.y + 2))) return false;
     return dirsOf(c).some(([a, b, d]) => { const n = { x: c.x + a, y: c.y + b, z: c.z + d }; return clickable(idAt(n.x, n.y, n.z)) && facing(s, c, n); });
@@ -454,7 +464,7 @@ export async function runBuild(plan, hands, { after = null, maxTicks = Infinity,
           // (u230 live: stranded on the shaft's top in the middle of the pod, it carried the whole top course of the pod's walls up; the platform
           // floor then had nothing to rest on and went in by command a block at a time, a checkerboard. Carried up only when it is all that is
           // left of the layer and a small part of it; otherwise it climbs over to the rest, as a player would.)
-          if (stranded && canCarry && close && cand.length === T.size && cand.length * 3 <= mine.length) {
+          if (stranded && canCarry && close && cand.length === [...T.values()].filter((t) => !notchKeys.has(key(t.x, t.y, t.z))).length && cand.length * 3 <= mine.length) {
             for (const { c } of cand) { tried.set(key(c.x, c.y, c.z), TRIES - 1); fail(c); }
             continue;
           }
@@ -597,6 +607,7 @@ export async function runBuild(plan, hands, { after = null, maxTicks = Infinity,
   let carry = [];
   for (let y = bd.y1; y <= bd.y2; y++) {
     stats.layer = y;
+    if (y === notchTop && notchCells.length) { carry = [...carry, ...notchCells]; hands.note?.(`NOTCH ${notchCells.length} cells left out of the wall are laid now, from its top`); }
     carry = await layer(y, false, carry);
     stats.layer = `slabs ${y}`;
     await layer(y, true);

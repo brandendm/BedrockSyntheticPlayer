@@ -119,7 +119,9 @@ export function ironFarmPlan({ shell = SHELL } = {}) {
   fill(box(15, WATER_Y, 2, 15, WATER_Y, 13), 'water', 'water sources, east edge', 'water');
 
   const bounds = hull(ops.map(opBox));
-  return { ops, beds, stations, villagers, bounds, centre, centres: [c1, c2], shell };
+  // The notch (u240): two cells of the pod's north wall, left out until the shaft is up, so the bot hops out of the open pit over the wall's low step.
+  const notch = [{ x: 4, y: 2, z: 1 }, { x: 4, y: 3, z: 1 }];
+  return { ops, beds, stations, villagers, bounds, centre, centres: [c1, c2], shell, notch };
 }
 
 /** What it takes to build it, counted from the plan: blocks by kind, and the survival shopping list as text. */
