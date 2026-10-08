@@ -41,16 +41,27 @@ export const MOBS = {
   pillager: { hp: 24, dps: 3, kind: 'ranged' },
   vindicator: { hp: 24, dps: 10, kind: 'melee', never: true },
   evoker: { hp: 24, dps: 6, kind: 'ranged', never: true },
+  evocation_illager: { hp: 24, dps: 6, kind: 'ranged', never: true }, // (the entity's real id: `evoker` above never matched; vex below are its fangs' cousins, summoned)
+  vex: { hp: 14, dps: 3, kind: 'melee', never: true, flying: true }, // (flies through walls, 14 hp: not worth a duel)
   ravager: { hp: 100, dps: 12, kind: 'melee', never: true },
   enderman: { hp: 40, dps: 7, kind: 'melee', neutral: true },
   iron_golem: { hp: 100, dps: 14, kind: 'melee', neutral: true }, // (7.5 to 21 a hit, a hit a second; only after it has been hit)
   zombie_pigman: { hp: 20, dps: 5, kind: 'melee', neutral: true },
   piglin: { hp: 16, dps: 5, kind: 'melee', neutral: true },
   hoglin: { hp: 40, dps: 6, kind: 'melee' },
+  zoglin: { hp: 40, dps: 6, kind: 'melee' }, // (a hoglin that goes for anything; vanilla data, bedrock-samples)
+  piglin_brute: { hp: 50, dps: 7, kind: 'melee', never: true }, // (always hostile, 7 a hit, 50 hp)
   blaze: { hp: 20, dps: 5, kind: 'ranged', never: true },
   ghast: { hp: 10, dps: 4, kind: 'ranged', never: true, flying: true }, // (shot with a bow when there is one: decide `bow`; else out of its sight)
   wither_skeleton: { hp: 20, dps: 8, kind: 'melee' },
   guardian: { hp: 30, dps: 4, kind: 'ranged', never: true },
+  elder_guardian: { hp: 80, dps: 5, kind: 'ranged', never: true },
+  shulker: { hp: 30, dps: 4, kind: 'ranged', never: true }, // (levitation bullets; it does not move)
+  breeze: { hp: 30, dps: 4, kind: 'ranged', never: true }, // (wind charges knock us about; it jumps)
+  creaking: { hp: 1, dps: 3, kind: 'melee', never: true }, // (only moves unwatched: not a duel)
+  wither: { hp: 600, dps: 30, kind: 'ranged', never: true },
+  parched: { hp: 16, dps: 2, kind: 'ranged' }, // (the desert skeleton: 16 hp, 2 a hit)
+  zombie_nautilus: { hp: 15, dps: 3, kind: 'melee' },
   warden: { hp: 500, dps: 30, kind: 'melee', never: true },
 };
 
@@ -161,7 +172,7 @@ export function decide({ health, damage = FIST_DAMAGE, isNight = false, prevMode
     const others = threats.some((m) => m !== creeper && (m.visible || m.attackedMe) &&
       (m.type === 'creeper' ? m.dist <= 8 : MOBS[m.type].kind === 'melee' ? m.dist <= 10 : m.dist <= 3));
     if (!others && creeper.canReach !== false && !inWater) return { mode: 'fight', target: creeper.id, threats, reason: 'creeper: keep it at arm\'s length' };
-    // Company, but the creeper's well back (it walks at about half a zombie's pace: running strings
+    // Company, but the creeper's well back (NOTE vanilla: its chase speed is 0.2 x 1.25 = 0.25 against a zombie's 0.23, so it keeps up; what slows it is its hissing stops: running strings
     // them out, the creeper last): turn on the rest while it's 10+ off (8+ once we're at it), then
     // run again as it comes up. Running from all of them for ever never won the fight.
     const creeperBack = !creeper.lit && creeper.dist > (prevMode === 'fight' ? 8 : 10) && !threats.some((m) => m !== creeper && m.type === 'creeper' && m.dist <= 10);
