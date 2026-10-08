@@ -435,6 +435,10 @@ async function runPool(agent, player, list, N, argN, results, set) {
 
 async function runOne(agent, player, name, arg, human = false) {
   const dim = agent.dim, sim = agent.sim, S = agent.skills;
+  // (u294: a test that starts while the last one's death is still waiting to respawn - 2 s - began with a dead bot and was reported 'died in 1 s')
+  for (let i = 0; i < 80 && agent.health() <= 0; i++) await system.waitTicks(5);
+  if (agent.health() <= 0) return report(agent, name, false, 'the bot was dead and did not respawn in 20 s');
+  await system.waitTicks(10);
   // Most tests are built in the sky on a slab of their own (no lakes, slopes or trees to interfere); the ones that
   // need the real world (trees, water, ores, the night) stay on the ground.
   const sky = !GROUND.has(name);
