@@ -2698,7 +2698,7 @@ async function runOne(agent, player, name, arg, human = false) {
         const heldBy = (id) => { try { return boat.getComponent('minecraft:leashable')?.leashHolder?.id === id; } catch { return false; } };
         let horse = null;
         if (horseMode) {
-          horse = await readyHorse(dim, cmd, who, { x: C.start.x - 1.5, y: C.start.y, z: C.start.z - 2.5 });
+          horse = await readyHorse(dim, cmd, who, { x: C.start.x - 1.5, y: C.start.y, z: C.start.z - 2.5 }, agent);
           if (!horse) { detail = "couldn't get an adult horse (babies can't be ridden)"; break; }
           cleanup.push(() => { try { horse.remove(); } catch { /* */ } });
           await system.waitTicks(10);
@@ -2886,7 +2886,7 @@ async function runOne(agent, player, name, arg, human = false) {
         cleanup.push(() => { try { boat.remove(); } catch {} });
         let horse = null;
         if (horseMode) {
-          horse = await readyHorse(dim, cmd, who, { x: x - 5.5, y: gy + 1, z: z - 2.5 });
+          horse = await readyHorse(dim, cmd, who, { x: x - 5.5, y: gy + 1, z: z - 2.5 }, agent);
           if (!horse) { detail = "couldn't get an adult horse"; break; }
           cleanup.push(() => { try { horse.remove(); } catch { /* */ } });
         }
@@ -2953,7 +2953,7 @@ async function runOne(agent, player, name, arg, human = false) {
         cleanup.push(() => { try { boat.remove(); } catch { /* */ } });
         let horse = null;
         if (horseMode) {
-          horse = await readyHorse(dim, cmd, who, { x: x - 5.5, y: gy + 1, z: z - 2.5 });
+          horse = await readyHorse(dim, cmd, who, { x: x - 5.5, y: gy + 1, z: z - 2.5 }, agent);
           if (!horse) { detail = "couldn't get an adult horse"; break; }
           cleanup.push(() => { try { horse.remove(); } catch { /* */ } });
         }
@@ -2993,9 +2993,11 @@ async function runOne(agent, player, name, arg, human = false) {
           pass = await humanTry(() => {
             watchBoat();
             vils.forEach((v, i) => {
+              try {
               if (!alive(v) || riding(v)) { near[i] = 0; return; }
               near[i] = Math.hypot(v.location.x - boat.location.x, v.location.z - boat.location.z) <= 1.8 ? near[i] + 1 : 0;
               if (near[i] >= 16 && ridersN() < 2) { putIn(v, 'by command (the boat was against it for 4 s)'); near[i] = 0; try { player.onScreenDisplay.setActionBar('The game did not take the villager in: put in the boat for you.'); } catch { /* */ } }
+              } catch { near[i] = 0; /* (u282: a villager killed or converted this very tick is gone: InvalidEntityError) */ }
             });
             return done();
           }, 300, { x: farGoal.x, y: farGoal.y, z: farGoal.z }, 'Both villagers to the gold block, in the boat on its lead: the zombies are coming');
@@ -3010,15 +3012,17 @@ async function runOne(agent, player, name, arg, human = false) {
         const watcher = system.runInterval(watchBoat, 2);
         // Anything in the boat that is not a villager comes out (a seat for a villager): the bot lifts it out the way it puts the villagers in, by command.
         const evicted = [];
-        const evict = () => { for (const r of riders()) { try { if (r.typeId !== 'minecraft:villager_v2') { const b = boat.location; r.teleport({ x: b.x + 2.2, y: b.y, z: b.z + 2.2 }); evicted.push(r.typeId.replace('minecraft:', '')); } } catch { /* */ } } };
+        const evict = () => { for (const r of riders()) { try { if (r.typeId !== 'minecraft:villager_v2' && r.typeId !== 'minecraft:player') { const b = boat.location; r.teleport({ x: b.x + 2.2, y: b.y, z: b.z + 2.2 }); evicted.push(r.typeId.replace('minecraft:', '')); } } catch { /* */ } } };
         const evictor = system.runInterval(evict, 10);
+        // (u282: with its own fight mode off the bot swings at a zombie that gets within reach of it, so the two pursuers are not simply free to kill the villagers.)
+        const swing = system.runInterval(() => { for (const zb of zombies) { try { if (zb.isValid && Math.hypot(zb.location.x - sim.location.x, zb.location.z - sim.location.z) <= 3.2) { sim.lookAtEntity?.(zb); sim.attackEntity(zb); } } catch { /* */ } } }, 8);
         try {
           await sweepVillagers(agent, gen, boat, vils.filter((v) => alive(v)), gy, { riding, ridersN, putIn });
           const m = await agent.tow.run(gen, boat, { ...farGoal, x: farGoal.x + 2.5 }, { mount: horse ?? undefined, maxS: 200 });
           if (horse) { try { await agent.horses.getOff(gen); } catch { /* */ } }
           pass = !m.snapped && done();
           detail = `${tail()}; ${boarded.length ? `${boarded.length} villagers put in by command` : 'villagers boarded by themselves'}${evicted.length ? `; ${evicted.length} non-villagers lifted out of the boat (${[...new Set(evicted)].join(', ')})` : ''}; ${towLine(m, farGoal)}`;
-        } finally { system.clearRun(watcher); system.clearRun(evictor); }
+        } finally { system.clearRun(watcher); system.clearRun(evictor); system.clearRun(swing); }
         break;
       }
       case 'elytra': {
@@ -3274,13 +3278,23 @@ async function horseReady(agent, gen, horse, secs) {
 }
 
 /** A tamed, saddled adult horse (u275, the "horse" versions of the boat tests): ready for whoever rides it, so taming is not part of the test. */
-async function readyHorse(dim, cmd, who, loc) {
+async function readyHorse(dim, cmd, who, loc, agent = null) {
   const h = await spawnAdultHorse(dim, loc);
   if (!h) return null;
   // (u279: a horse only has a saddle slot once it is tame, and it must be given a moment to be: tame it by every route, then saddle it by each until one takes)
   try { h.triggerEvent('minecraft:horse_tamed'); } catch { /* no such event */ }
   try { h.getComponent('minecraft:tameable')?.tame(who); } catch { /* the bot tames it itself below */ }
   await system.waitTicks(3);
+  // (u282: the game's own events and tame() do not tame a horse (traced: "tamed false"): the bot tames it the way a player does, by riding it until it accepts, then it is saddled for whoever is to ride.)
+  if (!isTamed(h) && agent) {
+    try {
+      const g = agent.newTask({ kind: 'test' });
+      const r = await agent.horses.tame(g, h, 8);
+      trace(`horse ready: bot tamed it (${r.ok ? 'yes' : 'no'}, ${r.tries} tries, ${r.how})`);
+      await agent.horses.getOff(g);
+      await system.waitTicks(4);
+    } catch (e) { trace(`horse ready: taming failed ${e}`); }
+  }
   const tries = [
     () => h.runCommand('replaceitem entity @s slot.saddle 0 saddle'),
     () => { h.addTag('vx_h'); try { cmd('replaceitem entity @e[tag=vx_h,c=1] slot.saddle 0 saddle'); } finally { h.removeTag('vx_h'); } },

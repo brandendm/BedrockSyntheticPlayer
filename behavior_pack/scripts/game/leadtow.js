@@ -252,6 +252,24 @@ export class LeadTow {
     const led = {}; let ledL = 'walk', ledT = system.currentTick;
     const mark = (l) => { const n = system.currentTick; led[ledL] = (led[ledL] ?? 0) + (n - ledT); ledL = l; ledT = n; };
     const note = (t) => { if (m.notes.length < 16) m.notes.push(`${Math.round((system.currentTick - t0) / 20)}s ${t}`); };
+    // (u281/u282) Lift the jammed boat from above: the formula (core/liftmodel.js) says how far out and how many jumps for the height we stand above it; a player's taught stretch first; each failure
+    // goes further out and one jump more. Elevation without the length (a hill only two across at the top) is made up by the runway: blocks built out along the top.
+    const liftFrom = async (rise, up) => {
+      m.slings++; mark('sling');
+      const hAbove = Math.round(Math.max(rise, up) * 2) / 2;
+      const lp = liftPlan({ h: hAbove, guard });
+      const learnedD = learnedStretch(L?.sling, rise);
+      const target = (learnedD ?? lp.d) + (stuckCount - 1) * TT.slingStep;
+      const nJumps = Math.min(4, (learnedD != null ? 1 : lp.jumps) + (stuckCount - 1));
+      note(`lift: ${hAbove} up -> ${learnedD != null ? 'as taught' : lp.feasible ? 'formula' : 'formula (not enough length under the guard)'}: ${target.toFixed(1)} out, ${nJumps} jump${nJumps > 1 ? 's' : ''}`);
+      const rw = ride ? null : await this.runway(gen, boat, target, guard);
+      if (rw?.built) { note(`runway: ${rw.built} blocks`); m.built += rw.built; }
+      const r = await this.sling(gen, boat, { ride, target, guard, dir: rw?.dir ?? null, jumps: nJumps });
+      trace(`tow: sling at rise ${rise}: ${hAbove} up, ${target.toFixed(1)} out, ${nJumps} jumps: stretch ${r.stretch}, ${r.ok ? 'it came' : r.snapped ? 'LEAD BROKE' : 'it did not come'}, boat peaked ${r.peak} b/s, climbed ${r.climbed}`);
+      note(`sling at rise ${rise}: ${r.ok ? 'it came' : r.snapped ? 'LEAD BROKE' : 'did not come'}`);
+      if (r.ok) { m.slingOk++; stuckCount = 0; }
+      return r;
+    };
     // The route: the walking search first; where it cannot get there (a gap, a wall), the search that may also place and break blocks, its
     // building steps kept as `act` points the bot does together (the boat brought up close first) when it gets to them.
     const plan = async (target) => {
@@ -434,27 +452,20 @@ export class LeadTow {
             mark('flank'); note(`up onto the step at ${cs.x.toFixed(0)},${cs.z.toFixed(0)} (${(cs.y - level).toFixed(1)} up)`);
             await S.goNear(gen, { x: cs.x, y: cs.y, z: cs.z }, 1, 2).catch(() => false);
             lastBoatMoveTick = system.currentTick;
+            // (u282, live villagerhaul: up on the step the bot stood 1.4 from the boat, the lead slack, and the route took it off down the far side: the boat never came. Up here the lift is done NOW.)
+            { const p2 = subject().location, b2 = boat.location;
+              if (!ride && boat.isValid && this.isLeashed(boat) && p2.y - b2.y >= 0.4) {
+                const r2 = await liftFrom(stepRise, p2.y - b2.y);
+                if (r2.snapped) { m.snapped = true; m.why = 'the lead broke in a sling'; break; }
+                lastBoatMoveTick = system.currentTick;
+              } }
             continue;
           }
           note('a step in the way: no way round, none to climb onto');
         }
         if (rise >= 0.4 && above && stuckCount <= 4) {
           // Below us against a step: the sling, a little further stretched each time it fails.
-          m.slings++; mark('sling');
-          // (u281) The formula (core/liftmodel.js): how far out, and how many jumps, for the height we stand above the boat. A player's own taught stretch first; each failure goes
-          // further out and one jump more. Elevation without the length is made up by the runway (blocks built behind us).
-          const hAbove = Math.round(Math.max(rise, pos.y - bl.y) * 2) / 2;
-          const lp = liftPlan({ h: hAbove, guard: guard });
-          const learnedD = learnedStretch(L?.sling, rise);
-          const target = (learnedD ?? lp.d) + (stuckCount - 1) * TT.slingStep;
-          const nJumps = Math.min(4, (learnedD != null ? 1 : lp.jumps) + (stuckCount - 1));
-          note(`lift: ${hAbove} up -> ${learnedD != null ? 'as taught' : lp.feasible ? 'formula' : 'formula (not enough length under the guard)'}: ${target.toFixed(1)} out, ${nJumps} jump${nJumps > 1 ? 's' : ''}`);
-          const rw = ride ? null : await this.runway(gen, boat, target, guard);
-          if (rw?.built) { note(`runway: ${rw.built} blocks`); m.built += rw.built; }
-          const r = await this.sling(gen, boat, { ride, target, guard, dir: rw?.dir ?? null, jumps: nJumps });
-          trace(`tow: sling at rise ${rise}: stretch ${r.stretch}, ${r.ok ? 'it came' : r.snapped ? 'LEAD BROKE' : 'it did not come'}, boat peaked ${r.peak} b/s, climbed ${r.climbed}`);
-          note(`sling at rise ${rise}: ${r.ok ? 'it came' : r.snapped ? 'LEAD BROKE' : 'did not come'}`);
-          if (r.ok) { m.slingOk++; stuckCount = 0; }
+          const r = await liftFrom(rise, pos.y - bl.y);
           if (r.snapped) { m.snapped = true; m.why = 'the lead broke in a sling'; break; }
           lastBoatMoveTick = system.currentTick;
           if (wp.fresh) route = null; // (a stand-and-sling waypoint: on with a new route)

@@ -62,3 +62,10 @@ readyHorse: the saddle slot only exists on a TAME horse, and `tame(who)` was han
 - Real calibration: `!bot test probejumps` (3 heights x 7 distances x up to 4 jumps), then `node sim/fit_lift.mjs --apply` fits pull/jump/need0/needPerH and rewrites LIFT. `--sim` runs the pipeline on the simulator (which has no multi-jump regime: its lead pulls steadily, so it shows 1 jump from 7 out).
 - sweepVillagers: when the boat has stopped short of the villager with the lead taut, the holder walks on half a block at a time (up to 3.5) instead of standing.
 - Horse variants: if the game still does not saddle the horse, a saddle goes in the rider's pack and the failure is traced. villagerferry bot gets resistance + regeneration (its fight mode is off, the zombies killed it).
+
+## u282 — from the u281 sweep (real game)
+- villagerhaul (bot): on the 1-high rise the bot climbed onto the step, stood 1.4 from the boat with a slack lead, and the route took it off down the far side: the boat never came (stuck #1-6, 25 s). Now, up on the step with the boat leashed and below, the lift (formula, runway if the top is too short) is done at once (`liftFrom`).
+- Horses: `readyHorse` traced "tamed false, saddled false": the game's tame() / events do not tame. The bot now tames it by riding (as a player does), gets off, then the horse is saddled (command, then container). Still: a saddle in the rider's pack as the last resort.
+- villagerferry: human run crashed (InvalidEntityError on a villager killed that tick) - guarded; the eviction no longer teleports the player out of the boat; the bot swings at a zombie within 3.2.
+- Horse ferry (bot): stood still 40 s at 12 from its boat while zombies hit it, then the lead broke at the tow's start - not yet understood (the fix above may cure it: the horse was never really tame).
+- Not yet run in the real game: probejumps (it was not in the sweep).
