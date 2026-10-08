@@ -7,6 +7,7 @@ const origLog = console.log; console.log = () => {}; console.error = () => {};
 for await (const line of rl) {
   const j = JSON.parse(line);
   let r;
+  if (j.learned) process.env.LEARNED = j.learned; else delete process.env.LEARNED;
   try {
     r = j.kind === 'fixed' ? await runTow(j.name, { tune: j.tune, maxS: 120 })
       : await runTow(`rand${j.seed}`, { course: (x, gy, z) => randomTowCourse(j.seed, x, gy, z, j.level), tune: j.tune, maxS: 90 });

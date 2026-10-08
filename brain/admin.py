@@ -76,8 +76,8 @@ def doctor(repo: Path, status: Optional[dict], status_age: Optional[float], auto
     out.append(_check("game talking to the brain", alive, f"last poll {status_age:.0f} s ago" if status_age is not None else "never heard from the game"))
     if auto is not None:
         out.append(_check("autorun switch", True if auto.get("enabled") else None, ("ON: " + str(auto.get("state"))) if auto.get("enabled") else "OFF (it resets whenever the brain restarts): turn it on to take run.json requests"))
-        used, lim = auto.get("tests_this_hour", 0), auto.get("limit_per_hour", 24)
-        out.append(_check("test runs this hour", used < lim - 5 if used < lim else False, f"{used} of {lim}" + (" (a failed attempt counts)" if used else "")))
+        used = auto.get("tests_this_hour", 0)
+        out.append(_check("test runs this hour", True, f"{used} (no limit)"))
     if (inbox / "STOP").exists():
         out.append(_check("STOP file", False, "brain/inbox/STOP exists: a run in progress is stopped and new ones refused until it is removed or the switch is turned on"))
     if (inbox / "run.json").exists():

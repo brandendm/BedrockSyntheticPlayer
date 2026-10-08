@@ -42,7 +42,7 @@ if (!has('--wait-only')) {
     console.log('committed: ' + sh('git', ['log', '--oneline', '-1']).trim());
   }
   if (has('--no-run')) process.exit(0);
-  fs.writeFileSync(path.join(inbox, 'run.json'), JSON.stringify({ tests, reload: true, expect_build: B, note: val('--note', `ship ${B}`) }));
+  fs.writeFileSync(path.join(inbox, 'run.json'), JSON.stringify({ tests, reload: true, expect_build: B, note: val('--note', `ship ${B}`), workers: Number(val('--workers', 1)) }));
   console.log(`queued ${tests.join(', ')} (expect ${B})`);
 }
 

@@ -53,9 +53,20 @@ class ParseTests(unittest.TestCase):
         self.assertEqual(r["tests"], ["leadledge", "leadgate"])
         self.assertTrue(r["reload"])
 
+    def test_workers(self):
+        self.assertEqual(parse_request('{"tests": ["aa"]}')["workers"], 1)
+        self.assertEqual(parse_request('{"tests": ["aa"], "workers": 4}')["workers"], 4)
+        for bad in ('0', '7', '"2"', 'true', '1.5'):
+            with self.assertRaises(RequestError, msg=bad):
+                parse_request('{"tests": ["aa"], "workers": ' + bad + '}')
+
+    def test_no_cap_on_how_many_tests(self):
+        names = [f"t{i:03d}" for i in range(60)]
+        self.assertEqual(len(parse_request(json.dumps({"tests": names}))["tests"]), 60)
+
     def test_refused(self):
         for bad in ['nope', '[]', '{}', '{"tests": []}', '{"tests": ["a b"]}', '{"tests": ["x;stop"]}', '{"tests": ["/op me"]}',
-                    '{"tests": ["aa","bb","cc","dd","ee","ff","gg","hh","ii"]}', '{"tests": ["leadledge"], "expect_build": "u1 2"}']:
+                    '{"tests": ["leadledge"], "expect_build": "u1 2"}']:
             with self.assertRaises(RequestError, msg=bad):
                 parse_request(bad)
 
@@ -107,17 +118,16 @@ class RunTests(unittest.TestCase):
             a.poll_once()
             self.assertIn("could not reload", (Path(tmp) / "inbox" / "result.txt").read_text())
 
-    def test_bad_request_and_hourly_limit_are_refused_not_run(self):
+    def test_bad_request_is_refused_and_there_is_no_hourly_limit(self):
         with tempfile.TemporaryDirectory() as tmp:
             f = Fake(); a = make(tmp, f); a.set_enabled(True)
             (Path(tmp) / "inbox" / "run.json").write_text('{"tests": ["x;y"]}')
             a.poll_once()
             self.assertIn("refused", (Path(tmp) / "inbox" / "result.txt").read_text())
-            a.run_times = [f.now] * 24
+            a.run_times = [f.now] * 500   # (a lot of runs this hour: still not refused)
             (Path(tmp) / "inbox" / "run.json").write_text('{"tests": ["leadledge"]}')
             a.poll_once()
-            self.assertIn("more than 24", (Path(tmp) / "inbox" / "result.txt").read_text())
-            self.assertEqual(f.queued, [])
+            self.assertNotIn("refused", (Path(tmp) / "inbox" / "result.txt").read_text())
 
     def test_stop_file_switches_it_off(self):
         with tempfile.TemporaryDirectory() as tmp:

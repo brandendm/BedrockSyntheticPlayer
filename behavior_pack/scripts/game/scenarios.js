@@ -69,6 +69,8 @@ import { compare } from '../core/testrun.js';
 import { boatToMob } from '../core/towline.js';
 import { TOW_META, TOW_NAMES, towCourse } from '../core/towcourses.js';
 import { PROBES, PROBE_NAMES } from '../core/probes.js';
+import { hire, dismissAll, MAX_WORKERS } from './crew.js';
+import { nextSlot, siteAt, queueOf } from '../core/poolplan.js';
 import { ARENAS, testArena, arenaCommand } from './arenas.js';
 
 /** How far the slab reaches round the site (west, east, to each side) for a test; the backed-up box is the same (a structure is 64 across at most). */
@@ -85,6 +87,12 @@ let running = false;
 let forestBot = null;
 /** How many sky sites have been used this session (each test gets a new one, 120 blocks further). */
 let siteCounter = 0;
+/** Which of the eight sky sites a running test holds (parallel batches: a test never lands on a site another is using), and the ring's centre and radius for such a batch. */
+const busySlots = new Set();
+let ring = null; // { x, z, r } while a parallel batch runs
+// Which tests may share the world with others (a batch with workers): they stay on their own sky slab and change nothing global. The rest run one at a time afterwards.
+const SERIAL_ONLY = new Set(['villagerferry', 'villagerferryhorse']); // (hard difficulty for everyone)
+const parallelClass = (n) => (GROUND.has(n) || NIGHT.has(n) || SERIAL_ONLY.has(n) || PLAYER_ONLY.has(n) ? null : COMBAT.has(n) ? 'combat' : 'calm');
 
 // Tests that wait out real time (a 5 minute despawn, a night, a furnace, a long walk): left out of
 // `!bot test all quick`. Their real durations are in the batch report (`secs`), so this list can be
@@ -253,6 +261,10 @@ export async function runTests(agent, player, args) {
     return agent.say(`Pass rate, last run of each test: you ${r.human.pct === null ? 'no runs' : `${r.human.pct}% (${r.human.pass}/${r.human.total})`}, bot ${r.bot.pct === null ? 'no runs' : `${r.bot.pct}% (${r.bot.pass}/${r.bot.total})`}.`);
   }
   if (running) return agent.say('A test is already running.');
+  // `test ... workers 4`: that many bots at once on the tests that can share the world (runPool).
+  const wIdx = args.indexOf('workers');
+  const workersN = wIdx >= 0 ? Math.max(1, Math.min(MAX_WORKERS, Number(args[wIdx + 1]) || 1)) : 1;
+  if (wIdx >= 0) args = args.filter((_, i) => i !== wIdx && i !== wIdx + 1);
   // `test all except a,b`: this batch only.
   const exIdx = args.indexOf('except');
   const except = new Set(exIdx >= 0 ? String(args[exIdx + 1] ?? '').split(',').map((n) => n.trim()) : []);
@@ -321,6 +333,11 @@ export async function runTests(agent, player, args) {
   const diff0 = (() => { try { return String(world.getDifficulty()).toLowerCase(); } catch { return 'normal'; } })();
   const setDiff = (d) => { try { world.getDimension('overworld').runCommand(`difficulty ${d}`); } catch { /* */ } };
   try {
+    if (workersN > 1 && who === 'bot') {
+      const left = await runPool(agent, player, jobs.map(([n]) => n), workersN, argN, results, { diff: setDiff, diff0, cycle: () => setCycle(keepCycle), gm: setGm });
+      jobs.length = 0;
+      for (const n of left) jobs.push([n, false]);
+    }
     for (const [n, isYou] of jobs) {
       if (agent.testAbort) break;
       const human = isYou;
@@ -334,7 +351,7 @@ export async function runTests(agent, player, args) {
       try { player?.removeEffect('slow_falling'); } catch { /* */ }
       // The cap: at the deadline the task ends, so waits on it return and the test reports.
       let capped = false;
-      const capS = ['leadboat', 'leadsling', 'villagerhaul', 'villagerferry', 'villagerhaulhorse', 'villagerferryhorse'].includes(n) || TOW_META[n] || TOW_META[n.replace(/horse$/, '')] ? 480 : CAP_S;
+      const capS = capFor(n);
       agent.testProgress.deadline = Date.now() + capS * 1000;
       agent.testProgress.limitS = capS;
       const cap = system.runTimeout(() => { capped = true; agent.newTask(null); agent.motor.stop(); }, capS * 20);
@@ -365,6 +382,51 @@ export async function runTests(agent, player, args) {
   }
 }
 
+const capFor = (n) => (['leadboat', 'leadsling', 'villagerhaul', 'villagerferry', 'villagerhaulhorse', 'villagerferryhorse'].includes(n) || TOW_META[n] || TOW_META[n.replace(/horse$/, '')] ? 480 : CAP_S);
+
+/**
+ * A batch of the bot's own tests on several bots at once (`!bot test all workers 4`). Only tests that stay on their own sky slab and touch nothing global (parallelClass); the
+ * calm ones together, then the fights together, each phase with its own difficulty; everything else is left for the one-at-a-time loop. Returns the names it did not take.
+ */
+async function runPool(agent, player, list, N, argN, results, set) {
+  const calm = list.filter((n) => parallelClass(n) === 'calm'), fights = list.filter((n) => parallelClass(n) === 'combat');
+  const rest = list.filter((n) => !parallelClass(n));
+  if (calm.length + fights.length < 2) return list;
+  const c = player?.location ?? agent.sim.location;
+  ring = { x: c.x, z: c.z, r: 96 };
+  const bots = await hire(agent, Math.min(N, MAX_WORKERS), { x: c.x, y: agent.sim.location.y, z: c.z }, system);
+  if (bots.length < 2) { ring = null; dismissAll(); return list; }
+  for (const w of bots) if (w !== agent) w.testProgress = agent.testProgress; // (one progress bar for the batch)
+  agent.say(`${bots.length} bots on ${calm.length + fights.length} tests at once.`);
+  const inflight = new Set();
+  try {
+    for (const [names, diff] of [[calm, 'peaceful'], [fights, null]]) {
+      if (!names.length) continue;
+      set.diff(diff ?? set.diff0); set.cycle(); set.gm('creative');
+      const pull = queueOf(names);
+      await Promise.all(bots.map(async (w) => {
+        for (let n = pull(); n !== undefined; n = agent.testAbort ? undefined : pull()) {
+          const t0 = system.currentTick;
+          inflight.add(n); agent.testProgress.current = [...inflight].join(', ');
+          w.testSkipped = false; w.testFast = false; w.testAbort = false;
+          const capS = capFor(n);
+          let capped = false;
+          const cap = system.runTimeout(() => { capped = true; w.newTask(null); w.motor.stop(); }, capS * 20);
+          let r;
+          try { r = await runOne(w, player, n, argN, false); }
+          catch (e) { r = { name: n, pass: false, detail: `threw: ${e}` }; }
+          finally { try { system.clearRun(cap); } catch { /* */ } }
+          r.secs = Math.round((system.currentTick - t0) / 20);
+          if (capped) { r.pass = false; r.detail = `cut off after ${capS} s; ${r.detail}`; }
+          results.push(r); inflight.delete(n); agent.testProgress.done++; agent.testProgress.current = [...inflight].join(', ') || null;
+        }
+      }));
+      if (agent.testAbort) break;
+    }
+  } finally { ring = null; dismissAll(); }
+  return rest;
+}
+
 async function runOne(agent, player, name, arg, human = false) {
   const dim = agent.dim, sim = agent.sim, S = agent.skills;
   // Most tests are built in the sky on a slab of their own (no lakes, slopes or trees to interfere); the ones that
@@ -374,16 +436,20 @@ async function runOne(agent, player, name, arg, human = false) {
   let x, z, gy;
   /** The ticking area that keeps a far-off site loaded (removed at the end). */
   let tickName = '';
+  let siteSlot = -1;
+  /** The backup of the test area is named for the site, so tests running side by side keep their own. */
+  let backupName = 'agent_test_backup';
   if (sky) {
     // Sky sites go round a ring 56 blocks from where you are (eight places, one after another), inside the chunks that are loaded: the
     // first try, 4000 blocks out, was mostly not loaded when the slab was built (blocks missing, "none walkable" under the bot). What a
     // test leaves (lava, fire) is cleaned out with a margin, and the next test is somewhere else.
     siteCounter++;
-    const slot = siteCounter % 8, ang = (slot * Math.PI) / 4;
-    x = Math.floor(from.location.x + 56 * Math.cos(ang));
-    z = Math.floor(from.location.z + 56 * Math.sin(ang));
+    const slot = nextSlot(siteCounter, busySlots) ?? siteCounter % 8; // (eight tests at once is more than the workers allow: never null in practice)
+    busySlots.add(slot); siteSlot = slot;
+    ({ x, z } = siteAt(ring ?? { x: from.location.x, z: from.location.z, r: 56 }, slot));
     gy = 150;
     tickName = `agent_test_site_${slot}`;
+    if (ring) backupName = `agent_test_backup_${slot}`;
     try { dim.runCommand(`tickingarea remove ${tickName}`); } catch { /* none */ }
     try { dim.runCommand(`tickingarea add circle ${x} ${gy} ${z} 4 ${tickName} true`); } catch (e) { console.warn(`[test] tickingarea: ${e}`); }
     // Every corner of the slab and its middle must answer before anything is built (a loaded chunk gives a block, an unloaded one nothing).
@@ -394,7 +460,7 @@ async function runOne(agent, player, name, arg, human = false) {
       loaded = probes.every(([px, pz]) => { try { return !!dim.getBlock({ x: px, y: gy, z: pz }); } catch { return false; } });
       if (!loaded) await system.waitTicks(5);
     }
-    if (!loaded) { try { dim.runCommand(`tickingarea remove ${tickName}`); } catch { /* */ } return report(agent, name, false, 'the test site did not load (a corner of the slab had no chunk after 30 s)'); }
+    if (!loaded) { busySlots.delete(siteSlot); try { dim.runCommand(`tickingarea remove ${tickName}`); } catch { /* */ } return report(agent, name, false, 'the test site did not load (a corner of the slab had no chunk after 30 s)'); }
   } else {
     // Site: 10 blocks in front of whoever asked (or of the bot), on natural ground.
     const v = from.getViewDirection();
@@ -411,7 +477,8 @@ async function runOne(agent, player, name, arg, human = false) {
   const box = sky ? { x1: x - ext.w, y1: gy - 10, z1: z - ext.r, x2: x + ext.e, y2: gy + (name === 'elytra' ? 36 : 20), z2: z + ext.r } : { x1: x - 8, y1: gy - 8, z1: z - 8, x2: x + 14, y2: gy + 18, z2: z + 8 };
   const pHome = player ? { x: player.location.x, y: player.location.y, z: player.location.z } : null;
   const cmd = (c) => { try { dim.runCommand(c); return true; } catch (e) { console.warn(`[test] ${c}: ${e}`); return false; } };
-  if (!cmd(`structure save agent_test_backup ${box.x1} ${box.y1} ${box.z1} ${box.x2} ${box.y2} ${box.z2} false memory true`)) {
+  if (!cmd(`structure save ${backupName} ${box.x1} ${box.y1} ${box.z1} ${box.x2} ${box.y2} ${box.z2} false memory true`)) {
+    busySlots.delete(siteSlot);
     if (tickName) { try { dim.runCommand(`tickingarea remove ${tickName}`); } catch { /* */ } }
     return report(agent, name, false, "couldn't back up the test area, not touching it");
   }
@@ -447,7 +514,7 @@ async function runOne(agent, player, name, arg, human = false) {
   for (const cat of ['crafting_table', 'furnace']) agent.memory.forgetNear(cat, dim.id, { x, y: gy, z }, 40);
   // Items lying about from earlier tests (logs from the vine tree, saplings) would have it digging
   // through the fresh rock to fetch them: the site starts with none.
-  try { for (const e of dim.getEntities({ type: 'minecraft:item', location: { x, y: gy, z }, maxDistance: 48 })) e.remove(); } catch {}
+  try { for (const e of dim.getEntities({ type: 'minecraft:item', location: { x, y: gy, z }, maxDistance: ring ? 30 : 48 })) e.remove(); } catch {}
   let t0 = system.currentTick;
   const hp0 = agent.health();
   /** @type {Array<() => void>} */
@@ -3094,8 +3161,9 @@ async function runOne(agent, player, name, arg, human = false) {
       await system.waitTicks(10);
     }
     // Put the ground back, then make sure the bot isn't left inside a restored block.
-    cmd(`structure load agent_test_backup ${box.x1} ${box.y1} ${box.z1}`);
-    cmd('structure delete agent_test_backup');
+    cmd(`structure load ${backupName} ${box.x1} ${box.y1} ${box.z1}`);
+    cmd(`structure delete ${backupName}`);
+    busySlots.delete(siteSlot);
     if (tickName) { try { dim.runCommand(`tickingarea remove ${tickName}`); } catch { /* */ } }
     try {
       const top = S.groundTop(Math.floor(sim.location.x), Math.floor(sim.location.z));

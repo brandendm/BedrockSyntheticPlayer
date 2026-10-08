@@ -6,6 +6,10 @@ from __future__ import annotations
 
 import json
 import statistics
+try:
+    from runstats import wilson, compare as compare_runs, allocate
+except ImportError:  # (imported as brain.analytics)
+    from .runstats import wilson, compare as compare_runs, allocate
 from pathlib import Path
 
 SPEED_CAP = 1.5
@@ -76,7 +80,7 @@ def _side(runs: list) -> dict:
             "prior_rate": (sum(1 for r in prior if r["pass"]) / len(prior)) if prior else None,
             "med_secs": statistics.median(pass_secs) if pass_secs else None,
             "recent_secs": statistics.median([r["secs"] for r in rec if r["pass"] and r["secs"]] or [0]) or None,
-            "pips": [1 if r["pass"] else 0 for r in runs[-10:]], "last": runs[-1]["pass"]}
+            "pips": [1 if r["pass"] else 0 for r in runs[-10:]], "last": runs[-1]["pass"], "ci": [round(v, 3) for v in wilson(p, n)]}
 
 
 def compute(rows: list) -> dict:
@@ -116,7 +120,22 @@ def compute(rows: list) -> dict:
     last20, prev20 = bot[-20:], bot[-40:-20]
     improved = sorted([p for p in per if p["trend"] == "up"], key=lambda p: -(p["bot"]["recent_rate"] - p["bot"]["prior_rate"]))
     regressed = sorted([p for p in per if p["trend"] == "down"], key=lambda p: p["bot"]["recent_rate"] - p["bot"]["prior_rate"])
-    return {"tests": per,
+    # Did the newest build change anything, test by test? Each test's bot runs on its last two builds, compared with the statistics in runstats.py.
+    latest = bot[-1]["build"] if bot else None
+    changes, stats = [], {}
+    for p in per:
+        mine = [r for r in bot if r["name"] == p["name"]]
+        bs = []
+        for r in mine:
+            if r["build"] not in bs:
+                bs.append(r["build"])
+        if len(bs) >= 2:
+            c = compare_runs([r for r in mine if r["build"] == bs[-2]], [r for r in mine if r["build"] == bs[-1]])
+            if c["verdict"] in ("better", "worse"):
+                changes.append({"name": p["name"], "from": bs[-2], "to": bs[-1], "verdict": c["verdict"], "why": c["why"]})
+        k = sum(1 for r in mine if r["pass"])
+        stats[p["name"]] = {"k": k, "n": len(mine), "changed": bool(mine) and mine[-1]["build"] != latest, "attention": p["status"] == "attention", "retire": p["status"] == "retire"}
+    return {"tests": per, "build_changes": changes, "plan": allocate(stats, 30),
             "overall": {"bot_rate": rate(bot), "human_rate": rate(hum), "bot_runs": len(bot), "human_runs": len(hum),
                         "efficiency": (sum(effs) / len(effs) * 100) if effs else None, "efficiency_n": len(effs),
                         "last20": rate(last20), "prev20": rate(prev20) if prev20 else None,

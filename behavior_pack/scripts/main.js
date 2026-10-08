@@ -14,6 +14,7 @@ import { poll, sendEvent } from './game/bridge.js';
 import { CONFIG } from './config.js';
 import { orderOf } from './core/toggles.js';
 import { probeApis } from './game/probe.js';
+import { crew, setCrewFactory, everyone, isCrewId, isCrewName } from './game/crew.js';
 import { describeStyle } from './core/buildstyle.js';
 import { chainItem, chainOutline } from './core/chain.js';
 import { getPlan, setPlan, planMaterials, describe } from './core/learnhouse.js';
@@ -58,6 +59,13 @@ function surfaceY(dim, x, z) {
   }
   return null;
 }
+
+// How a hired bot is made (game/crew.js): its own simulated player and Agent, sharing the main bot's memory.
+setCrewFactory((name, where, primary) => {
+  const sim = spawnSimulatedPlayer(where, name, GameMode.Survival);
+  try { sim.setSpawnPoint({ dimension: where.dimension, x: Math.floor(where.x), y: Math.floor(where.y), z: Math.floor(where.z) }); } catch { /* */ }
+  return new Agent(sim, { worker: true, memory: primary.memory });
+});
 
 async function spawnAgent(player) {
   // A script reload (/reload) loses our handle on an existing bot; kick the orphan so there's only one.
@@ -481,7 +489,7 @@ function handle(text, player) {
 const lastChat = new Map();
 world.afterEvents.chatSend.subscribe((ev) => {
   const msg = ev.message;
-  if (ev.sender.name === CONFIG.botName || ev.sender.id === agent?.sim.id) return;
+  if (ev.sender.name === CONFIG.botName || ev.sender.id === agent?.sim.id || isCrewId(ev.sender.id) || isCrewName(ev.sender.name)) return;
   if (msg.toLowerCase().startsWith(CONFIG.commandPrefix)) return handle(msg.slice(CONFIG.commandPrefix.length), ev.sender);
   // Plain chat: the brain (Jev) decides whether it's meant for the bot. At most one line per
   // player every 2 s, short lines only: keeps it cheap and ignores pasted walls of text.
@@ -504,6 +512,7 @@ world.afterEvents.playerBreakBlock.subscribe((ev) => { try { agent?.demo.onBreak
 world.afterEvents.playerPlaceBlock.subscribe((ev) => { try { agent?.demo.onPlace(ev); } catch { /* */ } });
 world.afterEvents.itemCompleteUse.subscribe((ev) => { try { agent?.demo.onEat(ev); } catch { /* */ } });
 world.afterEvents.entityHurt.subscribe((ev) => {
+  for (const w of crew.members) { if (ev.hurtEntity.id === w.sim?.id) { try { w.onHurt(ev.damageSource.damagingEntity, ev.damageSource.cause, ev.damage); } catch { /* */ } } }
   if (!agent) return;
   try { agent.demo.onHurt(ev); } catch { /* */ }
   // Following someone: what goes for them, and what they go for, is ours to fight too.
@@ -513,6 +522,11 @@ world.afterEvents.entityHurt.subscribe((ev) => {
 
 // Dead simulated players don't respawn on their own.
 world.afterEvents.entityDie.subscribe((ev) => {
+  for (const w of crew.members) {
+    if (ev.deadEntity.id !== w.sim?.id) continue;
+    try { w.onDeath(); } catch { /* */ }
+    system.runTimeout(() => { try { w.sim.respawn(); } catch (e) { console.error(`[crew] respawn failed: ${e}`); } }, 40);
+  }
   if (agent) { try { agent.demo.onDie(ev); } catch { /* */ } }
   if (!agent || ev.deadEntity.id !== agent.sim.id) return;
   const src = ev.damageSource;
@@ -537,6 +551,7 @@ system.runInterval(() => {
     const t0 = Date.now();
     agent.tick();
     agent.notePerf(Date.now() - t0);
+    for (const w of crew.members) { try { if (w.sim.isValid) w.tick(); } catch (e) { console.error(`[crew] tick error: ${e}`); } }
     if (debugLog && system.currentTick % 20 === 0) {
       const p = agent.sim.location, r = agent.sim.getRotation();
       console.warn(`[agent] pos ${p.x.toFixed(2)} ${p.y.toFixed(2)} ${p.z.toFixed(2)} yaw ${r.y.toFixed(1)} pitch ${r.x.toFixed(1)} task ${agent.task?.kind ?? 'idle'}`);

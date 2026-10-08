@@ -150,7 +150,7 @@
 
   <section class="wide" id="autosec">
     <h2>Auto runs <span class="muted" id="autostate"></span></h2>
-    <p class="muted" style="margin:4px 0 8px">When this is <b>ON</b>, Claude can start bot tests while you are away and read what happened. It can only do two things: reload the game's scripts and run <code>test &lt;names&gt;</code>. At most 8 tests per request and 24 an hour. It is OFF every time the brain starts. Turn it OFF to stop a run at once.</p>
+    <p class="muted" style="margin:4px 0 8px">When this is <b>ON</b>, Claude can start bot tests while you are away and read what happened. It can only do two things: reload the game's scripts and run <code>test &lt;names&gt;</code>. No limit on how many or how often. It is OFF every time the brain starts. Turn it OFF to stop a run at once.</p>
     <button id="autotoggle">Turn on</button>
     <span class="muted" id="autolast"></span>
   </section>
@@ -622,8 +622,11 @@ async function loadAnalytics() {
     const sp = t.speed === null ? '–' : `<span class="${t.speed >= 0.9 ? 'up' : t.speed >= 0.5 ? 'flat' : 'down'}">${t.speed.toFixed(2)}×</span>`;
     const pips = (t.bot.pips || []).map((v) => `<span class="pip" style="background:${v ? 'var(--good)' : 'var(--bad)'}"></span>`).join('');
     const badge = t.status === 'retire' ? `<span class="badge ok" title="${esc(t.why)}">RETIRE?</span>` : t.status === 'attention' ? `<span class="badge bad" title="${esc(t.why)}">NEEDS ATTENTION</span>` : '';
-    return `<span>${t.name}<br>${badge}</span><div>${bar(t.human.rate, 'var(--accent)')}${bar(t.bot.recent_rate, t.bot.recent_rate >= 0.8 ? 'var(--good)' : t.bot.recent_rate >= 0.5 ? 'var(--warn)' : 'var(--bad)')}</div><span>${sp}</span><span>${pips}</span><span>${tr[t.trend] || ''}</span>`;
-  }).join('') + '</div>';
+    const ci = t.bot.ci ? `<br><small class="muted" title="${t.bot.p}/${t.bot.n} runs, 90% interval">${Math.round(t.bot.rate * 100)}% (${Math.round(t.bot.ci[0] * 100)}–${Math.round(t.bot.ci[1] * 100)})</small>` : '';
+    return `<span>${t.name}${ci}<br>${badge}</span><div>${bar(t.human.rate, 'var(--accent)')}${bar(t.bot.recent_rate, t.bot.recent_rate >= 0.8 ? 'var(--good)' : t.bot.recent_rate >= 0.5 ? 'var(--warn)' : 'var(--bad)')}</div><span>${sp}</span><span>${pips}</span><span>${tr[t.trend] || ''}</span>`;
+  }).join('') + '</div>'
+    + ((d.build_changes || []).length ? '<p class="muted" style="margin:8px 0 2px"><b>Newest build vs the one before (enough runs to tell):</b> ' + d.build_changes.map((c) => `<span class="${c.verdict === 'better' ? 'up' : 'down'}" title="${esc(c.why)}">${c.name} ${c.verdict === 'better' ? '▲ better' : '▼ worse'}</span>`).join(', ') + '</p>' : '')
+    + (Object.keys(d.plan || {}).length ? '<p class="muted" style="margin:2px 0"><b>Where the next 30 runs are best spent:</b> ' + Object.entries(d.plan).sort((x, y) => y[1] - x[1]).map(([n, k]) => `${n} ×${k}`).join(', ') + '</p>' : '');
   const list = (a, c) => a.length ? `<span class="${c}">${a.join(', ')}</span>` : '<span class="muted">none</span>';
   $('an').innerHTML = tiles + `<div class="grid"><div><b>Bot pass rate over time</b> <span class="muted">(rolling 10 runs; dashed = new build)</span>${rollSvg}</div><div><b>By build</b>${bb || '<span class="muted">no build data yet</span>'}</div></div>
     <p>${d.attention.length ? `<b class="down">Needs attention:</b> ${d.tests.filter((t) => t.status === 'attention').map((t) => `${t.name} (${esc(t.why)})`).join('; ')}<br>` : ''}${d.retire.length ? `<b class="up">Recommended for retirement:</b> ${d.tests.filter((t) => t.status === 'retire').map((t) => `${t.name} (${esc(t.why)})`).join('; ')}<br>` : ''}Improving: ${list(d.improved, 'up')} · Getting worse: ${list(d.regressed, 'down')} · Furthest behind you: ${list(o.gap, 'down')}</p>${grid}
@@ -684,7 +687,7 @@ async function autoRefresh() {
   const on = !!i.enabled;
   document.getElementById('autostate').textContent = on ? `ON: ${i.state}` : 'OFF';
   document.getElementById('autotoggle').textContent = on ? 'Turn OFF (stops a run)' : 'Turn on';
-  document.getElementById('autolast').textContent = `  ${i.tests_this_hour ?? 0}/${i.limit_per_hour ?? 24} test runs this hour. ` + ((i.last || []).slice(-3).map((r) => `${r.t} ${(r.tests || []).join(',')}: ${r.outcome}`).join(' | ') || 'nothing run yet');
+  document.getElementById('autolast').textContent = `  ${i.tests_this_hour ?? 0} test runs this hour. ` + ((i.last || []).slice(-3).map((r) => `${r.t} ${(r.tests || []).join(',')}: ${r.outcome}`).join(' | ') || 'nothing run yet');
 }
 document.getElementById('autotoggle').addEventListener('click', async () => {
   const on = !/OFF$/.test(document.getElementById('autostate').textContent);

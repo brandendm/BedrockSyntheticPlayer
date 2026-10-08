@@ -51,3 +51,26 @@ class AnalyticsTests(unittest.TestCase):
             r = analytics.compute(analytics.load_runs(Path(d)))
             self.assertIsNone(r["overall"]["efficiency"])
             self.assertEqual(r["tests"], [])
+
+
+class StatsInAnalytics(unittest.TestCase):
+    def test_ci_plan_and_build_changes(self):
+        rows = []
+        for i in range(10):
+            rows.append(ev("2026-01-01 00:00:%02d" % i, "leadgate", "bot", False, None, build="u1"))
+        for i in range(10):
+            rows.append(ev("2026-01-02 00:00:%02d" % i, "leadgate", "bot", True, 15.0, build="u2"))
+        for i in range(10):
+            rows.append(ev("2026-01-02 00:01:%02d" % i, "other", "bot", True, 15.0, build="u2"))
+        with tempfile.TemporaryDirectory() as d:
+            d = Path(d)
+            (d / "tests.jsonl").write_text("\n".join(rows) + "\n")
+            r = analytics.compute(analytics.load_runs(d))
+        t = {x["name"]: x for x in r["tests"]}["leadgate"]
+        self.assertEqual(len(t["bot"]["ci"]), 2)
+        self.assertTrue(any(c["name"] == "leadgate" and c["verdict"] == "better" for c in r["build_changes"]))
+        self.assertIn("plan", r)
+
+
+if __name__ == "__main__":
+    unittest.main()

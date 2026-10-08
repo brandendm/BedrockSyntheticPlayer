@@ -79,8 +79,10 @@ const STEP_WORDS = {
 };
 
 export class Agent {
-  constructor(sim) {
+  /** opts.worker: a hired bot (game/crew.js): shares opts.memory, restores nothing, does not set the global position tracer. */
+  constructor(sim, opts = {}) {
     this.sim = sim;
+    this.worker = !!opts.worker;
     this.rng = makeRng();
     this.body = new SimBodyAdapter(sim);
     this.motor = new MotorController(this.body, {}, this.rng);
@@ -113,7 +115,7 @@ export class Agent {
     this.lastShout = -Infinity;
 
     // default behaviour: work toward stone tools on its own
-    this.memory = new WorldMemory();
+    this.memory = opts.memory ?? new WorldMemory();
     this.skills = new Skills(this);
     this.homestead = new Homestead(this);
     this.farm = new Farm(this);
@@ -127,9 +129,9 @@ export class Agent {
     this.portal = new Portals(this);
     /** @type {Set<string>} Far places already looked at for a village (game/villages.js scout). */
     this.villageScouted = new Set();
-    tracePosition(() => this.sim.location); // (villages seen from afar: game/villages.js)
-    system.runTimeout(() => { this.restoreSettings().catch(() => {}); }, 30);
-    system.runTimeout(() => { try { this.restoreKit(); } catch (e) { this.kitChecked = true; console.warn(`[agent] kit: ${e}`); } try { this.restoreState(); } catch {} }, 40);
+    if (!this.worker) tracePosition(() => this.sim.location); // (villages seen from afar: game/villages.js)
+    if (!this.worker) system.runTimeout(() => { this.restoreSettings().catch(() => {}); }, 30);
+    if (!this.worker) system.runTimeout(() => { try { this.restoreKit(); } catch (e) { this.kitChecked = true; console.warn(`[agent] kit: ${e}`); } try { this.restoreState(); } catch {} }, 40);
     this.badCells = new Map();   // "x,y,z" -> until (ms): cells we got stuck walking into
     this.deferred = new Map();   // stepKey -> {until (ms), step}: ladder steps that kept failing, set aside (core/focus.js)
     this.autoOpportunity = null; // the kind of side job we're on (sheep, food, log, stone), if any

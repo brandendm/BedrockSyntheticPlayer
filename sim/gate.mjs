@@ -6,8 +6,9 @@
 // --update writes the new numbers as the baseline (after a change you meant). --quick: fixed courses and the held-out seeds only.
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
-import { runTow } from './run_tow.mjs';
-import { randomTowCourse } from './gencourse.mjs';
+import { register } from 'node:module';
+import { runJobs } from './pool.mjs';
+register('./hooks.mjs', import.meta.url); // (so the game's modules can be loaded here: @minecraft/server is the sim)
 
 const args = process.argv.slice(2), has = (f) => args.includes(f);
 const BASE = new URL('./baseline.json', import.meta.url).pathname;
@@ -23,13 +24,23 @@ if (!has('--no-unit')) {
   if (!m || m[2] !== '0') bad.push('unit tests fail');
 }
 
+// every relative import in the pack must resolve to something the target exports (main.js cannot be loaded here)
+{ const { check } = await import('../tools/check_imports.mjs'); const p = check(new URL('../behavior_pack/scripts', import.meta.url).pathname); log(`imports: ${p.length ? p.length + ' problem(s)' : 'ok'}`); for (const x of p) { log('  ' + x); bad.push('import problem: ' + x); } }
 // the game's scenario file must at least load (a module-level mistake takes the whole pack down in the real game)
 try { const m = await import('../behavior_pack/scripts/game/scenarios.js'); log(`scenarios.js loads (${typeof m.runTests})`); } catch (e) { log(`scenarios.js DOES NOT LOAD: ${String(e).slice(0, 160)}`); bad.push('scenarios.js does not load'); }
 
+// (u287: the courses run over a few worker processes (sim/pool.mjs), all at once, instead of one after another; the results are read in the same order as before)
+const FIXED = ['leadledge', 'leadstep', 'leadstair', 'leadturn', 'leadgate'];
+const sets = [['held-out', 1000, 1011], ...(has('--quick') ? [] : [['seeds', 1, 20]])];
+const jobs = [];
+for (const mode of ['fresh', 'learned']) for (const c of FIXED) jobs.push({ kind: 'fixed', name: c, learned: mode === 'learned' ? LEARNED : undefined, tag: `${c}/${mode}` });
+for (const [, a, b] of sets) for (let sd = a; sd <= b; sd++) jobs.push({ kind: 'rand', seed: sd, level: undefined, tag: `seed ${sd}` });
+const done = await runJobs(jobs, Number(process.env.GATE_WORKERS) || undefined);
+const byTag = Object.fromEntries(jobs.map((j, i) => [j.tag, done[i] ?? { pass: false, secs: 0, why: 'no result' }]));
+
 for (const mode of ['fresh', 'learned']) {
-  if (mode === 'learned') process.env.LEARNED = LEARNED; else delete process.env.LEARNED;
-  for (const c of ['leadledge', 'leadstep', 'leadstair', 'leadturn', 'leadgate']) {
-    const r = await runTow(c, { maxS: 120 }), key = `${c}/${mode}`;
+  for (const c of FIXED) {
+    const r = byTag[`${c}/${mode}`], key = `${c}/${mode}`;
     now.fixed[key] = { pass: r.pass, secs: r.secs };
     const b = base?.fixed?.[key];
     let flag = '';
@@ -38,13 +49,11 @@ for (const mode of ['fresh', 'learned']) {
     log(`  ${key.padEnd(18)} ${r.pass ? 'PASS' : 'fail'} ${r.secs}s${flag}`);
   }
 }
-delete process.env.LEARNED;
 
-const sets = [['held-out', 1000, 1011], ...(has('--quick') ? [] : [['seeds', 1, 20]])];
 for (const [label, a, b] of sets) {
   let pass = 0, tot = 0;
   for (let sd = a; sd <= b; sd++) {
-    const r = await runTow(`rand${sd}`, { course: (x, gy, z) => randomTowCourse(sd, x, gy, z), maxS: 90 });
+    const r = byTag[`seed ${sd}`];
     now.rand[sd] = { pass: r.pass, secs: r.secs }; tot++; if (r.pass) pass++;
     if (base?.rand?.[sd]?.pass && !r.pass) bad.push(`seed ${sd} passed before and fails now (node sim/minimize.mjs ${sd})`);
   }

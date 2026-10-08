@@ -23,19 +23,19 @@ class AdminTests(unittest.TestCase):
             repo = Path(d)
             mk(repo, build="u10", pack_build="u9", extra="y")
             (repo / "brain/inbox").mkdir(parents=True); (repo / "brain/logs").mkdir(parents=True)
-            checks = {c["name"]: c for c in admin.doctor(repo, {"build": "u8"}, 2.0, {"enabled": False, "tests_this_hour": 20, "limit_per_hour": 24}, repo / "brain/logs", repo / "brain/inbox")}
+            checks = {c["name"]: c for c in admin.doctor(repo, {"build": "u8"}, 2.0, {"enabled": False, "tests_this_hour": 20, "limit_per_hour": None}, repo / "brain/logs", repo / "brain/inbox")}
             self.assertFalse(checks["build in the server's pack"]["ok"])
             self.assertFalse(checks["server pack identical to the repo's"]["ok"])
             self.assertFalse(checks["build the game runs"]["ok"])
             self.assertTrue(checks["game talking to the brain"]["ok"])
             self.assertIsNone(checks["autorun switch"]["ok"])
-            self.assertIn("20 of 24", checks["test runs this hour"]["detail"])
+            self.assertIn("20 (no limit)", checks["test runs this hour"]["detail"])
 
     def test_doctor_all_good(self):
         with tempfile.TemporaryDirectory() as d:
             repo = Path(d); mk(repo)
             (repo / "brain/inbox").mkdir(parents=True); (repo / "brain/logs").mkdir(parents=True)
-            checks = {c["name"]: c for c in admin.doctor(repo, {"build": "u9"}, 1.0, {"enabled": True, "state": "waiting", "tests_this_hour": 0, "limit_per_hour": 24}, repo / "brain/logs", repo / "brain/inbox")}
+            checks = {c["name"]: c for c in admin.doctor(repo, {"build": "u9"}, 1.0, {"enabled": True, "state": "waiting", "tests_this_hour": 0, "limit_per_hour": None}, repo / "brain/logs", repo / "brain/inbox")}
             for n in ("build in the repo", "build in the server's pack", "server pack identical to the repo's", "build the game runs", "game talking to the brain", "autorun switch"):
                 self.assertTrue(checks[n]["ok"], n)
 

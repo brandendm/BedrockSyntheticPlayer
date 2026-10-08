@@ -4,7 +4,8 @@ How it works, in plain words
 ----------------------------
 1. You switch it ON in the dashboard ("Auto runs" box). It is OFF every time the brain starts.
 2. Claude writes a small file, brain/inbox/run.json:
-       {"tests": ["leadledge", "leadgate"], "reload": true, "expect_build": "u253", "note": "why"}
+       {"tests": ["leadledge", "leadgate"], "reload": true, "expect_build": "u253", "note": "why", "workers": 3}
+   ("workers": 1 to 6 bots at once, default 1; only the tests that can share the world run together, the rest follow one by one)
 3. This module sees it, and (only if it is ON):
        - reloads the game's scripts if "reload" is true (types `reload` into the server window; needs the brain to be
          running the server, as Start Agent.bat does),
@@ -14,8 +15,7 @@ How it works, in plain words
        - writes brain/inbox/result.txt: the result of each test, the tow's trace lines, and any repro capsules.
 4. The request file moves to brain/inbox/done/, and every step is logged in brain/logs/autorun.jsonl.
 
-What it will NOT do: anything but `test <names>` and the reload. Names are letters and digits only. At most 8 tests in a request and
-24 test runs an hour. Turn it OFF in the dashboard (or put a file called STOP in brain/inbox) and it stops the run in progress.
+What it will NOT do: anything but `test <names>` and the reload. Names are letters and digits only. No cap on how many tests or how often (it was 8 a request and 24 an hour until u287). Turn it OFF in the dashboard (or put a file called STOP in brain/inbox) and it stops the run in progress.
 """
 from __future__ import annotations
 
@@ -26,8 +26,7 @@ import time
 from pathlib import Path
 from typing import Callable, Optional
 
-MAX_TESTS_PER_REQUEST = 8
-MAX_TESTS_PER_HOUR = 24
+MAX_TESTS_PER_REQUEST = 1000   # (only a typo guard: every scenario at once is fine)
 BATCH_TIMEOUT_S = 20 * 60
 NAME_RE = re.compile(r"^[a-z][a-z0-9]{1,24}$")
 
@@ -39,7 +38,7 @@ Claude can start bot tests while you are away. It is OFF until you switch it on 
   result.txt   the answer, written when the tests finish: results, the tow's trace, repro capsules
   done/        every request already handled (with what was done)
 
-It can only (1) reload the game's scripts, and (2) run `test <names>`. Nothing else. At most 8 tests per request and 24 an hour.
+It can only (1) reload the game's scripts, and (2) run `test <names>`. Nothing else. No limit on how many tests or how often.
 To stop it: switch it off in the dashboard, or create an empty file called STOP in this folder.
 """
 
@@ -70,7 +69,10 @@ def parse_request(text: str) -> dict:
     build = d.get("expect_build")
     if build is not None and not (isinstance(build, str) and re.match(r"^[A-Za-z0-9._-]{1,16}$", build)):
         raise RequestError('"expect_build" must be like "u253"')
-    return {"tests": clean, "reload": bool(d.get("reload", False)), "expect_build": build, "note": str(d.get("note", ""))[:300]}
+    w = d.get("workers", 1)
+    if isinstance(w, bool) or not isinstance(w, int) or not 1 <= w <= 6:
+        raise RequestError('"workers" must be a whole number from 1 to 6')
+    return {"tests": clean, "reload": bool(d.get("reload", False)), "expect_build": build, "note": str(d.get("note", ""))[:300], "workers": w}
 
 
 def build_result(req: dict, *, started: str, build: Optional[str], outcome: str, events: list, traces: list, capsules: list, notes: list) -> str:
@@ -126,7 +128,7 @@ class AutoRun:
         self.enabled = False            # OFF at every start
         self.state = "off"             # what it is doing, in a few words, for the dashboard
         self.history: list = []         # the last runs: {t, tests, outcome}
-        self.run_times: list = []       # when each test was started (for the hourly limit)
+        self.run_times: list = []       # when each test was started (a count for the dashboard; there is no limit)
         self.lock = threading.Lock()
         self._thread: Optional[threading.Thread] = None
         self.inbox.mkdir(parents=True, exist_ok=True)
@@ -136,7 +138,7 @@ class AutoRun:
     # ---- what the dashboard shows and sets -------------------------------------------------
     def info(self) -> dict:
         h = [t for t in self.run_times if self.clock() - t < 3600]
-        return {"enabled": self.enabled, "state": self.state if self.enabled else "off", "last": self.history[-6:], "tests_this_hour": len(h), "limit_per_hour": MAX_TESTS_PER_HOUR}
+        return {"enabled": self.enabled, "state": self.state if self.enabled else "off", "last": self.history[-6:], "tests_this_hour": len(h), "limit_per_hour": None}
 
     def set_enabled(self, on: bool) -> None:
         self.enabled = bool(on)
@@ -183,9 +185,6 @@ class AutoRun:
             self._finish(req_file, stamp, {"tests": [], "reload": False, "note": ""}, f"refused: {e}", None)
             return True
         hour = [t for t in self.run_times if self.clock() - t < 3600]
-        if len(hour) + len(req["tests"]) > MAX_TESTS_PER_HOUR:
-            self._finish(req_file, stamp, req, f"refused: that would be more than {MAX_TESTS_PER_HOUR} test runs in an hour ({len(hour)} so far)", None)
-            return True
         self.run_times = hour + [self.clock()] * len(req["tests"])
         # (u257 live: the request was archived when the run FINISHED, so a newer run.json written while it ran was archived unrun: it moves at the start)
         try: req_file.replace(self.inbox / "done" / f"{stamp}-run.json")
@@ -244,7 +243,7 @@ class AutoRun:
         else:
             self.queue("/say [Auto run from Claude] testing: " + ", ".join(req["tests"]) + ". Switch it off in the dashboard to stop.")
             t0 = time.strftime("%Y-%m-%d %H:%M:%S")
-            self.queue("test " + ",".join(req["tests"]))
+            self.queue("test " + ",".join(req["tests"]) + (f" workers {req['workers']}" if req.get("workers", 1) > 1 else ""))
             self._log({"event": "queued", "tests": req["tests"]})
 
             def finished() -> bool:
