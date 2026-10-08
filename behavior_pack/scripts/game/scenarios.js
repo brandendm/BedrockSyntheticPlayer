@@ -228,6 +228,11 @@ export async function runTests(agent, player, args) {
     agent.memory.data.testOmit = [...new Set([...agent.memory.data.testOmit, 'mineore', 'house'])];
     agent.memory.data.retiredV4 = true; agent.memory.save();
   }
+  // The fifth (the u284 sweep, 180 runs): the bot passes these every time, at close to your pace. ravine stays in: it failed.
+  if (!agent.memory.data.retiredV5) {
+    agent.memory.data.testOmit = [...new Set([...agent.memory.data.testOmit, 'leadstair', 'leadstep', 'leadturn', 'tower', 'pen', 'climb', 'farmrace', 'forest', 'vineclimb'])];
+    agent.memory.data.retiredV5 = true; agent.memory.save();
+  }
   const omitList = () => (agent.memory.data.testOmit ??= []);
   if (args[0] === 'omit' || args[0] === 'include') {
     const names = String(args[1] ?? '').split(',').map((n) => n.trim()).filter(Boolean);
