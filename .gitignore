@@ -10,3 +10,5 @@ brain/settings.json
 
 # (u253) auto runs: requests and answers
 brain/inbox/
+brain/reports/
+brain/inbox/regress_state.json

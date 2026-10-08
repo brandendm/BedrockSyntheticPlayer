@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Scout admin</title>
+<style>
+:root{--bg:#f6f7f9;--panel:#fff;--ink:#1c2230;--muted:#6b7385;--line:#dfe3ea;--accent:#2f6fed;--good:#1a8f4c;--warn:#b7791f;--bad:#c53030;--chip:#eef1f6;--mono:ui-monospace,Consolas,monospace}
+@media(prefers-color-scheme:dark){:root{--bg:#12151b;--panel:#1b2029;--ink:#e4e8f0;--muted:#8b94a8;--line:#2a313e;--accent:#5b8cff;--good:#3ecf8e;--warn:#e0a84a;--bad:#f06a6a;--chip:#252c39}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:14px system-ui,sans-serif}
+header{display:flex;gap:12px;align-items:center;padding:10px 16px;border-bottom:1px solid var(--line);background:var(--panel)}
+header h1{font-size:16px;margin:0}a{color:var(--accent)}
+nav{display:flex;gap:4px;padding:8px 16px;flex-wrap:wrap}
+nav button{border:1px solid var(--line);background:var(--chip);color:var(--ink);padding:6px 12px;border-radius:6px;cursor:pointer}
+nav button.on{background:var(--accent);color:#fff;border-color:var(--accent)}
+main{padding:0 16px 40px;max-width:1100px}
+section{display:none}section.on{display:block}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:12px;margin:10px 0}
+button.b{border:1px solid var(--line);background:var(--chip);color:var(--ink);padding:5px 10px;border-radius:6px;cursor:pointer}
+button.b:hover{border-color:var(--accent)}button.danger{color:var(--bad)}
+.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:6px 0}
+.ok{color:var(--good)}.no{color:var(--bad)}.na{color:var(--warn)}
+.muted{color:var(--muted)}
+pre{background:var(--chip);padding:10px;border-radius:6px;overflow:auto;max-height:520px;font:12px var(--mono);white-space:pre-wrap;margin:6px 0}
+input,select{background:var(--panel);color:var(--ink);border:1px solid var(--line);border-radius:6px;padding:5px 8px}
+table{border-collapse:collapse;width:100%}td,th{padding:4px 8px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}
+.chip{display:inline-block;background:var(--chip);border-radius:10px;padding:1px 8px;font-size:12px;margin-right:4px}
+#toast{position:fixed;right:16px;bottom:16px;background:var(--ink);color:var(--bg);padding:8px 12px;border-radius:6px;display:none;max-width:60ch}
+</style></head><body>
+<header><h1>Scout admin</h1><a href="/">← dashboard</a><span class="muted" id="sum"></span></header>
+<nav id="tabs"></nav>
+<main>
+<section id="overview"><div class="card"><div class="row"><button class="b" id="refresh">Refresh</button><label><input type="checkbox" id="auto" checked> auto-refresh 5 s</label></div><table id="checks"></table></div>
+<div class="card"><b>Controls</b><div class="row">
+<button class="b" data-post="reload">Reload server scripts</button>
+<button class="b" data-post="spawn">Spawn the bot</button>
+<button class="b danger" data-post="stop">STOP autorun</button>
+<button class="b" data-post="clear_stop">Clear STOP file</button>
+<button class="b" id="arOn">Autorun on</button><button class="b" id="arOff">Autorun off</button></div></div></section>
+
+<section id="run"><div class="card"><div class="row"><input id="filter" placeholder="filter scenarios…" size="24">
+<label><input type="checkbox" id="onlyYou"> ones you can do</label>
+<label><input type="checkbox" id="hideSlow"> hide slow</label></div>
+<div class="muted">Click a name to queue it for the bot ("me" = you do it). Tick boxes to build an auto-run batch (max 8).</div>
+<table id="scen"></table></div>
+<div class="card"><b>Auto-run batch</b><div class="row"><span id="picked" class="muted">none picked</span>
+<label><input type="checkbox" id="rl"> reload first</label><input id="eb" placeholder="expect_build (u276)" size="14"><input id="note" placeholder="note" size="24">
+<button class="b" id="go">Write run.json</button><button class="b" id="clr">Clear</button></div></div></section>
+
+<section id="logs"><div class="card"><div class="row"><select id="logsel"></select><input id="lgrep" placeholder="grep" size="20"><input id="ln" value="200" size="5">
+<button class="b" id="lload">Load</button><label><input type="checkbox" id="lfollow"> follow 3 s</label></div><pre id="logout"></pre></div></section>
+
+<section id="result"><div class="card"><div class="row"><button class="b" id="rload">Reload</button>
+<button class="b" id="rcopy">Copy</button></div><pre id="resout"></pre></div>
+<div class="card"><b>Autorun history</b> <span class="muted" id="hhour"></span><pre id="hist"></pre></div></section>
+
+<section id="reports"><div class="card"><div class="row"><select id="repsel"></select><button class="b" id="repload">Open</button></div><pre id="repout"></pre></div></section>
+
+<section id="cmd"><div class="card"><div class="row"><input id="cmdtext" size="50" placeholder='come Steve   |   test house   |   /time set day'><button class="b" id="cmdgo">Send to the bot</button></div></div>
+<div class="card"><b>Handy commands (PC)</b><div id="sims"></div></div></section>
+</main><div id="toast"></div>
+<script>
+const $=s=>document.querySelector(s),$$=s=>[...document.querySelectorAll(s)];
+const api=async(p,body)=>{const r=await fetch(p,body===undefined?{}:{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});return r.json()};
+const toast=t=>{const e=$('#toast');e.textContent=t;e.style.display='block';clearTimeout(toast.h);toast.h=setTimeout(()=>e.style.display='none',4000)};
+const esc=s=>String(s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+const TABS=['overview','run','logs','result','reports','cmd'],LABEL={overview:'Overview',run:'Run tests',logs:'Logs',result:'Last result',reports:'Reports',cmd:'Commands'};
+function show(t){TABS.forEach(x=>{$('#'+x).classList.toggle('on',x===t)});$$('#tabs button').forEach(b=>b.classList.toggle('on',b.dataset.t===t));location.hash=t;
+ if(t==='overview')doctor();if(t==='run')scen();if(t==='logs')logList();if(t==='result')result();if(t==='reports')repList()}
+TABS.forEach(t=>{const b=document.createElement('button');b.textContent=LABEL[t];b.dataset.t=t;b.onclick=()=>show(t);$('#tabs').append(b)});
+async function doctor(){const d=await api('/api/admin/doctor');const c=d.checks||[];
+ $('#checks').innerHTML=c.map(x=>`<tr><td class="${x.ok===true?'ok':x.ok===false?'no':'na'}">${x.ok===true?'✔':x.ok===false?'✘':'•'}</td><td>${esc(x.name)}</td><td class="muted">${esc(x.detail)}</td></tr>`).join('');
+ const bad=c.filter(x=>x.ok===false).length;$('#sum').textContent=bad?bad+' problem(s)':'all good'}
+$('#refresh').onclick=doctor;setInterval(()=>{if($('#overview').classList.contains('on')&&$('#auto').checked)doctor()},5000);
+$$('[data-post]').forEach(b=>b.onclick=async()=>{const r=await api('/api/admin/'+b.dataset.post,{});toast(r.detail||r.error||'done');doctor()});
+$('#arOn').onclick=async()=>{await api('/api/autorun',{on:true});toast('autorun on');doctor()};
+$('#arOff').onclick=async()=>{await api('/api/autorun',{on:false});toast('autorun off');doctor()};
+let S=[],picked=new Set();
+async function scen(){if(!S.length)S=(await api('/api/admin/scenarios')).scenarios||[];drawScen()}
+function drawScen(){const f=$('#filter').value.toLowerCase(),y=$('#onlyYou').checked,hs=$('#hideSlow').checked;
+ $('#scen').innerHTML=S.filter(s=>s.name.includes(f)&&(!y||s.you)&&(!hs||!s.slow)).map(s=>`<tr><td><input type="checkbox" data-p="${s.name}" ${picked.has(s.name)?'checked':''}></td><td><b>${s.name}</b></td><td><span class="chip">${s.group}</span>${s.slow?'<span class="chip">slow</span>':''}</td><td><button class="b" data-t="${s.name}">bot</button> ${s.you?`<button class="b" data-m="${s.name}">me</button>`:''}</td></tr>`).join('');
+ $$('[data-t]').forEach(b=>b.onclick=async()=>{const r=await api('/api/admin/test',{name:b.dataset.t});toast(r.detail||r.error)});
+ $$('[data-m]').forEach(b=>b.onclick=async()=>{const r=await api('/api/admin/test',{name:b.dataset.m,me:true});toast(r.detail||r.error)});
+ $$('[data-p]').forEach(b=>b.onchange=()=>{b.checked?picked.add(b.dataset.p):picked.delete(b.dataset.p);$('#picked').textContent=picked.size?[...picked].join(', '):'none picked'})}
+['filter','onlyYou','hideSlow'].forEach(i=>$('#'+i).oninput=drawScen);
+$('#clr').onclick=()=>{picked.clear();drawScen();$('#picked').textContent='none picked'};
+$('#go').onclick=async()=>{const r=await api('/api/admin/run',{tests:[...picked],reload:$('#rl').checked,expect_build:$('#eb').value.trim()||undefined,note:$('#note').value||'from the admin panel'});toast(r.detail||r.error)};
+async function logList(){const d=await api('/api/admin/logs');const cur=$('#logsel').value;$('#logsel').innerHTML=(d.logs||[]).map(l=>`<option>${esc(l.name)}</option>`).join('');if(cur)$('#logsel').value=cur;loadLog()}
+async function loadLog(){const n=$('#logsel').value;if(!n)return;const d=await api(`/api/admin/log?name=${encodeURIComponent(n)}&n=${+$('#ln').value||200}&grep=${encodeURIComponent($('#lgrep').value)}`);$('#logout').textContent=d.error||d.lines.join('\n')}
+$('#lload').onclick=loadLog;setInterval(()=>{if($('#logs').classList.contains('on')&&$('#lfollow').checked)loadLog()},3000);
+async function result(){$('#resout').textContent=(await api('/api/admin/result')).text;const h=await api('/api/admin/history');$('#hhour').textContent=`(${h.tests_started_last_hour} test runs started in the last hour, limit 24)`;$('#hist').textContent=(h.rows||[]).map(r=>JSON.stringify(r)).join('\n')}
+$('#rload').onclick=result;$('#rcopy').onclick=()=>navigator.clipboard.writeText($('#resout').textContent).then(()=>toast('copied'));
+async function repList(){const d=await api('/api/admin/reports');$('#repsel').innerHTML=(d.reports||[]).map(r=>`<option>${esc(r.name)}</option>`).join('')||'<option value="">(none yet)</option>'}
+$('#repload').onclick=async()=>{const n=$('#repsel').value;if(!n)return;const d=await api('/api/admin/report?name='+encodeURIComponent(n));$('#repout').textContent=d.error||d.text};
+$('#cmdgo').onclick=async()=>{const t=$('#cmdtext').value.trim();if(!t)return;const r=await api('/api/command',{text:t});toast(r.queued?'queued: '+r.queued:r.error)};
+const SIMS=[['Gate (sim + unit tests)','node sim/gate.mjs'],['Quick gate','node sim/gate.mjs --quick'],['Ship a build','node tools/ship.mjs --bump --commit "msg" --tests leadstair'],['Wait for a running ship','node tools/ship.mjs --wait-only'],['Regression: start tow set','node tools/regress.mjs --start --set tow'],['Regression: status','node tools/regress.mjs --status'],['Minimize a failing seed','node sim/minimize.mjs 12 --timeline'],['Tune tow constants','node sim/tune.mjs --evals 40'],['Nightly run','node tools/nightly.mjs --seeds 24 --tune --minimize 3'],['New probe scaffold','node tools/new_probe.mjs name']];
+$('#sims').innerHTML=SIMS.map(([a,c])=>`<div class="row"><span style="min-width:230px">${a}</span><code>${esc(c)}</code><button class="b" data-c="${esc(c)}">copy</button></div>`).join('');
+$$('[data-c]').forEach(b=>b.onclick=()=>navigator.clipboard.writeText(b.dataset.c.replace(/&quot;/g,'"')).then(()=>toast('copied')));
+show(TABS.includes(location.hash.slice(1))?location.hash.slice(1):'overview');
+</script></body></html>

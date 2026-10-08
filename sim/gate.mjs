@@ -23,6 +23,9 @@ if (!has('--no-unit')) {
   if (!m || m[2] !== '0') bad.push('unit tests fail');
 }
 
+// the game's scenario file must at least load (a module-level mistake takes the whole pack down in the real game)
+try { const m = await import('../behavior_pack/scripts/game/scenarios.js'); log(`scenarios.js loads (${typeof m.runTests})`); } catch (e) { log(`scenarios.js DOES NOT LOAD: ${String(e).slice(0, 160)}`); bad.push('scenarios.js does not load'); }
+
 for (const mode of ['fresh', 'learned']) {
   if (mode === 'learned') process.env.LEARNED = LEARNED; else delete process.env.LEARNED;
   for (const c of ['leadledge', 'leadstep', 'leadstair', 'leadturn', 'leadgate']) {

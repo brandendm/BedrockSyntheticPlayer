@@ -14,6 +14,7 @@ import collections
 import json
 import logging
 import os
+import re
 import sys
 import threading
 import time
@@ -420,6 +421,89 @@ def make_handler(engine: DecisionEngine, key: str | None = None):
             self.wfile.write(body)
             return False
 
+        def _admin_get(self):
+            from urllib.parse import urlparse, parse_qs
+            from . import admin
+            u = urlparse(self.path)
+            q = {k: v[0] for k, v in parse_qs(u.query).items()}
+            what = u.path[len("/api/admin/"):]
+            repo = ROOT.parent
+            try:
+                if what == "doctor":
+                    with _lock:
+                        data, at = _status["data"], _status["at"]
+                    ar = _auto["run"]
+                    return self._send(200, {"checks": admin.doctor(repo, data, (time.time() - at) if at else None, ar.info() if ar else None, LOG_DIR, ar.inbox if ar else ROOT / "inbox")})
+                if what == "scenarios":
+                    return self._send(200, {"scenarios": admin.scenarios(repo)})
+                if what == "logs":
+                    return self._send(200, {"logs": admin.list_logs(LOG_DIR)})
+                if what == "log":
+                    return self._send(200, admin.tail_log(LOG_DIR, q.get("name", ""), int(q.get("n", 200)), q.get("grep", "")))
+                if what == "history":
+                    return self._send(200, admin.history(LOG_DIR))
+                if what == "result":
+                    f = (_auto["run"].inbox if _auto["run"] else ROOT / "inbox") / "result.txt"
+                    return self._send(200, {"text": f.read_text(encoding="utf-8", errors="replace")[:300_000] if f.exists() else "(no result yet)"})
+                if what == "reports":
+                    return self._send(200, {"reports": admin.reports(repo)})
+                if what == "report":
+                    return self._send(200, admin.report(repo, q.get("name", "")))
+            except (OSError, ValueError) as e:
+                return self._send(500, {"error": str(e)})
+            self._send(404, {"error": "not found"})
+
+        def _admin_post(self):
+            from . import admin
+            what = self.path[len("/api/admin/"):]
+            try:
+                body = self._read_json()
+            except ValueError:
+                return self._send(400, {"error": "bad json"})
+            ar = _auto["run"]
+            say = lambda text: (_commands.append(text), _recent.append({"t": time.strftime("%Y-%m-%d %H:%M:%S"), "type": "command", "text": text}))
+            try:
+                if what == "reload":
+                    send = _auto_server_send()
+                    if send is None:
+                        return self._send(200, {"ok": False, "detail": "the brain does not own a running server; type reload in the server window"})
+                    send("reload")
+                    return self._send(200, {"ok": True, "detail": "reload sent to the server"})
+                if what == "spawn":
+                    with _lock:
+                        say("spawn")
+                    return self._send(200, {"ok": True, "detail": "spawn queued"})
+                if what == "stop":
+                    if ar is None:
+                        return self._send(500, {"error": "not available"})
+                    (ar.inbox / "STOP").write_text("stopped from the admin panel\n")
+                    ar.set_enabled(False)
+                    return self._send(200, {"ok": True, "detail": "autorun off, STOP file written"})
+                if what == "clear_stop":
+                    if ar:
+                        try:
+                            (ar.inbox / "STOP").unlink()
+                        except OSError:
+                            pass
+                    return self._send(200, {"ok": True, "detail": "STOP file removed"})
+                if what == "run":
+                    if ar is None:
+                        return self._send(500, {"error": "not available"})
+                    run = admin.validate_run(body)
+                    (ar.inbox / "run.json").write_text(json.dumps(run), encoding="utf-8")
+                    return self._send(200, {"ok": True, "detail": "run.json written", "run": run})
+                if what == "test":
+                    name = str(body.get("name", ""))
+                    who = "me" if body.get("me") else ""
+                    if not re.fullmatch(r"[a-z0-9]+", name):
+                        return self._send(400, {"error": "bad test name"})
+                    with _lock:
+                        say(f"test {name} {who}".strip())
+                    return self._send(200, {"ok": True, "detail": f"queued: test {name} {who}".strip()})
+            except (OSError, ValueError) as e:
+                return self._send(400, {"error": str(e)})
+            self._send(404, {"error": "not found"})
+
         def do_GET(self):
             if self.path != "/health" and not self._gate():
                 return
@@ -431,6 +515,16 @@ def make_handler(engine: DecisionEngine, key: str | None = None):
                 self.end_headers()
                 self.wfile.write(body)
                 return
+            if self.path.split("?")[0] == "/admin":
+                body = (ROOT / "admin.html").read_bytes()
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                return
+            if self.path.startswith("/api/admin/"):
+                return self._admin_get()
             if self.path == "/api/status":
                 j = engine.jev
                 with _lock:
@@ -555,6 +649,8 @@ def make_handler(engine: DecisionEngine, key: str | None = None):
                     pass
                 ar.set_enabled(on)
                 return self._send(200, ar.info())
+            if self.path.startswith("/api/admin/"):
+                return self._admin_post()
             if self.path == "/api/command":
                 try:
                     text = str(self._read_json().get("text", "")).strip()[:200]
@@ -646,6 +742,11 @@ def make_handler(engine: DecisionEngine, key: str | None = None):
     return Handler
 
 
+def _auto_server_send():
+    f = _auto.get("server_send")
+    return f() if f else None
+
+
 def _setup_autorun() -> None:
     """(u253) Auto runs: see brain/autorun.py. Off until switched on in the dashboard."""
     from .autorun import AutoRun
@@ -662,6 +763,8 @@ def _setup_autorun() -> None:
     def server_send():
         sp = _server["proc"]
         return sp.send if sp is not None and sp.alive() else None
+
+    _auto["server_send"] = server_send
 
     def batch():
         with _lock:

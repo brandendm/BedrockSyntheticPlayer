@@ -291,3 +291,5 @@ export const TimeOfDay = {};
 export const MolangVariableMap = class {};
 export const Player = SimPlayer;
 export const Entity_ = Entity;
+export const DisplaySlotId = { Sidebar: 'Sidebar', List: 'List', BelowName: 'BelowName' };
+export const ObjectiveSortOrder = { Ascending: 0, Descending: 1 };
