@@ -9,6 +9,7 @@
 //
 // Priority jobs are never pre-empted: night (home, shelter), collecting a furnace that's done,
 // building/furnishing the house we started, crafting (it's instant), and the crafting table.
+import { live } from './tunables.js';
 import { count, has, isLog, isPlanks, isWool, TOOL_STONE } from './recipes.js';
 import { materials, layoutOf, NEW_LAYOUT } from './house.js';
 import { FOOD_GOAL, TORCH_GOAL, foodCount, fittingsPlanks } from './settle.js';
@@ -19,9 +20,6 @@ export const PRIORITY = new Set(['fight_fire', 'clear_house', 'repair_house', 'g
 /** How close a resource must be to be worth a detour, in blocks. */
 export const RADIUS = { sheep: 24, food: 16, log: 20, stone: 16 };
 const WORK = { sheep: 8, food: 6, log: 14, stone: 10 }; // rough effort on top of walking there (log: ~4 logs chopped)
-const EXPLORE = 60;
-const DIG = 30;       // dig a staircase down to stone: always possible with a pickaxe   // "go and find one": what a step costs when nothing's known
-const STICKY = 10;    // the ladder's own step wins ties by this much, so it doesn't flip-flop
 
 export const stepKey = (s) => s.step + (s.items ? s.items.join() : '') + (s.what ?? '') + (s.why ?? '');
 
@@ -81,8 +79,8 @@ export function chooseStep(main, f) {
   const seen = f.seen ?? {}, need = f.need;
   const mainKind = kindOf(main);
   // Stone is never a search with a pickaxe: dig down to it (or the quarry) if none is in sight.
-  const known = mainKind === 'stone' && f.canMineStone ? Math.min(seen.stone ?? Infinity, DIG) : seen[mainKind];
-  const mainCost = deferred ? Infinity : mainKind ? (known ?? EXPLORE) + WORK[mainKind] : main.step === 'blocked' ? 2 * EXPLORE : 0;
+  const known = mainKind === 'stone' && f.canMineStone ? Math.min(seen.stone ?? Infinity, live.digCost) : seen[mainKind];
+  const mainCost = deferred ? Infinity : mainKind ? (known ?? live.exploreCost) + WORK[mainKind] : main.step === 'blocked' ? 2 * live.exploreCost : 0;
 
   const inv = f.inv;
   const options = [];
@@ -104,7 +102,7 @@ export function chooseStep(main, f) {
   if (deferred) {
     const has = (k) => options.some((o) => o.kind === k);
     if (need.stone > 0 && f.canMineStone && !has('stone')) {
-      options.push({ kind: 'stone', cost: (seen.stone ?? DIG) + WORK.stone, step: { step: 'get_stone', need: Math.min(need.stone, 16), why: 'later' } });
+      options.push({ kind: 'stone', cost: (seen.stone ?? live.digCost) + WORK.stone, step: { step: 'get_stone', need: Math.min(need.stone, 16), why: 'later' } });
     }
     if (need.logs > 0 && seen.log != null && !has('log')) {
       options.push({ kind: 'log', cost: seen.log + WORK.log, step: { step: 'gather_logs', count: count(inv, isLog) + Math.min(need.logs, 12), wanted: ['later'] } });
@@ -117,7 +115,7 @@ export function chooseStep(main, f) {
   const others = options.filter((o) => o.kind !== gathering && !f.deferred?.has(stepKey(o.step))).sort((a, b) => a.cost - b.cost);
   const best = others[0];
   // Before stone tools exist, the ladder's step is the priority: a side job must be much cheaper.
-  const sticky = f.early ? 25 : STICKY;
+  const sticky = f.early ? 25 : live.stickyCost;
   if (best && best.cost + sticky < mainCost) {
     return { ...best.step, opportunity: best.kind, why: best.step.why ?? 'later', near: seen[best.kind] != null ? Math.round(seen[best.kind]) : null, setAside: deferred ? main.step : null };
   }

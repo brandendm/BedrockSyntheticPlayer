@@ -820,3 +820,9 @@ The bot can improve itself with nobody watching. Switch **Training** on in the d
 * Cave tests: `cavewalk`, `cavemobs`, `cavedeep`, `caveescape` (`test cavemobs 3` = level 3): dark caves with turns, a squeeze, a pool, a drop, lava and hostile mobs,
   generated from a seed and checked solvable (`core/caves.js`).
 * `node sim/fit_outcomes.mjs [--apply]` fits the simulator's physics to the real game's course times (cross-validated).
+
+### Training additions (u292/u293)
+- **More tunables** (`core/tunables.js`): combat adds bowMin, crowdRange, noticeMelee/Ranged, creeperNotice/Alert; group `cave` has quarryTorchLight; group `play` has calmResume, attackerMemory, exploreCost, digCost, stickyCost (scored only by the real game).
+- **Crash recovery** (`brain/autorun.py run_batch`): if the bot is gone 45 s mid-batch it is respawned and only the tests that had not reported are re-run (2 retries); a test that keeps crashing counts as failed and the batch carries on. In-game, a throwing test is already caught and the batch continues.
+- **Tests**: `oceandrop/oceandeep/caveascent/wild` (u292) and, from `core/terrain.js`, `thicket jungle swamp ambush siege mobmaze minecollapse lavafield raid chasm` (level 1-3, 40 seeds each, solvable by construction). Run `!bot test thicket 3`.
+- **Course evolution**: `node sim/evolve_courses.mjs` grows `sim/hardcourses.json`, used by the tow search.

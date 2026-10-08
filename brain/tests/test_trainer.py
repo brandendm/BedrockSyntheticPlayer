@@ -53,7 +53,7 @@ class Perturb(unittest.TestCase):
     def test_ranges_match_the_game_registry(self):
         src = (Path(__file__).resolve().parents[2] / "behavior_pack/scripts/core/tunables.js").read_text(encoding="utf-8")
         for k, (lo, hi, d) in T.CAVE_RANGES.items():
-            m = re.search(k + r":\s*\{ v: ([\d.]+), min: ([\d.]+), max: ([\d.]+), group: 'cave'", src)
+            m = re.search(k + r":\s*\{ v: ([\d.]+), min: ([\d.]+), max: ([\d.]+), group: '(?:cave|play)'", src)
             self.assertTrue(m, k)
             self.assertEqual((float(m.group(2)), float(m.group(3)), float(m.group(1))), (lo, hi, d))
 
@@ -216,7 +216,7 @@ if __name__ == "__main__":
 class PickGroup(unittest.TestCase):
     def test_effort_drifts_to_the_group_that_pays_but_none_is_dropped(self):
         t = Trainer(Path(tempfile.mkdtemp()), run_batch=None, send=None, sim_search=None, status=lambda: ({}, 0), seed=5)
-        t.group_stats = {"tow": [0, 12], "combat": [9, 12], "cave": [0, 12]}
+        t.group_stats = {"tow": [0, 12], "combat": [9, 12], "cave": [0, 12], "play": [0, 12]}
         picks = [t._pick_group() for _ in range(400)]
         self.assertGreater(picks.count("combat"), 250)
         self.assertGreater(picks.count("tow"), 5)

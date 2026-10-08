@@ -28,6 +28,8 @@ from typing import Callable, Optional
 
 MAX_TESTS_PER_REQUEST = 1000   # (only a typo guard: every scenario at once is fine)
 BATCH_TIMEOUT_S = 20 * 60
+CRASH_RETRIES = 2          # a batch that loses the bot is run again (only what had not reported) this many times
+CRASH_GONE_S = 45          # the bot offline this long during a batch is a crash
 NAME_RE = re.compile(r"^[a-z][a-z0-9]{1,24}$")
 
 README = """AUTO RUNS (what this folder is)
@@ -293,26 +295,57 @@ class AutoRun:
                     return True
                 self.sleep(1)
             return False
-        if not wait(back, 150):
-            return ("stopped" if not alive() else "the bot did not come online in 2 minutes"), []
-        started = time.strftime("%Y-%m-%d %H:%M:%S")
-        self.queue("test " + ",".join(tests) + (f" workers {workers}" if workers > 1 else ""))
-        self._log({"event": "queued (trainer)", "tests": tests})
+        events: list = []
+        remaining = list(tests)
+        for attempt in range(1 + CRASH_RETRIES):
+            if not wait(back, 150):
+                return ("stopped" if not alive() else "the bot did not come online in 2 minutes"), events
+            started = time.strftime("%Y-%m-%d %H:%M:%S")
+            self.queue("test " + ",".join(remaining) + (f" workers {workers}" if workers > 1 else ""))
+            self._log({"event": "queued (trainer)", "tests": remaining, "attempt": attempt})
 
-        def finished() -> bool:
-            b = self.batch()
-            return bool(b and b.get("t", "") >= started)
+            def finished() -> bool:
+                b = self.batch()
+                return bool(b and b.get("t", "") >= started)
 
-        def running() -> bool:
-            d = self._bot_ready()[1] or {}
-            return bool((d.get("tests") or {}).get("running"))
-        if not wait(lambda: running() or finished(), 60):
-            return ("stopped" if not alive() else "the game did not start the tests within a minute"), []
-        if not wait(finished, timeout):
-            self.queue("test stop")
-            return ("stopped" if not alive() else "the tests did not finish in the time allowed"), []
-        self.sleep(1)
-        return "ok", self.test_events(started)
+            def running() -> bool:
+                d = self._bot_ready()[1] or {}
+                return bool((d.get("tests") or {}).get("running"))
+            if not wait(lambda: running() or finished() or not self._bot_ready()[0], 60):
+                return ("stopped" if not alive() else "the game did not start the tests within a minute"), events
+            crashed = [False]
+            gone = [None]
+
+            def done_or_crashed() -> bool:
+                """The batch finished, or the bot has been gone for CRASH_GONE_S (the game or the scripts died mid-batch)."""
+                if finished():
+                    return True
+                if self._bot_ready()[0]:
+                    gone[0] = None
+                    return False
+                gone[0] = self.clock() if gone[0] is None else gone[0]
+                if self.clock() - gone[0] > CRASH_GONE_S:
+                    crashed[0] = True
+                    return True
+                return False
+            if not wait(done_or_crashed, timeout):
+                self.queue("test stop")
+                return ("stopped" if not alive() else "the tests did not finish in the time allowed"), events
+            self.sleep(1)
+            got = self.test_events(started)
+            events += got
+            if not crashed[0]:
+                return "ok", events
+            # A fatal error took the bot down mid-batch: note it, let `back` respawn it, and run only what has not reported.
+            self._log({"event": "crash during batch", "attempt": attempt})
+            seen = {e.get("name") for e in got if e.get("type") == "test_result"}
+            remaining = [t for t in remaining if t not in seen]
+            if not remaining:
+                return "ok", events
+        # Still crashing after the retries: what never reported counts as failed (the last one in flight is the likely culprit), and the batch is over.
+        events += [{"type": "test_result", "name": t, "pass": False, "secs": 0, "detail": "crashed the game (or the scripts) on every try"} for t in remaining]
+        self._log({"event": "gave up on", "tests": remaining})
+        return "ok", events
 
     def _finish(self, req_file: Path, stamp: str, req: dict, outcome: str, build: Optional[str]) -> None:
         try:

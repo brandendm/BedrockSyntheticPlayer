@@ -4,6 +4,7 @@
 import { system, world, Direction, BlockTypes, BlockVolume, ItemTypes, ItemStack } from '@minecraft/server';
 import { isNight } from '../core/settle.js';
 import { wetCones, towardWet, ExploreStall } from '../core/explore.js';
+import { live } from '../core/tunables.js';
 import { tourStops, sweepOrder } from '../core/flow.js';
 import { EYE_HEIGHT } from '../core/motor.js';
 import { TUNING } from '../core/calibrate.js'; // (useGap: ticks between one item use and the next, the game refuses sooner)
@@ -1379,7 +1380,7 @@ export class Skills {
     if (!b) return;
     let light, sky;
     try { light = b.getLightLevel(); sky = b.getSkyLightLevel(); } catch { return; }
-    if (sky > 7 || light > 3) return;
+    if (sky > 7 || light > live.quarryTorchLight) return;
     if (!invCounts(this.sim).torch) {
       const inv = invCounts(this.sim);
       if ((inv.charcoal ?? 0) + (inv.coal ?? 0) > 0) await this.craft(gen, ['torch'], false, true);

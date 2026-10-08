@@ -146,3 +146,62 @@ class RunTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CrashTests(unittest.TestCase):
+    """A fatal error takes the bot down mid-batch: the batch is run again for what had not reported (u292)."""
+
+    def _world(self, crashes):
+        class W:
+            now = 1000.0
+            queued = []
+            batch_v = None
+            online = True
+            tests_q = 0
+            crash_left = crashes
+            done = set()
+            started_at = 0
+
+            def clock(w): return w.now
+
+            def sleep(w, s):
+                w.now += s
+                runs = [q for q in w.queued if q.startswith("test ") and q != "test stop"]
+                if len(runs) > w.tests_q:
+                    w.tests_q = len(runs)
+                    names = runs[-1][5:].split(" workers")[0].split(",")
+                    if w.crash_left > 0:
+                        w.crash_left -= 1
+                        if w.crash_left < 50: w.done.add(names[0])      # the first one reported, then the game died
+                        w.online = False
+                        w.back_at = w.now + 100
+                    else:
+                        w.done.update(names)
+                        w.batch_v = {"t": "2999-01-01 00:00:00"}
+                if not w.online and getattr(w, "back_at", 1e18) <= w.now and "spawn" in w.queued:
+                    w.online = True
+
+            def status(w): return {"online": w.online, "tests": {"running": w.tests_q > 0 and w.batch_v is None and w.online}}, 0.5
+        return W()
+
+    def run_it(self, crashes):
+        w = self._world(crashes)
+        tmp = tempfile.mkdtemp()
+        ar = AutoRun(Path(tmp), Path(tmp) / "logs", status=w.status, queue=w.queued.append, server_send=lambda: None, batch=lambda: w.batch_v, capsules=lambda: [],
+                     traces_since=lambda m: [], trace_mark=lambda: 0,
+                     test_events=lambda s: [{"type": "test_result", "name": n, "pass": True, "secs": 1} for n in sorted(w.done)], clock=w.clock, sleep=w.sleep)
+        ar.enabled = True
+        return ar.run_batch(["a", "b", "c"], 1, lambda: True, 3000), w
+
+    def test_a_crash_is_respawned_and_only_the_rest_is_rerun(self):
+        (outcome, events), w = self.run_it(1)
+        self.assertEqual(outcome, "ok")
+        self.assertIn("spawn", w.queued)
+        self.assertEqual({e["name"] for e in events if e["type"] == "test_result"}, {"a", "b", "c"})
+        self.assertTrue(w.queued[-1].startswith("test b,c"))
+
+    def test_a_game_that_always_crashes_still_ends_the_batch_with_failures(self):
+        (outcome, events), w = self.run_it(99)
+        self.assertEqual(outcome, "ok")
+        bad = [e for e in events if e["type"] == "test_result" and not e["pass"]]
+        self.assertTrue(bad)

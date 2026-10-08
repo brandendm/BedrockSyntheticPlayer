@@ -7,7 +7,7 @@ test('every tunable has a default inside its range and a group', () => {
   for (const [k, d] of Object.entries(TUNABLES)) {
     assert.ok(d.min < d.max, k);
     assert.ok(d.v >= d.min && d.v <= d.max, `${k} default ${d.v} outside ${d.min}..${d.max}`);
-    assert.ok(['tow', 'combat', 'cave'].includes(d.group), k);
+    assert.ok(['tow', 'combat', 'cave', 'play'].includes(d.group), k);
   }
 });
 test('applyPolicy: known numbers only, clamped, and a second call starts from the defaults', () => {

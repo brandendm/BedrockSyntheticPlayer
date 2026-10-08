@@ -6,7 +6,8 @@
 //               get a path to, an arrow line that never reaches us): give it up, don't stare at it
 //   pickRefuge  where to run: far from the threats, and out of a shooter's sight if one's hitting us
 //   bestWeapon  what to hold: most damage per hit (Bedrock has no attack cooldown), worn-out last
-import { HOLD_AT, REACH_HIT, BACK_OFF, STOP_AT, standOff, MOBS, weaponDamage, SLOT_SAFE, CROWD_RANGE } from './threat.js';
+import { HOLD_AT, REACH_HIT, BACK_OFF, STOP_AT, standOff, MOBS, weaponDamage, SLOT_SAFE } from './threat.js';
+import { live as tune } from './tunables.js';
 
 const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z);
 
@@ -362,7 +363,7 @@ export function turnTo(hx, hz, vx, vz) {
  */
 export function creeperPlan({ me, creepers, shield = false, health = 20, company = false, safe = true, active = false, leads = 0 }) {
   if (company) return null;
-  const live = creepers.filter((c) => c.d <= CROWD_RANGE + (active ? 2 : 0));
+  const live = creepers.filter((c) => c.d <= tune.crowdRange + (active ? 2 : 0));
   // (One left of a crowd we were taking on, and hissing: the shield it is facing stays up. An unlit one is the arm's-length dance's.)
   if (live.length < (active ? 1 : 2)) return null;
   if (live.length === 1 && !(live[0].lit && live[0].d <= 6)) return null;
@@ -386,7 +387,7 @@ export function creeperPlan({ me, creepers, shield = false, health = 20, company
     mid = (lo + hi) / 2; spread = (hi - lo) / 2;
   }
   const takeable = shield && health >= SHIELD_MIN_HP && safe;
-  const asked = nearest <= (active ? CROWD_RANGE : CROWD_TAKE_AT);
+  const asked = nearest <= (active ? tune.crowdRange : CROWD_TAKE_AT);
   if (takeable && spread <= SHIELD_TAKE) {
     if (!asked) return null;
     // Look along the middle of the spread (the same room either side), at the nearest one's distance.

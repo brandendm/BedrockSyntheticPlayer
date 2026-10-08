@@ -1,7 +1,7 @@
 // One agent = one SimulatedPlayer + motor + task state.
 // Everything time-critical (movement, survival reflexes) runs locally every few ticks for free;
 // the brain is only consulted on events (commands, stuck, task done, combat reports).
-import { applyPolicy } from '../core/tunables.js';
+import { applyPolicy, live } from '../core/tunables.js';
 import { passRates, avgRates } from '../core/testrun.js';
 import { system, world, EntityComponentTypes, Direction, EquipmentSlot, ItemStack } from '@minecraft/server';
 import { MotorController, EYE_HEIGHT } from '../core/motor.js';
@@ -62,8 +62,6 @@ const ESSENTIAL_STEPS = new Set(['go_home', 'clear_house', 'fight_fire', 'repair
 const SURVIVE_EVERY = 4;          // ticks between threat checks (0.2 s reaction time)
 const BAD_BESIDE = /lava|magma|fire|cactus|campfire|powder_snow/; // beside where we take a creeper blast on the shield (game/agent.js crowdSafe)
 const ENDERMAN_SCAN_EVERY = 20;
-const CALM_TICKS_TO_RESUME = 40;  // threats gone this long -> resume the interrupted task
-const ATTACKER_MEMORY_TICKS = 200;
 const ESCORT_MEMORY_TICKS = 400; // a mob that hit the player we follow, or that they hit: ours to fight for 20 s
 
 /** A sword worth hunting with: stone or better (a wooden one or a fist wastes the time). */
@@ -742,7 +740,7 @@ export class Agent {
       let targetingMe = false;
       try { targetingMe = e.target?.id === this.sim.id; } catch {}
       const hitAt = this.attackers.get(e.id);
-      const attackedMe = hitAt !== undefined && t - hitAt < ATTACKER_MEMORY_TICKS;
+      const attackedMe = hitAt !== undefined && t - hitAt < live.attackerMemory;
       const head = e.getHeadLocation();
       out.push({
         id: e.id, type, entity: e, head,
@@ -867,7 +865,7 @@ export class Agent {
 
   survive(t) {
     if (this.testHold) return; // a calibration test is driving
-    for (const [id, at] of this.attackers) if (t - at > ATTACKER_MEMORY_TICKS) this.attackers.delete(id);
+    for (const [id, at] of this.attackers) if (t - at > live.attackerMemory) this.attackers.delete(id);
     if (this.lastSeen.size > 200) for (const [id, at] of this.lastSeen) if (t - at > 200) this.lastSeen.delete(id);
     // In the boat with the player we follow: nothing to do but sit (they're steering). Anything
     // else has us out of it first.
@@ -988,7 +986,7 @@ export class Agent {
       this.setBlocking(false); // never left crouching once it's calm
     } else if (this.checkWater(t, inWater)) {
       // swimming to shore
-    } else if (this.suspended && !this.task && t - this.calmSince > CALM_TICKS_TO_RESUME) {
+    } else if (this.suspended && !this.task && t - this.calmSince > live.calmResume) {
       const s = this.suspended;
       this.suspended = null;
       this.resume(s);

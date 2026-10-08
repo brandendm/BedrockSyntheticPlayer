@@ -26,19 +26,23 @@ from typing import Callable, Optional
 
 from . import runstats
 
-GROUPS = ["tow", "combat", "cave"]
+GROUPS = ["tow", "combat", "cave", "play"]
 # What each group's real-game confirmation runs, and the guards that must not get worse whatever the group. (Names: behavior_pack/scripts/game/scenarios.js.)
 GROUP_TESTS = {
     "tow": ["leadledge", "leadstep", "leadstair", "leadturn", "leadgate", "villagerhaul", "leadboat"],
     "combat": ["husk", "creepers", "skel", "shield", "enderman"],
-    "cave": ["cavewalk", "cavemobs", "caveescape", "cavedeep", "caveascent", "oceandrop", "oceandeep"],
+    "cave": ["cavewalk", "cavemobs", "caveescape", "cavedeep", "caveascent", "oceandrop", "oceandeep", "minecollapse", "chasm"],
+    "play": ["thicket", "jungle", "swamp", "ambush", "siege", "mobmaze", "lavafield", "raid", "wild"],
 }
 GUARD_TESTS = ["ravine", "hole", "pit", "bow", "ladder"]
 # Normal play for 5 minutes with no setup: run once after a policy is accepted (a champion that dies in ordinary play is undone), and it feeds the weakest-tests table.
 HEALTH_TEST = "wild"
 EVOLVE_EVERY = 5     # every 5th tow cycle first breeds new hard courses (sim/evolve_courses.mjs)
 # Ranges for the real-only (cave) steps: mirrors tunables.js (kept in step by tests/test_trainer.py).
-CAVE_RANGES = {"caveTorchEvery": (4, 12, 7), "caveFleeLight": (0, 8, 4)}
+REAL_RANGES = {"cave": {"quarryTorchLight": (1, 7, 3)},
+               "play": {"calmResume": (10, 100, 40), "attackerMemory": (60, 400, 200), "exploreCost": (30, 100, 60), "digCost": (15, 60, 30), "stickyCost": (3, 20, 10)}}
+CAVE_RANGES = {k: v for g in REAL_RANGES.values() for k, v in g.items()}      # (all of them, for the mirror test)
+REAL_ONLY = tuple(REAL_RANGES)
 ROUNDS_MIN, ROUNDS_MAX = 2, 6
 WORKERS = 4
 
@@ -249,10 +253,10 @@ class Trainer:
         rec = {"event": "cycle", "n": self.cycle_n, "group": group, "outcome": "?", "candidate_diff": {}, "why": ""}
         # 1. SEARCH
         sim_ok = False
-        if group == "cave":
+        if group in REAL_ONLY:
             self.state = f"cycle {self.cycle_n}: {group}: trying a small step from the champion"
-            cand = perturb(self.champion, self.rng, CAVE_RANGES, n_keys=1 + self.rng.randrange(2))
-            rec["search"] = "random step (no simulator for caves)"
+            cand = perturb(self.champion, self.rng, REAL_RANGES[group], n_keys=1 + self.rng.randrange(2))
+            rec["search"] = "random step (no simulator for this group)"
         else:
             if group == "tow" and self.evolve and self.cycle_n % EVOLVE_EVERY == 0:
                 self.state = f"cycle {self.cycle_n}: breeding harder tow courses"
