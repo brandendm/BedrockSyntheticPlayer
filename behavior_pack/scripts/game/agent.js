@@ -1,6 +1,7 @@
 // One agent = one SimulatedPlayer + motor + task state.
 // Everything time-critical (movement, survival reflexes) runs locally every few ticks for free;
 // the brain is only consulted on events (commands, stuck, task done, combat reports).
+import { applyPolicy } from '../core/tunables.js';
 import { passRates, avgRates } from '../core/testrun.js';
 import { system, world, EntityComponentTypes, Direction, EquipmentSlot, ItemStack } from '@minecraft/server';
 import { MotorController, EYE_HEIGHT } from '../core/motor.js';
@@ -129,6 +130,7 @@ export class Agent {
     this.portal = new Portals(this);
     /** @type {Set<string>} Far places already looked at for a village (game/villages.js scout). */
     this.villageScouted = new Set();
+    if (!this.worker) { try { applyPolicy(this.memory.data.policy); } catch { /* the trained policy is optional */ } }   // (u290: what the trainer last sent)
     if (!this.worker) tracePosition(() => this.sim.location); // (villages seen from afar: game/villages.js)
     if (!this.worker) system.runTimeout(() => { this.restoreSettings().catch(() => {}); }, 30);
     if (!this.worker) system.runTimeout(() => { try { this.restoreKit(); } catch (e) { this.kitChecked = true; console.warn(`[agent] kit: ${e}`); } try { this.restoreState(); } catch {} }, 40);

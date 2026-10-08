@@ -379,6 +379,7 @@ def authorized(client_ip: str, cookie: str, query_key: str, key: str | None) -> 
 
 
 _server = {"proc": None, "jobs": None}
+_train: dict = {"run": None}   # (u290) brain/trainer.py: the bot trains itself (off until switched on in the dashboard)
 _auto: dict = {"run": None}   # (u253) brain/autorun.py: Claude starts bot tests while you are away (off until switched on in the dashboard)
 
 
@@ -574,6 +575,12 @@ def make_handler(engine: DecisionEngine, key: str | None = None):
             if self.path == "/api/autorun":
                 ar = _auto["run"]
                 return self._send(200, ar.info() if ar else {"enabled": False, "state": "not available"})
+            if self.path == "/api/trainer":
+                tr = _train["run"]
+                return self._send(200, tr.info() if tr else {"enabled": False, "state": "not available"})
+            if self.path == "/api/trainer/digest":
+                tr = _train["run"]
+                return self._send(200, {"text": tr.write_digest() if tr else ""})
             if self.path == "/api/capsules":
                 with _lock:
                     return self._send(200, {"capsules": list(_capsules)})
@@ -652,6 +659,16 @@ def make_handler(engine: DecisionEngine, key: str | None = None):
                     pass
                 ar.set_enabled(on)
                 return self._send(200, ar.info())
+            if self.path == "/api/trainer":
+                tr = _train["run"]
+                if tr is None:
+                    return self._send(500, {"error": "not available"})
+                try:
+                    on = bool(self._read_json().get("on"))
+                except ValueError:
+                    return self._send(400, {"error": "bad json"})
+                tr.set_enabled(on)
+                return self._send(200, tr.info())
             if self.path.startswith("/api/admin/"):
                 return self._admin_post()
             if self.path == "/api/command":
@@ -808,6 +825,48 @@ def _setup_autorun() -> None:
     ar.start()
 
 
+def _setup_trainer() -> None:
+    """(u290) Training: see brain/trainer.py. Off until switched on in the dashboard. Needs the auto-run machinery (it runs the real-game batches through it)."""
+    import shutil
+    import subprocess
+    import tempfile
+    from .trainer import Trainer
+    ar = _auto["run"]
+    if ar is None:
+        return
+    repo = ROOT.parent
+    node = shutil.which("node")
+
+    def sim_search(group, champion, seed, alive):
+        if not node or not (repo / "sim" / "train.mjs").exists():
+            return None
+        out = Path(tempfile.gettempdir()) / f"train_{group}_{seed}.json"
+        try:
+            out.unlink()
+        except OSError:
+            pass
+        gens, pop = os.environ.get("TRAIN_GENS", "12"), os.environ.get("TRAIN_POP", "10")
+        proc = subprocess.Popen([node, "sim/train.mjs", "--group", group, "--base", json.dumps(champion), "--seed", str(seed), "--gens", gens, "--pop", pop, "--out", str(out)],
+                                cwd=str(repo), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        while proc.poll() is None:
+            if not alive():
+                proc.kill()
+                return None
+            time.sleep(2)
+        try:
+            return json.loads(out.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
+
+    def status():
+        with _lock:
+            return _status["data"], time.time() - (_status["at"] or 0)
+
+    tr = Trainer(ROOT, run_batch=ar.run_batch, send=ar.queue, sim_search=sim_search, status=status)
+    _train["run"] = tr
+    tr.start()
+
+
 def main():
     _load_test_stats()
     _load_test_runs()
@@ -828,6 +887,7 @@ def main():
         log.info("PHONE: on the same Wi-Fi, open  http://%s:%d/?key=%s", lan_ip(), port, key)
         log.info("(first time only: allow Python through the Windows firewall for Private networks)")
     _setup_autorun()
+    _setup_trainer()
     httpd = ThreadingHTTPServer((host, port), make_handler(engine, key))
     if "--server" in sys.argv:
         # The Bedrock server as our child (its console is this window): needed for /locate answers.

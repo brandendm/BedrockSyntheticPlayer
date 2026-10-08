@@ -268,6 +268,52 @@ class AutoRun:
         except (OSError, TypeError, ValueError): pass
         self._finish(req_file, stamp, req, outcome, build)
 
+    def run_batch(self, tests: list, workers: int = 4, alive: Optional[Callable[[], bool]] = None, timeout: float = BATCH_TIMEOUT_S) -> tuple:
+        """Run `test <names>` and wait for the batch: (outcome, events). For the trainer (brain/trainer.py): no request file, no reload, the caller's switch decides
+        whether to go on. outcome is "ok" or why not."""
+        alive = alive or (lambda: True)
+        last_spawn = [-1e9]
+
+        def back() -> bool:
+            ready, _ = self._bot_ready()
+            if not ready:
+                d2, age = self.status()
+                if d2 is not None and age < 6 and not d2.get("online") and self.clock() - last_spawn[0] > 20:
+                    self.queue("spawn")
+                    last_spawn[0] = self.clock()
+                return False
+            return True
+
+        def wait(cond, secs: float) -> bool:
+            end = self.clock() + secs
+            while self.clock() < end:
+                if not alive() or (self.inbox / "STOP").exists():
+                    return False
+                if cond():
+                    return True
+                self.sleep(1)
+            return False
+        if not wait(back, 150):
+            return ("stopped" if not alive() else "the bot did not come online in 2 minutes"), []
+        started = time.strftime("%Y-%m-%d %H:%M:%S")
+        self.queue("test " + ",".join(tests) + (f" workers {workers}" if workers > 1 else ""))
+        self._log({"event": "queued (trainer)", "tests": tests})
+
+        def finished() -> bool:
+            b = self.batch()
+            return bool(b and b.get("t", "") >= started)
+
+        def running() -> bool:
+            d = self._bot_ready()[1] or {}
+            return bool((d.get("tests") or {}).get("running"))
+        if not wait(lambda: running() or finished(), 60):
+            return ("stopped" if not alive() else "the game did not start the tests within a minute"), []
+        if not wait(finished, timeout):
+            self.queue("test stop")
+            return ("stopped" if not alive() else "the tests did not finish in the time allowed"), []
+        self.sleep(1)
+        return "ok", self.test_events(started)
+
     def _finish(self, req_file: Path, stamp: str, req: dict, outcome: str, build: Optional[str]) -> None:
         try:
             if outcome.startswith("refused"):

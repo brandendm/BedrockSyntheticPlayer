@@ -31,6 +31,14 @@
   main { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; padding: 16px 20px 40px; max-width: 1400px; margin: 0 auto; }
   section { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; min-width: 0; }
   section h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 0 0 10px; font-weight: 600; }
+  .tswitch { position: relative; width: 64px; height: 34px; border-radius: 17px; border: 1px solid var(--line); background: var(--chip); cursor: pointer; padding: 0; flex: none; transition: background .2s; }
+  .tswitch::after { content: ""; position: absolute; top: 3px; left: 3px; width: 26px; height: 26px; border-radius: 50%; background: var(--muted); transition: left .2s, background .2s; }
+  .tswitch.on { background: var(--good); border-color: var(--good); }
+  .tswitch.on::after { left: 33px; background: #fff; }
+  .trainhead { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+  .trainalert { background: color-mix(in srgb, var(--bad) 14%, transparent); border: 1px solid var(--bad); border-radius: 8px; padding: 8px 10px; margin: 8px 0; }
+  table.trainlog { border-collapse: collapse; width: 100%; font-size: 12.5px; margin-top: 8px; }
+  table.trainlog td, table.trainlog th { text-align: left; padding: 3px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
   .wide { grid-column: 1 / -1; }
   .kv { display: grid; grid-template-columns: auto 1fr; gap: 4px 14px; }
   .kv b { font-weight: 600; }
@@ -153,6 +161,24 @@
     <p class="muted" style="margin:4px 0 8px">When this is <b>ON</b>, Claude can start bot tests while you are away and read what happened. It can only do two things: reload the game's scripts and run <code>test &lt;names&gt;</code>. No limit on how many or how often. It is OFF every time the brain starts. Turn it OFF to stop a run at once.</p>
     <button id="autotoggle">Turn on</button>
     <span class="muted" id="autolast"></span>
+  </section>
+
+  <section class="wide" id="trainsec">
+    <h2>Training <span class="muted" id="trainstate"></span></h2>
+    <div class="trainhead">
+      <button class="tswitch" id="traintoggle" role="switch" aria-checked="false" aria-label="Training on or off"></button>
+      <div>
+        <div class="big" id="trainbig">Off</div>
+        <div class="muted" id="trainsub">When this is on, the bot improves itself with nobody here: it searches for better settings in the simulators, proves the best one in the real game with several bots at once, and keeps it only if it really is better. No limit on time or cycles. It only moves numbers inside safe ranges; it never edits code.</div>
+      </div>
+      <span class="spacer"></span>
+      <button id="traindigest">Show digest</button>
+    </div>
+    <div id="trainalert" class="trainalert" style="display:none"></div>
+    <div class="muted" style="margin-top:8px">Champion (what differs from the defaults): <span id="trainchamp">nothing yet</span></div>
+    <div class="muted" id="traintrying"></div>
+    <table class="trainlog" id="trainlog"></table>
+    <pre id="traindigesttext" style="display:none;white-space:pre-wrap;margin-top:8px"></pre>
   </section>
 
   <section class="wide" id="healthsec">
@@ -695,6 +721,30 @@ document.getElementById('autotoggle').addEventListener('click', async () => {
   autoRefresh();
 });
 autoRefresh(); setInterval(autoRefresh, 3000);
+// Training (brain/trainer.py): the switch, the champion, and what the last cycles did.
+async function trainRefresh() {
+  const i = await getJSON('/api/trainer'); if (!i) return;
+  const on = !!i.enabled, sw = document.getElementById('traintoggle');
+  sw.classList.toggle('on', on); sw.setAttribute('aria-checked', on ? 'true' : 'false');
+  document.getElementById('trainstate').textContent = on ? `ON: ${i.state}` : 'OFF';
+  document.getElementById('trainbig').textContent = on ? 'Training' : 'Off';
+  const c = i.counts || {};
+  document.getElementById('trainchamp').textContent = Object.keys(i.champion || {}).length ? Object.entries(i.champion).map(([k, v]) => `${k} ${v}`).join(', ') : 'nothing yet (the defaults)';
+  document.getElementById('traintrying').textContent = `${i.cycles || 0} cycles so far: ${c.accepted || 0} kept, ${c.rejected || 0} dropped, ${c.sim_none || 0} found nothing in the simulator, ${c.aborted || 0} aborted.` + (i.group && on ? ` Now: ${i.group}.` : '') + (Object.keys(i.candidate || {}).length ? ` Trying: ${Object.entries(i.candidate).map(([k, v]) => `${k} ${v}`).join(', ')}.` : '');
+  const al = document.getElementById('trainalert'); al.style.display = i.alert ? '' : 'none'; al.textContent = i.alert || '';
+  const rows = (i.last || []).slice().reverse().map((e) => `<tr><td>${esc(String(e.t || '').slice(5, 16))}</td><td>${esc(e.group || '')}</td><td><b>${esc(e.outcome || '')}</b></td><td>${esc(JSON.stringify(e.candidate_diff || {}))}</td><td>${esc(String(e.why || '').slice(0, 110))}</td></tr>`).join('');
+  document.getElementById('trainlog').innerHTML = rows ? '<tr><th>when</th><th>group</th><th>outcome</th><th>tried</th><th>why</th></tr>' + rows : '';
+}
+document.getElementById('traintoggle').addEventListener('click', async () => {
+  const on = document.getElementById('traintoggle').classList.contains('on');
+  await fetch('/api/trainer', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ on: !on }) });
+  trainRefresh();
+});
+document.getElementById('traindigest').addEventListener('click', async () => {
+  const el = document.getElementById('traindigesttext'); const d = await getJSON('/api/trainer/digest');
+  el.textContent = d?.text || 'No digest yet.'; el.style.display = el.style.display === 'none' ? '' : 'none';
+});
+trainRefresh(); setInterval(trainRefresh, 3000);
 async function fullReport() {
   const [st, about, tr, ev, fl, ts, house] = await Promise.all([getJSON('/api/status'), getJSON('/api/about'), getJSON('/api/trace?since=0&all=1'), getJSON('/api/events'), getJSON('/api/flight'), getJSON('/api/tests'), getJSON('/api/house')]);
   const s = st?.status || {}, dg = s.diag || {};

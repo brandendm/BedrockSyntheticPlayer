@@ -71,6 +71,7 @@ import { TOW_META, TOW_NAMES, towCourse } from '../core/towcourses.js';
 import { PROBES, PROBE_NAMES } from '../core/probes.js';
 import { hire, dismissAll, MAX_WORKERS } from './crew.js';
 import { nextSlot, siteAt, queueOf } from '../core/poolplan.js';
+import { caveCourse, caveCommands, CAVE_KINDS, CAVE_EXT } from '../core/caves.js';
 import { ARENAS, testArena, arenaCommand } from './arenas.js';
 
 /** How far the slab reaches round the site (west, east, to each side) for a test; the backed-up box is the same (a structure is 64 across at most). */
@@ -78,10 +79,11 @@ function extFor(name) {
   if (TOW_META[name]) return TOW_META[name].ext;
   if (/horse$/.test(name) && TOW_META[name.slice(0, -5)]) return TOW_META[name.slice(0, -5)].ext;
   if (PROBES[name]) return PROBES[name].ext;
+  if (CAVE_KINDS.includes(name)) return CAVE_EXT;
   return name === 'farm' || name === 'farmrace' ? { w: 22, e: 36, r: 24 } : name === 'horserace' || name === 'elytra' || name === 'boatcross' ? { w: 8, e: 54, r: 10 } : name === 'bow' ? { w: 14, e: 34, r: 14 }
     : name === 'villagerferry' || name === 'villagerferryhorse' ? { w: 17, e: 44, r: 12 } : name === 'villagerhaulhorse' ? { w: 12, e: 44, r: 12 } : name === 'leadboat' || name === 'villagerhaul' ? { w: 12, e: 44, r: 12 } : name === 'forest' ? { w: 6, e: 34, r: 20 } : { w: 14, e: 18, r: 12 };
 }
-const NAMES = ['roof', 'tower', 'hole', 'pit', 'trap', 'climb', 'ledge', 'ladder', 'husk', 'creeper', 'sheep', 'pen', 'smelt', 'smeltlogs', 'shelter', 'house', 'resume', 'ghostlog', 'quarry', 'dark', 'replant', 'litter', 'trader', 'iron', 'farm', 'equip', 'water', 'bucketfarm', 'treetop', 'corner', 'leap', 'bridge', 'fall', 'vines', 'stairgap', 'loot', 'shield', 'skel', 'rest', 'nights', 'calibrate', 'portal', 'horse', 'leadboat', 'leadsling', 'bow', 'duel', 'horserace', 'pillarrace', 'woodrace', 'lavacross', 'obsidian', 'mineore', 'enderman', 'blaze', 'ghast', 'witherskeleton', 'placerate', 'farmrace', 'creepers', 'ravine', 'elytra', 'villagerhaul', 'villagerferry', 'villagerhaulhorse', 'villagerferryhorse', 'forest', 'vineclimb', 'boatcross', ...TOW_NAMES, ...TOW_NAMES.map((n) => `${n}horse`), ...PROBE_NAMES];
+const NAMES = ['roof', 'tower', 'hole', 'pit', 'trap', 'climb', 'ledge', 'ladder', 'husk', 'creeper', 'sheep', 'pen', 'smelt', 'smeltlogs', 'shelter', 'house', 'resume', 'ghostlog', 'quarry', 'dark', 'replant', 'litter', 'trader', 'iron', 'farm', 'equip', 'water', 'bucketfarm', 'treetop', 'corner', 'leap', 'bridge', 'fall', 'vines', 'stairgap', 'loot', 'shield', 'skel', 'rest', 'nights', 'calibrate', 'portal', 'horse', 'leadboat', 'leadsling', 'bow', 'duel', 'horserace', 'pillarrace', 'woodrace', 'lavacross', 'obsidian', 'mineore', 'enderman', 'blaze', 'ghast', 'witherskeleton', 'placerate', 'farmrace', 'creepers', 'ravine', 'elytra', 'villagerhaul', 'villagerferry', 'villagerhaulhorse', 'villagerferryhorse', 'forest', 'vineclimb', 'boatcross', ...CAVE_KINDS, ...TOW_NAMES, ...TOW_NAMES.map((n) => `${n}horse`), ...PROBE_NAMES];
 let running = false;
 /** The bot's last forest turn (its logs and trees), for your turn to be compared with. @type {{logs: number, trees: number, cut: number, build: string} | null} */
 let forestBot = null;
@@ -108,7 +110,7 @@ const GROUND = new Set(['water', 'bucketfarm', 'treetop', 'vines', 'ghostlog', '
 const NIGHT = new Set(['shelter', 'house', 'resume', 'nights', 'rest', 'dark', 'loot']);
 /** Tests that need the natural terrain or water as it is: no floor is laid for them. */
 const NATURAL = new Set(['water', 'bucketfarm', 'treetop', 'vines', 'ghostlog', 'nights', 'calibrate']);
-const COMBAT = new Set(['husk', 'creeper', 'skel', 'shield', 'dark', 'duel', 'enderman', 'blaze', 'ghast', 'witherskeleton', 'creepers', 'villagerferry', 'villagerferryhorse']);
+const COMBAT = new Set(['cavemobs', 'cavedeep', 'caveescape', 'husk', 'creeper', 'skel', 'shield', 'dark', 'duel', 'enderman', 'blaze', 'ghast', 'witherskeleton', 'creepers', 'villagerferry', 'villagerferryhorse']);
 // The ones a player can do too (`!bot test <name> me`): a goal the player can reach and the test can see.
 const HUMAN_OK = new Set(['tower', 'hole', 'pit', 'climb', 'ladder', 'corner', 'leap', 'bridge', 'ledge', 'bow', 'husk', 'sheep', 'pen', 'replant', 'litter', 'house', 'lavacross', 'obsidian', 'mineore', 'enderman', 'blaze', 'ghast', 'witherskeleton', 'creepers', 'ravine', 'leadboat', 'elytra', 'villagerhaul', 'villagerferry', 'villagerhaulhorse', 'villagerferryhorse', ...TOW_NAMES.map((n) => `${n}horse`), 'forest', 'vineclimb', 'boatcross', ...TOW_NAMES]);
 // No single test runs longer than this (the task is ended and the test left to report what it has).
@@ -2015,6 +2017,40 @@ async function runOne(agent, player, name, arg, human = false) {
         else if (agent.memory.data.placeCal) { agent.memory.data.placeCal = null; agent.memory.save(); }
         pass = !!best;
         detail = `${best ? `fastest that never failed: ${best.method} every ${best.gap} ticks${best.gap <= 6 ? ' (now used for building)' : ' (not faster than the usual, not used)'}` : 'none placed six in a row'}; ${table.join(', ')}`;
+        break;
+      }
+      case 'cavewalk':
+      case 'cavemobs':
+      case 'cavedeep':
+      case 'caveescape': {
+        // A cave cut into the slab's rock (core/caves.js, solvable by construction): dark, with turns, a squeeze, a pool, a drop, lava, and hostile mobs waiting.
+        // `test cavemobs 3` is the level (1 easy .. 3); the course is one of 40 random ones, its seed in the detail so a failure can be rebuilt.
+        const lvl = Math.min(3, Math.max(1, arg !== undefined && Number.isFinite(Number(arg)) ? Number(arg) : 2));
+        const seed = 1 + Math.floor(Math.random() * 40);
+        const C = caveCourse(name, seed, lvl);
+        for (const c of caveCommands(C, x, gy, z)) cmd(c);
+        for (const [id, n] of C.kit) if (n > 0) giveItem(id, n);
+        tp(x + C.start.x, gy + C.start.y, z + C.start.z);
+        await system.waitTicks(15);
+        for (const m of C.mobs) cmd(`summon ${m.type} ${x + m.x + 0.5} ${gy + m.y} ${z + m.z + 0.5}`);
+        cleanup.push(() => { try { dim.runCommand(`kill @e[family=monster,x=${x + 26},y=${gy - 4},z=${z},r=44]`); } catch { /* */ } });
+        const goalAt = { x: x + C.goal.x + 0.5, y: gy + C.goal.y, z: z + C.goal.z + 0.5 };
+        const escape = name === 'caveescape';
+        const done = () => (escape ? sim.location.y >= gy + 0.9 : dist3D(sim.location, goalAt) <= 2.5);
+        const mobsLeft = () => { try { return dim.getEntities({ families: ['monster'], location: { x: x + 26, y: gy - 4, z }, maxDistance: 44 }).length; } catch { return -1; } };
+        const hpMin = { v: agent.health() };
+        let starts = 0;
+        const begin = () => { starts++; if (escape) { agent.newTask({ kind: 'test' }); agent.apply([{ type: 'surface' }]); } else agent.startGoto(goalAt, 1); };
+        begin();
+        const limit = capFor(name) - 30;
+        for (let i = 0; i < limit * 4 && !done() && agent.health() > 0 && !agent.testSkipped && !agent.testAbort; i++) {
+          await system.waitTicks(5);
+          hpMin.v = Math.min(hpMin.v, agent.health());
+          if (!agent.task && !done() && starts < 8 && i % 8 === 7) begin();      // the task ended short of the goal (a fight, a failed route): try again
+        }
+        pass = done() && agent.health() > 0;
+        detail = `${escape ? (pass ? 'out on the surface' : `still ${Math.round(gy + 1 - sim.location.y)} below it`) : (pass ? 'reached the gold block' : `${dist3D(sim.location, goalAt).toFixed(0)} blocks short of it`)} in ${secs()}s; level ${lvl} seed ${seed}, `
+          + `lowest health ${hpMin.v.toFixed(0)}, ${C.mobs.length} mobs put in, ${mobsLeft()} left, started ${starts}x (mode ${agent.mode})`;
         break;
       }
       case 'ravine': {

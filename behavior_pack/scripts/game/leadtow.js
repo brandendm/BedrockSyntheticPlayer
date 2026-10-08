@@ -15,6 +15,7 @@
 import { system } from '@minecraft/server';
 import { trace } from './bridge.js';
 import { towTune } from '../core/towtune.js';
+import { live } from '../core/tunables.js';
 import { hold } from './inventory.js';
 import { isWalkMove } from '../core/pathfinder.js';
 import { slingCame, stuckTrack, learnedStretch } from '../core/towlearn.js';
@@ -235,7 +236,7 @@ export class LeadTow {
     const L = cal?.learned?.[mount ? 'ride' : 'walk'] ?? null, SL = cal?.sling ?? {};
     // (u268 live: a player's "it follows from 5 apart" was taken for the engine's: the lead does not pull before about 5.6, so a boat sitting still at 5.5 was "jammed" a second after the
     // start and yanked at 4.7, which pulls nothing: 7 s lost on every course. Never below 5.4.)
-    const TT = towTune(a.memory.data.leadTune);
+    const TT = towTune({ ...live, ...a.memory.data.leadTune });   // (u290: the trained policy, then anything this world's memory holds)
     const lo = Math.max(L?.pullAt ?? cal?.pullAt ?? 5, TT.loFloor);
     // (A lead was seen to break at 10.1 blocks with the stated maximum 12: never past 8.8 unless a calibration in this world found better.)
     const guard = Math.min(Math.min(TT.guardMax, SL.guard ?? TT.guardMax), lim.max * 0.95, SL.snapAt ? SL.snapAt - 0.8 : 99);

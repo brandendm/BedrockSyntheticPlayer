@@ -15,8 +15,11 @@ import { readFileSync } from 'node:fs';
 import { pinchWallCells, alcoveCells, fleeJabOrder, avoidCreepers, towerWorth, TOWER_H, fightMove, creeperMove, creeperFight, Stalemate, pickRefuge, barricadeCells, awayPath, weaponReach, creeperWeapon, bestWeapon, pickCreeperSwing, knockbackRoom, blockOffCells, fleeJab, killSlotCells, killSlotWorth, dodgeArrow, guardCell, blastDamage, bowFight, aimBow, bowPower, BOW_FULL } from '../behavior_pack/scripts/core/tactics.js';
 import { makeRng, dist3D } from '../behavior_pack/scripts/core/mathutil.js';
 import { SimBody } from '../tests/helpers.js';
+import { applyPolicy } from '../behavior_pack/scripts/core/tunables.js';
+if (process.env.POLICY) applyPolicy(JSON.parse(process.env.POLICY));   // (u290: the trainer scores a policy here)
 
 const VERBOSE = process.argv.includes('-v');
+const SEED_SHIFT = Number(process.env.SEED ?? 0);   // (u290: the trainer scores on other seeds than it searched on)
 // --old: the fight logic as it was (aim at a point on the straight line to the mob; archers always
 // count as reachable), to check the arena reproduces what went wrong in game.
 const OLD = process.argv.includes('--old');
@@ -939,7 +942,7 @@ if (ARMORRUNS) {
 // each weapon: hits taken, and how long a zombie was inside its own reach (1.6) of the bot.
 const ZOMBIES = process.argv.includes('--zombies') ? Number(process.argv[process.argv.indexOf('--zombies') + 1] || 200) : 0;
 if (ZOMBIES) {
-  const rng = makeRng(7);
+  const rng = makeRng(7 + SEED_SHIFT);
   const pick = (a) => a[Math.floor(rng() * a.length)];
   let hits = 0, close = 0, died = 0, kills = 0, total = 0, secs = 0;
   for (let i = 0; i < ZOMBIES; i++) {
@@ -963,7 +966,7 @@ if (ZOMBIES) {
 // to be after us, sometimes with company; any gear (fists too). Counts how many never went off.
 const CREEPERS = process.argv.includes('--creepers') ? Number(process.argv[process.argv.indexOf('--creepers') + 1] || 200) : 0;
 if (CREEPERS) {
-  const rng = makeRng(4242);
+  const rng = makeRng(4242 + SEED_SHIFT);
   const pick = (a) => a[Math.floor(rng() * a.length)];
   const stats = { runs: 0, exploded: 0, died: 0 };
   const bad = [], byKind = {};
@@ -1005,7 +1008,7 @@ if (CREEPERS) {
 // (knockback hits the steps behind it and barely moves it). Weapons: stone sword (+ spear).
 const CORNERED = process.argv.includes('--cornered') ? Number(process.argv[process.argv.indexOf('--cornered') + 1] || 200) : 0;
 if (CORNERED) {
-  const rng = makeRng(31337);
+  const rng = makeRng(31337 + SEED_SHIFT);
   const kinds = { deadend: [0, 0, 0], wide: [0, 0, 0], low: [0, 0, 0] };
   const bad = [];
   let walls = 0, killed = 0, lost = 0, blast = 0;
@@ -1032,7 +1035,7 @@ if (CORNERED) {
 // our walk), zombies where the ground slows us (forest, up the quarry stairs). Sword and spear.
 const CHASE = process.argv.includes('--chase') ? Number(process.argv[process.argv.indexOf('--chase') + 1] || 200) : 0;
 if (CHASE) {
-  const rng = makeRng(2718);
+  const rng = makeRng(2718 + SEED_SHIFT);
   const pick = (a) => a[Math.floor(rng() * a.length)];
   let hits = 0, died = 0, runs = 0, jabs = 0, hpLeft = 0;
   const byKind = {};
@@ -1065,7 +1068,7 @@ if (CHASE) {
 // a creeper was within 3 of the bot, creepers jabbed away, pillars climbed.
 const PURSUIT = process.argv.includes('--pursuit') ? Number(process.argv[process.argv.indexOf('--pursuit') + 1] || 200) : 0;
 if (PURSUIT) {
-  const rng = makeRng(31337);
+  const rng = makeRng(31337 + SEED_SHIFT);
   const pick = (a) => a[Math.floor(rng() * a.length)];
   const tot = { runs: 0, died: 0, hits: 0, blasts: 0, close: 0, cjabs: 0, towers: 0 };
   const byT = {};
@@ -1097,7 +1100,7 @@ if (PURSUIT) {
 // random weapon and health, a shield some of the time. DODGE=0: no stepping out of the way.
 const ARCHERS = process.argv.includes('--archers') ? Number(process.argv[process.argv.indexOf('--archers') + 1] || 200) : 0;
 if (ARCHERS) {
-  const rng = makeRng(4242);
+  const rng = makeRng(4242 + SEED_SHIFT);
   const pick = (a) => a[Math.floor(rng() * a.length)];
   let shot = 0, hit = 0, died = 0, dodges = 0, won = 0, blockedN = 0;
   const by = {};

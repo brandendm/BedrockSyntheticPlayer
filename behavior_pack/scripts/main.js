@@ -13,6 +13,7 @@ import { farmBuildCommand } from './game/farmbuild.js';
 import { poll, sendEvent } from './game/bridge.js';
 import { CONFIG } from './config.js';
 import { orderOf } from './core/toggles.js';
+import { applyPolicy, diffFromDefaults } from './core/tunables.js';
 import { probeApis } from './game/probe.js';
 import { crew, setCrewFactory, everyone, isCrewId, isCrewName } from './game/crew.js';
 import { describeStyle } from './core/buildstyle.js';
@@ -446,6 +447,20 @@ function handle(text, player) {
       }
       console.warn(`[around] y${dy >= 0 ? '+' : ''}${dy} at ${f.x} ${f.y} ${f.z}\n  ${rows.join('\n  ')}`);
     }
+    return;
+  }
+  // !bot policy {json} | policy clear | policy: the trained constants (core/tunables.js), applied at once and kept in the world's memory. The trainer sends these.
+  if (lower === 'policy' || lower.startsWith('policy ')) {
+    if (!agent) return reply(player, 'spawn first');
+    const arg = cmd.slice(6).trim();
+    try {
+      if (arg === 'clear') agent.memory.data.policy = null;
+      else if (arg) { const o = JSON.parse(arg); if (!o || typeof o !== 'object' || Array.isArray(o)) throw new Error('not an object'); agent.memory.data.policy = o; }
+      const applied = applyPolicy(agent.memory.data.policy);
+      if (arg) agent.memory.save();
+      sendEvent({ type: 'policy', policy: diffFromDefaults(applied) });
+      reply(player, `policy: ${JSON.stringify(diffFromDefaults(applied))}`);
+    } catch (e) { reply(player, `policy: ${e}`); }
     return;
   }
   if (lower === 'done') { if (agent) /** @type {any} */ (agent).testDone = true; return; } // finished the house you were building for the test

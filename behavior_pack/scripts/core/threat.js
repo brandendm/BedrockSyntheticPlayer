@@ -10,6 +10,7 @@
 // Overrides on top: creepers are never meleed, some mobs are never fought, very low HP always flees,
 // neutral mobs (endermen, daytime spiders, zombified piglins) only count once they're after us.
 
+import { live } from './tunables.js';   // (u290: the fight-or-run thresholds are trainable: read live.*, the exports below are the defaults)
 export const ATTACK_INTERVAL_S = 0.6; // how often we swing (12 ticks)
 export const FIGHT_MARGIN = 0.6;       // need to win the race by this margin to start a fight
 export const KEEP_FIGHTING_MARGIN = 0.9; // hysteresis: once engaged, keep going unless clearly losing
@@ -187,7 +188,7 @@ export function decide({ health, damage = FIST_DAMAGE, isNight = false, prevMode
   // Armor counts as health: iron all over takes over half of a zombie's hit, so 10 hp in it is
   // more like 22. Confidence goes on what we can take (health through armor), not bare health.
   const closeOnes = threats.filter((m) => m.dist <= 16 && (m.visible || m.attackedMe));
-  const lowAt = Math.max(3, FLEE_HEALTH * armorFactor(3, armor, toughness));
+  const lowAt = Math.max(3, live.fleeHealth * armorFactor(3, armor, toughness));
   if (health <= lowAt && !(closeOnes.length && closeOnes.every(held))) {
     const close = threats.filter((m) => m.dist <= 16 && (m.visible || m.attackedMe));
     const archerOnly = close.length > 0 && close.every((m) => MOBS[m.type].kind === 'ranged');
@@ -236,7 +237,7 @@ export function decide({ health, damage = FIST_DAMAGE, isNight = false, prevMode
   // fought unless we'd clearly lose (tools/sim_combat.mjs --witch: running from one was the
   // deadliest thing to do with it).
   const outranged = engaged.some((m) => MOBS[m.type].potions && m.dist <= 16);
-  const margin = Math.max(toeToToe ? COMMITTED_MARGIN : prevMode === 'fight' ? KEEP_FIGHTING_MARGIN : FIGHT_MARGIN, outranged ? 1 : 0);
+  const margin = Math.max(toeToToe ? live.committedMargin : prevMode === 'fight' ? live.keepFightingMargin : live.fightMargin, outranged ? 1 : 0);
   const why = `kill ${ttk.toFixed(1)}s vs die ${ttd.toFixed(1)}s`;
 
   // In water we swing slowly, can't dodge and drowned out-swim us: get to land first.

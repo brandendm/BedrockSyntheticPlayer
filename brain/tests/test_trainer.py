@@ -1,0 +1,190 @@
+import json
+import random
+import re
+import tempfile
+import unittest
+from pathlib import Path
+
+from brain import trainer as T
+from brain.trainer import Trainer, judge, perturb
+
+
+def runs(passes, total, secs=30):
+    return [{"pass": i < passes, "secs": secs} for i in range(total)]
+
+
+class Judge(unittest.TestCase):
+    def test_clear_gain_accepts(self):
+        v = judge(runs(1, 12), runs(11, 12), runs(5, 10), runs(5, 10), sim_ok=False)
+        self.assertEqual(v["verdict"], "accept")
+
+    def test_clear_loss_rejects(self):
+        v = judge(runs(11, 12), runs(1, 12), runs(5, 10), runs(5, 10), sim_ok=True)
+        self.assertEqual(v["verdict"], "reject")
+
+    def test_a_worse_guard_rejects_whatever_else(self):
+        v = judge(runs(1, 12), runs(12, 12), runs(10, 10), runs(4, 10), sim_ok=True)
+        self.assertEqual(v["verdict"], "reject")
+        self.assertIn("guard", v["why"])
+
+    def test_a_tie_with_a_simulator_gain_accepts_but_without_it_rejects(self):
+        a = judge(runs(10, 12), runs(10, 12), runs(5, 10), runs(5, 10), sim_ok=True)
+        b = judge(runs(10, 12), runs(10, 12), runs(5, 10), runs(5, 10), sim_ok=False)
+        self.assertEqual((a["verdict"], b["verdict"]), ("accept", "reject"))
+
+    def test_a_tie_that_is_slightly_lower_in_the_real_game_rejects(self):
+        v = judge(runs(10, 12), runs(9, 12), runs(5, 10), runs(5, 10), sim_ok=True)
+        self.assertEqual(v["verdict"], "reject")
+
+    def test_too_few_runs_is_undecided(self):
+        v = judge(runs(2, 4), runs(3, 4), runs(2, 2), runs(2, 2), sim_ok=True)
+        self.assertEqual(v["verdict"], "need_more")
+
+
+class Perturb(unittest.TestCase):
+    def test_steps_stay_in_range_and_change_something(self):
+        rng = random.Random(3)
+        for _ in range(50):
+            p = perturb({}, rng, T.CAVE_RANGES, n_keys=2)
+            for k, v in p.items():
+                lo, hi, _ = T.CAVE_RANGES[k]
+                self.assertTrue(lo <= v <= hi)
+
+    def test_ranges_match_the_game_registry(self):
+        src = (Path(__file__).resolve().parents[2] / "behavior_pack/scripts/core/tunables.js").read_text(encoding="utf-8")
+        for k, (lo, hi, d) in T.CAVE_RANGES.items():
+            m = re.search(k + r":\s*\{ v: ([\d.]+), min: ([\d.]+), max: ([\d.]+), group: 'cave'", src)
+            self.assertTrue(m, k)
+            self.assertEqual((float(m.group(2)), float(m.group(3)), float(m.group(1))), (lo, hi, d))
+
+
+class World:
+    """A pretend game: pass rates depend on the policy in force (a dict of pass rates by name and policy), recorded sends, a clock the sleeps advance."""
+
+    def __init__(self, rate_for):
+        self.now = 0.0
+        self.sent, self.batches = [], []
+        self.policy = {}
+        self.rate_for = rate_for
+        self.rng = random.Random(1)
+        self.alive = True
+
+    def clock(self):
+        return self.now
+
+    def sleep(self, s):
+        self.now += s
+
+    def send(self, text):
+        self.sent.append(text)
+        self.policy = json.loads(text[7:]) if text.startswith("policy {") else {}
+
+    def run_batch(self, tests, workers, alive):
+        self.batches.append((list(tests), dict(self.policy)))
+        ev = [{"type": "test_result", "name": n, "pass": self.rng.random() < self.rate_for(n, self.policy), "secs": 30} for n in tests]
+        return "ok", ev
+
+    def status(self):
+        return {"online": True}, 0.1
+
+
+def make(world, sim, root=None):
+    root = root or Path(tempfile.mkdtemp())
+    t = Trainer(root, run_batch=world.run_batch, send=world.send, sim_search=sim, status=world.status, clock=world.clock, sleep=world.sleep, seed=2)
+    t.set_enabled(True)
+    return t
+
+
+def good_sim(group, champion, seed, alive):
+    return {"accepted": True, "best": {"fightMargin": 0.7}, "train": [7, 5], "held": [6, 5], "evals": 10}
+
+
+class Cycle(unittest.TestCase):
+    def test_a_better_candidate_becomes_champion_and_is_sent_to_the_bot(self):
+        w = World(lambda n, p: 0.95 if p.get("fightMargin") == 0.7 and n in T.GROUP_TESTS["combat"] else (0.9 if n in T.GUARD_TESTS else 0.15))
+        t = make(w, good_sim)
+        t.group_i = 1                      # combat
+        t.guard_baseline = [9, 10]
+        t.cycle()
+        self.assertEqual(t.champion, {"fightMargin": 0.7})
+        self.assertEqual(t.counts["accepted"], 1)
+        self.assertTrue(w.sent[-1].startswith('policy {"fightMargin": 0.7}'))
+        self.assertEqual(json.loads((t.dir / "champion.json").read_text()), {"fightMargin": 0.7})
+        self.assertIn("ACCEPTED", (t.dir / "journal.jsonl").read_text())
+
+    def test_a_candidate_that_does_nothing_in_the_real_game_is_dropped(self):
+        w = World(lambda n, p: 0.5)
+        t = make(w, lambda *a: {"accepted": True, "best": {"fightMargin": 0.7}, "train": [7, 5], "held": [6, 5], "evals": 3})
+        t.group_i = 1
+        t.guard_baseline = [5, 10]
+        for _ in range(1):
+            t.cycle()
+        self.assertIn(t.counts["rejected"] + t.counts["accepted"], (1,))
+
+    def test_a_candidate_that_breaks_a_guard_is_dropped(self):
+        w = World(lambda n, p: (0.2 if p.get("fightMargin") == 0.7 and n in T.GUARD_TESTS else 0.95))
+        t = make(w, good_sim)
+        t.group_i = 1
+        t.guard_baseline = [9, 10]
+        for _ in range(3):
+            t.cycle()
+            t.group_i = 1
+        self.assertEqual(t.champion, {})
+
+    def test_no_simulator_gain_costs_no_real_runs(self):
+        w = World(lambda n, p: 0.9)
+        t = make(w, lambda *a: {"accepted": False, "best": {}, "train": [5, 5], "held": [5, 5]})
+        t.group_i = 0
+        t.guard_baseline = [9, 10]
+        t.cycle()
+        self.assertEqual(w.batches, [])
+        self.assertEqual(t.counts["sim_none"], 1)
+
+    def test_baseline_is_measured_once_on_the_defaults(self):
+        w = World(lambda n, p: 0.8)
+        t = make(w, lambda *a: {"accepted": False, "best": {}, "train": [5, 5], "held": [5, 5]})
+        t.cycle()
+        self.assertEqual(len(w.batches), 2)
+        self.assertEqual(w.batches[0][1], {})
+        self.assertIsNotNone(t.guard_baseline)
+        t.cycle()
+        self.assertEqual(len(w.batches), 2)        # not measured again
+
+    def test_a_collapse_against_the_baseline_reverts_and_pauses(self):
+        w = World(lambda n, p: 0.1 if p else 0.95)
+        t = make(w, good_sim)
+        t.group_i = 1
+        t.guard_baseline = [9, 10]
+        t.champion = {"fightMargin": 0.6}
+        t.cycle()
+        self.assertEqual(t.champion, {})
+        self.assertIsNotNone(t.alert)
+        self.assertFalse(t.enabled)
+        self.assertEqual(w.sent[-1], "policy clear")
+
+    def test_stop_file_switches_it_off(self):
+        w = World(lambda n, p: 0.9)
+        t = make(w, good_sim)
+        (t.dir / "STOP").write_text("")
+        self.assertFalse(t._alive())
+        self.assertFalse(t.enabled)
+
+    def test_the_cave_group_uses_a_random_step_and_the_real_game_alone(self):
+        w = World(lambda n, p: 0.9)
+        called = []
+        t = make(w, lambda *a: called.append(a))
+        t.group_i = 2
+        t.guard_baseline = [9, 10]
+        t.cycle()
+        self.assertEqual(called, [])
+        self.assertTrue(w.batches)
+
+    def test_the_digest_names_the_champion(self):
+        w = World(lambda n, p: 0.9)
+        t = make(w, good_sim)
+        t.champion = {"fightMargin": 0.7}
+        self.assertIn("fightMargin", t.write_digest())
+
+
+if __name__ == "__main__":
+    unittest.main()
