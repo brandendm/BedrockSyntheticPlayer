@@ -53,3 +53,6 @@ Dashboard "Pass rates & progress": tiles (bot pass rate, last 20 vs the 20 befor
 
 ## u279 — ferry/horse fixes from the first real runs
 villagerferry (bot): the bot's own fight mode replaced the test task ("interrupted: task replaced, mode fight"): now `testHold` for the run. Horse variants: "tame after 2 tries but not saddled" — the bot had no saddle in the pack: now given one before mounting.
+
+## u280 — horse saddle, zombies leave the spectator alone
+readyHorse: the saddle slot only exists on a TAME horse, and `tame(who)` was handed a string in some paths; now triggers the horse's own tamed event, tames, waits, then tries `replaceitem @s`, the tagged command, and the inventory container in turn, and logs the result. villagerferry bot runs put you in creative (zombies ignore creative players) and restore your old mode in cleanup.

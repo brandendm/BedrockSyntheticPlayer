@@ -2977,6 +2977,9 @@ async function runOne(agent, player, name, arg, human = false) {
         // The zombies last, from the west end, fire-proof (the day would burn them). 14 blocks from where you stand.
         const zombies = [];
         for (const zz of [z - 3.5, z + 3.5]) { const zb = await born('minecraft:zombie', x - 15, zz, 'vf_z'); if (zb) zombies.push(zb); }
+        if (!human) { // (u279: zombies hunt whoever is nearest: you, spectating. In creative they leave you alone; back to what you were after.)
+          try { const gm = player.getGameMode?.(); const was = typeof gm === 'string' && gm ? gm.toLowerCase() : 'survival'; player.runCommand('gamemode creative @s'); cleanup.push(() => { try { player.runCommand(`gamemode ${was} @s`); } catch { /* */ } }); } catch { /* */ }
+        }
         agent.testHold = true;   // (u279: the bot's own fight/flee would replace the test's task and end it: the zombies are the thing to outrun)
         cmd('effect @e[tag=vf_z] fire_resistance 1000 0 true');
         const turned = () => { try { return dim.getEntities({ type: 'minecraft:zombie_villager', location: { x: x + 10, y: gy, z }, maxDistance: 70 }).length; } catch { return 0; } };
@@ -3267,8 +3270,17 @@ async function horseReady(agent, gen, horse, secs) {
 async function readyHorse(dim, cmd, who, loc) {
   const h = await spawnAdultHorse(dim, loc);
   if (!h) return null;
+  // (u279: a horse only has a saddle slot once it is tame, and it must be given a moment to be: tame it by every route, then saddle it by each until one takes)
+  try { h.triggerEvent('minecraft:horse_tamed'); } catch { /* no such event */ }
   try { h.getComponent('minecraft:tameable')?.tame(who); } catch { /* the bot tames it itself below */ }
-  h.addTag('vx_h'); cmd('replaceitem entity @e[tag=vx_h,c=1] slot.saddle 0 saddle'); h.removeTag('vx_h');
+  await system.waitTicks(3);
+  const tries = [
+    () => h.runCommand('replaceitem entity @s slot.saddle 0 saddle'),
+    () => { h.addTag('vx_h'); try { cmd('replaceitem entity @e[tag=vx_h,c=1] slot.saddle 0 saddle'); } finally { h.removeTag('vx_h'); } },
+    () => h.getComponent('minecraft:inventory')?.container?.setItem(0, new ItemStack('minecraft:saddle', 1)),
+  ];
+  for (const t of tries) { if (saddledOf(h)) break; try { t(); } catch { /* next way */ } await system.waitTicks(2); }
+  console.warn(`[test] readyHorse: tamed ${isTamed(h)}, saddled ${saddledOf(h)}`);
   return h;
 }
 /** The bot on the horse: tamed and saddled first if the game did not take the setup, then up. { ok, detail } */
