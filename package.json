@@ -9,7 +9,9 @@
     "test:brain": "python -m unittest discover -s brain/tests -t .",
     "typecheck": "tsc -p .",
     "fuzz": "node tools/fuzz_motor.mjs",
-    "sim": "node tools/sim_plan.mjs"
+    "sim": "node tools/sim_plan.mjs",
+    "gate": "node sim/gate.mjs",
+    "gate:quick": "node sim/gate.mjs --quick"
   },
   "devDependencies": {
     "@minecraft/server": "2.11.0-beta.1.26.51-stable",

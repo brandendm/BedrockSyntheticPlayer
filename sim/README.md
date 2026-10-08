@@ -22,3 +22,11 @@ Calibration loop: run the probes in the game (`brain/inbox/run.json` with `test 
 `node sim/gen_run.mjs 1 20` plays the bot's real code on generated lanes (`sim/gencourse.mjs`: steps of 1, gates on either side, low walls; seeds >= 1000 are held out). First run: 13/20 pass, mean 24 s. It also caught a u268 regression the five fixed courses missed when the bot has no learned memory (the jam clock reset whenever the walker came within range). Open: low "wall" bumps the walker hops over and drops off (repeated "up onto the step" at one spot, boat left jammed behind).
 
 u270: on the random courses (seeds 1-20: 13 -> 14 of 20; held-out 1000-1011: 8 -> 10 of 12) the walker past a low wall with the boat jammed at its foot now slings from the ground (taut lead, 8+) before it tries climbing the wall, which only walked it back off.
+
+## Debugging tools (u271)
+- `npm run gate` (`gate:quick`): unit tests + the five fixed courses (no memory, and with a player's learned memory) + random seeds 1-20 and held-out 1000-1011, against `sim/baseline.json`. Fails on any course that fails or is >25% slower, or a seed that passed before and fails now. `node sim/gate.mjs --update` after a change you meant. About 80 s.
+- `node sim/minimize.mjs <seed> [--timeline]`: shrinks a failing random course to the smallest one that still fails (drops parts, then shortens them). `--parts '<json>'` re-runs a minimal one.
+- `node sim/replay_capsule.mjs brain/inbox/capsules.json [i]`: a real-game repro capsule rebuilt in the sim (its blocks, where the bot and boat were, the tow goal) and played with the bot's real code. `LEARNED='{...}'` adds a learned memory.
+- `sim/report.mjs`: second-by-second bot/boat table + the tow's trace lines, returned by `runTow` (`timeline`, `traces`).
+- `node tools/ship.mjs [--bump] [--commit "msg"] [--tests a,b] [--wait 150]` (on the PC): sync the pack to the server, check it, queue the real-game run, wait for THAT build's result, print the summary, commit.
+Open: seed 20 minimizes to one 1-high 3-deep wall 2 blocks in; the sim bot stretches to 8.5 and jumps every second and the boat never comes (is the sim's ground-level lift too weak, or the real thing the same? needs a probe: boat at a wall's foot, walker on the ground beyond).

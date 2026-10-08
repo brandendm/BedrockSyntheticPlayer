@@ -5,20 +5,23 @@ register('./hooks.mjs', import.meta.url);
 const SIM = await import('./server.mjs');
 const { engine, system, spawnBot, ItemStack } = SIM;
 const { Agent } = await import('../behavior_pack/scripts/game/agent.js');
+const B = await import('../behavior_pack/scripts/game/bridge.js');
 const { towCourse, TOW_META } = await import('../behavior_pack/scripts/core/towcourses.js');
 
 export async function runTow(name, { params = {}, gy = 150, verbose = false, x = 100, z = 100, maxS = 200, course = null } = {}) {
   engine.reset({ params, floorY: process.env.FLOORY ? Number(process.env.FLOORY) : -64 });
   const C = course ? course(x, gy, z) : towCourse(name, x, gy, z);
   // the test site as game/scenarios.js builds it: a slab in the sky (stone, dirt, grass) with a glass wall round its rim, nothing beyond
-  const ext = C.ext ?? TOW_META[name].ext;
-  for (const c of [`fill ${x - ext.w} ${gy - 10} ${z - ext.r} ${x + ext.e} ${gy - 4} ${z + ext.r} stone`, `fill ${x - ext.w} ${gy - 3} ${z - ext.r} ${x + ext.e} ${gy - 1} ${z + ext.r} dirt`, `fill ${x - ext.w} ${gy} ${z - ext.r} ${x + ext.e} ${gy} ${z + ext.r} grass_block`]) engine.world.command(c);
+  const ext = C.ext ?? TOW_META[name]?.ext ?? { w: 0, e: 0, r: 0 };
+  if (!C.noSlab) for (const c of [`fill ${x - ext.w} ${gy - 10} ${z - ext.r} ${x + ext.e} ${gy - 4} ${z + ext.r} stone`, `fill ${x - ext.w} ${gy - 3} ${z - ext.r} ${x + ext.e} ${gy - 1} ${z + ext.r} dirt`, `fill ${x - ext.w} ${gy} ${z - ext.r} ${x + ext.e} ${gy} ${z + ext.r} grass_block`]) engine.world.command(c);
   const wx1 = x - ext.w, wx2 = x + ext.e, wz1 = z - ext.r, wz2 = z + ext.r;
-  for (const [a1, b1, a2, b2] of [[wx1, wz1, wx2, wz1], [wx1, wz2, wx2, wz2], [wx1, wz1, wx1, wz2], [wx2, wz1, wx2, wz2]]) engine.world.command(`fill ${a1} ${gy + 1} ${b1} ${a2} ${gy + 8} ${b2} glass`);
+  if (!C.noSlab) for (const [a1, b1, a2, b2] of [[wx1, wz1, wx2, wz1], [wx1, wz2, wx2, wz2], [wx1, wz1, wx1, wz2], [wx2, wz1, wx2, wz2]]) engine.world.command(`fill ${a1} ${gy + 1} ${b1} ${a2} ${gy + 8} ${b2} glass`);
   for (const c of C.cmds) engine.world.command(c);
   const sim = spawnBot({ x: C.start.x - 0.5, y: C.start.y, z: C.start.z - 0.5 });
   for (const [id, n] of (C.ext ? null : TOW_META[name]?.kit) ?? [['lead', 2]]) sim.inv.addItem(new ItemStack(id, n));
   const agent = new Agent(sim);
+  const traces = [], timeline = [];
+  B.onTrace((tick, msg) => traces.push({ tick, msg }));
   // (the world's memory of how a player tows, learned from their runs: LEARNED='{"walk":{...}}' puts it in)
   if (process.env.LEARNED) agent.memory.data.leadCal = { ...(agent.memory.data.leadCal ?? {}), learned: JSON.parse(process.env.LEARNED) };
   // (what main.js does: the agent's own tick, every tick, which drives the motor)
@@ -30,6 +33,7 @@ export async function runTow(name, { params = {}, gy = 150, verbose = false, x =
   const how = agent.tow.attach(boat);
   if (!how) throw new Error('no lead on the boat');
   const t0 = system.currentTick;
+  system.runInterval(() => { const b = boat.isValid ? boat.location : null, p = sim.location; timeline.push({ s: Math.round((system.currentTick - t0) / 20), bot: [p.x, p.y, p.z].map((v) => Math.round(v * 10) / 10), boat: b ? [b.x, b.y, b.z].map((v) => Math.round(v * 10) / 10) : null, d: b ? Math.round(Math.hypot(p.x - b.x, p.z - b.z) * 10) / 10 : null }); }, 20);
   if (verbose) system.runInterval(() => { const b = boat.location, p = sim.location; console.log(`t${system.currentTick} bot ${p.x.toFixed(1)},${p.y.toFixed(1)},${p.z.toFixed(1)} boat ${b.x.toFixed(1)},${b.y.toFixed(1)},${b.z.toFixed(1)} v ${boat.vx.toFixed(2)},${boat.vz.toFixed(2)} ${boat.holder ? 'leashed' : 'FREE'}`); }, Number(process.env.EVERY || 20));
   const m = await engine.runUntil((async () => {
     const m = await agent.tow.run(gen, boat, C.goal, { maxS, walkTo: { x: C.goal.x + (C.room ?? 1.5), y: C.goal.y, z: C.goal.z }, boatZone: C.zone });
@@ -41,7 +45,7 @@ export async function runTow(name, { params = {}, gy = 150, verbose = false, x =
     return m;
   })());
   const pass = inZone(boat) && !m.snapped;
-  return { name, pass, secs: Math.round((system.currentTick - t0) / 20 * 10) / 10, m, boat: boat.location, goal: C.goal, unimplemented: Object.fromEntries(engine.unimplemented), tickErrors: Object.fromEntries(tickErrors) };
+  return { name, pass, traces, timeline, secs: Math.round((system.currentTick - t0) / 20 * 10) / 10, m, boat: boat.location, goal: C.goal, unimplemented: Object.fromEntries(engine.unimplemented), tickErrors: Object.fromEntries(tickErrors) };
 }
 
 if (process.argv[1].endsWith('run_tow.mjs')) {
