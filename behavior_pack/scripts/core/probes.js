@@ -152,5 +152,24 @@ export const PROBES = {
       }
     },
   },
+  // The sling from the GROUND past a low wall (u272, from sim/minimize.mjs: one 1-high wall 3 deep and the bot jumping at 8.5, the boat never coming): a boat at the foot of a wall
+  // 1 and 2 high and 3 deep, the walker on the ground beyond it at 7, 8.3, 9.5 from the boat; held 20 ticks, then the walker jumps. Does the boat come over, how high, how fast.
+  probewall: {
+    ext: { w: 4, e: 28, r: 4 }, floor: floor(4, 28, 4), secs: 50,
+    async run(ctx) {
+      for (const rise of [1, 2]) {
+        ctx.cmd(`fill ${ctx.x} ${ctx.gy + 1} ${ctx.z - 2} ${ctx.x + 2} ${ctx.gy + rise} ${ctx.z + 2} stone`);
+        for (const d of [7, 8.3, 9.5]) {
+          ctx.sim.teleport({ x: ctx.x - 2.5, y: ctx.gy + 1, z: ctx.z + 0.5 }); await ctx.wait(5);
+          const boat = ctx.spawn('minecraft:boat', { x: ctx.x - 0.9, y: ctx.gy + 1, z: ctx.z + 0.5 }); ctx.watch(boat); await ctx.wait(5);
+          if (!ctx.leash(boat)) return;
+          ctx.sim.teleport({ x: ctx.x - 0.9 + d, y: ctx.gy + 1, z: ctx.z + 0.5 }); ctx.mark(`wall ${rise} stretch ${d}`); await ctx.wait(20);
+          ctx.mark('jump'); ctx.sim.jump(); await ctx.wait(30);
+          try { boat.remove(); } catch { /* */ }
+        }
+        ctx.cmd(`fill ${ctx.x} ${ctx.gy + 1} ${ctx.z - 2} ${ctx.x + 2} ${ctx.gy + rise} ${ctx.z + 2} air`);
+      }
+    },
+  },
 };
 export const PROBE_NAMES = Object.keys(PROBES);

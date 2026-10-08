@@ -2456,7 +2456,7 @@ async function runOne(agent, player, name, arg, human = false) {
         detail = `${r.detail}; ${ride.detail}`;
         break;
       }
-      case 'probewalk': case 'probemove': case 'probejump': case 'probestep': case 'probeslide': case 'probepull': case 'probefollow': case 'probesling': case 'probeblock': case 'probelift': {
+      case 'probewalk': case 'probemove': case 'probejump': case 'probestep': case 'probeslide': case 'probepull': case 'probefollow': case 'probesling': case 'probeblock': case 'probelift': case 'probewall': {
         // A physics probe (core/probes.js): a scripted experiment, every tick recorded, sent to the brain as a 'probe' event. The simulator runs the same
         // probe (sim/probes_run.mjs) and sim/calibrate.mjs makes its numbers agree with these.
         const pr = PROBES[name];
