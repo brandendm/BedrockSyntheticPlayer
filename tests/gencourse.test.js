@@ -19,3 +19,16 @@ test('a capsule becomes a sim course (blocks, bot, boat, goal)', () => {
   assert.deepEqual(c.goal, { x: 3, y: 1, z: 3 });
   assert.throws(() => capsuleCourse({ why: 't', build: 'x', slice, entities: [], samples: [], watch: null }));
 });
+
+import { towTune, tuneDefaults, TOW_TUNE } from '../behavior_pack/scripts/core/towtune.js';
+test('tow tuning: defaults, clamped overrides, unknown keys ignored', () => {
+  assert.equal(towTune().loFloor, 5.4);
+  assert.equal(towTune({ loFloor: 99 }).loFloor, TOW_TUNE.loFloor.max);
+  assert.equal(towTune({ nonsense: 1 }).nonsense, undefined);
+  assert.equal(towTune({ guardMax: NaN }).guardMax, tuneDefaults().guardMax);
+});
+test('level 2 courses have pits and a block kit; level 1 are unchanged by the level argument', () => {
+  let pit = false; for (let s = 1; s < 30; s++) if (towParts(s, 2).some((p) => p.kind === 'pit')) { pit = true; assert.ok(buildCourse(towParts(s, 2), 100, 150, 100).kit.some(([id]) => id === 'dirt')); break; }
+  assert.ok(pit);
+  assert.deepEqual(towParts(5), towParts(5, 1));
+});

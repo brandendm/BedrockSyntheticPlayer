@@ -8,7 +8,7 @@ const { Agent } = await import('../behavior_pack/scripts/game/agent.js');
 const B = await import('../behavior_pack/scripts/game/bridge.js');
 const { towCourse, TOW_META } = await import('../behavior_pack/scripts/core/towcourses.js');
 
-export async function runTow(name, { params = {}, gy = 150, verbose = false, x = 100, z = 100, maxS = 200, course = null } = {}) {
+export async function runTow(name, { params = {}, gy = 150, verbose = false, x = 100, z = 100, maxS = 200, course = null, tune = null } = {}) {
   engine.reset({ params, floorY: process.env.FLOORY ? Number(process.env.FLOORY) : -64 });
   const C = course ? course(x, gy, z) : towCourse(name, x, gy, z);
   // the test site as game/scenarios.js builds it: a slab in the sky (stone, dirt, grass) with a glass wall round its rim, nothing beyond
@@ -18,8 +18,9 @@ export async function runTow(name, { params = {}, gy = 150, verbose = false, x =
   if (!C.noSlab) for (const [a1, b1, a2, b2] of [[wx1, wz1, wx2, wz1], [wx1, wz2, wx2, wz2], [wx1, wz1, wx1, wz2], [wx2, wz1, wx2, wz2]]) engine.world.command(`fill ${a1} ${gy + 1} ${b1} ${a2} ${gy + 8} ${b2} glass`);
   for (const c of C.cmds) engine.world.command(c);
   const sim = spawnBot({ x: C.start.x - 0.5, y: C.start.y, z: C.start.z - 0.5 });
-  for (const [id, n] of (C.ext ? null : TOW_META[name]?.kit) ?? [['lead', 2]]) sim.inv.addItem(new ItemStack(id, n));
+  for (const [id, n] of (C.kit ?? (C.ext ? null : TOW_META[name]?.kit)) ?? [['lead', 2]]) sim.inv.addItem(new ItemStack(id, n));
   const agent = new Agent(sim);
+  if (tune) agent.memory.data.leadTune = tune;
   const traces = [], timeline = [];
   B.onTrace((tick, msg) => traces.push({ tick, msg }));
   // (the world's memory of how a player tows, learned from their runs: LEARNED='{"walk":{...}}' puts it in)

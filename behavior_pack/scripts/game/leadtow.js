@@ -14,6 +14,7 @@
 // efficient it was (ideal walking time over actual) is a number.
 import { system } from '@minecraft/server';
 import { trace } from './bridge.js';
+import { towTune } from '../core/towtune.js';
 import { hold } from './inventory.js';
 import { isWalkMove } from '../core/pathfinder.js';
 import { slingCame, stuckTrack, learnedStretch } from '../core/towlearn.js';
@@ -225,12 +226,13 @@ export class LeadTow {
     const L = cal?.learned?.[mount ? 'ride' : 'walk'] ?? null, SL = cal?.sling ?? {};
     // (u268 live: a player's "it follows from 5 apart" was taken for the engine's: the lead does not pull before about 5.6, so a boat sitting still at 5.5 was "jammed" a second after the
     // start and yanked at 4.7, which pulls nothing: 7 s lost on every course. Never below 5.4.)
-    const lo = Math.max(L?.pullAt ?? cal?.pullAt ?? 5, 5.4);
+    const TT = towTune(a.memory.data.leadTune);
+    const lo = Math.max(L?.pullAt ?? cal?.pullAt ?? 5, TT.loFloor);
     // (A lead was seen to break at 10.1 blocks with the stated maximum 12: never past 8.8 unless a calibration in this world found better.)
-    const guard = Math.min(SL.guard ?? 8.8, lim.max * 0.95, SL.snapAt ? SL.snapAt - 0.8 : 99);
-    const patience = Math.max(12, Math.min(90, Math.round(L?.patience ?? 20)));
+    const guard = Math.min(Math.min(TT.guardMax, SL.guard ?? TT.guardMax), lim.max * 0.95, SL.snapAt ? SL.snapAt - 0.8 : 99);
+    const patience = Math.max(TT.patienceMin, Math.min(90, Math.round(L?.patience ?? TT.patienceDef)));
     // (u241: the player's own jump at this height of step first, from the tow courses; then the calibration; then a guess)
-    const stretchFor = (rise) => learnedStretch(L?.sling, rise) ?? SL.byRise?.[Math.min(3, Math.max(1, Math.ceil(rise)))] ?? Math.min(guard - 0.5, lim.max * 0.7);
+    const stretchFor = (rise) => learnedStretch(L?.sling, rise) ?? SL.byRise?.[Math.min(3, Math.max(1, Math.ceil(rise)))] ?? Math.min(guard - 0.5, lim.max * TT.stretchFrac);
     const m = { arrived: false, snapped: false, why: '', secs: 0, idealS: 0, efficiency: 0, holds: 0, tugs: 0, reroutes: 0, steps: 0, slings: 0, slingOk: 0, maxSep: 0, pullAt: null, boatMoved: 0, boatEnd: null, pathLen: 0, wet: false, notes: [], built: 0, ...lim, holdAt: guard };
     const t0 = system.currentTick, b0 = { ...boat.location };
     let bestGoal = Infinity, bestAt = t0, noProg = 0, waitAct = -9999;
@@ -413,7 +415,7 @@ export class LeadTow {
           // never passed the face), but on a STAIR it is 4 s quicker (sim 8 s vs 12.8, real ~10 vs 14). So one try, then the climb.)
           if (stepRise >= 0.4 && stuckCount <= 1 && d >= 3) {
             m.slings++; mark('sling');
-            const r = await this.sling(gen, boat, { ride, target: Math.min(guard - 0.3, 8.3), guard });
+            const r = await this.sling(gen, boat, { ride, target: Math.min(guard - 0.3, TT.groundTarget), guard });
             trace(`tow: sling from the ground, rise ${stepRise}: stretch ${r.stretch}, ${r.ok ? 'it came' : r.snapped ? 'LEAD BROKE' : 'it did not come'}, boat peaked ${r.peak} b/s, climbed ${r.climbed}`);
             note(`sling from level ground at rise ${stepRise}: ${r.ok ? 'it came' : r.snapped ? 'LEAD BROKE' : 'did not come'}`);
             if (r.ok) { m.slingOk++; stuckCount = 0; }
@@ -433,7 +435,7 @@ export class LeadTow {
         if (rise >= 0.4 && above && stuckCount <= 4) {
           // Below us against a step: the sling, a little further stretched each time it fails.
           m.slings++; mark('sling');
-          const target = stretchFor(rise) + (stuckCount - 1) * 1.0;
+          const target = stretchFor(rise) + (stuckCount - 1) * TT.slingStep;
           const rw = ride ? null : await this.runway(gen, boat, target, guard);
           if (rw?.built) { note(`runway: ${rw.built} blocks`); m.built += rw.built; }
           const r = await this.sling(gen, boat, { ride, target, guard, dir: rw?.dir ?? null });
@@ -449,7 +451,7 @@ export class LeadTow {
         // such a place (the tow courses): stretch the lead the way they did and jump, before going back to it.
         if (!ride && L?.sling?.flat && rise < 0.4 && stuckCount <= 2 && d >= 3 && !this.wallBetween(boat, pos)) {
           m.slings++; mark('sling');
-          const target = Math.max(L.sling.flat.stretch, lo + 1.5) + (stuckCount - 1) * 0.8;
+          const target = Math.max(L.sling.flat.stretch, lo + TT.yankMargin) + (stuckCount - 1) * 0.8;
           const r = await this.sling(gen, boat, { ride, target, guard });
           trace(`tow: yank on the flat: stretch ${r.stretch}, ${r.ok ? 'it came' : r.snapped ? 'LEAD BROKE' : 'it did not come'}, boat peaked ${r.peak} b/s`);
           note(`yank (jump with the lead stretched, as you did) at ${here}: ${r.ok ? 'it came' : r.snapped ? 'LEAD BROKE' : 'did not come'}`);
