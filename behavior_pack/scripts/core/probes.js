@@ -171,5 +171,24 @@ export const PROBES = {
       }
     },
   },
+  // (u281) The jump formula (core/liftmodel.js): a boat jammed at the foot of a platform 1, 2, 3 high, the walker on top 4.5 .. 8.5 out from it. Held 20 ticks, then up to four jumps 24 ticks
+  // apart: how many does it take for the boat to come up (sim/fit_lift.mjs reads the marks "h <rise> d <out>" and "jump <n>")?
+  probejumps: {
+    ext: { w: 4, e: 28, r: 4 }, floor: floor(4, 28, 4), secs: 170,
+    async run(ctx) {
+      for (const rise of [1, 2, 3]) {
+        ctx.cmd(`fill ${ctx.x} ${ctx.gy + 1} ${ctx.z - 2} ${ctx.x + 13} ${ctx.gy + rise} ${ctx.z + 2} stone`);
+        for (const d of [4.5, 5.5, 6, 6.5, 7, 7.5, 8.5]) {
+          ctx.sim.teleport({ x: ctx.x - 2.5, y: ctx.gy + 1, z: ctx.z + 0.5 }); await ctx.wait(5);
+          const boat = ctx.spawn('minecraft:boat', { x: ctx.x - 0.9, y: ctx.gy + 1, z: ctx.z + 0.5 }); ctx.watch(boat); await ctx.wait(5);
+          if (!ctx.leash(boat)) return;
+          ctx.sim.teleport({ x: ctx.x - 0.9 + d, y: ctx.gy + 1 + rise, z: ctx.z + 0.5 }); ctx.mark(`h ${rise} d ${d}`); await ctx.wait(20);
+          for (let j = 1; j <= 4; j++) { ctx.mark(`jump ${j}`); ctx.sim.jump(); await ctx.wait(24); }
+          try { boat.remove(); } catch { /* */ }
+        }
+        ctx.cmd(`fill ${ctx.x} ${ctx.gy + 1} ${ctx.z - 2} ${ctx.x + 13} ${ctx.gy + rise} ${ctx.z + 2} air`);
+      }
+    },
+  },
 };
 export const PROBE_NAMES = Object.keys(PROBES);

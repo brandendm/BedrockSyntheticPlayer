@@ -42,12 +42,12 @@ export async function runProbe(name, { params = {}, x = 100, gy = 150, z = 100 }
     }
   })();
   let error = '';
-  await engine.runUntil((async () => { try { await pr.run(ctx); } catch (e) { error = String(e.stack ?? e); } live = false; await system.waitTicks(2); })(), 20 * 120, 1);
+  await engine.runUntil((async () => { try { await pr.run(ctx); } catch (e) { error = String(e.stack ?? e); } live = false; await system.waitTicks(2); })(), 20 * Math.max(120, (pr.secs ?? 0) + 20), 1);
   void sampler;
   return { name, ticks: rows.length, marks, rows, error, unimplemented: Object.fromEntries(engine.unimplemented) };
 }
 
-if ((process.argv[1] ?? '').endsWith('probes_run.mjs')) {
+if (process.argv[1].endsWith('probes_run.mjs')) {
   const names = process.argv.slice(2).filter((a) => !a.startsWith('-'));
   for (const n of names.length ? names : PROBE_NAMES) {
     const r = await runProbe(n);

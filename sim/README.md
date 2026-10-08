@@ -56,3 +56,9 @@ villagerferry (bot): the bot's own fight mode replaced the test task ("interrupt
 
 ## u280 — horse saddle, zombies leave the spectator alone
 readyHorse: the saddle slot only exists on a TAME horse, and `tame(who)` was handed a string in some paths; now triggers the horse's own tamed event, tames, waits, then tries `replaceitem @s`, the tagged command, and the inventory container in turn, and logs the result. villagerferry bot runs put you in creative (zombies ignore creative players) and restore your old mode in cleanup.
+
+## u281 — the lift formula, probejumps, villager creep
+- `core/liftmodel.js`: holder h above the boat, d out: top-of-jump lead length s = hypot(d, h + jump); excess e = s - pull; jumps = ceil((need0 + needPerH*h)/e), Infinity when e <= 0 (one up, two out: nothing; going down: shorter lead, nothing). `minLength`, `liftPlan` (fewest jumps that fit the guard; `extra` = runway to build). The tow's sling at a step now takes its distance and number of jumps from it (a player's taught stretch still wins), one more jump per failure; `sling()` jumps up to N times.
+- Real calibration: `!bot test probejumps` (3 heights x 7 distances x up to 4 jumps), then `node sim/fit_lift.mjs --apply` fits pull/jump/need0/needPerH and rewrites LIFT. `--sim` runs the pipeline on the simulator (which has no multi-jump regime: its lead pulls steadily, so it shows 1 jump from 7 out).
+- sweepVillagers: when the boat has stopped short of the villager with the lead taut, the holder walks on half a block at a time (up to 3.5) instead of standing.
+- Horse variants: if the game still does not saddle the horse, a saddle goes in the rider's pack and the failure is traced. villagerferry bot gets resistance + regeneration (its fight mode is off, the zombies killed it).

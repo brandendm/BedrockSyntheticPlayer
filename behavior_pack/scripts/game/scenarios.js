@@ -2980,6 +2980,7 @@ async function runOne(agent, player, name, arg, human = false) {
         if (!human) { // (u279: zombies hunt whoever is nearest: you, spectating. In creative they leave you alone; back to what you were after.)
           try { const gm = player.getGameMode?.(); const was = typeof gm === 'string' && gm ? gm.toLowerCase() : 'survival'; player.runCommand('gamemode creative @s'); cleanup.push(() => { try { player.runCommand(`gamemode ${was} @s`); } catch { /* */ } }); } catch { /* */ }
         }
+        if (!human) { try { sim.runCommand('effect @s resistance 600 3 true'); sim.runCommand('effect @s regeneration 600 1 true'); } catch { /* */ } }   // (u281: with its own fight switched off the zombies killed it on both runs)
         agent.testHold = true;   // (u279: the bot's own fight/flee would replace the test's task and end it: the zombies are the thing to outrun)
         cmd('effect @e[tag=vf_z] fire_resistance 1000 0 true');
         const turned = () => { try { return dim.getEntities({ type: 'minecraft:zombie_villager', location: { x: x + 10, y: gy, z }, maxDistance: 70 }).length; } catch { return 0; } };
@@ -3195,10 +3196,15 @@ async function sweepVillagers(agent, gen, boat, vils, gy, fns) {
   };
   for (const v of vils) {
     const t0 = system.currentTick;
-    let near = 0, lastSay = -1;
+    let near = 0, lastSay = -1, creep = 0, still = 0, lastB = { ...boat.location };
     while (v.isValid && !fns.riding(v) && fns.ridersN() < 2 && system.currentTick - t0 < 600) {
       S.check(gen);
       const bl = boat.location, vl = v.location, me = sim.location;
+      // (u281, the owner: the bot walked a little past the villager and stood waiting. The boat comes to within ~4.5 of whoever holds the lead, so if it has stopped short of the villager the holder
+      // walks on a little further, half a block at a time, until the boat touches it: a boat that is still, with the lead taut and the villager not yet against it.)
+      if (Math.hypot(bl.x - lastB.x, bl.z - lastB.z) < 0.03) still++; else { still = 0; if (creep > 0) creep = Math.max(0, creep - 0.25); }
+      lastB = { x: bl.x, y: bl.y, z: bl.z };
+      if (still >= 6 && Math.hypot(vl.x - bl.x, vl.z - bl.z) > 1.8 && Math.hypot(me.x - bl.x, me.z - bl.z) < 8.6) { creep = Math.min(3.5, creep + 0.5); still = 0; }
       if (Math.hypot(vl.x - bl.x, vl.z - bl.z) <= 1.8) {
         // Against it: still, so the boat stays there; the game is given 4 s (what you are given), then it is put in.
         try { sim.stopMoving(); } catch { /* */ }
@@ -3207,7 +3213,7 @@ async function sweepVillagers(agent, gen, boat, vils, gy, fns) {
         continue;
       }
       near = 0;
-      const r = boatToMob(bl, vl, me);
+      const r = boatToMob(bl, vl, me, { past: 5.2 + creep, maxFrom: 8.5 + Math.min(creep, 0.5) });
       let { stand, via } = r;
       // Somewhere we can stand: the stand point drawn in toward the boat until it is; the side point from the other side if not.
       if (floorAt(stand.x, stand.z) === null) {
@@ -3221,6 +3227,7 @@ async function sweepVillagers(agent, gen, boat, vils, gy, fns) {
       const target = byTheSide ? via : stand;
       const apart = Math.hypot(me.x - bl.x, me.z - bl.z);
       if (apart > 9.2) { try { sim.stopMoving(); } catch { /* */ } }   // (a lead snaps at about 10: let the boat come up)
+      else if (creep > 0 && apart > 8.8) { try { sim.stopMoving(); } catch { /* */ } }
       else toward(target, Math.hypot(me.x - target.x, me.z - target.z) < 2.5 ? 0.6 : 1);
       if (lastSay < 0 || system.currentTick - lastSay >= 100) { lastSay = system.currentTick; trace(`villagers: boat ${bl.x.toFixed(1)},${bl.z.toFixed(1)} -> villager ${vl.x.toFixed(1)},${vl.z.toFixed(1)} (${r.d.toFixed(1)}), me ${me.x.toFixed(1)},${me.z.toFixed(1)} -> ${byTheSide ? 'by the side' : 'past it'} ${target.x.toFixed(1)},${target.z.toFixed(1)}`); }
       await system.waitTicks(2);
@@ -3280,7 +3287,9 @@ async function readyHorse(dim, cmd, who, loc) {
     () => h.getComponent('minecraft:inventory')?.container?.setItem(0, new ItemStack('minecraft:saddle', 1)),
   ];
   for (const t of tries) { if (saddledOf(h)) break; try { t(); } catch { /* next way */ } await system.waitTicks(2); }
-  console.warn(`[test] readyHorse: tamed ${isTamed(h)}, saddled ${saddledOf(h)}`);
+  trace(`horse ready: tamed ${isTamed(h)}, saddled ${saddledOf(h)}`);
+  // (u281: if the game still did not take the saddle, the rider has one in the pack: the owner got none on two runs, and could then at least saddle it himself.)
+  if (!saddledOf(h)) { try { who.getComponent('minecraft:inventory')?.container?.addItem(new ItemStack('minecraft:saddle', 1)); } catch { /* */ } try { who.sendMessage?.('The horse did not take its saddle: one is in your pack (use it on the horse).'); } catch { /* */ } }
   return h;
 }
 /** The bot on the horse: tamed and saddled first if the game did not take the setup, then up. { ok, detail } */
