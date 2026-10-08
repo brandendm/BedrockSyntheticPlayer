@@ -50,3 +50,6 @@ Dashboard "Pass rates & progress": tiles (bot pass rate, last 20 vs the 20 befor
 
 ## u278 — retire / needs-attention verdicts
 `brain/analytics.py` `verdict()`: RETIRE? = 8+ bot runs, last 5 all passed, 90%+ lifetime, and (if you have a time) efficiency >= 90%. NEEDS ATTENTION = 3+ bot runs and recent pass rate <= 40%, or efficiency < 50% of yours, or falling while under 60%. Thresholds are constants at the top of the file. Shown as tiles, badges on each test row (hover for why) and a summary line.
+
+## u279 — ferry/horse fixes from the first real runs
+villagerferry (bot): the bot's own fight mode replaced the test task ("interrupted: task replaced, mode fight"): now `testHold` for the run. Horse variants: "tame after 2 tries but not saddled" — the bot had no saddle in the pack: now given one before mounting.

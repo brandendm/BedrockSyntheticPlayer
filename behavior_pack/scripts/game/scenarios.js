@@ -2718,7 +2718,7 @@ async function runOne(agent, player, name, arg, human = false) {
         }
         giveItem('lead', 2);
         const gen = agent.newTask({ kind: 'test' });
-        if (horse) { const mt = await mountHorse(agent, gen, horse, secs); if (!mt.ok) { detail = `horse: ${mt.detail}`; break; } }
+        if (horse) { giveItem('saddle', 1); const mt = await mountHorse(agent, gen, horse, secs); if (!mt.ok) { detail = `horse: ${mt.detail}`; break; } }
         const via = leashTo(sim, boat);
         if (!via) { detail = `couldn't put a lead on the boat (leashable: ${!!boat.getComponent('minecraft:leashable')})`; break; }
         rec.reset(); t0 = system.currentTick;
@@ -2918,7 +2918,7 @@ async function runOne(agent, player, name, arg, human = false) {
         }
         giveItem('lead', 3);
         const gen = agent.newTask({ kind: 'test' });
-        if (horse) { const mt = await mountHorse(agent, gen, horse, secs); if (!mt.ok) { detail = `horse: ${mt.detail}`; break; } }
+        if (horse) { giveItem('saddle', 1); const mt = await mountHorse(agent, gen, horse, secs); if (!mt.ok) { detail = `horse: ${mt.detail}`; break; } }
         if (!leashTo(sim, boat)) { detail = "couldn't put a lead on the boat"; break; }
         rec.reset(); t0 = system.currentTick;
         await sweepVillagers(agent, gen, boat, vils, gy, { riding, ridersN, putIn });
@@ -2977,6 +2977,7 @@ async function runOne(agent, player, name, arg, human = false) {
         // The zombies last, from the west end, fire-proof (the day would burn them). 14 blocks from where you stand.
         const zombies = [];
         for (const zz of [z - 3.5, z + 3.5]) { const zb = await born('minecraft:zombie', x - 15, zz, 'vf_z'); if (zb) zombies.push(zb); }
+        agent.testHold = true;   // (u279: the bot's own fight/flee would replace the test's task and end it: the zombies are the thing to outrun)
         cmd('effect @e[tag=vf_z] fire_resistance 1000 0 true');
         const turned = () => { try { return dim.getEntities({ type: 'minecraft:zombie_villager', location: { x: x + 10, y: gy, z }, maxDistance: 70 }).length; } catch { return 0; } };
         const names = (list) => list.map((e) => { try { return e.typeId.replace('minecraft:', ''); } catch { return '?'; } });
@@ -2999,7 +3000,7 @@ async function runOne(agent, player, name, arg, human = false) {
         }
         giveItem('lead', 3); giveItem('iron_sword', 1);
         const gen = agent.newTask({ kind: 'test' });
-        if (horse) { const mt = await mountHorse(agent, gen, horse, secs); if (!mt.ok) { detail = `horse: ${mt.detail}`; break; } }
+        if (horse) { giveItem('saddle', 1); const mt = await mountHorse(agent, gen, horse, secs); if (!mt.ok) { detail = `horse: ${mt.detail}`; break; } }
         if (!leashTo(sim, boat)) { detail = "couldn't put a lead on the boat"; break; }
         rec.reset(); t0 = system.currentTick;
         const watcher = system.runInterval(watchBoat, 2);
