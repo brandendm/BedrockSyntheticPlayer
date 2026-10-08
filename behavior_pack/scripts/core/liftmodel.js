@@ -11,7 +11,7 @@
 // The numbers are calibrated: `!bot test probejumps` in the real game, then `node sim/fit_lift.mjs --apply` rewrites LIFT below. Until then they are the fit to probelift /
 // probewall (a boat 1 high at 6.5 out does not come on one jump; at 7+ it does).
 
-export const LIFT = { pull: 5.6, jump: 1.1, need0: 1.0, needPerH: 0.5, maxJumps: 4 };   // (LIFT: fitted, see sim/fit_lift.mjs)
+export const LIFT = { pull: 6.3, jump: 0.6, need0: 0.7, needPerH: 0.2, maxJumps: 4 };   // (LIFT: fitted, see sim/fit_lift.mjs)
 
 const lift = (m) => ({ ...LIFT, ...(m ?? {}) });
 
