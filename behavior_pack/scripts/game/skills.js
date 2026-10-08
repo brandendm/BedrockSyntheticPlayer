@@ -4430,7 +4430,7 @@ export class Skills {
         }
       }
       const why = await this.pillarUp(gen, byHand);
-      this.log(`pillar stopped: ${why}`);
+      this.log(`pillar stopped: ${why}${why === 'blocked' && this.pillarDbg ? ` (${this.pillarDbg})` : ''}`);
       if (!(await this.needsEscape(gen))) break;
       if (why === 'falling' && (await this.drainSide(gen, byHand))) continue;
       // Out of blocks to stand on: grab some from the walls around us (quick with a pickaxe, or
@@ -4655,10 +4655,10 @@ export class Skills {
       if (id !== 'air' && !/^(short_grass|tall_grass|fern|large_fern|snow_layer|vine)$/.test(id)) {
         if (/lava/.test(id) || this.dangerousLiquidNear(head)) return climbed ? 'climbed' : 'liquid';
         if (FALLING.test(id) || this.fallingAbove(head)) return climbed ? 'climbed' : 'falling';
-        if (!this.isDiggable([head], { byHand })) return climbed ? 'climbed' : 'blocked';
+        if (!this.isDiggable([head], { byHand })) { this.pillarDbg = `the block over the head (${id}) cannot be dug${byHand ? ' by hand' : ''}`; return climbed ? 'climbed' : 'blocked'; }
         // Punching stone by hand yields nothing to stand on; the staircase is cheaper then.
         if (byHand && PICKAXE_BLOCKS.test(id) && this.placeableSlot() < 0) return climbed ? 'climbed' : 'noBlocks';
-        if (!(await this.mine(gen, head, { collect: false }))) return climbed ? 'climbed' : 'blocked';
+        if (!(await this.mine(gen, head, { collect: false }))) { this.pillarDbg = `could not mine the block over the head (${id})`; return climbed ? 'climbed' : 'blocked'; }
         await this.wait(gen, 10); // the drop falls down the shaft onto us and is picked up
       }
       const slot = this.placeableSlot();
@@ -4678,7 +4678,7 @@ export class Skills {
       this.afterUse(slot);
       await this.wait(gen, 6);
       if (placed) this.markPlaced(f);
-      if (!placed || this.feet().y <= f.y) return climbed ? 'climbed' : 'blocked';
+      if (!placed || this.feet().y <= f.y) { this.pillarDbg = `${placed ? 'placed but did not rise' : 'could not place'} (slot ${slot} = ${this.sim.getComponent('minecraft:inventory')?.container?.getItem(slot)?.typeId ?? '?'}, jumped to ${this.sim.location.y.toFixed(2)} from ${f.y})`; return climbed ? 'climbed' : 'blocked'; }
       climbed++;
       if (!this.canPillarHere(byHand) && this.isUnderground()) return 'exposed';
     }

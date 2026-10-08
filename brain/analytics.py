@@ -39,7 +39,7 @@ def verdict(b: dict, eff, speed, trend) -> tuple:
 def load_runs(log_dir: Path) -> list:
     """Every counted test_run in order: {t, name, who, pass, secs, build}."""
     rows = []
-    for fn in ("tests.prev.jsonl", "tests.jsonl", "test_history.jsonl"):
+    for fn in ("tests.old.jsonl", "tests.prev.jsonl", "tests.jsonl", "test_history.jsonl"):
         try:
             lines = (log_dir / fn).read_text(encoding="utf-8").splitlines()
         except OSError:

@@ -72,3 +72,6 @@ readyHorse: the saddle slot only exists on a TAME horse, and `tame(who)` was han
 
 ## u283 — horses the owner's way
 `readyHorse`: spawn, `ageable_grow_up`, `minecraft:on_tame`, saddle by command, then `ride @s start_riding <horse> teleport_rider` puts whoever's turn it is on it already (the owner found this route; tame()/horse_tamed did nothing). The bot-taming fallback stays if the event does not take.
+
+## u284 — ravine diagnostics
+Real sweep u281: ravine bot FAILED (45 s, 3 below the rim) after 5 s on every earlier run. Trace: the same pocket, but the pillar stopped "blocked" every cycle and gained one level per ~4 s; the pack held 12 cobblestone, 8 dirt, planks, logs from an autonomous get_stone step that was still running (44 cobblestone left vs 32 on every pass). Cause not yet known; `pillar stopped: blocked` now says which of three things failed (head block not diggable / could not mine it / could not place, with the slot's item and the jump height).
