@@ -2,7 +2,7 @@
  "fixed": {
   "leadledge/fresh": {
    "pass": true,
-   "secs": 13.2
+   "secs": 12.6
   },
   "leadstep/fresh": {
    "pass": true,
@@ -18,11 +18,11 @@
   },
   "leadgate/fresh": {
    "pass": true,
-   "secs": 13.6
+   "secs": 13.5
   },
   "leadledge/learned": {
    "pass": true,
-   "secs": 13.1
+   "secs": 13.4
   },
   "leadstep/learned": {
    "pass": true,
@@ -34,17 +34,17 @@
   },
   "leadturn/learned": {
    "pass": true,
-   "secs": 12.5
+   "secs": 12.6
   },
   "leadgate/learned": {
    "pass": true,
-   "secs": 13.7
+   "secs": 13.5
   }
  },
  "rand": {
   "1": {
    "pass": true,
-   "secs": 24.7
+   "secs": 16.1
   },
   "2": {
    "pass": true,
@@ -52,7 +52,7 @@
   },
   "3": {
    "pass": true,
-   "secs": 28.7
+   "secs": 30.2
   },
   "4": {
    "pass": true,
@@ -60,115 +60,115 @@
   },
   "5": {
    "pass": true,
-   "secs": 21.1
+   "secs": 26.8
   },
   "6": {
    "pass": true,
-   "secs": 18.8
+   "secs": 16.1
   },
   "7": {
    "pass": true,
-   "secs": 31.1
+   "secs": 22
   },
   "8": {
-   "pass": false,
-   "secs": 68.4
+   "pass": true,
+   "secs": 21.2
   },
   "9": {
-   "pass": false,
-   "secs": 67.9
+   "pass": true,
+   "secs": 11.6
   },
   "10": {
    "pass": true,
-   "secs": 18.6
+   "secs": 12.1
   },
   "11": {
-   "pass": false,
-   "secs": 68.1
+   "pass": true,
+   "secs": 12.3
   },
   "12": {
    "pass": true,
-   "secs": 14.7
+   "secs": 15
   },
   "13": {
    "pass": true,
-   "secs": 15.2
+   "secs": 14.7
   },
   "14": {
    "pass": true,
-   "secs": 19.5
+   "secs": 30.6
   },
   "15": {
    "pass": true,
-   "secs": 24.7
+   "secs": 18
   },
   "16": {
    "pass": true,
-   "secs": 9.2
+   "secs": 9.3
   },
   "17": {
-   "pass": false,
-   "secs": 75.5
+   "pass": true,
+   "secs": 18.7
   },
   "18": {
    "pass": true,
-   "secs": 23.9
+   "secs": 20.6
   },
   "19": {
    "pass": true,
-   "secs": 17
+   "secs": 10.4
   },
   "20": {
-   "pass": false,
-   "secs": 63.2
+   "pass": true,
+   "secs": 17.7
   },
   "1000": {
    "pass": true,
-   "secs": 20.5
+   "secs": 14
   },
   "1001": {
-   "pass": false,
-   "secs": 68.6
+   "pass": true,
+   "secs": 18.9
   },
   "1002": {
-   "pass": false,
-   "secs": 85.6
+   "pass": true,
+   "secs": 36.4
   },
   "1003": {
    "pass": true,
    "secs": 19.5
   },
   "1004": {
-   "pass": false,
-   "secs": 68.8
+   "pass": true,
+   "secs": 14.4
   },
   "1005": {
    "pass": true,
-   "secs": 20.5
+   "secs": 14
   },
   "1006": {
    "pass": true,
-   "secs": 23.9
+   "secs": 15.1
   },
   "1007": {
-   "pass": false,
-   "secs": 74.2
+   "pass": true,
+   "secs": 29
   },
   "1008": {
    "pass": true,
    "secs": 30.9
   },
   "1009": {
-   "pass": false,
-   "secs": 63.5
+   "pass": true,
+   "secs": 28.6
   },
   "1010": {
    "pass": true,
-   "secs": 11.4
+   "secs": 11.3
   },
   "1011": {
-   "pass": false,
-   "secs": 74.5
+   "pass": true,
+   "secs": 18.8
   }
  }
 }

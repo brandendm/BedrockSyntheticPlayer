@@ -12,7 +12,7 @@ export function towParts(seed) {
     const kind = ['step', 'step', 'gate', 'wall'][ri(0, 3)];
     if (kind === 'step') { const tread = ri(3, 6); parts.push({ kind, tread, gap: i === 0 ? 5 : ri(2, 5) }); }
     else if (kind === 'gate') { const south = R() < 0.5; parts.push({ kind, south, gap: i === 0 ? 5 : ri(5, 9) }); }
-    else parts.push({ kind, depth: ri(3, 5), gap: i === 0 ? 5 : ri(2, 4) + 4 });
+    else parts.push({ kind, depth: ri(6, 9), gap: i === 0 ? 5 : ri(2, 4) + 4 });   // (u272: probewall showed a boat at a wall's foot cannot be slung from the ground, so a wall needs a top to stand on and stretch the lead: 6+ deep)
   }
   // (the old generator drew the gaps after a part, from the same stream: this one puts them in front, so the same seed is a different course than before u271)
   return parts;

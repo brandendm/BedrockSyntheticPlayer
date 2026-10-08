@@ -409,11 +409,11 @@ export class LeadTow {
             if (flat(subject().location, wp) > 8) route = null;
             continue;
           }
-          // (u270, found by the random courses: we are past a low wall on the ground and the boat is jammed at its foot. Climbing onto the wall only
-          // walked us back off again; what lifts a boat over it is the jump with the lead taut at 8 or more, from where we stand.)
-          if (stepRise >= 0.4 && stuckCount <= 2 && d >= 3) {
+          // (u270/u273: one jump with the lead taut from where we stand, before climbing. probewall in the real game: past a WALL 1-2 high this never lifts the boat over (six tries at 7-9.5, it peaked 1.2-1.5 and
+          // never passed the face), but on a STAIR it is 4 s quicker (sim 8 s vs 12.8, real ~10 vs 14). So one try, then the climb.)
+          if (stepRise >= 0.4 && stuckCount <= 1 && d >= 3) {
             m.slings++; mark('sling');
-            const r = await this.sling(gen, boat, { ride, target: Math.min(guard - 0.3, 8.3) + (stuckCount - 1) * 0.3, guard });
+            const r = await this.sling(gen, boat, { ride, target: Math.min(guard - 0.3, 8.3), guard });
             trace(`tow: sling from the ground, rise ${stepRise}: stretch ${r.stretch}, ${r.ok ? 'it came' : r.snapped ? 'LEAD BROKE' : 'it did not come'}, boat peaked ${r.peak} b/s, climbed ${r.climbed}`);
             note(`sling from level ground at rise ${stepRise}: ${r.ok ? 'it came' : r.snapped ? 'LEAD BROKE' : 'did not come'}`);
             if (r.ok) { m.slingOk++; stuckCount = 0; }

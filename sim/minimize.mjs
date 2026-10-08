@@ -19,7 +19,7 @@ export async function minimize(parts, log = () => {}) {
   }
   // shorter gaps / treads / depths, one notch at a time
   for (let i = 0; i < cur.length; i++) for (const key of ['gap', 'tread', 'depth']) {
-    while (cur[i][key] > (key === 'gap' ? 2 : 3)) {
+    while (cur[i][key] > (key === 'gap' ? 2 : key === 'depth' ? 6 : 3)) {
       const t = cur.map((p, k) => k === i ? { ...p, [key]: p[key] - 1 } : p);
       if ((await fails(t)).fail) { cur = t; log(`${key} of part ${i} -> ${cur[i][key]}`); } else break;
     }
