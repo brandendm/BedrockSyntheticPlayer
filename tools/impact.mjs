@@ -2,11 +2,12 @@
 // Builds the import graph (static and dynamic import() with literal paths) of every tests/*.test.js and the sim gate, takes the changed files (git diff against --base plus untracked,
 // or the files named), and prints which unit tests, the gate and the brain's Python tests are worth running. --run runs them. When in doubt (a changed file nothing imports and not a
 // known kind) it says so and selects everything: a wrong "nothing to run" is worse than an extra minute.
+import { fileURLToPath } from 'node:url';
 import fs from 'node:fs';
 import path from 'node:path';
 import { execSync, spawnSync } from 'node:child_process';
 
-const root = path.resolve(new URL('..', import.meta.url).pathname);
+const root = path.resolve(fileURLToPath(new URL('..', import.meta.url)));
 const args = process.argv.slice(2);
 const val = (k, d) => { const i = args.indexOf(k); return i >= 0 ? args[i + 1] : d; };
 

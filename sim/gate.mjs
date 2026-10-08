@@ -4,6 +4,7 @@
 //   - any fixed course that fails, or is more than 25% (+2 s) slower than before;
 //   - any random seed that passed before and fails now, or a pass count below the baseline's.
 // --update writes the new numbers as the baseline (after a change you meant). --quick: fixed courses and the held-out seeds only.
+import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import { register } from 'node:module';
@@ -11,21 +12,21 @@ import { runJobs } from './pool.mjs';
 register('./hooks.mjs', import.meta.url); // (so the game's modules can be loaded here: @minecraft/server is the sim)
 
 const args = process.argv.slice(2), has = (f) => args.includes(f);
-const BASE = new URL('./baseline.json', import.meta.url).pathname;
+const BASE = fileURLToPath(new URL('./baseline.json', import.meta.url));
 const base = fs.existsSync(BASE) ? JSON.parse(fs.readFileSync(BASE, 'utf8')) : null;
 const LEARNED = '{"walk":{"pullAt":5,"patience":20,"sling":{"flat":{"stretch":4.7}}}}';
 const bad = [], now = { fixed: {}, rand: {} };
 const log = (s) => console.log(s);
 
 if (!has('--no-unit')) {
-  const r = spawnSync('node', ['--test', ...fs.readdirSync(new URL('../tests', import.meta.url).pathname).filter((f) => f.endsWith('.test.js')).map((f) => `tests/${f}`)], { encoding: 'utf8', cwd: new URL('..', import.meta.url).pathname });
+  const r = spawnSync('node', ['--test', ...fs.readdirSync(fileURLToPath(new URL('../tests', import.meta.url))).filter((f) => f.endsWith('.test.js')).map((f) => `tests/${f}`)], { encoding: 'utf8', cwd: fileURLToPath(new URL('..', import.meta.url)) });
   const m = /# pass (\d+)[\s\S]*# fail (\d+)/.exec(r.stdout ?? '');
   log(`unit tests: ${m ? `${m[1]} pass, ${m[2]} fail` : 'did not run'}`);
   if (!m || m[2] !== '0') bad.push('unit tests fail');
 }
 
 // every relative import in the pack must resolve to something the target exports (main.js cannot be loaded here)
-{ const { check } = await import('../tools/check_imports.mjs'); const p = check(new URL('../behavior_pack/scripts', import.meta.url).pathname); log(`imports: ${p.length ? p.length + ' problem(s)' : 'ok'}`); for (const x of p) { log('  ' + x); bad.push('import problem: ' + x); } }
+{ const { check } = await import('../tools/check_imports.mjs'); const p = check(fileURLToPath(new URL('../behavior_pack/scripts', import.meta.url))); log(`imports: ${p.length ? p.length + ' problem(s)' : 'ok'}`); for (const x of p) { log('  ' + x); bad.push('import problem: ' + x); } }
 // the game's scenario file must at least load (a module-level mistake takes the whole pack down in the real game)
 try { const m = await import('../behavior_pack/scripts/game/scenarios.js'); log(`scenarios.js loads (${typeof m.runTests})`); } catch (e) { log(`scenarios.js DOES NOT LOAD: ${String(e).slice(0, 160)}`); bad.push('scenarios.js does not load'); }
 

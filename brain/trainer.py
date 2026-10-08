@@ -243,6 +243,13 @@ class Trainer:
         else:
             self.state = f"cycle {self.cycle_n}: {group}: searching in the simulator"
             res = self.sim_search(group, self.champion, self.rng.randrange(1, 10**6), self._alive)
+            if res and res.get("error"):
+                rec.update(outcome="aborted", why=res["error"])
+                self.counts["aborted"] += 1
+                self.alert = None
+                self._finish(rec)
+                self.sleep(60)          # a broken search is not retried in a tight loop
+                return
             if not res or not res.get("accepted"):
                 rec.update(outcome="no simulator gain", why=(f"train {res['train'][0]:.2f}->{res['train'][1]:.2f}, held {res['held'][0]:.2f}->{res['held'][1]:.2f}" if res else "the search did not finish"))
                 self.counts["sim_none" if res else "aborted"] += 1

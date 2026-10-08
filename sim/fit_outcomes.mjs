@@ -4,6 +4,7 @@
 // A few physics constants that decide how fast a tow goes (the lead's stiffness and pull limit, the boat's friction and impulse) are moved by separable CMA-ES
 // (sim/cmaes.mjs) inside +-35% of their calibrated values, to make the sim's time on each course match the median of the real runs. Cross-checked: fitted on the even
 // real runs' medians, scored on the odd ones' (and the reverse); the fit is only kept (--apply writes sim/calibration.json's `outcome` overlay) if it helps on both.
+import { fileURLToPath } from 'node:url';
 import fs from 'node:fs';
 import { runTow } from './run_tow.mjs';
 import { SepCMA } from './cmaes.mjs';
@@ -19,7 +20,7 @@ const bounds = KEYS.map((p) => [get(base, p) * 0.65, get(base, p) * 1.35]);
 const toParams = (u) => { const o = {}; KEYS.forEach((p, i) => { const [a, b] = p.split('.'); (o[a] ??= {})[b] = bounds[i][0] + u[i] * (bounds[i][1] - bounds[i][0]); }); return o; };
 const median = (a) => { const s = [...a].sort((x, y) => x - y); return s.length ? (s.length % 2 ? s[(s.length - 1) / 2] : (s[s.length / 2 - 1] + s[s.length / 2]) / 2) : null; };
 
-const dir = new URL('../brain/logs/', import.meta.url).pathname;
+const dir = fileURLToPath(new URL('../brain/logs/', import.meta.url));
 const text = fs.existsSync(dir) ? fs.readdirSync(dir).filter((f) => /^tests.*\.jsonl/.test(f)).map((f) => fs.readFileSync(dir + f, 'utf8')).join('\n') : '';
 const real = readRuns(text).filter((r) => !r.horse && r.pass && r.secs);
 const courses = TOW_NAMES.filter((n) => real.filter((r) => r.name === n).length >= 6);
@@ -60,7 +61,7 @@ if (helps && argv.includes('--apply')) {
   const es = new SepCMA(x0, 0.2, { lambda: 8, seed: 11 });
   let best = { u: x0, l: loss(t0, all) };
   for (let g = 0; g < Number(val('--gens', 10)); g++) { const pts = es.ask(), costs = []; for (const u of pts) costs.push(loss(await simTimes(u), all)); es.tell(pts, costs); const i = costs.indexOf(Math.min(...costs)); if (costs[i] < best.l) best = { u: pts[i], l: costs[i] }; }
-  const f = new URL('./calibration.json', import.meta.url).pathname, cal = JSON.parse(fs.readFileSync(f, 'utf8'));
+  const f = fileURLToPath(new URL('./calibration.json', import.meta.url)), cal = JSON.parse(fs.readFileSync(f, 'utf8'));
   const p = toParams(best.u);
   for (const [a, o] of Object.entries(p)) for (const [b, v] of Object.entries(o)) { cal.params[a] ??= {}; cal.params[a][b] = Math.round(v * 10000) / 10000; }
   cal.outcomeFit = { at: new Date().toISOString(), courses, loss: [loss(t0, all), best.l] };

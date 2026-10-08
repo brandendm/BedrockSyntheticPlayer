@@ -5,10 +5,11 @@
 //   --status                                                   where a run is
 // Per scenario it keeps pass/fail and seconds, and at the end lists REGRESSIONS (passed before, fails now), SLOWER (>25% + 3 s), FASTER, NEW, to brain/reports/regress-<build>.md.
 // Exit 0 = nothing regressed, 1 = regressions, 2 = unfinished.
+import { fileURLToPath } from 'node:url';
 import fs from 'node:fs';
 import path from 'node:path';
 
-const root = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..');
+const root = path.resolve(path.dirname(fileURLToPath(new URL(import.meta.url))), '..');
 const args = process.argv.slice(2), has = (f) => args.includes(f), val = (f, d) => (args.includes(f) ? args[args.indexOf(f) + 1] : d);
 const inbox = path.join(root, 'brain/inbox'), stateF = path.join(inbox, 'regress_state.json'), baseF = path.join(root, 'brain/regress_baseline.json');
 const build = () => /build:\s*'(u\d+)'/.exec(fs.readFileSync(path.join(root, 'behavior_pack/scripts/config.js'), 'utf8'))?.[1];

@@ -3,6 +3,7 @@
 // new ones every night, so what it passes is not what it has been fixed on); (3) every failure shrunk to the smallest course that still fails (sim/minimize.mjs),
 // with its second-by-second timeline; (4) with --tune, the constant search (sim/tune.mjs). Writes brain/reports/nightly-YYYY-MM-DD.md: read it in the morning.
 // It changes nothing in the bot: a fix is a decision (and goes through the gate and tools/ship.mjs).
+import { fileURLToPath } from 'node:url';
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -11,7 +12,7 @@ import { towParts, buildCourse, describeParts } from '../sim/gencourse.mjs';
 import { minimize, fails } from '../sim/minimize.mjs';
 import { timelineText } from '../sim/report.mjs';
 
-const root = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..');
+const root = path.resolve(path.dirname(fileURLToPath(new URL(import.meta.url))), '..');
 const args = process.argv.slice(2), val = (f, d) => (args.includes(f) ? Number(args[args.indexOf(f) + 1]) : d);
 const day = new Date().toISOString().slice(0, 10), dayN = Math.floor(Date.now() / 86400000);
 const out = [`# Nightly ${day}`, ''];

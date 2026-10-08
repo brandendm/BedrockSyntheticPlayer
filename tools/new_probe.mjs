@@ -1,10 +1,11 @@
 // A new physics probe in one step.   node tools/new_probe.mjs probefoo "what it measures" [--ext 4,28,4]
 // Adds a template probe to core/probes.js, registers it in game/scenarios.js's probe case, runs it once in the sim to prove it executes, and tells you the
 // next command (tools/probe_cycle.mjs, on the PC: ship, run in the real game, compare to the sim). Edit the template's run() to do the experiment.
+import { fileURLToPath } from 'node:url';
 import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-const root = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..');
+const root = path.resolve(path.dirname(fileURLToPath(new URL(import.meta.url))), '..');
 const [name, what = 'TODO: what it measures'] = process.argv.slice(2).filter((a) => !a.startsWith('--'));
 const ei = process.argv.indexOf('--ext'); const [w, e, r] = (ei > 0 ? process.argv[ei + 1] : '4,28,4').split(',').map(Number);
 if (!/^probe[a-z0-9]+$/.test(name ?? '')) { console.log('usage: node tools/new_probe.mjs probefoo "what it measures" [--ext w,e,r]  (name: probe + lowercase letters/digits)'); process.exit(3); }

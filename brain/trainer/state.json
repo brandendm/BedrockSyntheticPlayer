@@ -1,0 +1,28 @@
+{
+ "counts": {
+  "accepted": 0,
+  "rejected": 0,
+  "sim_none": 0,
+  "aborted": 1
+ },
+ "guard_baseline": [
+  10,
+  10
+ ],
+ "cycle_n": 1,
+ "group_i": 1,
+ "group_stats": {
+  "tow": [
+   0,
+   1
+  ],
+  "combat": [
+   0,
+   0
+  ],
+  "cave": [
+   0,
+   0
+  ]
+ }
+}

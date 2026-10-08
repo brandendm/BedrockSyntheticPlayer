@@ -1,0 +1,3 @@
+{"t": "2026-10-08 12:03:36", "event": "switched on"}
+{"t": "2026-10-08 12:04:27", "event": "baseline", "guard": [10, 10]}
+{"t": "2026-10-08 12:04:29", "event": "cycle", "n": 1, "group": "tow", "outcome": "no simulator gain", "candidate_diff": {}, "why": "the search did not finish"}

@@ -5,6 +5,7 @@
 //     (no flags / --report): how far the sim is from the real traces now, per probe, in blocks
 //     --fit: Nelder-Mead on the FIT constants, writes calibration.json
 //     --selftest: fabricate "real" traces from known constants, fit from the defaults, and show the constants come back (proves the fitter, needs no game data)
+import { fileURLToPath } from 'node:url';
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { runProbe } from './probes_run.mjs';
 import { loadParams } from './params.js';
@@ -116,7 +117,7 @@ if (process.argv[1].endsWith('calibrate.mjs')) {
   const arg = (k, d) => { const i = process.argv.indexOf(k); return i > 0 ? process.argv[i + 1] : d; };
   if (process.argv.includes('--trace')) {
     // real vs sim, every 10th tick, of one probe: where they part
-    const name = arg('--trace'), real = loadReal(arg('--real', new URL('../brain/logs/probes.jsonl', import.meta.url).pathname))[name];
+    const name = arg('--trace'), real = loadReal(arg('--real', fileURLToPath(new URL('../brain/logs/probes.jsonl', import.meta.url))))[name];
     const sim = await runProbe(name, {});
     const f = (r, i) => (r?.[i] == null ? '   -  ' : r[i].toFixed(2).padStart(6));
     for (let t = 0; t < Math.min(real.rows.length, sim.rows.length); t += Number(arg('--step', 10))) {
@@ -133,7 +134,7 @@ if (process.argv[1].endsWith('calibrate.mjs')) {
     console.log('fit residual', r.residual.toFixed(4), '\n recovered vs truth:');
     FIT.forEach(([p], i) => console.log(`  ${p.padEnd(22)} ${r.vec[i].toFixed(4)}   (truth ${get(truth, p) ?? '(default)'})`));
   } else {
-    const file = arg('--real', new URL('../brain/logs/probes.jsonl', import.meta.url).pathname);
+    const file = arg('--real', fileURLToPath(new URL('../brain/logs/probes.jsonl', import.meta.url)));
     const real = loadReal(file);
     const names = Object.keys(real);
     if (!names.length) { console.log(`no real probe traces in ${file}: run \`!bot test ${PROBE_NAMES.join(',')}\` in the game (brain/inbox/run.json does it) first`); process.exit(0); }

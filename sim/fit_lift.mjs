@@ -1,6 +1,7 @@
 // Fit the jump formula (core/liftmodel.js) to real (or simulated) `probejumps` traces.
 //   node sim/fit_lift.mjs [--real brain/logs/probes.jsonl] [--apply] [--sim]
 // --sim fits to the simulator's own run of the probe instead (proves the pipeline; the simulator has no two-jump regime). --apply rewrites LIFT in core/liftmodel.js.
+import { fileURLToPath } from 'node:url';
 import fs from 'node:fs';
 import { register } from 'node:module';
 register('./hooks.mjs', import.meta.url);
@@ -35,7 +36,7 @@ if (process.argv[1].endsWith('fit_lift.mjs')) {
     const { runProbe } = await import('./probes_run.mjs');
     rec = await runProbe('probejumps');
   } else {
-    const file = arg('--real', new URL('../brain/logs/probes.jsonl', import.meta.url).pathname);
+    const file = arg('--real', fileURLToPath(new URL('../brain/logs/probes.jsonl', import.meta.url)));
     for (const l of fs.readFileSync(file, 'utf8').split('\n')) { try { const e = JSON.parse(l); if (e.name === 'probejumps') rec = e; } catch { /* */ } }
     if (!rec) { console.log('no probejumps in', file, '(run `!bot test probejumps` in the real game first)'); process.exit(3); }
   }
@@ -47,7 +48,7 @@ if (process.argv[1].endsWith('fit_lift.mjs')) {
   console.log(`current LIFT ${JSON.stringify(LIFT)} gets ${T.length - cur}/${T.length} right`);
   console.log(`best fit ${JSON.stringify(f.model)} gets ${f.total - f.wrong}/${f.total} right`);
   if (arg('--apply') && !arg('--sim')) {
-    const p = new URL('../behavior_pack/scripts/core/liftmodel.js', import.meta.url).pathname;
+    const p = fileURLToPath(new URL('../behavior_pack/scripts/core/liftmodel.js', import.meta.url));
     const src = fs.readFileSync(p, 'utf8').replace(/export const LIFT = \{[^}]*\};/, `export const LIFT = { pull: ${f.model.pull}, jump: ${f.model.jump}, need0: ${f.model.need0}, needPerH: ${f.model.needPerH}, maxJumps: ${LIFT.maxJumps} };`);
     fs.writeFileSync(p, src);
     console.log('written to core/liftmodel.js');

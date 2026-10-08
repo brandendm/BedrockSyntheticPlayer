@@ -213,3 +213,15 @@ class PickGroup(unittest.TestCase):
         t.cycle()
         self.assertEqual(t.group_stats["combat"], [0, 1])
         self.assertEqual(json.loads((t.dir / "state.json").read_text())["group_stats"]["combat"], [0, 1])
+
+
+class SearchErrors(unittest.TestCase):
+    def test_a_failed_search_is_journaled_with_its_reason_and_costs_no_real_runs(self):
+        w = World(lambda n, p: 0.9)
+        t = make(w, lambda *a: {"error": "node.js was not found"})
+        t.group_i = 0
+        t.guard_baseline = [9, 10]
+        t.cycle()
+        self.assertEqual(w.batches, [])
+        self.assertEqual(t.counts["aborted"], 1)
+        self.assertIn("node.js was not found", (t.dir / "journal.jsonl").read_text())

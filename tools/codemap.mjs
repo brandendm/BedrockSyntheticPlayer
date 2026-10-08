@@ -1,9 +1,10 @@
 // Writes docs/CODEMAP.md: a map of the big files (line numbers of every class, method, top-level function, and each scenario's `case`), so a file of thousands of lines can be
 // entered at the right place instead of read from the top.   node tools/codemap.mjs [--check]   (--check exits 1 when the committed map is stale)
+import { fileURLToPath } from 'node:url';
 import fs from 'node:fs';
 import path from 'node:path';
 
-const root = path.resolve(new URL('..', import.meta.url).pathname);
+const root = path.resolve(fileURLToPath(new URL('..', import.meta.url)));
 const pack = path.join(root, 'behavior_pack/scripts');
 const MIN = 400;
 const files = (d) => fs.readdirSync(d, { withFileTypes: true }).flatMap((e) => e.isDirectory() ? files(path.join(d, e.name)) : e.name.endsWith('.js') ? [path.join(d, e.name)] : []);

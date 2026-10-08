@@ -6,12 +6,13 @@
 //   4. waits for brain/inbox/result.txt from THAT build and prints its summary (a result from another build is ignored: no stale answers).
 //   5. --commit "msg": git add + commit, moving aside the .lock files git leaves where deleting is not allowed.
 // Exit 0 = ran and every test passed, 1 = a test failed, 2 = still running (run again with --wait-only), 3 = could not ship (mismatch, no autorun).
+import { fileURLToPath } from 'node:url';
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 
-const root = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..');
+const root = path.resolve(path.dirname(fileURLToPath(new URL(import.meta.url))), '..');
 const args = process.argv.slice(2), has = (f) => args.includes(f), val = (f, d) => (args.includes(f) ? args[args.indexOf(f) + 1] : d);
 const cfg = path.join(root, 'behavior_pack/scripts/config.js'), pack = path.join(root, 'behavior_pack');
 const server = path.join(root, 'server/development_behavior_packs/BedrockAgent'), inbox = path.join(root, 'brain/inbox');

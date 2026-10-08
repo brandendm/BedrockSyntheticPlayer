@@ -1,6 +1,7 @@
 // What a policy is worth in the simulators: one cost per job (lower is better), plus the names of any scenario it lost. Two groups: 'tow' (the tow simulator,
 // sim/pool.mjs) and 'combat' (tools/sim_combat.mjs, the fight-or-run logic against zombies, creepers and a fixed suite of nasty terrain). 'cave' has no simulator
 // (it has no mobs): those constants are scored only by the real game (brain/trainer.py).
+import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
 import { runJobs } from './pool.mjs';
 
@@ -28,7 +29,7 @@ function runNode(args, env, timeoutMs = 240000) {
     p.on('close', () => { clearTimeout(t); resolve(out); });
   });
 }
-const COMBAT = new URL('../tools/sim_combat.mjs', import.meta.url).pathname;
+const COMBAT = fileURLToPath(new URL('../tools/sim_combat.mjs', import.meta.url));
 
 /** Parse sim_combat's output for a job into { cost, lost }. Exported for the tests. */
 export function parseCombat(job, out) {

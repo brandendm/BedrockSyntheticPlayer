@@ -835,28 +835,41 @@ def _setup_trainer() -> None:
     if ar is None:
         return
     repo = ROOT.parent
-    node = shutil.which("node")
+    node = shutil.which("node") or shutil.which("node.exe")
 
     def sim_search(group, champion, seed, alive):
-        if not node or not (repo / "sim" / "train.mjs").exists():
-            return None
+        """Run sim/train.mjs. Returns its result dict, None if the switch went off, or {"error": why} so the journal can say what went wrong."""
+        if not node:
+            return {"error": "node.js was not found on the brain's PATH (the simulator search needs it): install Node or start the brain from a shell where `node` works"}
+        if not (repo / "sim" / "train.mjs").exists():
+            return {"error": "sim/train.mjs is missing"}
         out = Path(tempfile.gettempdir()) / f"train_{group}_{seed}.json"
+        errlog = ROOT / "trainer" / f"sim_{group}.log"
         try:
             out.unlink()
         except OSError:
             pass
         gens, pop = os.environ.get("TRAIN_GENS", "12"), os.environ.get("TRAIN_POP", "10")
-        proc = subprocess.Popen([node, "sim/train.mjs", "--group", group, "--base", json.dumps(champion), "--seed", str(seed), "--gens", gens, "--pop", pop, "--out", str(out)],
-                                cwd=str(repo), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        try:
+            errf = errlog.open("w", encoding="utf-8")
+            proc = subprocess.Popen([node, "sim/train.mjs", "--group", group, "--base", json.dumps(champion), "--seed", str(seed), "--gens", gens, "--pop", pop, "--out", str(out)],
+                                    cwd=str(repo), stdout=errf, stderr=subprocess.STDOUT)
+        except OSError as e:
+            return {"error": f"could not start node: {e}"}
         while proc.poll() is None:
             if not alive():
                 proc.kill()
                 return None
             time.sleep(2)
+        errf.close()
         try:
             return json.loads(out.read_text(encoding="utf-8"))
         except (OSError, ValueError):
-            return None
+            try:
+                tail = " | ".join(errlog.read_text(encoding="utf-8", errors="replace").strip().splitlines()[-3:])
+            except OSError:
+                tail = ""
+            return {"error": f"sim/train.mjs exited with code {proc.returncode} and wrote no result: {tail[:300]}"}
 
     def status():
         with _lock:

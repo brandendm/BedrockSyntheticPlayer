@@ -3,6 +3,7 @@
 // random courses at levels 1 and 2 (seeds 2001-2012 / 2001-2010); cost = mean seconds, a failed course counting 120. The result is then checked on a held-out
 // set (seeds 1000-1011 / 1000-1009, never searched on): it is written to sim/tuned.json only if it wins there too, with no course lost.
 // A player's runs only seeded the defaults (the learned memory); nothing here imitates anyone. --apply also copies the values into core/towtune.js's defaults.
+import { fileURLToPath } from 'node:url';
 import fs from 'node:fs';
 import { runJobs } from './pool.mjs';
 import { TOW_TUNE, tuneDefaults } from '../behavior_pack/scripts/core/towtune.js';
@@ -45,10 +46,10 @@ console.log(`values:  ${JSON.stringify(best)}`);
 const wins = held.pass >= base.held.pass && held.cost < base.held.cost * 0.98 && held.lost.every((l) => base.held.lost.includes(l));
 console.log(wins ? `WINS on held-out: ${base.held.cost.toFixed(2)} -> ${held.cost.toFixed(2)}` : 'does not clearly win on held-out: nothing written');
 if (wins) {
-  fs.writeFileSync(new URL('./tuned.json', import.meta.url).pathname, JSON.stringify({ at: new Date().toISOString(), tune: best, default: base.tune, trainCost: [base.train.cost, bestS.cost], heldCost: [base.held.cost, held.cost], heldPass: [base.held.pass, held.pass] }, null, 1));
+  fs.writeFileSync(fileURLToPath(new URL('./tuned.json', import.meta.url)), JSON.stringify({ at: new Date().toISOString(), tune: best, default: base.tune, trainCost: [base.train.cost, bestS.cost], heldCost: [base.held.cost, held.cost], heldPass: [base.held.pass, held.pass] }, null, 1));
   console.log('wrote sim/tuned.json');
   if (args.includes('--apply')) {
-    const f = new URL('../behavior_pack/scripts/core/towtune.js', import.meta.url).pathname; let s = fs.readFileSync(f, 'utf8');
+    const f = fileURLToPath(new URL('../behavior_pack/scripts/core/towtune.js', import.meta.url)); let s = fs.readFileSync(f, 'utf8');
     for (const [k, v] of Object.entries(best)) s = s.replace(new RegExp(`(${k}:\\s*\\{ v: )[0-9.]+`), `$1${v}`);
     fs.writeFileSync(f, s); console.log('applied to core/towtune.js');
   }

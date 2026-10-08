@@ -2,6 +2,7 @@
 // (brain/logs/tests*.jsonl, test_run events) against the sim's: pass rate, median time with a bootstrap 90% interval, and the ratio sim/real. A ratio far from 1, or a
 // pass in the sim where the game fails, is a gap the probes did not catch (e.g. README: leadstep 9 s in the sim, 13 in the game) - the thing to fit next.
 //   node sim/validate.mjs [course ...] [--log file ...] [--n 5] [--posterior] [--json]
+import { fileURLToPath } from 'node:url';
 import { readFileSync, existsSync, readdirSync } from 'node:fs';
 import { runTow } from './run_tow.mjs';
 import { TOW_NAMES } from '../behavior_pack/scripts/core/towcourses.js';
@@ -51,7 +52,7 @@ export function compare(real, sim) {
 if (process.argv[1].endsWith('validate.mjs')) {
   const logs = [];
   for (let i = 0; i < argv.length; i++) if (argv[i] === '--log') logs.push(argv[i + 1]);
-  if (!logs.length) { const dir = new URL('../brain/logs/', import.meta.url).pathname; if (existsSync(dir)) for (const f of readdirSync(dir)) if (/^tests.*\.jsonl$/.test(f) || f === 'test_history.jsonl') logs.push(dir + f); }
+  if (!logs.length) { const dir = fileURLToPath(new URL('../brain/logs/', import.meta.url)); if (existsSync(dir)) for (const f of readdirSync(dir)) if (/^tests.*\.jsonl$/.test(f) || f === 'test_history.jsonl') logs.push(dir + f); }
   const real = readRuns(logs.filter(existsSync).map((f) => readFileSync(f, 'utf8')).join('\n')).filter((r) => !r.horse);
   const names = argv.filter((a, i) => !a.startsWith('--') && !['--log', '--n'].includes(argv[i - 1]) && TOW_NAMES.includes(a));
   const N = Number(val('--n', 5)), rows = {};

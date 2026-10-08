@@ -1,9 +1,10 @@
 // Runs many tow jobs over a few worker processes. jobs: [{kind:'fixed',name,tune}|{kind:'rand',seed,level,tune}] -> results in the same order.
+import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
 import os from 'node:os';
 export async function runJobs(jobs, workers = Math.max(1, Math.min(os.cpus().length, 8))) {
   const out = new Array(jobs.length); let next = 0, done = 0; const procs = [];
-  const file = new URL('./eval_worker.mjs', import.meta.url).pathname;
+  const file = fileURLToPath(new URL('./eval_worker.mjs', import.meta.url));
   await new Promise((resolve) => {
     if (!jobs.length) return resolve();
     for (let w = 0; w < Math.min(workers, jobs.length); w++) {

@@ -1,5 +1,6 @@
 // A tow course in the sim against the bot's own real run of it (the newest `test_run` of the bot in brain/logs/tests.jsonl): the bot's path, side by side every second.
 //   node sim/compare_run.mjs leadledge [--file brain/logs/tests.jsonl]
+import { fileURLToPath } from 'node:url';
 import { readFileSync } from 'node:fs';
 import { register } from 'node:module';
 register('./hooks.mjs', import.meta.url);
@@ -7,7 +8,7 @@ const { runTow } = await import('./run_tow.mjs');
 const SIM = await import('./server.mjs');
 const name = process.argv[2] ?? 'leadledge';
 const fi = process.argv.indexOf('--file');
-const file = fi > 0 ? process.argv[fi + 1] : new URL('../brain/logs/tests.jsonl', import.meta.url).pathname;
+const file = fi > 0 ? process.argv[fi + 1] : fileURLToPath(new URL('../brain/logs/tests.jsonl', import.meta.url));
 let real = null;
 for (const l of readFileSync(file, 'utf8').split('\n')) { try { const e = JSON.parse(l); if (e.type === 'test_run' && e.name === name && e.who === 'bot' && e.trace?.path?.length) real = e; } catch { /* */ } }
 if (!real) { console.log('no real bot run of', name); process.exit(0); }

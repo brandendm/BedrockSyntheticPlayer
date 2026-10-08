@@ -1,6 +1,7 @@
 // Static link check for the game's modules: every named import from a relative module must be something that module exports, and every relative import must resolve.
 // main.js cannot be loaded off the game (it needs the GameTest API), so a misspelt import there would only show up when the pack fails to start. Run by the gate.
 //   node tools/check_imports.mjs [dir]       exit 1 on any problem
+import { fileURLToPath } from 'node:url';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -40,7 +41,7 @@ export function check(dir) {
   return problems;
 }
 if (process.argv[1].endsWith('check_imports.mjs')) {
-  const dir = path.resolve(process.argv[2] ?? new URL('../behavior_pack/scripts', import.meta.url).pathname);
+  const dir = path.resolve(process.argv[2] ?? fileURLToPath(new URL('../behavior_pack/scripts', import.meta.url)));
   const p = check(dir);
   console.log(p.length ? p.join('\n') : `imports ok (${dir})`);
   process.exit(p.length ? 1 : 0);
