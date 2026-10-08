@@ -19,6 +19,8 @@ export async function runTow(name, { params = {}, gy = 150, verbose = false, x =
   const sim = spawnBot({ x: C.start.x - 0.5, y: C.start.y, z: C.start.z - 0.5 });
   for (const [id, n] of TOW_META[name]?.kit ?? [['lead', 2]]) sim.inv.addItem(new ItemStack(id, n));
   const agent = new Agent(sim);
+  // (the world's memory of how a player tows, learned from their runs: LEARNED='{"walk":{...}}' puts it in)
+  if (process.env.LEARNED) agent.memory.data.leadCal = { ...(agent.memory.data.leadCal ?? {}), learned: JSON.parse(process.env.LEARNED) };
   // (what main.js does: the agent's own tick, every tick, which drives the motor)
   const tickErrors = new Map();
   system.runInterval(() => { try { agent.tick(); } catch (e) { const k = String(e).slice(0, 120); tickErrors.set(k, (tickErrors.get(k) ?? 0) + 1); } }, 1);

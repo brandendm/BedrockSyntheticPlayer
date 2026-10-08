@@ -223,7 +223,9 @@ export class LeadTow {
     const cal = a.memory.data.leadCal;
     // What a player was watched doing and what the sling calibration found, over the guesses.
     const L = cal?.learned?.[mount ? 'ride' : 'walk'] ?? null, SL = cal?.sling ?? {};
-    const lo = L?.pullAt ?? cal?.pullAt ?? 5;
+    // (u268 live: a player's "it follows from 5 apart" was taken for the engine's: the lead does not pull before about 5.6, so a boat sitting still at 5.5 was "jammed" a second after the
+    // start and yanked at 4.7, which pulls nothing: 7 s lost on every course. Never below 5.4.)
+    const lo = Math.max(L?.pullAt ?? cal?.pullAt ?? 5, 5.4);
     // (A lead was seen to break at 10.1 blocks with the stated maximum 12: never past 8.8 unless a calibration in this world found better.)
     const guard = Math.min(SL.guard ?? 8.8, lim.max * 0.95, SL.snapAt ? SL.snapAt - 0.8 : 99);
     const patience = Math.max(12, Math.min(90, Math.round(L?.patience ?? 20)));
@@ -353,6 +355,8 @@ export class LeadTow {
         try { a.body.jump(); } catch { /* */ }
         if (system.currentTick - stillSince > 160) { note('standing still: new route'); route = null; stillSince = system.currentTick; continue; }
       }
+      // (the boat is only "still" while the lead is long enough to pull it: the clock does not run before that)
+      if (d <= lo + 0.5) lastBoatMoveTick = system.currentTick;
       const jammed = d > lo + 0.5 && system.currentTick - lastBoatMoveTick > patience;
       const boatMoving = system.currentTick - lastBoatMoveTick <= 10;
       // The lead nearly at its limit with the boat coming along: stop and let it catch up (no tug). Slower from 2.5 short of it.
@@ -436,7 +440,7 @@ export class LeadTow {
         // such a place (the tow courses): stretch the lead the way they did and jump, before going back to it.
         if (!ride && L?.sling?.flat && rise < 0.4 && stuckCount <= 2 && d >= 3 && !this.wallBetween(boat, pos)) {
           m.slings++; mark('sling');
-          const target = L.sling.flat.stretch + (stuckCount - 1) * 0.8;
+          const target = Math.max(L.sling.flat.stretch, lo + 1.5) + (stuckCount - 1) * 0.8;
           const r = await this.sling(gen, boat, { ride, target, guard });
           trace(`tow: yank on the flat: stretch ${r.stretch}, ${r.ok ? 'it came' : r.snapped ? 'LEAD BROKE' : 'it did not come'}, boat peaked ${r.peak} b/s`);
           note(`yank (jump with the lead stretched, as you did) at ${here}: ${r.ok ? 'it came' : r.snapped ? 'LEAD BROKE' : 'did not come'}`);
