@@ -119,6 +119,7 @@
 #an svg{max-width:100%;height:auto}#an .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:12px}
 #an .bars{display:grid;grid-template-columns:130px 1fr 52px 70px 40px;gap:4px 8px;align-items:center;font-size:12px}
 #an .bar{height:7px;background:var(--chip);border-radius:4px;position:relative;margin:1px 0}#an .bar i{position:absolute;left:0;top:0;bottom:0;border-radius:4px}
+#an .badge{font-size:9px;font-weight:700;padding:1px 6px;border-radius:8px;color:#fff}#an .badge.ok{background:var(--good)}#an .badge.bad{background:var(--bad)}
 #an .pip{display:inline-block;width:6px;height:10px;margin-right:1px;border-radius:1px}
 </style>
 </head>
@@ -605,23 +606,27 @@ async function loadAnalytics() {
   const o = d.overall, arrow = (a, b) => (a === null || b === null || b === undefined ? '' : a - b > 0.02 ? `<span class="up">▲ ${Math.round((a - b) * 100)} pts</span>` : a - b < -0.02 ? `<span class="down">▼ ${Math.round((b - a) * 100)} pts</span>` : '<span class="flat">▬ flat</span>');
   const eff = o.efficiency, effc = eff === null ? 'flat' : eff >= 80 ? 'up' : eff >= 50 ? 'flat' : 'down';
   const tiles = `<div class="tiles">
+    <div class="tile" title="Mastered: 8+ runs, last 5 clean, 90%+ overall, 90%+ as efficient as you"><small>Ready to retire</small><b class="up">${d.retire.length}</b><small>${d.retire.slice(0, 3).join(', ') || 'none yet'}</small></div>
+    <div class="tile" title="3+ runs and recent pass rate 40% or less, or under half as efficient as you, or falling below 60%"><small>Needs attention</small><b class="${d.attention.length ? 'down' : 'flat'}">${d.attention.length}</b><small>${d.attention.slice(0, 3).join(', ') || 'none'}</small></div>
     <div class="tile"><small>Bot pass rate (all)</small><b>${pct(o.bot_rate)}</b><small>${o.bot_runs} runs</small></div>
     <div class="tile"><small>Bot, last 20 vs the 20 before</small><b>${pct(o.last20)}</b>${arrow(o.last20, o.prev20)}</div>
     <div class="tile"><small>Your pass rate</small><b>${pct(o.human_rate)}</b><small>${o.human_runs} runs</small></div>
     <div class="tile" title="Mean over tests you both ran of: bot recent pass rate x speed against your median time (capped at 1.5). 100 = as reliable and as fast as you."><small>Efficiency score</small><b class="${effc}">${eff === null ? '–' : Math.round(eff)}</b><small>${o.efficiency_n} tests with your baseline · 100 = you</small></div></div>`;
   const rollSvg = lineSvg([{ c: 'var(--accent)', pts: d.rolling.map((r) => r.rate), marks: d.rolling.map((r, i) => [r, i]).filter(([r, i]) => i && r.build && d.rolling[i - 1].build !== r.build).map(([r, i]) => ({ i, label: r.build })).slice(-10) }], 460, 150, pct);
   const bb = d.by_build.map((b) => `<div class="bars" style="grid-template-columns:60px 1fr 44px 50px"><span>${b.build}</span><div class="bar"><i style="width:${(b.rate || 0) * 100}%;background:${b.rate >= 0.8 ? 'var(--good)' : b.rate >= 0.5 ? 'var(--warn)' : 'var(--bad)'}"></i></div><span>${pct(b.rate)}</span><span class="muted">${b.n} runs</span></div>`).join('');
-  const rows = d.tests.filter((t) => t.bot.n || t.human.n).sort((a, b) => ((a.bot.recent_rate ?? 2) - (b.bot.recent_rate ?? 2)) || a.name.localeCompare(b.name));
+  const rank = { attention: 0, ok: 1, new: 2, retire: 3 };
+  const rows = d.tests.filter((t) => t.bot.n || t.human.n).sort((a, b) => (rank[a.status] - rank[b.status]) || ((a.bot.recent_rate ?? 2) - (b.bot.recent_rate ?? 2)) || a.name.localeCompare(b.name));
   const bar = (x, c) => `<div class="bar"><i style="width:${(x || 0) * 100}%;background:${c}"></i></div>`;
   const tr = { up: '<span class="up">▲</span>', down: '<span class="down">▼</span>', flat: '<span class="flat">▬</span>' };
   const grid = '<div class="bars"><b>Test</b><b>you ▮ / bot ▮ (recent)</b><b>speed</b><b>last 10</b><b></b>' + rows.map((t) => {
     const sp = t.speed === null ? '–' : `<span class="${t.speed >= 0.9 ? 'up' : t.speed >= 0.5 ? 'flat' : 'down'}">${t.speed.toFixed(2)}×</span>`;
     const pips = (t.bot.pips || []).map((v) => `<span class="pip" style="background:${v ? 'var(--good)' : 'var(--bad)'}"></span>`).join('');
-    return `<span>${t.name}</span><div>${bar(t.human.rate, 'var(--accent)')}${bar(t.bot.recent_rate, t.bot.recent_rate >= 0.8 ? 'var(--good)' : t.bot.recent_rate >= 0.5 ? 'var(--warn)' : 'var(--bad)')}</div><span>${sp}</span><span>${pips}</span><span>${tr[t.trend] || ''}</span>`;
+    const badge = t.status === 'retire' ? `<span class="badge ok" title="${esc(t.why)}">RETIRE?</span>` : t.status === 'attention' ? `<span class="badge bad" title="${esc(t.why)}">NEEDS ATTENTION</span>` : '';
+    return `<span>${t.name}<br>${badge}</span><div>${bar(t.human.rate, 'var(--accent)')}${bar(t.bot.recent_rate, t.bot.recent_rate >= 0.8 ? 'var(--good)' : t.bot.recent_rate >= 0.5 ? 'var(--warn)' : 'var(--bad)')}</div><span>${sp}</span><span>${pips}</span><span>${tr[t.trend] || ''}</span>`;
   }).join('') + '</div>';
   const list = (a, c) => a.length ? `<span class="${c}">${a.join(', ')}</span>` : '<span class="muted">none</span>';
   $('an').innerHTML = tiles + `<div class="grid"><div><b>Bot pass rate over time</b> <span class="muted">(rolling 10 runs; dashed = new build)</span>${rollSvg}</div><div><b>By build</b>${bb || '<span class="muted">no build data yet</span>'}</div></div>
-    <p>Improving: ${list(d.improved, 'up')} · Getting worse: ${list(d.regressed, 'down')} · Furthest behind you: ${list(o.gap, 'down')}</p>${grid}
+    <p>${d.attention.length ? `<b class="down">Needs attention:</b> ${d.tests.filter((t) => t.status === 'attention').map((t) => `${t.name} (${esc(t.why)})`).join('; ')}<br>` : ''}${d.retire.length ? `<b class="up">Recommended for retirement:</b> ${d.tests.filter((t) => t.status === 'retire').map((t) => `${t.name} (${esc(t.why)})`).join('; ')}<br>` : ''}Improving: ${list(d.improved, 'up')} · Getting worse: ${list(d.regressed, 'down')} · Furthest behind you: ${list(o.gap, 'down')}</p>${grid}
     <div class="muted" style="font-size:11px">speed = your median pass time / the bot's recent median (1× = same, capped at 1.5×). ▲▼ compares the bot's last 5 runs with the 5 before.</div>`;
 }
 loadAnalytics(); setInterval(loadAnalytics, 15000);

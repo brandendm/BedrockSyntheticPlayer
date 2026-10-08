@@ -30,6 +30,22 @@ class AnalyticsTests(unittest.TestCase):
             self.assertIn("leadstair", r["improved"])
             self.assertEqual(r["by_build"][0]["build"], "u1")
 
+    def test_retire_and_attention(self):
+        with tempfile.TemporaryDirectory() as d:
+            d = Path(d)
+            L = [ev("2026-01-01 00:00:%02d" % i, "easy", "bot", True, 10.0) for i in range(10)]
+            L += [ev("2026-01-01 00:01:00", "easy", "human", True, 12.0)]
+            L += [ev("2026-01-01 00:02:%02d" % i, "hard", "bot", i == 0, 40.0) for i in range(6)]
+            L += [ev("2026-01-01 00:03:%02d" % i, "slow", "bot", True, 100.0) for i in range(6)]
+            L += [ev("2026-01-01 00:04:00", "slow", "human", True, 20.0)]
+            L += [ev("2026-01-01 00:05:%02d" % i, "few", "bot", True, 5.0) for i in range(2)]
+            (d / "tests.jsonl").write_text("\n".join(L))
+            r = analytics.compute(analytics.load_runs(d))
+            st = {t["name"]: t["status"] for t in r["tests"]}
+            self.assertEqual(st, {"easy": "retire", "hard": "attention", "slow": "attention", "few": "new"})
+            self.assertEqual(r["retire"], ["easy"])
+            self.assertIn("efficiency", {t["name"]: t for t in r["tests"]}["slow"]["why"])
+
     def test_empty(self):
         with tempfile.TemporaryDirectory() as d:
             r = analytics.compute(analytics.load_runs(Path(d)))

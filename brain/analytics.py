@@ -10,6 +10,30 @@ from pathlib import Path
 
 SPEED_CAP = 1.5
 RECENT = 5
+# Retire: mastered. At least RETIRE_MIN counted bot runs, the last RECENT all passed, lifetime rate >= RETIRE_RATE,
+# and (when you have a time to compare with) efficiency >= RETIRE_EFF.
+RETIRE_MIN, RETIRE_RATE, RETIRE_EFF = 8, 0.9, 0.9
+# Needs attention: at least ATTN_MIN bot runs and either the recent pass rate <= ATTN_RATE, efficiency < ATTN_EFF,
+# or it is falling (trend down) while below 60%.
+ATTN_MIN, ATTN_RATE, ATTN_EFF = 3, 0.4, 0.5
+
+
+def verdict(b: dict, eff, speed, trend) -> tuple:
+    """(status, reason): 'retire' | 'attention' | 'ok' | 'new' (too few runs to say)."""
+    if not b.get("n") or b["n"] < ATTN_MIN:
+        return "new", "fewer than %d bot runs" % ATTN_MIN
+    why = []
+    if b["recent_rate"] <= ATTN_RATE:
+        why.append("recent pass rate %d%%" % round(b["recent_rate"] * 100))
+    if eff is not None and eff < ATTN_EFF:
+        why.append("efficiency %d%% of yours" % round(eff * 100))
+    if trend == "down" and b["recent_rate"] < 0.6 and not why:
+        why.append("getting worse (%d%% now)" % round(b["recent_rate"] * 100))
+    if why:
+        return "attention", ", ".join(why)
+    if b["n"] >= RETIRE_MIN and b["recent_rate"] == 1.0 and b["rate"] >= RETIRE_RATE and (eff is None or eff >= RETIRE_EFF):
+        return "retire", "%d/%d passed, last %d clean%s" % (b["p"], b["n"], RECENT, "" if eff is None else ", efficiency %d%%" % round(eff * 100))
+    return "ok", ""
 
 
 def load_runs(log_dir: Path) -> list:
@@ -70,7 +94,8 @@ def compute(rows: list) -> dict:
         if b.get("prior_rate") is not None:
             d = b["recent_rate"] - b["prior_rate"]
             trend = "up" if d > 0.15 else "down" if d < -0.15 else "flat"
-        per.append({"name": n, "human": h, "bot": b, "speed": speed, "efficiency": eff, "trend": trend})
+        status, why = verdict(b, eff, speed, trend)
+        per.append({"name": n, "human": h, "bot": b, "speed": speed, "efficiency": eff, "trend": trend, "status": status, "why": why})
     effs = [p["efficiency"] for p in per if p["efficiency"] is not None]
     bot = [r for r in rows if r["who"] == "bot"]
     hum = [r for r in rows if r["who"] == "human"]
@@ -96,5 +121,6 @@ def compute(rows: list) -> dict:
                         "efficiency": (sum(effs) / len(effs) * 100) if effs else None, "efficiency_n": len(effs),
                         "last20": rate(last20), "prev20": rate(prev20) if prev20 else None,
                         "gap": [p["name"] for p in sorted(per, key=lambda p: (p["efficiency"] if p["efficiency"] is not None else 9)) if p["efficiency"] is not None and p["efficiency"] < 0.8][:8]},
+            "retire": [p["name"] for p in per if p["status"] == "retire"], "attention": [p["name"] for p in per if p["status"] == "attention"],
             "rolling": roll[-300:], "by_build": by_build[-24:],
             "improved": [p["name"] for p in improved[:6]], "regressed": [p["name"] for p in regressed[:6]]}
