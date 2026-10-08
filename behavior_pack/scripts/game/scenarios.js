@@ -2065,6 +2065,7 @@ async function runOne(agent, player, name, arg, human = false) {
         const lvl = Math.min(3, Math.max(1, arg !== undefined && Number.isFinite(Number(arg)) ? Number(arg) : 2));
         const seed = 1 + Math.floor(Math.random() * 40);
         const T = terrainCourse(name, seed, lvl);
+        tp(x - 2.5, gy + 1, z + 0.5);        // (out of the way first: the course may fill the cell the bot stands in)
         const cmds = terrainCommands(T, x, gy, z);
         for (let i = 0; i < cmds.length; i++) { cmd(cmds[i]); if (i % 40 === 39) await system.waitTicks(1); }
         for (const [id, n] of T.kit) if (n > 0) giveItem(id, n);

@@ -58,7 +58,7 @@ export function caveCourse(kind, seed = 1, level = 1) {
     air.push(box(cx + 10, fy, 2, cx + 13, fy + 2, 4));
     // the ramp, rising to the west: column i has its feet at LOW + i; the top column opens onto the surface
     const rx = 8;
-    for (let i = 0; i <= 8; i++) air.push(box(rx - i, LOW + i, -1, rx - i, LOW + i + 2, 1));
+    for (let i = 0; i <= 9; i++) air.push(box(rx - i, LOW + i, -1, rx - i, LOW + i + 2, 1));
     const exitX = rx - 9;
     for (const [type, dx] of [['zombie', 2 + level], ['zombie', 5 + level], ['creeper', 10], ['zombie', 14]].slice(0, 2 + level)) mobs.push({ type, x: rx + dx + ri(0, 2), y: LOW, z: ri(-1, 1) });
     return { ext: { ...CAVE_EXT }, air, fill, start, goal: { x: exitX, y: 1, z: 0 }, mobs, kit, exitFeetY: 1,
@@ -76,7 +76,7 @@ export function caveCourse(kind, seed = 1, level = 1) {
     const hl = 6 + level;                                                  // a longer hall higher up
     fill.push({ ...box(hx, fy - 1, -1, hx + hl, fy - 1, -1), block: 'lava' }, { ...box(hx, fy - 1, 1, hx + hl, fy - 1, 1), block: 'lava' });
     const rx = 8;
-    for (let i = 0; i <= 8; i++) air.push(box(rx - i, LOW + i, -1, rx - i, LOW + i + 2, 1));
+    for (let i = 0; i <= 9; i++) air.push(box(rx - i, LOW + i, -1, rx - i, LOW + i + 2, 1));
     start.x = sx; start.y = LOW; start.z = 0;
     const picks = [['skeleton', hx - 3], ['zombie', hx + 9], ['zombie', hx + 11], ['creeper', sx - 3], ['skeleton', hx + 10]].slice(0, 2 + level);
     for (const [type, mx] of picks) mobs.push({ type, x: mx, y: LOW, z: ri(0, 0) });
