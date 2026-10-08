@@ -1,0 +1,902 @@
+real runs: 165; courses with enough: leadstep, leadstair, leadledge, leadturn, leadgate
+[agent] brain unreachable at http://127.0.0.1:8765 (Error: HTTP 0); using local fallback
+start: leadstep sim 9s real 14.3/13.3s | leadstair sim 8s real 15.4/15.4s | leadledge sim 12.7s real 11.8/12.1s | leadturn sim 12.6s real 14.4/14.5s | leadgate sim 13.5s real 18.3/15.7s
+[flight] === FLIGHT REPORT #1 build u290: pacing: walked 105 blocks and ended 1.4 from where it started, pack unchanged
+[flight] at 98 151 101 tick 1000 time 6000 hp 20 food null mode none task test step - ()
+[flight] last 60 s: walked 105 blocks, 1.4 from where it was; steps: - 50s
+[flight] pack: dirt 32, lead 2
+[flight] pack since 20 s ago: nothing
+[flight] route (30 s apart): 97,151,100 > 99,151,100
+[flight] house: none
+[flight] toggles: {"beds":true,"nights":true,"house":true,"torches":true,"farm":true,"iron":true,"hunting":true,"storage":true,"witches":true,"villages":true}
+[flight] surroundings:
+[flight]   y 153   x 93..103 across, z 96 (north) .. 106 down
+[flight]   ......#####
+[flight]   ...........
+[flight]   ...........
+[flight]   ...........
+[flight]   ...........
+[flight]   ...........
+[flight]   ...........
+[flight]   ...........
+[flight]   ......#####
+[flight]   ......#####
+[flight]   ......#####
+[flight]   y 152 (head)   x 93..103 across, z 96 (north) .. 106 down
+[flight]   ......#####
+[flight]   ...........
+[flight]   ...........
+[flight]   ...........
+[flight]   ...........
+[flight]   .....@.....
+[flight]   ...........
+[flight]   ...........
+[flight]   ......#####
+[flight]   ......#####
+[flight]   ......#####
+[flight]   y 151 (feet)   x 93..103 across, z 96 (north) .. 106 down
+[flight]   ......#####
+[flight]   ...........
+[flight]   ...........
+[flight]   ...........
+[flight]   ...........
+[flight]   .....@.....
+[flight]   ...........
+[flight]   ...........
+[flight]   ......#####
+[flight]   ......#####
+[flight]   ......#####
+[flight]   y 150 (floor)   x 93..103 across, z 96 (north) .. 106 down
+[flight]   ###########
+[flight]   ###########
+[flight]   ###########
+[flight]   ###########
+[flight]   ###########
+[flight]   ###########
+[flight]   ###########
+[flight]   ###########
+[flight]   ###########
+[flight]   ###########
+[flight]   ###########
+[flight]   50s ago tow: route 16 cells from 93,151,100 to 107,154,100 (partial), aimed at 124,154,101
+[flight]   49s ago tow: stuck #1: boat 92.8,151.0,100.7, me 98.8,151.0,100.5 (6.1 apart); the pull is clear
+[flight]   45s ago tow: stuck #2: boat 93.0,151.0,100.7, me 99.1,151.0,101.9 (6.1 apart); the pull is clear
+[flight]   40s ago tow: stuck #3: boat 93.3,151.0,100.7, me 99.3,151.0,99.3 (6.2 apart); the pull is clear
+[flight]   36s ago tow: route 15 cells from 94,151,104 to 107,154,100 (partial), aimed at 124,154,101
+[flight]   34s ago tow: stuck #1: boat 93.6,151.0,100.7, me 99.6,151.0,100.7 (6.0 apart); the pull is clear
+[flight]   30s ago tow: stuck #2: boat 93.8,151.0,100.7, me 99.8,151.0,101.6 (6.0 apart); the pull is clear
+[flight]   25s ago tow: stuck #3: boat 94.0,151.0,100.7, me 99.9,151.0,99.5 (6.0 apart); the pull is clear
+[flight]   21s ago tow: route 15 cells from 94,151,104 to 107,154,100 (partial), aimed at 124,154,101
+[flight]   21s ago tow: route 15 cells from 94,151,104 to 107,154,100 (partial), aimed at 124,154,101
+[flight]   20s ago tow: stuck #1: boat 94.2,151.0,100.7, me 100.3,151.0,100.6 (6.0 apart); the pull is clear
+[flight]   15s ago tow: stuck #1: boat 94.5,151.0,100.7, me 100.4,151.0,101.3 (6.0 apart); the pull is clear
+[flight]   11s ago tow: stuck #2: boat 94.7,151.0,100.7, me 100.6,151.0,101.2 (6.0 apart); the pull is clear
+[flight]    6s ago tow: stuck #3: boat 94.8,151.0,100.7, me 100.7,151.0,99.9 (6.0 apart); the pull is clear
+[flight]    3s ago tow: route 13 cells from 96,151,104 to 107,154,100 (partial), aimed at 124,154,101
+[flight]    1s ago tow: stuck #1: boat 95.0,151.0,100.7, me 100.9,151.0,100.6 (6.0 apart); the pull is clear
+[flight] === END FLIGHT REPORT
+[flight] === FLIGHT REPORT #1 build u290: pacing: walked 105 blocks and ended 4.6 from where it started, pack unchanged
+[flight] at 101 151 101 tick 1000 time 6000 hp 20 food null mode none task test step - ()
+[flight] last 60 s: walked 105 blocks, 4.6 from where it was; steps: - 50s
+[flight] pack: lead 2
+[flight] pack since 20 s ago: nothing
+[flight] route (30 s apart): 97,151,100 > 101,151,101
+[flight] house: none
+[flight] toggles: {"beds":true,"nights":true,"house":true,"torches":true,"farm":true,"iron":true,"hunting":true,"storage":true,"witches":true,"villages":true}
+[flight] surroundings:
+[flight]   y 153   x 96..106 across, z 96 (north) .. 106 down
+[flight]   ...########
+[flight]   ...........
+[flight]   ...........
+[flight]   ...........
+[flight]   ...........
+[flight]   ...........
+[flight]   ...........
+[flight]   ...........
+[flight]   ...########
+[flight]   ...########
+[flight]   ...########
+[flight]   y 152 (head)   x 96..106 across, z 96 (north) .. 106 down
+[flight]   ...########
+[flight]   ...........
+[flight]   ...........
+[flight]   ...........
+[flight]   ...........
+[flight]   .....@.....
+[flight]   ...........
+[flight]   ...........
+[flight]   ...########
+[flight]   ...########
+[flight]   ...########
+[flight]   y 151 (feet)   x 96..106 across, z 96 (north) .. 106 down
+[flight]   ...########
+[flight]   ...........
+[flight]   ...........
+[flight]   ...........
+[flight]   ...........
+[flight]   .....@.....
+[flight]   ...........
+[flight]   ...........
+[flight]   ...########
+[flight]   ...########
+[flight]   ...########
+[flight]   y 150 (floor)   x 96..106 across, z 96 (north) .. 106 down
+[flight]   ###########
+[flight]   ###########
+[flight]   ###########
+[flight]   ###########
+[flight]   ###########
+[flight]   ###########
+[flight]   ###########
+[flight]   ###########
+[flight]   ###########
+[flight]   ###########
+[flight]   ###########
+[flight]   50s ago tow: route 39 cells from 93,151,100 to 131,151,100 (complete), aimed at 132,151,101
+[flight]   49s ago tow: stuck #1: boat 92.9,151.0,100.7, me 98.8,151.0,100.5 (5.9 apart); the pull is clear
+[flight]   45s ago tow: stuck #2: boat 93.6,151.0,100.8, me 99.5,151.0,101.7 (6.0 apart); the pull is clear
+[flight]   40s ago tow: stuck #3: boat 94.2,151.0,100.7, me 100.0,151.0,99.6 (5.9 apart); the pull is clear
+[flight]   36s ago tow: route 37 cells from 95,151,104 to 131,151,100 (complete), aimed at 132,151,101
+[flight]   34s ago tow: stuck #1: boat 94.7,151.0,100.7, me 100.6,151.0,100.7 (5.9 apart); the pull is clear
+[flight]   30s ago tow: stuck #2: boat 95.3,151.0,100.8, me 101.1,151.0,101.8 (5.9 apart); the pull is clear
+[flight]   25s ago tow: stuck #3: boat 96.0,151.0,100.7, me 101.8,151.0,99.6 (6.0 apart); the pull is clear
+[flight]   22s ago tow: route 36 cells from 96,151,104 to 131,151,100 (complete), aimed at 132,151,101
+[flight]   20s ago tow: stuck #1: boat 96.5,151.0,100.7, me 102.4,151.0,100.6 (5.9 apart); the pull is clear
+[flight]   17s ago tow: stuck #2: boat 97.1,151.0,100.7, me 103.1,151.0,100.8 (6.0 apart); the pull is clear
+[flight]   14s ago tow: stuck #3: boat 97.7,151.0,100.7, me 103.7,151.0,100.7 (6.0 apart); the pull is clear
+[flight]   10s ago tow: route 35 cells from 98,151,104 to 131,151,100 (complete), aimed at 132,151,101
+[flight]    8s ago tow: stuck #1: boat 98.3,151.0,100.7, me 104.3,151.0,100.6 (6.0 apart); the pull is clear
+[flight]    5s ago tow: stuck #2: boat 98.9,151.0,100.7, me 104.9,151.0,100.7 (6.0 apart); the pull is clear
+[flight]    2s ago tow: stuck #3: boat 99.4,151.0,100.7, me 105.3,151.0,100.9 (5.9 apart); the pull is clear
+[flight] === END FLIGHT REPORT
+[flight] === FLIGHT REPORT #1 build u290: pacing: walked 91 blocks and ended 2.7 from where it started, pack unchanged
+[flight] at 98 151 102 tick 1000 time 6000 hp 20 food null mode none task test step - ()
+[flight] last 60 s: walked 91 blocks, 2.7 from where it was; steps: - 50s
+[flight] pack: lead 2
+[flight] pack since 20 s ago: nothing
+[flight] route (30 s apart): 97,151,100 > 99,151,101
+[flight] house: none
+[flight] toggles: {"beds":true,"nights":true,"house":true,"torches":true,"farm":true,"iron":true,"hunting":true,"storage":true,"witches":true,"villages":true}
+[flight] surroundings:
+[flight]   y 153   x 93..103 across, z 97 (north) .. 107 down
+[flight]   ......#####
+[flight]   ......#####
+[flight]   ...........
+[flight]   ...........
+[flight]   ...........
+[flight]   ...........
+[flight]   ......#####
+[flight]   ......#####
+[flight]   ......#####
+[flight]   ......#####
+[flight]   ......#####
+[flight]   y 152 (head)   x 93..103 across, z 97 (north) .. 107 down
+[flight]   ......#####
+[flight]   ......#####
+[flight]   ...........
+[flight]   ...........
+[flight]   ...........
+[flight]   .....@.....
+[flight]   ......#####
+[flight]   ......#####
+[flight]   ......#####
+[flight]   ......#####
+[flight]   ......#####
+[flight]   y 151 (feet)   x 93..103 across, z 97 (north) .. 107 down
+[flight]   ......#####
+[flight]   ......#####
+[flight]   ...........
+[flight]   ...........
+[flight]   ...........
+[flight]   .....@.....
+[flight]   ......#####
+[flight]   ......#####
+[flight]   ......#####
+[flight]   ......#####
+[flight]   ......#####
+[flight]   y 150 (floor)   x 93..103 across, z 97 (north) .. 107 down
+[flight]   ###########
+[flight]   ###########
+[flight]   ###########
+[flight]   ###########
+[flight]   ###########
+[flight]   ###########
+[flight]   ###########
+[flight]   ###########
+[flight]   ###########
+[flight]   ###########
+[flight]   ###########
+[flight]   50s ago tow: route 39 cells from 93,151,100 to 129,151,100 (complete), aimed at 130,151,101
+[flight]   49s ago tow: stuck #1: boat 92.9,151.0,100.7, me 98.8,151.0,100.5 (5.9 apart); the pull is clear
+[flight]   45s ago tow: stuck #2: boat 93.7,151.0,100.8, me 99.5,151.0,101.7 (5.9 apart); the pull is clear
+[flight]   39s ago tow: stuck #3: boat 94.3,151.0,100.8, me 100.2,151.0,100.1 (5.9 apart); the pull is clear
+[flight]   36s ago tow: route 37 cells from 95,151,104 to 129,151,100 (complete), aimed at 130,151,101
+[flight]   34s ago tow: stuck #1: boat 95.0,151.0,100.8, me 100.9,151.0,101.6 (6.0 apart); the pull is clear
+[flight]   29s ago tow: stuck #2: boat 95.7,151.0,100.9, me 101.5,151.0,102.0 (6.0 apart); the pull is clear
+[flight]   24s ago tow: stuck #3: boat 96.3,151.0,100.9, me 102.2,151.0,101.0 (5.9 apart); the pull is clear
+[flight]   20s ago tow: route 36 cells from 96,151,104 to 129,151,100 (complete), aimed at 130,151,101
+[flight]   18s ago tow: stuck #1: boat 96.9,151.0,101.0, me 102.8,151.0,101.6 (6.0 apart); the pull is clear
+[flight]   12s ago tow: stuck #2: boat 97.6,151.0,101.1, me 103.4,151.0,102.5 (6.0 apart); the pull is clear
+[flight]    5s ago tow: stuck #3: boat 98.3,151.0,101.3, me 104.1,151.0,102.7 (6.0 apart); the pull is clear
+[flight]    1s ago tow: route 37 cells from 97,151,105 to 129,151,100 (complete), aimed at 130,151,101
+[flight] === END FLIGHT REPORT
+[flight] === FLIGHT REPORT #1 build u290: pacing: walked 39 blocks and ended 0.0 from where it started, pack unchanged
+[flight] at 120 155 100 tick 1600 time 6000 hp 20 food null mode none task test step - ()
+[flight] last 60 s: walked 39 blocks, 0.0 from where it was; steps: - 80s
+[flight] pack: lead 2
+[flight] pack since 50 s ago: nothing
+[flight] route (30 s apart): 97,151,100 > 120,156,100 > 120,155,100
+[flight] house: none
+[flight] toggles: {"beds":true,"nights":true,"house":true,"torches":true,"farm":true,"iron":true,"hunting":true,"storage":true,"witches":true,"villages":true}
+[flight] surroundings:
+[flight]   y 157   x 115..125 across, z 95 (north) .. 105 down
+[flight]   ###########
+[flight]   ###########
+[flight]   ...........
+[flight]   ...........
+[flight]   ...........
+[flight]   ...........
+[flight]   ...........
+[flight]   ...........
+[flight]   ...........
+[flight]   ###########
+[flight]   ###########
+[flight]   y 156 (head)   x 115..125 across, z 95 (north) .. 105 down
+[flight]   ###########
+[flight]   ###########
+[flight]   ...........
+[flight]   ...........
+[flight]   ...........
+[flight]   .....@.....
+[flight]   ...........
+[flight]   ...........
+[flight]   ...........
+[flight]   ###########
+[flight]   ###########
+[flight]   y 155 (feet)   x 115..125 across, z 95 (north) .. 105 down
+[flight]   ###########
+[flight]   ###########
+[flight]   ...........
+[flight]   ...........
+[flight]   ...........
+[flight]   .....@.....
+[flight]   ...........
+[flight]   ...........
+[flight]   ...........
+[flight]   ###########
+[flight]   ###########
+[flight]   y 154 (floor)   x 115..125 across, z 95 (north) .. 105 down
+[flight]   ###########
+[flight]   ###########
+[flight]   ###########
+[flight]   ###########
+[flight]   ###########
+[flight]   ###########
+[flight]   ###########
+[flight]   ###########
+[flight]   ###########
+[flight]   ###########
+[flight]   ###########
+[flight]   37s ago tow: route 4 cells from 120,155,100 to 123,155,100 (complete), aimed at 124,155,101
+[flight]   37s ago tow: stuck #1: boat 111.3,154.9,100.5, me 120.1,155.0,100.5 (8.8 apart); the pull stops at 112.1,100.5 against a step of 1
+[flight]   34s ago tow: sling from the ground, rise 1: stretch 8.8, it did not come, boat peaked 1.2 b/s, climbed 0.2
+[flight]   34s ago tow: route 4 cells from 120,155,100 to 123,155,100 (complete), aimed at 124,155,101
+[flight]   34s ago tow: stuck #2: boat 111.3,154.1,100.5, me 120.1,155.0,100.5 (8.8 apart); the pull stops at 112.1,100.5 against a step of 1, we are above it
+[flight]   31s ago tow: sling at rise 1: 1 up, 8.0 out, 2 jumps: stretch 8.8, it came, boat peaked 2 b/s, climbed 0.8
+[flight]   31s ago tow: stuck #1: boat 111.3,154.1,100.5, me 120.1,155.0,100.5 (8.8 apart); the pull stops at 112.1,100.5 against a step of 1, we are above it
+[flight]   28s ago tow: sling at rise 1: 1 up, 7.0 out, 1 jumps: stretch 8.8, it came, boat peaked 2 b/s, climbed 0.7
+[flight]   28s ago tow: standing still 6s at 120.1,155.0,100.5: waypoint 1/3 at 122.5,155.0,100.5, boat 8.8 away and moving, guard 8.8
+[flight]   28s ago tow: stuck #1: boat 111.3,154.9,100.5, me 120.1,155.0,100.5 (8.8 apart); the pull stops at 112.1,100.5 against a step of 1
+[flight]   26s ago tow: sling from the ground, rise 1: stretch 8.8, it did not come, boat peaked 1.2 b/s, climbed 0.2
+[flight]   26s ago tow: stuck #2: boat 111.3,154.1,100.5, me 120.1,155.0,100.5 (8.8 apart); the pull stops at 112.1,100.5 against a step of 1, we are above it
+[flight]   22s ago tow: sling at rise 1: 1 up, 8.0 out, 2 jumps: stretch 8.8, it came, boat peaked 2 b/s, climbed 0.8
+[flight]   22s ago tow: standing still 12s at 120.1,155.0,100.5: waypoint 1/3 at 122.5,155.0,100.5, boat 8.8 away and moving, guard 8.8
+[flight]   22s ago tow: route 4 cells from 120,155,100 to 123,155,100 (complete), aimed at 124,155,101
+[flight]   22s ago tow: stuck #1: boat 111.3,154.9,100.5, me 120.1,155.0,100.5 (8.8 apart); the pull stops at 112.1,100.5 against a step of 1
+[flight]   20s ago tow: sling from the ground, rise 1: stretch 8.8, it did not come, boat peaked 1.2 b/s, climbed 0.2
+[flight]   20s ago tow: stuck #2: boat 111.3,154.1,100.5, me 120.1,155.0,100.5 (8.8 apart); the pull stops at 112.1,100.5 against a step of 1, we are above it
+[flight]   16s ago tow: sling at rise 1: 1 up, 8.0 out, 2 jumps: stretch 8.8, it came, boat peaked 2 b/s, climbed 0.8
+[flight]   16s ago tow: standing still 6s at 120.1,155.0,100.5: waypoint 1/3 at 122.5,155.0,100.5, boat 8.8 away and moving, guard 8.8
+[flight]   16s ago tow: stuck #1: boat 111.3,154.9,100.5, me 120.1,155.0,100.5 (8.8 apart); the pull stops at 112.1,100.5 against a step of 1
+[flight]   14s ago tow: sling from the ground, rise 1: stretch 8.8, it did not come, boat peaked 1.2 b/s, climbed 0.2
+[flight]   14s ago tow: stuck #2: boat 111.3,154.1,100.5, me 120.1,155.0,100.5 (8.8 apart); the pull stops at 112.1,100.5 against a step of 1, we are above it
+[flight]   10s ago tow: sling at rise 1: 1 up, 8.0 out, 2 jumps: stretch 8.8, it came, boat peaked 2 b/s, climbed 0.8
+[flight]   10s ago tow: standing still 12s at 120.1,155.0,100.5: waypoint 1/3 at 122.5,155.0,100.5, boat 8.8 away and moving, guard 8.8
+[flight]   10s ago tow: route 4 cells from 120,155,100 to 123,155,100 (complete), aimed at 124,155,101
+[flight]   10s ago tow: stuck #1: boat 111.3,154.9,100.5, me 120.1,155.0,100.5 (8.8 apart); the pull stops at 112.1,100.5 against a step of 1
+[flight]    8s ago tow: sling from the ground, rise 1: stretch 8.8, it did not come, boat peaked 1.2 b/s, climbed 0.2
+[flight]    8s ago tow: time ledger sling 48.6s, walk 14.7s, wait for the boat 6s, unstick 3.1s, plan 0.1s
+[flight]    8s ago tow: stopped (no progress for 25 s (boat 10 from the goal, 8.8 from me; me 120,101 y155.0, waypoint 1/3 at 123,101 y155.0, jam over 5.9 apart, boat still 3s)) in 72s, efficiency 0, apart 8.8 at most, 11/19 slings, 1 unst
+[flight] === END FLIGHT REPORT
+[flight] === FLIGHT REPORT #1 build u290: pacing: walked 103 blocks and ended 5.0 from where it started, pack unchanged
+[flight] at 102 151 100 tick 1000 time 6000 hp 20 food null mode none task test step - ()
+[flight] last 60 s: walked 103 blocks, 5.0 from where it was; steps: - 50s
+[flight] pack: lead 2
+[flight] pack since 20 s ago: nothing
+[flight] route (30 s apart): 97,151,100 > 100,151,101
+[flight] house: none
+[flight] toggles: {"beds":true,"nights":true,"house":true,"torches":true,"farm":true,"iron":true,"hunting":true,"storage":true,"witches":true,"villages":true}
+[flight] surroundings:
+[flight]   y 153   x 97..107 across, z 95 (north) .. 105 down
+[flight]   ..#########
+[flight]   ..#########
+[flight]   ...........
+[flight]   ...........
+[flight]   ...........
+[flight]   ...........
+[flight]   ...........
+[flight]   ...........
+[flight]   ...........
+[flight]   ..#########
+[flight]   ..#########
+[flight]   y 152 (head)   x 97..107 across, z 95 (north) .. 105 down
+[flight]   ..#########
+[flight]   ..#########
+[flight]   ...........
+[flight]   ...........
+[flight]   ...........
+[flight]   .....@.....
+[flight]   ...........
+[flight]   ...........
+[flight]   ...........
+[flight]   ..#########
+[flight]   ..#########
+[flight]   y 151 (feet)   x 97..107 across, z 95 (north) .. 105 down
+[flight]   ..#########
+[flight]   ..#########
+[flight]   .........##
+[flight]   .........##
+[flight]   .........##
+[flight]   .....@...##
+[flight]   .........##
+[flight]   .........##
+[flight]   .........##
+[flight]   ..#########
+[flight]   ..#########
+[flight]   y 150 (floor)   x 97..107 across, z 95 (north) .. 105 down
+[flight]   ###########
+[flight]   ###########
+[flight]   ###########
+[flight]   ###########
+[flight]   ###########
+[flight]   ###########
+[flight]   ###########
+[flight]   ###########
+[flight]   ###########
+[flight]   ###########
+[flight]   ###########
+[flight]   50s ago tow: route 32 cells from 93,151,100 to 124,154,100 (complete), aimed at 125,154,101
+[flight]   49s ago tow: stuck #1: boat 92.9,151.0,100.7, me 98.8,151.0,100.5 (6.0 apart); the pull is clear
+[flight]   45s ago tow: stuck #2: boat 93.5,151.0,100.7, me 99.3,151.0,101.8 (5.9 apart); the pull is clear
+[flight]   40s ago tow: stuck #3: boat 94.1,151.0,100.7, me 99.9,151.0,99.6 (6.0 apart); the pull is clear
+[flight]   36s ago tow: route 31 cells from 94,151,104 to 124,154,100 (complete), aimed at 125,154,101
+[flight]   34s ago tow: stuck #1: boat 94.5,151.0,100.7, me 100.5,151.0,100.6 (5.9 apart); the pull is clear
+[flight]   30s ago tow: stuck #2: boat 95.1,151.0,100.7, me 101.0,151.0,101.5 (5.9 apart); the pull is clear
+[flight]   25s ago tow: stuck #3: boat 95.7,151.0,100.7, me 101.7,151.0,99.9 (6.0 apart); the pull is clear
+[flight]   22s ago tow: route 29 cells from 96,151,104 to 124,154,100 (complete), aimed at 125,154,101
+[flight]   20s ago tow: stuck #1: boat 96.3,151.0,100.7, me 102.2,151.0,100.6 (6.0 apart); the pull is clear
+[flight]   17s ago tow: stuck #2: boat 96.8,151.0,100.7, me 102.8,151.0,100.8 (6.0 apart); the pull is clear
+[flight]   14s ago tow: stuck #3: boat 97.4,151.0,100.7, me 103.5,151.0,100.7 (6.0 apart); the pull is clear
+[flight]   10s ago tow: route 28 cells from 98,151,104 to 124,154,100 (complete), aimed at 125,154,101
+[flight]    8s ago tow: stuck #1: boat 98.0,151.0,100.7, me 104.1,151.0,100.6 (6.1 apart); the pull is clear
+[flight]    5s ago tow: stuck #2: boat 98.6,151.0,100.7, me 104.5,151.0,100.7 (5.9 apart); the pull is clear
+[flight]    2s ago tow: stuck #3: boat 99.1,151.0,100.7, me 105.0,151.0,100.8 (5.9 apart); the pull is clear
+[flight]    0s ago tow: route 24 cells from 101,151,101 to 124,154,100 (complete), aimed at 125,154,101
+[flight] === END FLIGHT REPORT
+[flight] === FLIGHT REPORT #1 build u290: pacing: walked 103 blocks and ended 5.0 from where it started, pack unchanged
+[flight] at 102 151 100 tick 1000 time 6000 hp 20 food null mode none task test step - ()
+[flight] last 60 s: walked 103 blocks, 5.0 from where it was; steps: - 50s
+[flight] pack: lead 2
+[flight] pack since 20 s ago: nothing
+[flight] route (30 s apart): 97,151,100 > 100,151,101
+[flight] house: none
+[flight] toggles: {"beds":true,"nights":true,"house":true,"torches":true,"farm":true,"iron":true,"hunting":true,"storage":true,"witches":true,"villages":true}
+[flight] surroundings:
+[flight]   y 153   x 97..107 across, z 95 (north) .. 105 down
+[flight]   ..#########
+[flight]   ..#########
+[flight]   ...........
+[flight]   ...........
+[flight]   ...........
+[flight]   ...........
+[flight]   ...........
+[flight]   ...........
+[flight]   ...........
+[flight]   ..#########
+[flight]   ..#########
+[flight]   y 152 (head)   x 97..107 across, z 95 (north) .. 105 down
+[flight]   ..#########
+[flight]   ..#########
+[flight]   ...........
+[flight]   ...........
+[flight]   ...........
+[flight]   .....@.....
+[flight]   ...........
+[flight]   ...........
+[flight]   ...........
+[flight]   ..#########
+[flight]   ..#########
+[flight]   y 151 (feet)   x 97..107 across, z 95 (north) .. 105 down
+[flight]   ..#########
+[flight]   ..#########
+[flight]   .........##
+[flight]   .........##
+[flight]   .........##
+[flight]   .....@...##
+[flight]   .........##
+[flight]   .........##
+[flight]   .........##
+[flight]   ..#########
+[flight]   ..#########
+[flight]   y 150 (floor)   x 97..107 across, z 95 (north) .. 105 down
+[flight]   ###########
+[flight]   ###########
+[flight]   ###########
+[flight]   ###########
+[flight]   ###########
+[flight]   ###########
+[flight]   ###########
+[flight]   ###########
+[flight]   ###########
+[flight]   ###########
+[flight]   ###########
+[flight]   50s ago tow: route 31 cells from 93,151,100 to 123,155,100 (complete), aimed at 124,155,101
+[flight]   49s ago tow: stuck #1: boat 92.9,151.0,100.7, me 98.8,151.0,100.5 (6.0 apart); the pull is clear
+[flight]   45s ago tow: stuck #2: boat 93.5,151.0,100.7, me 99.3,151.0,101.8 (5.9 apart); the pull is clear
+[flight]   40s ago tow: stuck #3: boat 94.1,151.0,100.7, me 99.9,151.0,99.6 (6.0 apart); the pull is clear
+[flight]   36s ago tow: route 30 cells from 94,151,104 to 123,155,100 (complete), aimed at 124,155,101
+[flight]   34s ago tow: stuck #1: boat 94.5,151.0,100.7, me 100.5,151.0,100.6 (5.9 apart); the pull is clear
+[flight]   30s ago tow: stuck #2: boat 95.1,151.0,100.7, me 101.0,151.0,101.5 (5.9 apart); the pull is clear
+[flight]   25s ago tow: stuck #3: boat 95.7,151.0,100.7, me 101.7,151.0,99.9 (6.0 apart); the pull is clear
+[flight]   22s ago tow: route 28 cells from 96,151,104 to 123,155,100 (complete), aimed at 124,155,101
+[flight]   20s ago tow: stuck #1: boat 96.3,151.0,100.7, me 102.2,151.0,100.6 (6.0 apart); the pull is clear
+[flight]   17s ago tow: stuck #2: boat 96.8,151.0,100.7, me 102.8,151.0,100.8 (6.0 apart); the pull is clear
+[flight]   14s ago tow: stuck #3: boat 97.4,151.0,100.7, me 103.5,151.0,100.7 (6.0 apart); the pull is clear
+[flight]   10s ago tow: route 27 cells from 98,151,104 to 123,155,100 (complete), aimed at 124,155,101
+[flight]    8s ago tow: stuck #1: boat 98.0,151.0,100.7, me 104.1,151.0,100.6 (6.1 apart); the pull is clear
+[flight]    5s ago tow: stuck #2: boat 98.6,151.0,100.7, me 104.5,151.0,100.7 (5.9 apart); the pull is clear
+[flight]    2s ago tow: stuck #3: boat 99.1,151.0,100.7, me 105.0,151.0,100.8 (5.9 apart); the pull is clear
+[flight]    0s ago tow: route 23 cells from 101,151,101 to 123,155,100 (complete), aimed at 124,155,101
+[flight] === END FLIGHT REPORT
+[flight] === FLIGHT REPORT #1 build u290: pacing: walked 93 blocks and ended 4.4 from where it started, pack unchanged
+[flight] at 101 151 102 tick 1000 time 6000 hp 20 food null mode none task test step - ()
+[flight] last 60 s: walked 93 blocks, 4.4 from where it was; steps: - 50s
+[flight] pack: lead 2
+[flight] pack since 20 s ago: nothing
+[flight] route (30 s apart): 97,151,100 > 101,151,101
+[flight] house: none
+[flight] toggles: {"beds":true,"nights":true,"house":true,"torches":true,"farm":true,"iron":true,"hunting":true,"storage":true,"witches":true,"villages":true}
+[flight] surroundings:
+[flight]   y 153   x 96..106 across, z 97 (north) .. 107 down
+[flight]   ...########
+[flight]   ...########
+[flight]   ...........
+[flight]   ...........
+[flight]   ...........
+[flight]   ...........
+[flight]   ...#####...
+[flight]   ...#####...
+[flight]   ...#####...
+[flight]   ...#####...
+[flight]   ...#####...
+[flight]   y 152 (head)   x 96..106 across, z 97 (north) .. 107 down
+[flight]   ...########
+[flight]   ...########
+[flight]   ...........
+[flight]   ...........
+[flight]   ...........
+[flight]   .....@.....
+[flight]   ...#####...
+[flight]   ...#####...
+[flight]   ...#####...
+[flight]   ...#####...
+[flight]   ...#####...
+[flight]   y 151 (feet)   x 96..106 across, z 97 (north) .. 107 down
+[flight]   ...########
+[flight]   ...########
+[flight]   ...........
+[flight]   ...........
+[flight]   ...........
+[flight]   .....@.....
+[flight]   ...#####...
+[flight]   ...#####...
+[flight]   ...#####...
+[flight]   ...#####...
+[flight]   ...#####...
+[flight]   y 150 (floor)   x 96..106 across, z 97 (north) .. 107 down
+[flight]   ###########
+[flight]   ###########
+[flight]   ###########
+[flight]   ###########
+[flight]   ###########
+[flight]   ###########
+[flight]   ###########
+[flight]   ###########
+[flight]   ###########
+[flight]   ###########
+[flight]   ###########
+[flight]   50s ago tow: route 39 cells from 93,151,100 to 129,151,100 (complete), aimed at 130,151,101
+[flight]   49s ago tow: stuck #1: boat 92.9,151.0,100.7, me 98.8,151.0,100.5 (6.0 apart); the pull is clear
+[flight]   45s ago tow: stuck #2: boat 93.5,151.0,100.7, me 99.3,151.0,101.8 (5.9 apart); the pull is clear
+[flight]   39s ago tow: stuck #3: boat 94.1,151.0,100.7, me 100.0,151.0,100.0 (6.0 apart); the pull is clear
+[flight]   36s ago tow: route 38 cells from 94,151,104 to 129,151,100 (complete), aimed at 130,151,101
+[flight]   34s ago tow: stuck #1: boat 94.6,151.0,100.7, me 100.6,151.0,101.5 (6.0 apart); the pull is clear
+[flight]   29s ago tow: stuck #2: boat 95.2,151.0,100.8, me 101.1,151.0,101.9 (6.0 apart); the pull is clear
+[flight]   24s ago tow: stuck #3: boat 95.8,151.0,100.9, me 101.7,151.0,101.1 (5.9 apart); the pull is clear
+[flight]   21s ago tow: route 36 cells from 96,151,104 to 129,151,100 (complete), aimed at 130,151,101
+[flight]   19s ago tow: stuck #1: boat 96.3,151.0,100.9, me 102.1,151.0,101.5 (5.9 apart); the pull is clear
+[flight]   14s ago tow: stuck #2: boat 96.7,151.0,101.0, me 102.6,151.0,101.7 (5.9 apart); the pull is clear
+[flight]    7s ago tow: stuck #3: boat 97.2,151.0,101.1, me 103.0,151.0,102.6 (5.9 apart); the pull is clear
+[flight]    4s ago tow: route 37 cells from 97,151,105 to 129,151,100 (complete), aimed at 130,151,101
+[flight]    1s ago tow: stuck #1: boat 97.7,151.0,101.2, me 103.6,151.0,102.5 (6.0 apart); the pull is clear
+[flight] === END FLIGHT REPORT
+[flight] === FLIGHT REPORT #1 build u290: pacing: walked 103 blocks and ended 4.7 from where it started, pack unchanged
+[flight] at 101 151 101 tick 1000 time 6000 hp 20 food null mode none task test step - ()
+[flight] last 60 s: walked 103 blocks, 4.7 from where it was; steps: - 50s
+[flight] pack: lead 2
+[flight] pack since 20 s ago: nothing
+[flight] route (30 s apart): 97,151,100 > 100,151,101
+[flight] house: none
+[flight] toggles: {"beds":true,"nights":true,"house":true,"torches":true,"farm":true,"iron":true,"hunting":true,"storage":true,"witches":true,"villages":true}
+[flight] surroundings:
+[flight]   y 153   x 96..106 across, z 96 (north) .. 106 down
+[flight]   ...########
+[flight]   ...........
+[flight]   ...........
+[flight]   ...........
+[flight]   ...........
+[flight]   ...........
+[flight]   ...........
+[flight]   ...........
+[flight]   ...########
+[flight]   ...########
+[flight]   ...########
+[flight]   y 152 (head)   x 96..106 across, z 96 (north) .. 106 down
+[flight]   ...########
+[flight]   ...........
+[flight]   ...........
+[flight]   ...........
+[flight]   ...........
+[flight]   .....@.....
+[flight]   ...........
+[flight]   ...........
+[flight]   ...########
+[flight]   ...########
+[flight]   ...########
+[flight]   y 151 (feet)   x 96..106 across, z 96 (north) .. 106 down
+[flight]   ...########
+[flight]   ...........
+[flight]   ...........
+[flight]   ...........
+[flight]   ...........
+[flight]   .....@.....
+[flight]   ...........
+[flight]   ...........
+[flight]   ...########
+[flight]   ...########
+[flight]   ...########
+[flight]   y 150 (floor)   x 96..106 across, z 96 (north) .. 106 down
+[flight]   ###########
+[flight]   ###########
+[flight]   ###########
+[flight]   ###########
+[flight]   ###########
+[flight]   ###########
+[flight]   ###########
+[flight]   ###########
+[flight]   ###########
+[flight]   ###########
+[flight]   ###########
+[flight]   50s ago tow: route 39 cells from 93,151,100 to 131,151,100 (complete), aimed at 132,151,101
+[flight]   49s ago tow: stuck #1: boat 92.9,151.0,100.7, me 98.8,151.0,100.5 (6.0 apart); the pull is clear
+[flight]   45s ago tow: stuck #2: boat 93.5,151.0,100.7, me 99.3,151.0,101.8 (5.9 apart); the pull is clear
+[flight]   40s ago tow: stuck #3: boat 94.1,151.0,100.7, me 99.9,151.0,99.6 (6.0 apart); the pull is clear
+[flight]   36s ago tow: route 38 cells from 94,151,104 to 131,151,100 (complete), aimed at 132,151,101
+[flight]   34s ago tow: stuck #1: boat 94.5,151.0,100.7, me 100.5,151.0,100.6 (5.9 apart); the pull is clear
+[flight]   30s ago tow: stuck #2: boat 95.1,151.0,100.7, me 101.0,151.0,101.5 (5.9 apart); the pull is clear
+[flight]   25s ago tow: stuck #3: boat 95.7,151.0,100.7, me 101.7,151.0,99.9 (6.0 apart); the pull is clear
+[flight]   22s ago tow: route 36 cells from 96,151,104 to 131,151,100 (complete), aimed at 132,151,101
+[flight]   20s ago tow: stuck #1: boat 96.3,151.0,100.7, me 102.2,151.0,100.6 (6.0 apart); the pull is clear
+[flight]   17s ago tow: stuck #2: boat 96.8,151.0,100.7, me 102.8,151.0,100.8 (6.0 apart); the pull is clear
+[flight]   14s ago tow: stuck #3: boat 97.4,151.0,100.7, me 103.5,151.0,100.7 (6.0 apart); the pull is clear
+[flight]   10s ago tow: route 35 cells from 98,151,104 to 131,151,100 (complete), aimed at 132,151,101
+[flight]    8s ago tow: stuck #1: boat 98.0,151.0,100.7, me 104.1,151.0,100.6 (6.1 apart); the pull is clear
+[flight]    5s ago tow: stuck #2: boat 98.6,151.0,100.7, me 104.7,151.0,100.7 (6.0 apart); the pull is clear
+[flight]    2s ago tow: stuck #3: boat 99.2,151.0,100.7, me 105.2,151.0,100.9 (6.0 apart); the pull is clear
+[flight]    0s ago tow: route 31 cells from 101,151,101 to 131,151,100 (complete), aimed at 132,151,101
+[flight] === END FLIGHT REPORT
+fold 0: fit loss 0.1520 -> 0.0504; on the other half 0.1253 -> 0.0561
+[flight] === FLIGHT REPORT #1 build u290: pacing: walked 100 blocks and ended 4.1 from where it started, pack unchanged
+[flight] at 101 151 101 tick 1000 time 6000 hp 20 food null mode none task test step - ()
+[flight] last 60 s: walked 100 blocks, 4.1 from where it was; steps: - 50s
+[flight] pack: lead 2
+[flight] pack since 20 s ago: nothing
+[flight] route (30 s apart): 97,151,100 > 100,151,101
+[flight] house: none
+[flight] toggles: {"beds":true,"nights":true,"house":true,"torches":true,"farm":true,"iron":true,"hunting":true,"storage":true,"witches":true,"villages":true}
+[flight] surroundings:
+[flight]   y 153   x 96..106 across, z 96 (north) .. 106 down
+[flight]   ...########
+[flight]   ...........
+[flight]   ...........
+[flight]   ...........
+[flight]   ...........
+[flight]   ...........
+[flight]   ...........
+[flight]   ...........
+[flight]   ...########
+[flight]   ...########
+[flight]   ...########
+[flight]   y 152 (head)   x 96..106 across, z 96 (north) .. 106 down
+[flight]   ...########
+[flight]   ...........
+[flight]   ...........
+[flight]   ...........
+[flight]   ...........
+[flight]   .....@.....
+[flight]   ...........
+[flight]   ...........
+[flight]   ...########
+[flight]   ...########
+[flight]   ...########
+[flight]   y 151 (feet)   x 96..106 across, z 96 (north) .. 106 down
+[flight]   ...########
+[flight]   ..........#
+[flight]   ..........#
+[flight]   ..........#
+[flight]   ..........#
+[flight]   .....@....#
+[flight]   ..........#
+[flight]   ..........#
+[flight]   ...########
+[flight]   ...########
+[flight]   ...########
+[flight]   y 150 (floor)   x 96..106 across, z 96 (north) .. 106 down
+[flight]   ###########
+[flight]   ###########
+[flight]   ###########
+[flight]   ###########
+[flight]   ###########
+[flight]   ###########
+[flight]   ###########
+[flight]   ###########
+[flight]   ###########
+[flight]   ###########
+[flight]   ###########
+[flight]   50s ago tow: route 32 cells from 93,151,100 to 124,154,100 (complete), aimed at 125,154,101
+[flight]   49s ago tow: stuck #1: boat 92.9,151.0,100.7, me 98.8,151.0,100.5 (6.0 apart); the pull is clear
+[flight]   45s ago tow: stuck #2: boat 93.4,151.0,100.7, me 99.3,151.0,101.8 (5.9 apart); the pull is clear
+[flight]   40s ago tow: stuck #3: boat 93.9,151.0,100.7, me 99.7,151.0,99.5 (5.9 apart); the pull is clear
+[flight]   36s ago tow: route 31 cells from 94,151,104 to 124,154,100 (complete), aimed at 125,154,101
+[flight]   34s ago tow: stuck #1: boat 94.4,151.0,100.7, me 100.3,151.0,100.6 (6.0 apart); the pull is clear
+[flight]   30s ago tow: stuck #2: boat 95.0,151.0,100.7, me 100.9,151.0,101.5 (5.9 apart); the pull is clear
+[flight]   25s ago tow: stuck #3: boat 95.5,151.0,100.7, me 101.4,151.0,99.8 (5.9 apart); the pull is clear
+[flight]   22s ago tow: route 29 cells from 96,151,104 to 124,154,100 (complete), aimed at 125,154,101
+[flight]   20s ago tow: stuck #1: boat 95.9,151.0,100.7, me 101.8,151.0,100.7 (5.9 apart); the pull is clear
+[flight]   16s ago tow: stuck #2: boat 96.5,151.0,100.7, me 102.3,151.0,101.6 (5.9 apart); the pull is clear
+[flight]   13s ago tow: stuck #3: boat 96.9,151.0,100.8, me 102.8,151.0,100.9 (5.9 apart); the pull is clear
+[flight]    9s ago tow: route 28 cells from 97,151,104 to 124,154,100 (complete), aimed at 125,154,101
+[flight]    8s ago tow: stuck #1: boat 97.4,151.0,100.8, me 103.3,151.0,100.6 (5.9 apart); the pull is clear
+[flight]    5s ago tow: stuck #1: boat 97.8,151.0,100.8, me 103.8,151.0,100.8 (5.9 apart); the pull is clear
+[flight]    2s ago tow: stuck #2: boat 98.4,151.0,100.8, me 104.4,151.0,100.7 (6.0 apart); the pull is clear
+[flight] === END FLIGHT REPORT
+[flight] === FLIGHT REPORT #1 build u290: pacing: walked 100 blocks and ended 4.1 from where it started, pack unchanged
+[flight] at 101 151 101 tick 1000 time 6000 hp 20 food null mode none task test step - ()
+[flight] last 60 s: walked 100 blocks, 4.1 from where it was; steps: - 50s
+[flight] pack: lead 2
+[flight] pack since 20 s ago: nothing
+[flight] route (30 s apart): 97,151,100 > 100,151,101
+[flight] house: none
+[flight] toggles: {"beds":true,"nights":true,"house":true,"torches":true,"farm":true,"iron":true,"hunting":true,"storage":true,"witches":true,"villages":true}
+[flight] surroundings:
+[flight]   y 153   x 96..106 across, z 96 (north) .. 106 down
+[flight]   ...########
+[flight]   ...........
+[flight]   ...........
+[flight]   ...........
+[flight]   ...........
+[flight]   ...........
+[flight]   ...........
+[flight]   ...........
+[flight]   ...########
+[flight]   ...########
+[flight]   ...########
+[flight]   y 152 (head)   x 96..106 across, z 96 (north) .. 106 down
+[flight]   ...########
+[flight]   ...........
+[flight]   ...........
+[flight]   ...........
+[flight]   ...........
+[flight]   .....@.....
+[flight]   ...........
+[flight]   ...........
+[flight]   ...########
+[flight]   ...########
+[flight]   ...########
+[flight]   y 151 (feet)   x 96..106 across, z 96 (north) .. 106 down
+[flight]   ...########
+[flight]   ..........#
+[flight]   ..........#
+[flight]   ..........#
+[flight]   ..........#
+[flight]   .....@....#
+[flight]   ..........#
+[flight]   ..........#
+[flight]   ...########
+[flight]   ...########
+[flight]   ...########
+[flight]   y 150 (floor)   x 96..106 across, z 96 (north) .. 106 down
+[flight]   ###########
+[flight]   ###########
+[flight]   ###########
+[flight]   ###########
+[flight]   ###########
+[flight]   ###########
+[flight]   ###########
+[flight]   ###########
+[flight]   ###########
+[flight]   ###########
+[flight]   ###########
+[flight]   50s ago tow: route 31 cells from 93,151,100 to 123,155,100 (complete), aimed at 124,155,101
+[flight]   49s ago tow: stuck #1: boat 92.9,151.0,100.7, me 98.8,151.0,100.5 (6.0 apart); the pull is clear
+[flight]   45s ago tow: stuck #2: boat 93.4,151.0,100.7, me 99.3,151.0,101.8 (5.9 apart); the pull is clear
+[flight]   40s ago tow: stuck #3: boat 93.9,151.0,100.7, me 99.7,151.0,99.5 (5.9 apart); the pull is clear
+[flight]   36s ago tow: route 30 cells from 94,151,104 to 123,155,100 (complete), aimed at 124,155,101
+[flight]   34s ago tow: stuck #1: boat 94.4,151.0,100.7, me 100.3,151.0,100.6 (6.0 apart); the pull is clear
+[flight]   30s ago tow: stuck #2: boat 95.0,151.0,100.7, me 100.9,151.0,101.5 (5.9 apart); the pull is clear
+[flight]   25s ago tow: stuck #3: boat 95.5,151.0,100.7, me 101.4,151.0,99.8 (5.9 apart); the pull is clear
+[flight]   22s ago tow: route 28 cells from 96,151,104 to 123,155,100 (complete), aimed at 124,155,101
+[flight]   20s ago tow: stuck #1: boat 95.9,151.0,100.7, me 101.8,151.0,100.7 (5.9 apart); the pull is clear
+[flight]   16s ago tow: stuck #2: boat 96.5,151.0,100.7, me 102.3,151.0,101.6 (5.9 apart); the pull is clear
+[flight]   13s ago tow: stuck #3: boat 96.9,151.0,100.8, me 102.8,151.0,100.9 (5.9 apart); the pull is clear
+[flight]    9s ago tow: route 27 cells from 97,151,104 to 123,155,100 (complete), aimed at 124,155,101
+[flight]    8s ago tow: stuck #1: boat 97.4,151.0,100.8, me 103.3,151.0,100.6 (5.9 apart); the pull is clear
+[flight]    5s ago tow: stuck #1: boat 97.8,151.0,100.8, me 103.8,151.0,100.8 (5.9 apart); the pull is clear
+[flight]    2s ago tow: stuck #2: boat 98.4,151.0,100.8, me 104.4,151.0,100.7 (6.0 apart); the pull is clear
+[flight] === END FLIGHT REPORT
+[flight] === FLIGHT REPORT #1 build u290: pacing: walked 88 blocks and ended 3.5 from where it started, pack unchanged
+[flight] at 98 151 103 tick 1000 time 6000 hp 20 food null mode none task test step - ()
+[flight] last 60 s: walked 88 blocks, 3.5 from where it was; steps: - 50s
+[flight] pack: lead 2
+[flight] pack since 20 s ago: nothing
+[flight] route (30 s apart): 97,151,100 > 101,151,101
+[flight] house: none
+[flight] toggles: {"beds":true,"nights":true,"house":true,"torches":true,"farm":true,"iron":true,"hunting":true,"storage":true,"witches":true,"villages":true}
+[flight] surroundings:
+[flight]   y 153   x 93..103 across, z 98 (north) .. 108 down
+[flight]   ......#####
+[flight]   ...........
+[flight]   ...........
+[flight]   ...........
+[flight]   ...........
+[flight]   ......#####
+[flight]   ......#####
+[flight]   ......#####
+[flight]   ......#####
+[flight]   ......#####
+[flight]   ......#####
+[flight]   y 152 (head)   x 93..103 across, z 98 (north) .. 108 down
+[flight]   ......#####
+[flight]   ...........
+[flight]   ...........
+[flight]   ...........
+[flight]   ...........
+[flight]   .....@#####
+[flight]   ......#####
+[flight]   ......#####
+[flight]   ......#####
+[flight]   ......#####
+[flight]   ......#####
+[flight]   y 151 (feet)   x 93..103 across, z 98 (north) .. 108 down
+[flight]   ......#####
+[flight]   ...........
+[flight]   ...........
+[flight]   ...........
+[flight]   ...........
+[flight]   .....@#####
+[flight]   ......#####
+[flight]   ......#####
+[flight]   ......#####
+[flight]   ......#####
+[flight]   ......#####
+[flight]   y 150 (floor)   x 93..103 across, z 98 (north) .. 108 down
+[flight]   ###########
+[flight]   ###########
+[flight]   ###########
+[flight]   ###########
+[flight]   ###########
+[flight]   ###########
+[flight]   ###########
+[flight]   ###########
+[flight]   ###########
+[flight]   ###########
+[flight]   ###########
+[flight]   50s ago tow: route 39 cells from 93,151,100 to 129,151,100 (complete), aimed at 130,151,101
+[flight]   49s ago tow: stuck #1: boat 92.9,151.0,100.7, me 98.8,151.0,100.5 (6.0 apart); the pull is clear
+[flight]   45s ago tow: stuck #2: boat 93.4,151.0,100.7, me 99.3,151.0,101.8 (5.9 apart); the pull is clear
+[flight]   39s ago tow: stuck #3: boat 94.0,151.0,100.7, me 99.8,151.0,99.9 (5.9 apart); the pull is clear
+[flight]   36s ago tow: route 38 cells from 94,151,104 to 129,151,100 (complete), aimed at 130,151,101
+[flight]   34s ago tow: stuck #1: boat 94.4,151.0,100.7, me 100.3,151.0,101.5 (6.0 apart); the pull is clear
+[flight]   30s ago tow: stuck #2: boat 94.9,151.0,100.8, me 100.7,151.0,102.0 (5.9 apart); the pull is clear
+[flight]   24s ago tow: stuck #3: boat 95.4,151.0,100.9, me 101.3,151.0,100.9 (5.9 apart); the pull is clear
+[flight]   21s ago tow: route 37 cells from 95,151,104 to 129,151,100 (complete), aimed at 130,151,101
+[flight]   19s ago tow: stuck #1: boat 95.9,151.0,100.9, me 101.7,151.0,101.5 (5.9 apart); the pull is clear
+[flight]   14s ago tow: stuck #1: boat 96.4,151.0,101.0, me 102.4,151.0,101.7 (6.0 apart); the pull is clear
+[flight]    8s ago tow: stuck #2: boat 97.0,151.0,101.0, me 103.0,151.0,101.9 (6.1 apart); the pull is clear
+[flight] === END FLIGHT REPORT
+[flight] === FLIGHT REPORT #1 build u290: pacing: walked 100 blocks and ended 4.1 from where it started, pack unchanged
+[flight] at 101 151 101 tick 1000 time 6000 hp 20 food null mode none task test step - ()
+[flight] last 60 s: walked 100 blocks, 4.1 from where it was; steps: - 50s
+[flight] pack: lead 2
+[flight] pack since 20 s ago: nothing
+[flight] route (30 s apart): 97,151,100 > 100,151,101
+[flight] house: none
+[flight] toggles: {"beds":true,"nights":true,"house":true,"torches":true,"farm":true,"iron":true,"hunting":true,"storage":true,"witches":true,"villages":true}
+[flight] surroundings:
+[flight]   y 153   x 96..106 across, z 96 (north) .. 106 down
+[flight]   ...########
+[flight]   ...........
+[flight]   ...........
+[flight]   ...........
+[flight]   ...........
+[flight]   ...........
+[flight]   ...........
+[flight]   ...........
+[flight]   ...########
+[flight]   ...########
+[flight]   ...########
+[flight]   y 152 (head)   x 96..106 across, z 96 (north) .. 106 down
+[flight]   ...########
+[flight]   ...........
+[flight]   ...........
+[flight]   ...........
+[flight]   ...........
+[flight]   .....@.....
+[flight]   ...........
+[flight]   ...........
+[flight]   ...########
+[flight]   ...########
+[flight]   ...########
+[flight]   y 151 (feet)   x 96..106 across, z 96 (north) .. 106 down
+[flight]   ...########
+[flight]   ...........
+[flight]   ...........
+[flight]   ...........
+[flight]   ...........
+[flight]   .....@.....
+[flight]   ...........
+[flight]   ...........
+[flight]   ...########
+[flight]   ...########
+[flight]   ...########
+[flight]   y 150 (floor)   x 96..106 across, z 96 (north) .. 106 down
+[flight]   ###########
+[flight]   ###########
+[flight]   ###########
+[flight]   ###########
+[flight]   ###########
+[flight]   ###########
+[flight]   ###########
+[flight]   ###########
+[flight]   ###########
+[flight]   ###########
+[flight]   ###########
+[flight]   50s ago tow: route 39 cells from 93,151,100 to 131,151,100 (complete), aimed at 132,151,101
+[flight]   49s ago tow: stuck #1: boat 92.9,151.0,100.7, me 98.8,151.0,100.5 (6.0 apart); the pull is clear
+[flight]   45s ago tow: stuck #2: boat 93.4,151.0,100.7, me 99.3,151.0,101.8 (5.9 apart); the pull is clear
+[flight]   40s ago tow: stuck #3: boat 93.9,151.0,100.7, me 99.7,151.0,99.5 (5.9 apart); the pull is clear
+[flight]   36s ago tow: route 38 cells from 94,151,104 to 131,151,100 (complete), aimed at 132,151,101
+[flight]   34s ago tow: stuck #1: boat 94.4,151.0,100.7, me 100.3,151.0,100.6 (6.0 apart); the pull is clear
+[flight]   30s ago tow: stuck #2: boat 95.0,151.0,100.7, me 100.9,151.0,101.5 (5.9 apart); the pull is clear
+[flight]   25s ago tow: stuck #3: boat 95.5,151.0,100.7, me 101.4,151.0,99.8 (5.9 apart); the pull is clear
+[flight]   22s ago tow: route 36 cells from 96,151,104 to 131,151,100 (complete), aimed at 132,151,101
+[flight]   20s ago tow: stuck #1: boat 95.9,151.0,100.7, me 101.8,151.0,100.7 (5.9 apart); the pull is clear
+[flight]   16s ago tow: stuck #2: boat 96.5,151.0,100.7, me 102.3,151.0,101.6 (5.9 apart); the pull is clear
+[flight]   13s ago tow: stuck #3: boat 96.9,151.0,100.8, me 102.8,151.0,100.9 (5.9 apart); the pull is clear
+[flight]    9s ago tow: route 35 cells from 97,151,104 to 131,151,100 (complete), aimed at 132,151,101
+[flight]    8s ago tow: stuck #1: boat 97.4,151.0,100.8, me 103.3,151.0,100.6 (5.9 apart); the pull is clear
+[flight]    5s ago tow: stuck #1: boat 97.8,151.0,100.8, me 103.8,151.0,100.8 (5.9 apart); the pull is clear
+[flight]    2s ago tow: stuck #2: boat 98.4,151.0,100.8, me 104.4,151.0,100.7 (6.0 apart); the pull is clear
+[flight] === END FLIGHT REPORT
+fold 1: fit loss 0.1253 -> 0.0537; on the other half 0.1520 -> 0.0695
+the fit helps on held-out real runs in both folds

@@ -2,173 +2,173 @@
  "fixed": {
   "leadledge/fresh": {
    "pass": true,
-   "secs": 12.6
+   "secs": 17.4
   },
   "leadstep/fresh": {
    "pass": true,
-   "secs": 9.4
+   "secs": 13.8
   },
   "leadstair/fresh": {
    "pass": true,
-   "secs": 8
+   "secs": 13.4
   },
   "leadturn/fresh": {
    "pass": true,
-   "secs": 12.5
+   "secs": 18.3
   },
   "leadgate/fresh": {
    "pass": true,
-   "secs": 13.5
+   "secs": 18.2
   },
   "leadledge/learned": {
    "pass": true,
-   "secs": 13.4
+   "secs": 21
   },
   "leadstep/learned": {
    "pass": true,
-   "secs": 9.4
+   "secs": 16.8
   },
   "leadstair/learned": {
    "pass": true,
-   "secs": 8
+   "secs": 15.4
   },
   "leadturn/learned": {
    "pass": true,
-   "secs": 12.6
+   "secs": 41.2
   },
   "leadgate/learned": {
    "pass": true,
-   "secs": 13.5
+   "secs": 25.9
   }
  },
  "rand": {
   "1": {
    "pass": true,
-   "secs": 16.1
+   "secs": 20.7
   },
   "2": {
    "pass": true,
-   "secs": 9.9
+   "secs": 13.9
   },
   "3": {
    "pass": true,
-   "secs": 30.2
+   "secs": 68
   },
   "4": {
    "pass": true,
-   "secs": 18.7
+   "secs": 23.7
   },
   "5": {
-   "pass": true,
-   "secs": 26.8
+   "pass": false,
+   "secs": 71.2
   },
   "6": {
    "pass": true,
-   "secs": 16.1
+   "secs": 20.5
   },
   "7": {
    "pass": true,
-   "secs": 22
+   "secs": 34.3
   },
   "8": {
-   "pass": true,
-   "secs": 21.2
+   "pass": false,
+   "secs": 71.3
   },
   "9": {
    "pass": true,
-   "secs": 11.6
+   "secs": 16.2
   },
   "10": {
    "pass": true,
-   "secs": 12.1
+   "secs": 16.6
   },
   "11": {
    "pass": true,
-   "secs": 12.3
+   "secs": 16.8
   },
   "12": {
    "pass": true,
-   "secs": 15
+   "secs": 20.5
   },
   "13": {
    "pass": true,
-   "secs": 14.7
+   "secs": 20.9
   },
   "14": {
-   "pass": true,
-   "secs": 30.6
+   "pass": false,
+   "secs": 71.6
   },
   "15": {
    "pass": true,
-   "secs": 18
+   "secs": 29.6
   },
   "16": {
    "pass": true,
-   "secs": 9.3
+   "secs": 12.9
   },
   "17": {
    "pass": true,
-   "secs": 18.7
+   "secs": 25.8
   },
   "18": {
    "pass": true,
-   "secs": 20.6
+   "secs": 25.4
   },
   "19": {
    "pass": true,
-   "secs": 10.4
+   "secs": 14.5
   },
   "20": {
-   "pass": true,
-   "secs": 17.7
+   "pass": false,
+   "secs": 67.4
   },
   "1000": {
    "pass": true,
-   "secs": 14
+   "secs": 18.1
   },
   "1001": {
-   "pass": true,
-   "secs": 18.9
+   "pass": false,
+   "secs": 76.1
   },
   "1002": {
-   "pass": true,
-   "secs": 36.4
+   "pass": false,
+   "secs": 85.1
   },
   "1003": {
    "pass": true,
-   "secs": 19.5
+   "secs": 20.3
   },
   "1004": {
    "pass": true,
-   "secs": 14.4
+   "secs": 18.6
   },
   "1005": {
    "pass": true,
-   "secs": 14
+   "secs": 18.5
   },
   "1006": {
    "pass": true,
-   "secs": 15.1
+   "secs": 21
   },
   "1007": {
-   "pass": true,
-   "secs": 29
+   "pass": false,
+   "secs": 76.6
   },
   "1008": {
    "pass": true,
-   "secs": 30.9
+   "secs": 34.6
   },
   "1009": {
    "pass": true,
-   "secs": 28.6
+   "secs": 31.2
   },
   "1010": {
    "pass": true,
-   "secs": 11.3
+   "secs": 16
   },
   "1011": {
    "pass": true,
-   "secs": 18.8
+   "secs": 23.2
   }
  }
 }
