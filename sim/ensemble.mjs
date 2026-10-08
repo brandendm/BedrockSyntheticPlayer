@@ -12,9 +12,29 @@ const names = process.argv.slice(2).filter((a, i, all) => !a.startsWith('--') &&
 const rng = (s) => () => { s = (s * 1664525 + 1013904223) % 4294967296; return s / 4294967296; };
 
 const base = loadParams();
+// --posterior [--scale 3]: draw the constants from the calibration's own uncertainty (sim/posterior.json, written by sim/identify.mjs --write) instead of +-spread on each:
+// correlated, narrow where the probes pin a constant down, wide where nothing does (the step heights), times --scale standard errors.
+import { readFileSync } from 'node:fs';
+import { cholesky } from './linalg.mjs';
+let post = null;
+if (process.argv.includes('--posterior')) {
+  const P = JSON.parse(readFileSync(new URL('./posterior.json', import.meta.url), 'utf8'));
+  const L = cholesky(P.cov.map((r, i) => r.map((v, j) => v + (i === j ? 1e-12 : 0))));
+  if (!L) throw new Error('posterior.json is not positive definite: rerun sim/identify.mjs --write');
+  post = { P, L, scale: arg('--scale', 3) };
+}
+const gauss = (r) => Math.sqrt(-2 * Math.log(Math.max(1e-12, r()))) * Math.cos(2 * Math.PI * r());
 const get = (o, p) => p.split('.').reduce((a, k) => a?.[k], o);
 function jittered(r) {
   const o = {};
+  if (post) {
+    const { P, L, scale } = post, z = P.names.map(() => gauss(r));
+    P.names.forEach((p, i) => {
+      const d = L[i].reduce((a, v, k) => a + v * z[k], 0) * scale, u = Math.min(1, Math.max(0, P.theta[i] + d));
+      const [a, b] = p.split('.'); (o[a] ??= {})[b] = P.lo[i] + u * (P.hi[i] - P.lo[i]);
+    });
+    return o;
+  }
   for (const [p] of FIT) { const [a, b] = p.split('.'); if (a === 'player') continue; (o[a] ??= {})[b] = get(base, p) * (1 + (r() * 2 - 1) * spread); }
   return o; // (the walker is measured to 1 cm: only the boat and the lead are jittered)
 }
