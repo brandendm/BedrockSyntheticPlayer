@@ -580,6 +580,9 @@ def make_handler(engine: DecisionEngine, key: str | None = None):
             if self.path == "/api/flight":
                 with _lock:
                     return self._send(200, {"reports": list(_flights)})
+            if self.path == "/api/analytics":
+                from . import analytics
+                return self._send(200, analytics.compute(analytics.load_runs(LOG_DIR)))
             if self.path == "/api/tests":
                 with _lock:
                     return self._send(200, {"batch": _tests["batch"], "results": dict(_tests["results"]), "runs": dict(_tests.get("runs", {})), "stats": dict(_tests["stats"])})

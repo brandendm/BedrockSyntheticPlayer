@@ -44,3 +44,6 @@ u275 horse versions: every tow course and both villager tests have a `...horse` 
 
 ## u276 — admin panel
 `http://<brain>/admin` (link in the dashboard header): doctor (build/pack/game/autorun/rate-limit/locks checks), reload/spawn/STOP, run any scenario as bot or you, build an auto-run batch (writes `inbox/run.json`), log tail with grep and follow, last result + autorun history, nightly/regress reports, command box, copyable sim/tool commands. Logic in `brain/admin.py`, tests in `brain/tests/test_admin.py`. Restart the brain to get it.
+
+## u277 — pass-rate analytics
+Dashboard "Pass rates & progress": tiles (bot pass rate, last 20 vs the 20 before, your rate, efficiency score), rolling pass-rate line with build markers, per-build bars, per-test you-vs-bot bars with speed against you, last-10 pips and ▲▼ trend. `brain/analytics.py` (`/api/analytics`) reads `tests.jsonl`; efficiency = mean of (bot recent pass rate x min(1.5, your median secs / bot median secs)) over tests you both ran, 100 = you. The game now sends `build` with each `test_run`, so by-build bars fill from u277 on (older rows group as "?").

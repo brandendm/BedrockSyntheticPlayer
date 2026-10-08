@@ -3097,7 +3097,7 @@ async function runOne(agent, player, name, arg, human = false) {
     // The lifetime pass/fail count, saved with the world right away; a skipped or stopped run is not counted.
     if (!stopped) addStat((agent.memory.data.testStats ??= {}), name, who, ok, Date.now(), CONFIG.build);
     agent.memory.save();
-    sendEvent({ type: 'test_run', name, who, pass: ok, stopped, summary, trace }).catch(() => {});
+    sendEvent({ type: 'test_run', name, who, pass: ok, stopped, summary, trace, build: CONFIG.build }).catch(() => {});
   };
   keep(human ? 'human' : 'bot', runSummary, runTrace, pass);
   for (const e of extraRuns) keep(e.who, e.summary, e.trace, e.pass);

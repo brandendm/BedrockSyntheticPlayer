@@ -111,6 +111,16 @@
   .row.tight { margin-bottom: 6px; }
   @media (max-width: 520px) { header, main { padding-left: 16px; padding-right: 16px; } }
 </style>
+<style id="anstyle">
+#an .tiles{display:flex;gap:10px;flex-wrap:wrap;margin:8px 0}
+#an .tile{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:8px 14px;min-width:140px}
+#an .tile b{font-size:24px;display:block;line-height:1.2}#an .tile small{color:var(--muted)}
+#an .up{color:var(--good)}#an .down{color:var(--bad)}#an .flat{color:var(--muted)}
+#an svg{max-width:100%;height:auto}#an .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:12px}
+#an .bars{display:grid;grid-template-columns:130px 1fr 52px 70px 40px;gap:4px 8px;align-items:center;font-size:12px}
+#an .bar{height:7px;background:var(--chip);border-radius:4px;position:relative;margin:1px 0}#an .bar i{position:absolute;left:0;top:0;bottom:0;border-radius:4px}
+#an .pip{display:inline-block;width:6px;height:10px;margin-right:1px;border-radius:1px}
+</style>
 </head>
 <body>
 <div class="banner" id="banner"><span id="bannertext"></span><button id="bannerdismiss">Dismiss</button></div>
@@ -256,7 +266,9 @@
     </div>
     <div id="testbar" style="display:none;margin:6px 0"><div style="background:var(--line,#333);border-radius:4px;height:14px;overflow:hidden"><div id="testfill" style="height:100%;width:0;background:#4a9"></div></div><div class="muted" id="testbartxt"></div></div>
     <div class="muted" id="testrates" style="margin:6px 0"></div>
-    <details open style="margin:6px 0"><summary>Pass rates: you vs the bot (every counted run, kept on this computer in brain/logs/test_stats.json, for every world)</summary><table class="tests" id="tchart" style="max-width:560px"></table></details>
+    <details open style="margin:6px 0"><summary>Pass rates &amp; progress: you vs the bot (every counted run, kept on this computer in brain/logs)</summary>
+      <div id="an"><div class="muted">loading…</div></div>
+      <details style="margin:6px 0"><summary>Plain table (passes/runs)</summary><table class="tests" id="tchart" style="max-width:560px"></table></details></details>
     <div class="muted" style="margin:4px 0">Left out of "test all" (click to toggle): <span id="testomit"></span></div>
     <details style="margin:6px 0"><summary>Paths: you vs the bot</summary>
       <div class="row"><select id="tracesel"></select><span class="muted"><span style="color:#4af">■</span> you <span style="color:#fa4">■</span> bot · dots: placed (filled) / broken (ring) · left: from above (x,z), right: side (distance east, height)</span></div>
@@ -570,6 +582,49 @@ function drawRuns() {
   }
 }
 $('tracesel').onchange = drawRuns;
+
+// ---------------------------------------------------------------- analytics (u277)
+const pct = (x) => (x === null || x === undefined ? '–' : Math.round(x * 100) + '%');
+function lineSvg(series, w, h, yfmt) {
+  const pad = { l: 34, r: 10, t: 10, b: 20 }, all = series.flatMap((s) => s.pts.filter((v) => v !== null));
+  if (!all.length) return '<div class="muted">not enough runs yet</div>';
+  const n = Math.max(...series.map((s) => s.pts.length)), hi = Math.max(1, ...all), X = (i) => pad.l + (n < 2 ? 0 : (i / (n - 1)) * (w - pad.l - pad.r)), Y = (v) => h - pad.b - (v / hi) * (h - pad.t - pad.b);
+  let o = `<svg viewBox="0 0 ${w} ${h}" role="img">`;
+  for (const g of [0, 0.5, 1]) { const y = Y(g * hi); o += `<line x1="${pad.l}" x2="${w - pad.r}" y1="${y}" y2="${y}" stroke="var(--line)"/><text x="${pad.l - 4}" y="${y + 3}" text-anchor="end" font-size="9" fill="var(--muted)">${yfmt(g * hi)}</text>`; }
+  for (const s of series) {
+    const d = s.pts.map((v, i) => (v === null ? null : `${X(i).toFixed(1)},${Y(v).toFixed(1)}`)).filter(Boolean);
+    o += `<polyline fill="none" stroke="${s.c}" stroke-width="2" points="${d.join(' ')}"/>`;
+    const last = s.pts.map((v, i) => [v, i]).filter((q) => q[0] !== null).pop();
+    if (last) o += `<circle cx="${X(last[1])}" cy="${Y(last[0])}" r="3.5" fill="${s.c}"/>`;
+  }
+  (series[0].marks || []).forEach((m) => { o += `<line x1="${X(m.i)}" x2="${X(m.i)}" y1="${pad.t}" y2="${h - pad.b}" stroke="var(--line)" stroke-dasharray="2 3"/><text x="${X(m.i) + 2}" y="${h - 6}" font-size="8" fill="var(--muted)">${m.label}</text>`; });
+  return o + '</svg>';
+}
+async function loadAnalytics() {
+  let d; try { d = await (await fetch('/api/analytics', { cache: 'no-store' })).json(); } catch { return; }
+  const o = d.overall, arrow = (a, b) => (a === null || b === null || b === undefined ? '' : a - b > 0.02 ? `<span class="up">▲ ${Math.round((a - b) * 100)} pts</span>` : a - b < -0.02 ? `<span class="down">▼ ${Math.round((b - a) * 100)} pts</span>` : '<span class="flat">▬ flat</span>');
+  const eff = o.efficiency, effc = eff === null ? 'flat' : eff >= 80 ? 'up' : eff >= 50 ? 'flat' : 'down';
+  const tiles = `<div class="tiles">
+    <div class="tile"><small>Bot pass rate (all)</small><b>${pct(o.bot_rate)}</b><small>${o.bot_runs} runs</small></div>
+    <div class="tile"><small>Bot, last 20 vs the 20 before</small><b>${pct(o.last20)}</b>${arrow(o.last20, o.prev20)}</div>
+    <div class="tile"><small>Your pass rate</small><b>${pct(o.human_rate)}</b><small>${o.human_runs} runs</small></div>
+    <div class="tile" title="Mean over tests you both ran of: bot recent pass rate x speed against your median time (capped at 1.5). 100 = as reliable and as fast as you."><small>Efficiency score</small><b class="${effc}">${eff === null ? '–' : Math.round(eff)}</b><small>${o.efficiency_n} tests with your baseline · 100 = you</small></div></div>`;
+  const rollSvg = lineSvg([{ c: 'var(--accent)', pts: d.rolling.map((r) => r.rate), marks: d.rolling.map((r, i) => [r, i]).filter(([r, i]) => i && r.build && d.rolling[i - 1].build !== r.build).map(([r, i]) => ({ i, label: r.build })).slice(-10) }], 460, 150, pct);
+  const bb = d.by_build.map((b) => `<div class="bars" style="grid-template-columns:60px 1fr 44px 50px"><span>${b.build}</span><div class="bar"><i style="width:${(b.rate || 0) * 100}%;background:${b.rate >= 0.8 ? 'var(--good)' : b.rate >= 0.5 ? 'var(--warn)' : 'var(--bad)'}"></i></div><span>${pct(b.rate)}</span><span class="muted">${b.n} runs</span></div>`).join('');
+  const rows = d.tests.filter((t) => t.bot.n || t.human.n).sort((a, b) => ((a.bot.recent_rate ?? 2) - (b.bot.recent_rate ?? 2)) || a.name.localeCompare(b.name));
+  const bar = (x, c) => `<div class="bar"><i style="width:${(x || 0) * 100}%;background:${c}"></i></div>`;
+  const tr = { up: '<span class="up">▲</span>', down: '<span class="down">▼</span>', flat: '<span class="flat">▬</span>' };
+  const grid = '<div class="bars"><b>Test</b><b>you ▮ / bot ▮ (recent)</b><b>speed</b><b>last 10</b><b></b>' + rows.map((t) => {
+    const sp = t.speed === null ? '–' : `<span class="${t.speed >= 0.9 ? 'up' : t.speed >= 0.5 ? 'flat' : 'down'}">${t.speed.toFixed(2)}×</span>`;
+    const pips = (t.bot.pips || []).map((v) => `<span class="pip" style="background:${v ? 'var(--good)' : 'var(--bad)'}"></span>`).join('');
+    return `<span>${t.name}</span><div>${bar(t.human.rate, 'var(--accent)')}${bar(t.bot.recent_rate, t.bot.recent_rate >= 0.8 ? 'var(--good)' : t.bot.recent_rate >= 0.5 ? 'var(--warn)' : 'var(--bad)')}</div><span>${sp}</span><span>${pips}</span><span>${tr[t.trend] || ''}</span>`;
+  }).join('') + '</div>';
+  const list = (a, c) => a.length ? `<span class="${c}">${a.join(', ')}</span>` : '<span class="muted">none</span>';
+  $('an').innerHTML = tiles + `<div class="grid"><div><b>Bot pass rate over time</b> <span class="muted">(rolling 10 runs; dashed = new build)</span>${rollSvg}</div><div><b>By build</b>${bb || '<span class="muted">no build data yet</span>'}</div></div>
+    <p>Improving: ${list(d.improved, 'up')} · Getting worse: ${list(d.regressed, 'down')} · Furthest behind you: ${list(o.gap, 'down')}</p>${grid}
+    <div class="muted" style="font-size:11px">speed = your median pass time / the bot's recent median (1× = same, capped at 1.5×). ▲▼ compares the bot's last 5 runs with the 5 before.</div>`;
+}
+loadAnalytics(); setInterval(loadAnalytics, 15000);
 async function loadTests() {
   try {
     const d = await (await fetch('/api/tests', { cache: 'no-store' })).json();
