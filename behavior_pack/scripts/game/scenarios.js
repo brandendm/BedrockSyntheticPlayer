@@ -3282,7 +3282,8 @@ async function readyHorse(dim, cmd, who, loc, agent = null) {
   const h = await spawnAdultHorse(dim, loc);
   if (!h) return null;
   // (u279: a horse only has a saddle slot once it is tame, and it must be given a moment to be: tame it by every route, then saddle it by each until one takes)
-  try { h.triggerEvent('minecraft:horse_tamed'); } catch { /* no such event */ }
+  // (u283, found by the owner: the event that tames a horse is minecraft:on_tame; then the saddle by command, then `ride ... teleport_rider` puts the rider on it.)
+  try { h.triggerEvent('minecraft:on_tame'); } catch { /* no such event */ }
   try { h.getComponent('minecraft:tameable')?.tame(who); } catch { /* the bot tames it itself below */ }
   await system.waitTicks(3);
   // (u282: the game's own events and tame() do not tame a horse (traced: "tamed false"): the bot tames it the way a player does, by riding it until it accepts, then it is saddled for whoever is to ride.)
@@ -3302,6 +3303,9 @@ async function readyHorse(dim, cmd, who, loc, agent = null) {
   ];
   for (const t of tries) { if (saddledOf(h)) break; try { t(); } catch { /* next way */ } await system.waitTicks(2); }
   trace(`horse ready: tamed ${isTamed(h)}, saddled ${saddledOf(h)}`);
+  // On the horse: the rider starts on it (the owner's route: no walking up, no being thrown).
+  try { h.addTag('vx_h'); who.runCommand('ride @s start_riding @e[tag=vx_h,c=1] teleport_rider'); } catch (e) { trace(`horse ready: ride command failed ${e}`); } finally { try { h.removeTag('vx_h'); } catch { /* */ } }
+  await system.waitTicks(6);
   // (u281: if the game still did not take the saddle, the rider has one in the pack: the owner got none on two runs, and could then at least saddle it himself.)
   if (!saddledOf(h)) { try { who.getComponent('minecraft:inventory')?.container?.addItem(new ItemStack('minecraft:saddle', 1)); } catch { /* */ } try { who.sendMessage?.('The horse did not take its saddle: one is in your pack (use it on the horse).'); } catch { /* */ } }
   return h;

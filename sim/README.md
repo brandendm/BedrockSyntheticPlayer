@@ -69,3 +69,6 @@ readyHorse: the saddle slot only exists on a TAME horse, and `tame(who)` was han
 - villagerferry: human run crashed (InvalidEntityError on a villager killed that tick) - guarded; the eviction no longer teleports the player out of the boat; the bot swings at a zombie within 3.2.
 - Horse ferry (bot): stood still 40 s at 12 from its boat while zombies hit it, then the lead broke at the tow's start - not yet understood (the fix above may cure it: the horse was never really tame).
 - Not yet run in the real game: probejumps (it was not in the sweep).
+
+## u283 — horses the owner's way
+`readyHorse`: spawn, `ageable_grow_up`, `minecraft:on_tame`, saddle by command, then `ride @s start_riding <horse> teleport_rider` puts whoever's turn it is on it already (the owner found this route; tame()/horse_tamed did nothing). The bot-taming fallback stays if the event does not take.
