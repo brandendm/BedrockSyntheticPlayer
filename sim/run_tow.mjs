@@ -7,17 +7,17 @@ const { engine, system, spawnBot, ItemStack } = SIM;
 const { Agent } = await import('../behavior_pack/scripts/game/agent.js');
 const { towCourse, TOW_META } = await import('../behavior_pack/scripts/core/towcourses.js');
 
-export async function runTow(name, { params = {}, gy = 150, verbose = false, x = 100, z = 100, maxS = 200 } = {}) {
+export async function runTow(name, { params = {}, gy = 150, verbose = false, x = 100, z = 100, maxS = 200, course = null } = {}) {
   engine.reset({ params, floorY: process.env.FLOORY ? Number(process.env.FLOORY) : -64 });
-  const C = towCourse(name, x, gy, z);
+  const C = course ? course(x, gy, z) : towCourse(name, x, gy, z);
   // the test site as game/scenarios.js builds it: a slab in the sky (stone, dirt, grass) with a glass wall round its rim, nothing beyond
-  const ext = TOW_META[name].ext;
+  const ext = C.ext ?? TOW_META[name].ext;
   for (const c of [`fill ${x - ext.w} ${gy - 10} ${z - ext.r} ${x + ext.e} ${gy - 4} ${z + ext.r} stone`, `fill ${x - ext.w} ${gy - 3} ${z - ext.r} ${x + ext.e} ${gy - 1} ${z + ext.r} dirt`, `fill ${x - ext.w} ${gy} ${z - ext.r} ${x + ext.e} ${gy} ${z + ext.r} grass_block`]) engine.world.command(c);
   const wx1 = x - ext.w, wx2 = x + ext.e, wz1 = z - ext.r, wz2 = z + ext.r;
   for (const [a1, b1, a2, b2] of [[wx1, wz1, wx2, wz1], [wx1, wz2, wx2, wz2], [wx1, wz1, wx1, wz2], [wx2, wz1, wx2, wz2]]) engine.world.command(`fill ${a1} ${gy + 1} ${b1} ${a2} ${gy + 8} ${b2} glass`);
   for (const c of C.cmds) engine.world.command(c);
   const sim = spawnBot({ x: C.start.x - 0.5, y: C.start.y, z: C.start.z - 0.5 });
-  for (const [id, n] of TOW_META[name]?.kit ?? [['lead', 2]]) sim.inv.addItem(new ItemStack(id, n));
+  for (const [id, n] of (C.ext ? null : TOW_META[name]?.kit) ?? [['lead', 2]]) sim.inv.addItem(new ItemStack(id, n));
   const agent = new Agent(sim);
   // (the world's memory of how a player tows, learned from their runs: LEARNED='{"walk":{...}}' puts it in)
   if (process.env.LEARNED) agent.memory.data.leadCal = { ...(agent.memory.data.leadCal ?? {}), learned: JSON.parse(process.env.LEARNED) };

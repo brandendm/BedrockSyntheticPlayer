@@ -17,3 +17,6 @@ Calibration loop: run the probes in the game (`brain/inbox/run.json` with `test 
 
 ## Robustness runs
 `node sim/ensemble.mjs [course] --n 10 --spread 0.08` runs each tow course on the fitted physics jittered by +-8% (boat and lead only). A course that passes on the fitted numbers and fails on a jittered one is a knife edge in the bot, not in the sim: u267's two leadledge fixes came from this (5/10 -> 10/10). `node sim/compare_run.mjs leadledge` puts the sim's bot path beside the bot's real run second by second.
+
+## Random courses (u269)
+`node sim/gen_run.mjs 1 20` plays the bot's real code on generated lanes (`sim/gencourse.mjs`: steps of 1, gates on either side, low walls; seeds >= 1000 are held out). First run: 13/20 pass, mean 24 s. It also caught a u268 regression the five fixed courses missed when the bot has no learned memory (the jam clock reset whenever the walker came within range). Open: low "wall" bumps the walker hops over and drops off (repeated "up onto the step" at one spot, boat left jammed behind).

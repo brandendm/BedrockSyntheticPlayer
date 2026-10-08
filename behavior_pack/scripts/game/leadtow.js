@@ -355,8 +355,6 @@ export class LeadTow {
         try { a.body.jump(); } catch { /* */ }
         if (system.currentTick - stillSince > 160) { note('standing still: new route'); route = null; stillSince = system.currentTick; continue; }
       }
-      // (the boat is only "still" while the lead is long enough to pull it: the clock does not run before that)
-      if (d <= lo + 0.5) lastBoatMoveTick = system.currentTick;
       const jammed = d > lo + 0.5 && system.currentTick - lastBoatMoveTick > patience;
       const boatMoving = system.currentTick - lastBoatMoveTick <= 10;
       // The lead nearly at its limit with the boat coming along: stop and let it catch up (no tug). Slower from 2.5 short of it.
