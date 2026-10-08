@@ -101,6 +101,7 @@ class Trainer:
         self.guard_baseline = st.get("guard_baseline")       # [k, n] of the defaults on the guard tests
         self.cycle_n = st.get("cycle_n", 0)
         self.group_i = st.get("group_i", 0)
+        self.group_stats = {g: list(st.get("group_stats", {}).get(g, [0, 0])) for g in GROUPS}   # g -> [accepted, tried]
 
     # ---- files --------------------------------------------------------------------------------
     def _load(self, name: str, default):
@@ -116,7 +117,7 @@ class Trainer:
             pass
 
     def _save_state(self) -> None:
-        self._save("state.json", {"counts": self.counts, "guard_baseline": self.guard_baseline, "cycle_n": self.cycle_n, "group_i": self.group_i})
+        self._save("state.json", {"counts": self.counts, "guard_baseline": self.guard_baseline, "cycle_n": self.cycle_n, "group_i": self.group_i, "group_stats": self.group_stats})
 
     def journal(self, rec: dict) -> None:
         try:
@@ -228,7 +229,7 @@ class Trainer:
             self.state = "the guard-test baseline did not finish: trying again"
             self.sleep(30)
             return
-        group = GROUPS[self.group_i % len(GROUPS)]
+        group = self._pick_group()
         self.group_i += 1
         self.cycle_n += 1
         self.current_group = group
@@ -304,6 +305,15 @@ class Trainer:
         self._check_collapse(rec, champ_x if verdict["verdict"] != "accept" else cand_x)
         self._finish(rec)
 
+    def _pick_group(self) -> str:
+        """Which group to work on: Thompson sampling on how often each has produced an accepted change (Beta(1+accepted, 1+rejected)), so the effort drifts to where
+        training is paying and away from where it has dried up; one cycle in five goes to the least-tried group regardless, so none is ever written off."""
+        if self.rng.random() < 0.2:
+            fewest = min(self.group_stats[g][1] for g in GROUPS)
+            return self.rng.choice([g for g in GROUPS if self.group_stats[g][1] == fewest])
+        draw = {g: self.rng.betavariate(1 + self.group_stats[g][0], 1 + self.group_stats[g][1] - self.group_stats[g][0]) for g in GROUPS}
+        return max(GROUPS, key=lambda g: draw[g])
+
     def _check_collapse(self, rec: dict, guard_runs: list) -> None:
         if not self.guard_baseline or len(guard_runs) < 6 or not self.champion:
             return
@@ -319,6 +329,11 @@ class Trainer:
             rec["alert"] = self.alert
 
     def _finish(self, rec: dict) -> None:
+        g = rec.get("group")
+        if g in self.group_stats and rec.get("outcome") not in ("aborted", "stopped"):
+            self.group_stats[g][1] += 1
+            if rec.get("outcome") == "ACCEPTED":
+                self.group_stats[g][0] += 1
         self.journal(rec)
         self._save_state()
         self.write_digest()

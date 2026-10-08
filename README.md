@@ -803,3 +803,20 @@ Say (in chat to the bot, `!bot ...`, or the dashboard box) things like **"make i
 - `behavior_pack/scripts/core/probes.js`: eight physics probes (walk, jump, step, slide, lead pull, follow, sling, block), each a scripted experiment sampled every tick.
 - `!bot test probewalk,probejump,probestep,probeslide,probepull,probefollow,probesling,probeblock` runs them in the real game (game/scenarios.js) and sends a `probe` event; the brain keeps them in `brain/logs/probes.jsonl`.
 - `sim/` is one engine that runs the bot's real code in Node (virtual clock); `sim/probes_run.mjs` runs the same probes on it and `sim/calibrate.mjs --fit` fits the constants in `sim/params.js` until the sim's traces match the real ones (`calibration.json`).
+
+## Training (u290)
+
+The bot can improve itself with nobody watching. Switch **Training** on in the dashboard (off at every start).
+
+* `behavior_pack/scripts/core/tunables.js` lists every constant the trainer may move (tow, fight-or-run, caves), each with a default and a range. The bot reads them
+  live (`!bot policy {json}` sets them at once, stored in the world's memory; `policy clear` goes back to the defaults).
+* `sim/train.mjs` searches a group in the simulators with separable CMA-ES (`sim/cmaes.mjs`): common random numbers, successive halving, and a held-out set it never
+  searched on. `tools/sim_combat.mjs` scores fight-or-run, the tow simulator scores the tow. The caves have no simulator (no mobs), so only the real game judges them.
+* `brain/trainer.py` runs the cycle: a candidate from the search, then the real game (several bots at once, champion and candidate in alternating order, guard tests
+  that must not get worse, `brain/runstats.py` for the verdict). A winner becomes the champion (`brain/trainer/champion.json`). Which group gets the next cycle is
+  chosen by Thompson sampling on how often each has paid. Every cycle is a line in `brain/trainer/journal.jsonl`; `brain/trainer/digest.md` is the one page to read
+  after a week away. A STOP file in `brain/trainer/` or the switch ends it; a champion whose guard tests collapse is reverted to the defaults and training pauses.
+* `node tools/bake_policy.mjs` writes the champion into the defaults.
+* Cave tests: `cavewalk`, `cavemobs`, `cavedeep`, `caveescape` (`test cavemobs 3` = level 3): dark caves with turns, a squeeze, a pool, a drop, lava and hostile mobs,
+  generated from a seed and checked solvable (`core/caves.js`).
+* `node sim/fit_outcomes.mjs [--apply]` fits the simulator's physics to the real game's course times (cross-validated).

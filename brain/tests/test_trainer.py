@@ -92,6 +92,7 @@ def make(world, sim, root=None):
     root = root or Path(tempfile.mkdtemp())
     t = Trainer(root, run_batch=world.run_batch, send=world.send, sim_search=sim, status=world.status, clock=world.clock, sleep=world.sleep, seed=2)
     t.set_enabled(True)
+    t._pick_group = lambda: T.GROUPS[t.group_i % len(T.GROUPS)]      # (the tests choose the group with group_i)
     return t
 
 
@@ -188,3 +189,27 @@ class Cycle(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PickGroup(unittest.TestCase):
+    def test_effort_drifts_to_the_group_that_pays_but_none_is_dropped(self):
+        t = Trainer(Path(tempfile.mkdtemp()), run_batch=None, send=None, sim_search=None, status=lambda: ({}, 0), seed=5)
+        t.group_stats = {"tow": [0, 12], "combat": [9, 12], "cave": [0, 12]}
+        picks = [t._pick_group() for _ in range(400)]
+        self.assertGreater(picks.count("combat"), 250)
+        self.assertGreater(picks.count("tow"), 5)
+        self.assertGreater(picks.count("cave"), 5)
+
+    def test_untried_groups_are_each_tried(self):
+        t = Trainer(Path(tempfile.mkdtemp()), run_batch=None, send=None, sim_search=None, status=lambda: ({}, 0), seed=1)
+        seen = {t._pick_group() for _ in range(60)}
+        self.assertEqual(seen, set(T.GROUPS))
+
+    def test_results_are_counted_per_group_and_saved(self):
+        w = World(lambda n, p: 0.9)
+        t = make(w, lambda *a: {"accepted": False, "best": {}, "train": [5, 5], "held": [5, 5]})
+        t.group_i = 1
+        t.guard_baseline = [9, 10]
+        t.cycle()
+        self.assertEqual(t.group_stats["combat"], [0, 1])
+        self.assertEqual(json.loads((t.dir / "state.json").read_text())["group_stats"]["combat"], [0, 1])
