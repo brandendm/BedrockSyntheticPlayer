@@ -16,3 +16,11 @@ test('every probe has a floor, an extent that holds it, and a run', () => {
     }
   }
 });
+
+import { readFileSync } from 'node:fs';
+test('every probe is a case in game/scenarios.js (probejumps was missing, and failed at once in the real game)', () => {
+  const src = readFileSync(new URL('../behavior_pack/scripts/game/scenarios.js', import.meta.url), 'utf8');
+  const line = src.split('\n').find((l) => l.includes("case 'probewalk'"));
+  assert.ok(line);
+  for (const n of Object.keys(PROBES)) assert.ok(line.includes(`'${n}'`), `${n} has no case in scenarios.js`);
+});

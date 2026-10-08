@@ -28,6 +28,9 @@ const WALK_BPS = 4.3, RIDE_BPS = 9; // blocks per second at full speed, on foot 
 export class LeadTow {
   constructor(agent) { this.a = agent; }
 
+  /** A trace note; a hired bot's (game/crew.js) carries its name, since several tows write to the one log at once. */
+  tr(msg) { trace(this.a.worker ? `[${this.a.sim.name}] ${msg}` : msg); }
+
   limits(boat) {
     try { const l = boat.getComponent('minecraft:leashable'); return { soft: l?.softDistance ?? 2, hard: l?.hardDistance ?? 4, max: l?.maxDistance ?? 12 }; } catch { return { soft: 2, hard: 4, max: 12 }; }
   }
@@ -265,7 +268,7 @@ export class LeadTow {
       const rw = ride ? null : await this.runway(gen, boat, target, guard);
       if (rw?.built) { note(`runway: ${rw.built} blocks`); m.built += rw.built; }
       const r = await this.sling(gen, boat, { ride, target, guard, dir: rw?.dir ?? null, jumps: nJumps });
-      trace(`tow: sling at rise ${rise}: ${hAbove} up, ${target.toFixed(1)} out, ${nJumps} jumps: stretch ${r.stretch}, ${r.ok ? 'it came' : r.snapped ? 'LEAD BROKE' : 'it did not come'}, boat peaked ${r.peak} b/s, climbed ${r.climbed}`);
+      this.tr(`tow: sling at rise ${rise}: ${hAbove} up, ${target.toFixed(1)} out, ${nJumps} jumps: stretch ${r.stretch}, ${r.ok ? 'it came' : r.snapped ? 'LEAD BROKE' : 'it did not come'}, boat peaked ${r.peak} b/s, climbed ${r.climbed}`);
       note(`sling at rise ${rise}: ${r.ok ? 'it came' : r.snapped ? 'LEAD BROKE' : 'did not come'}`);
       if (r.ok) { m.slingOk++; stuckCount = 0; }
       return r;
@@ -298,7 +301,7 @@ export class LeadTow {
             const rw = bg.built ? null : await this.runway(gen, boat, stretchFor(3) + t * 0.8, guard);
             if (rw?.built) { note(`runway: ${rw.built} blocks`); m.built += rw.built; }
             const r = await this.sling(gen, boat, { ride: false, target: stretchFor(3) + t * 0.8, guard, dir: rw?.dir ?? null });
-            trace(`tow: sling on the half bridge: stretch ${r.stretch}, ${r.ok ? 'it came' : r.snapped ? 'LEAD BROKE' : 'it did not come'}, boat peaked ${r.peak} b/s, climbed ${r.climbed}`);
+            this.tr(`tow: sling on the half bridge: stretch ${r.stretch}, ${r.ok ? 'it came' : r.snapped ? 'LEAD BROKE' : 'it did not come'}, boat peaked ${r.peak} b/s, climbed ${r.climbed}`);
             if (r.snapped) { m.snapped = true; m.why = 'the lead broke in a sling'; return null; }
             if (r.ok) {
               m.slingOk++; mark('plan');
@@ -324,7 +327,7 @@ export class LeadTow {
       if (!res.path || res.path.length < 2) return null;
       m.pathLen += res.path.length;
       // (u241: so the report says where it meant to go: the u241 ledge run stood at the foot of the wall for a minute)
-      { const a0 = res.path[0], a1 = res.path[res.path.length - 1]; trace(`tow: route ${res.path.length} cells from ${a0.x},${a0.y},${a0.z} to ${a1.x},${a1.y},${a1.z} (${res.complete ? 'complete' : 'partial'}${built ? ', with building steps' : ''}), aimed at ${target.x.toFixed(0)},${target.y.toFixed(0)},${target.z.toFixed(0)}`); }
+      { const a0 = res.path[0], a1 = res.path[res.path.length - 1]; this.tr(`tow: route ${res.path.length} cells from ${a0.x},${a0.y},${a0.z} to ${a1.x},${a1.y},${a1.z} (${res.complete ? 'complete' : 'partial'}${built ? ', with building steps' : ''}), aimed at ${target.x.toFixed(0)},${target.y.toFixed(0)},${target.z.toFixed(0)}`); }
       const out = [];
       res.path.forEach((c, i) => {
         const pt = { x: c.x + 0.5, y: c.y, z: c.z + 0.5, node: c, act: built && i > 0 && !isWalkMove(c) };
@@ -376,7 +379,7 @@ export class LeadTow {
       if (flat(pos, lastPos) > 0.4) { lastPos = { ...pos }; stillSince = system.currentTick; }
       else if (!(wp.hold && flat(pos, wp) < 1.1) && system.currentTick - stillSince > 80 && system.currentTick - stillSaid > 80) {
         stillSaid = system.currentTick;
-        trace(`tow: standing still ${Math.round((system.currentTick - stillSince) / 20)}s at ${pos.x.toFixed(1)},${pos.y.toFixed(1)},${pos.z.toFixed(1)}: waypoint ${wi}/${route.length} at ${wp.x.toFixed(1)},${wp.y.toFixed(1)},${wp.z.toFixed(1)}${wp.act ? ' (a building step)' : ''}, boat ${d.toFixed(1)} away and ${system.currentTick - lastBoatMoveTick > 10 ? 'still' : 'moving'}, guard ${guard.toFixed(1)}`);
+        this.tr(`tow: standing still ${Math.round((system.currentTick - stillSince) / 20)}s at ${pos.x.toFixed(1)},${pos.y.toFixed(1)},${pos.z.toFixed(1)}: waypoint ${wi}/${route.length} at ${wp.x.toFixed(1)},${wp.y.toFixed(1)},${wp.z.toFixed(1)}${wp.act ? ' (a building step)' : ''}, boat ${d.toFixed(1)} away and ${system.currentTick - lastBoatMoveTick > 10 ? 'still' : 'moving'}, guard ${guard.toFixed(1)}`);
         try { a.capsule.snap('tow: standing still'); } catch { /* */ }
         try { a.body.jump(); } catch { /* */ }
         if (system.currentTick - stillSince > 160) { note('standing still: new route'); route = null; stillSince = system.currentTick; continue; }
@@ -419,7 +422,7 @@ export class LeadTow {
         const stepRise = !pp.clear && Number.isFinite(pp.rise) ? pp.rise : 0;
         const rise = Math.max(this.riseAhead(boat, pos), stepRise);
         const above = pos.y - bl.y >= 0.4;
-        trace(`tow: stuck #${stuckCount}: boat ${bl.x.toFixed(1)},${bl.y.toFixed(1)},${bl.z.toFixed(1)}, me ${pos.x.toFixed(1)},${pos.y.toFixed(1)},${pos.z.toFixed(1)} (${d.toFixed(1)} apart); the pull ${pp.clear ? 'is clear' : pp.at ? `stops at ${pp.at.x.toFixed(1)},${pp.at.z.toFixed(1)} against ${Number.isFinite(pp.rise) ? `a step of ${pp.rise}` : 'no floor'}` : 'is stuck'}${above ? ', we are above it' : ''}`);
+        this.tr(`tow: stuck #${stuckCount}: boat ${bl.x.toFixed(1)},${bl.y.toFixed(1)},${bl.z.toFixed(1)}, me ${pos.x.toFixed(1)},${pos.y.toFixed(1)},${pos.z.toFixed(1)} (${d.toFixed(1)} apart); the pull ${pp.clear ? 'is clear' : pp.at ? `stops at ${pp.at.x.toFixed(1)},${pp.at.z.toFixed(1)} against ${Number.isFinite(pp.rise) ? `a step of ${pp.rise}` : 'no floor'}` : 'is stuck'}${above ? ', we are above it' : ''}`);
         // (u242 live, leadturn/leadgate: a boat clipping the inside of a corner is stopped by a wall, not a step (rise 0): the same way round: stand where the pull clears it)
         if (!ride && !above && !pp.clear && stuckCount <= 6) {
           // A step in the boat's way and we are level with it (we went round, or are on the far side): not a sling (that is lifted from
@@ -440,7 +443,7 @@ export class LeadTow {
           if (stepRise >= 0.4 && stuckCount <= 1 && d >= 3) {
             m.slings++; mark('sling');
             const r = await this.sling(gen, boat, { ride, target: Math.min(guard - 0.3, TT.groundTarget), guard });
-            trace(`tow: sling from the ground, rise ${stepRise}: stretch ${r.stretch}, ${r.ok ? 'it came' : r.snapped ? 'LEAD BROKE' : 'it did not come'}, boat peaked ${r.peak} b/s, climbed ${r.climbed}`);
+            this.tr(`tow: sling from the ground, rise ${stepRise}: stretch ${r.stretch}, ${r.ok ? 'it came' : r.snapped ? 'LEAD BROKE' : 'it did not come'}, boat peaked ${r.peak} b/s, climbed ${r.climbed}`);
             note(`sling from level ground at rise ${stepRise}: ${r.ok ? 'it came' : r.snapped ? 'LEAD BROKE' : 'did not come'}`);
             if (r.ok) { m.slingOk++; stuckCount = 0; }
             if (r.snapped) { m.snapped = true; m.why = 'the lead broke in a sling'; break; }
@@ -477,7 +480,7 @@ export class LeadTow {
           m.slings++; mark('sling');
           const target = Math.max(L.sling.flat.stretch, lo + TT.yankMargin) + (stuckCount - 1) * 0.8;
           const r = await this.sling(gen, boat, { ride, target, guard });
-          trace(`tow: yank on the flat: stretch ${r.stretch}, ${r.ok ? 'it came' : r.snapped ? 'LEAD BROKE' : 'it did not come'}, boat peaked ${r.peak} b/s`);
+          this.tr(`tow: yank on the flat: stretch ${r.stretch}, ${r.ok ? 'it came' : r.snapped ? 'LEAD BROKE' : 'it did not come'}, boat peaked ${r.peak} b/s`);
           note(`yank (jump with the lead stretched, as you did) at ${here}: ${r.ok ? 'it came' : r.snapped ? 'LEAD BROKE' : 'did not come'}`);
           if (r.ok) { m.slingOk++; stuckCount = 0; }
           if (r.snapped) { m.snapped = true; m.why = 'the lead broke in a yank'; break; }
@@ -512,13 +515,13 @@ export class LeadTow {
     try { a.capsule.towOn = false; } catch { /* */ }
     mark('end'); delete led.end;
     m.ledger = Object.fromEntries(Object.entries(led).map(([k, v]) => [k, Math.round(v / 2) / 10]).filter(([, v]) => v >= 0.1));
-    trace(`tow: time ledger ${Object.entries(m.ledger).sort((x, y) => y[1] - x[1]).map(([k, v]) => `${k} ${v}s`).join(', ')}`);
+    this.tr(`tow: time ledger ${Object.entries(m.ledger).sort((x, y) => y[1] - x[1]).map(([k, v]) => `${k} ${v}s`).join(', ')}`);
     m.secs = Math.round((system.currentTick - t0) / 20);
     m.boatMoved = boat.isValid ? flat(boat.location, b0) : 0;
     m.boatEnd = boat.isValid ? { x: Math.round(boat.location.x), z: Math.round(boat.location.z) } : null;
     m.efficiency = m.arrived && m.secs ? Math.round((m.idealS / m.secs) * 100) / 100 : 0;
     try { sim.stopMoving(); } catch { /* */ }
-    trace(`tow: ${m.arrived ? 'arrived' : `stopped (${m.why || 'time'})`} in ${m.secs}s, efficiency ${m.efficiency}, apart ${m.maxSep.toFixed(1)} at most, ${m.slingOk}/${m.slings} slings, ${m.tugs} unsticks, ${m.reroutes} reroutes${m.snapped ? ', LEAD BROKE' : ''}`);
+    this.tr(`tow: ${m.arrived ? 'arrived' : `stopped (${m.why || 'time'})`} in ${m.secs}s, efficiency ${m.efficiency}, apart ${m.maxSep.toFixed(1)} at most, ${m.slingOk}/${m.slings} slings, ${m.tugs} unsticks, ${m.reroutes} reroutes${m.snapped ? ', LEAD BROKE' : ''}`);
     const cal2 = a.memory.data.leadCal ?? {};
     a.memory.data.leadCal = { ...cal2, pullAt: m.pullAt ?? cal2.pullAt, lastTow: { ...m }, at: Date.now() };
     a.memory.save();

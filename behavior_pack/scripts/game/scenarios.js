@@ -382,7 +382,7 @@ export async function runTests(agent, player, args) {
   }
 }
 
-const capFor = (n) => (['leadboat', 'leadsling', 'villagerhaul', 'villagerferry', 'villagerhaulhorse', 'villagerferryhorse'].includes(n) || TOW_META[n] || TOW_META[n.replace(/horse$/, '')] ? 480 : CAP_S);
+const capFor = (n) => (PROBES[n] ? Math.max(CAP_S, (PROBES[n].secs ?? 0) + 60) : ['leadboat', 'leadsling', 'villagerhaul', 'villagerferry', 'villagerhaulhorse', 'villagerferryhorse'].includes(n) || TOW_META[n] || TOW_META[n.replace(/horse$/, '')] ? 480 : CAP_S);
 
 /**
  * A batch of the bot's own tests on several bots at once (`!bot test all workers 4`). Only tests that stay on their own sky slab and touch nothing global (parallelClass); the
@@ -2539,7 +2539,7 @@ async function runOne(agent, player, name, arg, human = false) {
         detail = `${r.detail}; ${ride.detail}`;
         break;
       }
-      case 'probewalk': case 'probemove': case 'probejump': case 'probestep': case 'probeslide': case 'probepull': case 'probefollow': case 'probesling': case 'probeblock': case 'probelift': case 'probewall': {
+      case 'probejumps': case 'probewalk': case 'probemove': case 'probejump': case 'probestep': case 'probeslide': case 'probepull': case 'probefollow': case 'probesling': case 'probeblock': case 'probelift': case 'probewall': {
         // A physics probe (core/probes.js): a scripted experiment, every tick recorded, sent to the brain as a 'probe' event. The simulator runs the same
         // probe (sim/probes_run.mjs) and sim/calibrate.mjs makes its numbers agree with these.
         const pr = PROBES[name];
