@@ -20,3 +20,5 @@ Calibration loop: run the probes in the game (`brain/inbox/run.json` with `test 
 
 ## Random courses (u269)
 `node sim/gen_run.mjs 1 20` plays the bot's real code on generated lanes (`sim/gencourse.mjs`: steps of 1, gates on either side, low walls; seeds >= 1000 are held out). First run: 13/20 pass, mean 24 s. It also caught a u268 regression the five fixed courses missed when the bot has no learned memory (the jam clock reset whenever the walker came within range). Open: low "wall" bumps the walker hops over and drops off (repeated "up onto the step" at one spot, boat left jammed behind).
+
+u270: on the random courses (seeds 1-20: 13 -> 14 of 20; held-out 1000-1011: 8 -> 10 of 12) the walker past a low wall with the boat jammed at its foot now slings from the ground (taut lead, 8+) before it tries climbing the wall, which only walked it back off.
