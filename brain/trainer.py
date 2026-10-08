@@ -31,9 +31,12 @@ GROUPS = ["tow", "combat", "cave"]
 GROUP_TESTS = {
     "tow": ["leadledge", "leadstep", "leadstair", "leadturn", "leadgate", "villagerhaul", "leadboat"],
     "combat": ["husk", "creepers", "skel", "shield", "enderman"],
-    "cave": ["cavewalk", "cavemobs", "caveescape", "cavedeep"],
+    "cave": ["cavewalk", "cavemobs", "caveescape", "cavedeep", "caveascent", "oceandrop", "oceandeep"],
 }
 GUARD_TESTS = ["ravine", "hole", "pit", "bow", "ladder"]
+# Normal play for 5 minutes with no setup: run once after a policy is accepted (a champion that dies in ordinary play is undone), and it feeds the weakest-tests table.
+HEALTH_TEST = "wild"
+EVOLVE_EVERY = 5     # every 5th tow cycle first breeds new hard courses (sim/evolve_courses.mjs)
 # Ranges for the real-only (cave) steps: mirrors tunables.js (kept in step by tests/test_trainer.py).
 CAVE_RANGES = {"caveTorchEvery": (4, 12, 7), "caveFleeLight": (0, 8, 4)}
 ROUNDS_MIN, ROUNDS_MAX = 2, 6
@@ -79,11 +82,12 @@ def diff(policy: dict) -> dict:
 
 
 class Trainer:
-    def __init__(self, root: Path, *, run_batch: Callable, send: Callable[[str], None], sim_search: Callable, status: Callable[[], tuple],
+    def __init__(self, root: Path, *, run_batch: Callable, send: Callable[[str], None], sim_search: Callable, status: Callable[[], tuple], evolve: Optional[Callable] = None,
                  clock: Callable[[], float] = time.time, sleep: Callable[[float], None] = time.sleep, seed: int = 1):
         self.dir = root / "trainer"
         self.dir.mkdir(parents=True, exist_ok=True)
         self.run_batch, self.send, self.sim_search, self.status = run_batch, send, sim_search, status
+        self.evolve = evolve
         self.clock, self.sleep = clock, sleep
         self.rng = random.Random(seed)
         self.enabled = False            # off at every start
@@ -101,6 +105,7 @@ class Trainer:
         self.guard_baseline = st.get("guard_baseline")       # [k, n] of the defaults on the guard tests
         self.cycle_n = st.get("cycle_n", 0)
         self.group_i = st.get("group_i", 0)
+        self.cells = {k: list(v) for k, v in st.get("cells", {}).items()}   # test -> [passed, tried] over every real run (the weakest-tests table)
         self.group_stats = {g: list(st.get("group_stats", {}).get(g, [0, 0])) for g in GROUPS}   # g -> [accepted, tried]
 
     # ---- files --------------------------------------------------------------------------------
@@ -117,7 +122,7 @@ class Trainer:
             pass
 
     def _save_state(self) -> None:
-        self._save("state.json", {"counts": self.counts, "guard_baseline": self.guard_baseline, "cycle_n": self.cycle_n, "group_i": self.group_i, "group_stats": self.group_stats})
+        self._save("state.json", {"counts": self.counts, "guard_baseline": self.guard_baseline, "cycle_n": self.cycle_n, "group_i": self.group_i, "group_stats": self.group_stats, "cells": self.cells})
 
     def journal(self, rec: dict) -> None:
         try:
@@ -148,6 +153,10 @@ class Trainer:
                   "| when | group | outcome | what changed | why |", "|---|---|---|---|---|"]
         for e in reversed(j[-25:]):
             lines.append(f"| {e.get('t')} | {e.get('group')} | {e.get('outcome')} | {json.dumps(e.get('candidate_diff', {}))} | {str(e.get('why', ''))[:120]} |")
+        weak = sorted(((v[0] / v[1], k, v) for k, v in self.cells.items() if v[1] >= 3))[:8]
+        if weak:
+            lines += ["", "## Weakest tests (pass rate over every real run, any policy)", "", "| test | passed | tried |", "|---|---|---|"]
+            lines += [f"| {k} | {v[0]} | {v[1]} |" for _, k, v in weak]
         text = "\n".join(lines) + "\n"
         try:
             (self.dir / "digest.md").write_text(text, encoding="utf-8")
@@ -200,6 +209,10 @@ class Trainer:
         self.sleep(2)
         outcome, events = self.run_batch(tests, workers, self._alive)
         res = [{"name": e.get("name"), "pass": bool(e.get("pass")), "secs": e.get("secs") or 0} for e in events if e.get("type") == "test_result" and e.get("who") != "human"]
+        for r in res:
+            c = self.cells.setdefault(r["name"], [0, 0])
+            c[0] += 1 if r["pass"] else 0
+            c[1] += 1
         return res, outcome
 
     def _measure_baseline(self) -> bool:
@@ -241,6 +254,13 @@ class Trainer:
             cand = perturb(self.champion, self.rng, CAVE_RANGES, n_keys=1 + self.rng.randrange(2))
             rec["search"] = "random step (no simulator for caves)"
         else:
+            if group == "tow" and self.evolve and self.cycle_n % EVOLVE_EVERY == 0:
+                self.state = f"cycle {self.cycle_n}: breeding harder tow courses"
+                try:
+                    ev = self.evolve(self.rng.randrange(1, 10**6), self._alive)
+                except Exception as e:  # noqa: BLE001 - a failed breed never stops training
+                    ev = {"error": str(e)}
+                self.journal({"event": "evolve", "result": ev})
             self.state = f"cycle {self.cycle_n}: {group}: searching in the simulator"
             res = self.sim_search(group, self.champion, self.rng.randrange(1, 10**6), self._alive)
             if res and res.get("error"):
@@ -297,6 +317,17 @@ class Trainer:
                        "guard_champion": [sum(1 for r in champ_x if r["pass"]), len(champ_x)], "guard_candidate": [sum(1 for r in cand_x if r["pass"]), len(cand_x)]}
         rec["why"] = verdict["why"]
         # 3. KEEP
+        if verdict["verdict"] == "accept":
+            self.state = f"cycle {self.cycle_n}: {group}: candidate won, checking ordinary play"
+            wres, wout = self._arm(cand, [HEALTH_TEST])
+            wild = [r for r in wres if r["name"] == HEALTH_TEST]
+            if wout == "ok" and wild and not wild[0]["pass"]:         # ordinary play is noisy: one more go before a winner is thrown out
+                wres, wout = self._arm(cand, [HEALTH_TEST])
+                wild += [r for r in wres if r["name"] == HEALTH_TEST]
+            rec["wild"] = [sum(1 for r in wild if r["pass"]), len(wild)]
+            if wout == "ok" and wild and not any(r["pass"] for r in wild):
+                verdict = {"verdict": "reject", "why": "won the tests but failed ordinary play (the wild test)"}
+                rec["why"] = verdict["why"]
         if verdict["verdict"] == "accept":
             self.champion = diff(cand)
             self._save("champion.json", self.champion)

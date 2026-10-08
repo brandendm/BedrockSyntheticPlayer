@@ -1,0 +1,1450 @@
+{
+ "courses": [
+  {
+   "parts": [
+    {
+     "kind": "step",
+     "tread": 5,
+     "gap": 5
+    },
+    {
+     "kind": "pit",
+     "width": 4,
+     "gap": 5
+    },
+    {
+     "kind": "step",
+     "tread": 6,
+     "gap": 4
+    },
+    {
+     "kind": "pit",
+     "width": 5,
+     "gap": 4
+    },
+    {
+     "kind": "pit",
+     "width": 3,
+     "gap": 4
+    },
+    {
+     "kind": "step",
+     "tread": 4,
+     "gap": 4
+    }
+   ],
+   "desc": "step(5) pit(4) step(6) pit(5) pit(3) step(4)",
+   "gen": 0,
+   "seed": 1
+  },
+  {
+   "parts": [
+    {
+     "kind": "pit",
+     "width": 4,
+     "gap": 6
+    },
+    {
+     "kind": "gate",
+     "south": true,
+     "gap": 7
+    },
+    {
+     "kind": "gate",
+     "south": false,
+     "gap": 5
+    }
+   ],
+   "desc": "pit(4) gateS gateN",
+   "gen": 0,
+   "seed": 1
+  },
+  {
+   "parts": [
+    {
+     "kind": "wall",
+     "depth": 8,
+     "gap": 5
+    },
+    {
+     "kind": "step",
+     "tread": 3,
+     "gap": 3
+    },
+    {
+     "kind": "step",
+     "tread": 5,
+     "gap": 4
+    },
+    {
+     "kind": "gate",
+     "south": false,
+     "gap": 6
+    },
+    {
+     "kind": "pit",
+     "width": 3,
+     "gap": 4
+    },
+    {
+     "kind": "wall",
+     "depth": 9,
+     "gap": 6
+    }
+   ],
+   "desc": "wall(8) step(3) step(5) gateN pit(3) wall(9)",
+   "gen": 0,
+   "seed": 1
+  },
+  {
+   "parts": [
+    {
+     "kind": "step",
+     "tread": 3,
+     "gap": 5
+    },
+    {
+     "kind": "wall",
+     "depth": 7,
+     "gap": 6
+    },
+    {
+     "kind": "step",
+     "tread": 6,
+     "gap": 4
+    },
+    {
+     "kind": "step",
+     "tread": 6,
+     "gap": 2
+    },
+    {
+     "kind": "pit",
+     "width": 5,
+     "gap": 5
+    },
+    {
+     "kind": "pit",
+     "width": 3,
+     "gap": 6
+    }
+   ],
+   "desc": "step(3) wall(7) step(6) step(6) pit(5) pit(3)",
+   "gen": 0,
+   "seed": 1
+  },
+  {
+   "parts": [
+    {
+     "kind": "step",
+     "tread": 4,
+     "gap": 5
+    },
+    {
+     "kind": "wall",
+     "depth": 6,
+     "gap": 7
+    },
+    {
+     "kind": "wall",
+     "depth": 9,
+     "gap": 8
+    },
+    {
+     "kind": "gate",
+     "south": true,
+     "gap": 5
+    },
+    {
+     "kind": "wall",
+     "depth": 9,
+     "gap": 7
+    },
+    {
+     "kind": "step",
+     "tread": 5,
+     "gap": 3
+    }
+   ],
+   "desc": "step(4) wall(6) wall(9) gateS wall(9) step(5)",
+   "gen": 0,
+   "seed": 1
+  },
+  {
+   "parts": [
+    {
+     "kind": "pit",
+     "width": 5,
+     "gap": 6
+    },
+    {
+     "kind": "wall",
+     "depth": 6,
+     "gap": 8
+    },
+    {
+     "kind": "step",
+     "tread": 4,
+     "gap": 3
+    },
+    {
+     "kind": "gate",
+     "south": true,
+     "gap": 9
+    }
+   ],
+   "desc": "pit(5) wall(6) step(4) gateS",
+   "gen": 0,
+   "seed": 1
+  },
+  {
+   "parts": [
+    {
+     "kind": "pit",
+     "width": 5,
+     "gap": 6
+    },
+    {
+     "kind": "wall",
+     "depth": 6,
+     "gap": 8
+    },
+    {
+     "kind": "step",
+     "tread": 3,
+     "gap": 3
+    },
+    {
+     "kind": "gate",
+     "south": true,
+     "gap": 9
+    }
+   ],
+   "desc": "pit(5) wall(6) step(3) gateS",
+   "gen": 1,
+   "seed": 1
+  },
+  {
+   "parts": [
+    {
+     "kind": "step",
+     "tread": 5,
+     "gap": 5
+    },
+    {
+     "kind": "pit",
+     "width": 4,
+     "gap": 5
+    },
+    {
+     "kind": "pit",
+     "width": 5,
+     "gap": 4
+    },
+    {
+     "kind": "pit",
+     "width": 3,
+     "gap": 4
+    },
+    {
+     "kind": "step",
+     "tread": 4,
+     "gap": 4
+    }
+   ],
+   "desc": "step(5) pit(4) pit(5) pit(3) step(4)",
+   "gen": 1,
+   "seed": 1
+  },
+  {
+   "parts": [
+    {
+     "kind": "pit",
+     "width": 5,
+     "gap": 6
+    },
+    {
+     "kind": "wall",
+     "depth": 6,
+     "gap": 8
+    },
+    {
+     "kind": "gate",
+     "south": true,
+     "gap": 9
+    }
+   ],
+   "desc": "pit(5) wall(6) gateS",
+   "gen": 1,
+   "seed": 1
+  },
+  {
+   "parts": [
+    {
+     "kind": "step",
+     "tread": 5,
+     "gap": 5
+    },
+    {
+     "kind": "pit",
+     "width": 4,
+     "gap": 5
+    },
+    {
+     "kind": "step",
+     "tread": 6,
+     "gap": 4
+    },
+    {
+     "kind": "pit",
+     "width": 5,
+     "gap": 4
+    },
+    {
+     "kind": "step",
+     "tread": 4,
+     "gap": 4
+    }
+   ],
+   "desc": "step(5) pit(4) step(6) pit(5) step(4)",
+   "gen": 1,
+   "seed": 1
+  },
+  {
+   "parts": [
+    {
+     "kind": "step",
+     "tread": 5,
+     "gap": 5
+    },
+    {
+     "kind": "pit",
+     "width": 4,
+     "gap": 5
+    },
+    {
+     "kind": "step",
+     "tread": 6,
+     "gap": 4
+    },
+    {
+     "kind": "pit",
+     "width": 5,
+     "gap": 4
+    },
+    {
+     "kind": "pit",
+     "width": 3,
+     "gap": 4
+    },
+    {
+     "kind": "gate",
+     "south": true,
+     "gap": 9
+    },
+    {
+     "kind": "step",
+     "tread": 4,
+     "gap": 4
+    }
+   ],
+   "desc": "step(5) pit(4) step(6) pit(5) pit(3) gateS step(4)",
+   "gen": 1,
+   "seed": 1
+  },
+  {
+   "parts": [
+    {
+     "kind": "pit",
+     "width": 5,
+     "gap": 6
+    },
+    {
+     "kind": "step",
+     "tread": 3,
+     "gap": 3
+    },
+    {
+     "kind": "wall",
+     "depth": 6,
+     "gap": 8
+    },
+    {
+     "kind": "gate",
+     "south": true,
+     "gap": 9
+    }
+   ],
+   "desc": "pit(5) step(3) wall(6) gateS",
+   "gen": 2,
+   "seed": 1
+  },
+  {
+   "parts": [
+    {
+     "kind": "pit",
+     "width": 5,
+     "gap": 6
+    },
+    {
+     "kind": "step",
+     "tread": 3,
+     "gap": 3
+    },
+    {
+     "kind": "gate",
+     "south": true,
+     "gap": 9
+    }
+   ],
+   "desc": "pit(5) step(3) gateS",
+   "gen": 2,
+   "seed": 1
+  },
+  {
+   "parts": [
+    {
+     "kind": "step",
+     "tread": 5,
+     "gap": 5
+    },
+    {
+     "kind": "pit",
+     "width": 4,
+     "gap": 5
+    },
+    {
+     "kind": "pit",
+     "width": 5,
+     "gap": 4
+    },
+    {
+     "kind": "pit",
+     "width": 3,
+     "gap": 4
+    },
+    {
+     "kind": "gate",
+     "south": true,
+     "gap": 6
+    },
+    {
+     "kind": "step",
+     "tread": 4,
+     "gap": 4
+    }
+   ],
+   "desc": "step(5) pit(4) pit(5) pit(3) gateS step(4)",
+   "gen": 2,
+   "seed": 1
+  },
+  {
+   "parts": [
+    {
+     "kind": "pit",
+     "width": 5,
+     "gap": 6
+    },
+    {
+     "kind": "wall",
+     "depth": 6,
+     "gap": 8
+    },
+    {
+     "kind": "gate",
+     "south": true,
+     "gap": 9
+    },
+    {
+     "kind": "step",
+     "tread": 3,
+     "gap": 3
+    }
+   ],
+   "desc": "pit(5) wall(6) gateS step(3)",
+   "gen": 2,
+   "seed": 1
+  },
+  {
+   "parts": [
+    {
+     "kind": "step",
+     "tread": 5,
+     "gap": 5
+    },
+    {
+     "kind": "pit",
+     "width": 4,
+     "gap": 5
+    },
+    {
+     "kind": "pit",
+     "width": 5,
+     "gap": 4
+    },
+    {
+     "kind": "step",
+     "tread": 4,
+     "gap": 4
+    },
+    {
+     "kind": "pit",
+     "width": 3,
+     "gap": 4
+    }
+   ],
+   "desc": "step(5) pit(4) pit(5) step(4) pit(3)",
+   "gen": 2,
+   "seed": 1
+  },
+  {
+   "parts": [
+    {
+     "kind": "pit",
+     "width": 5,
+     "gap": 6
+    },
+    {
+     "kind": "wall",
+     "depth": 6,
+     "gap": 8
+    },
+    {
+     "kind": "gate",
+     "south": false,
+     "gap": 10
+    }
+   ],
+   "desc": "pit(5) wall(6) gateN",
+   "gen": 2,
+   "seed": 1
+  },
+  {
+   "parts": [
+    {
+     "kind": "step",
+     "tread": 6,
+     "gap": 6
+    },
+    {
+     "kind": "pit",
+     "width": 4,
+     "gap": 5
+    },
+    {
+     "kind": "pit",
+     "width": 5,
+     "gap": 4
+    },
+    {
+     "kind": "pit",
+     "width": 3,
+     "gap": 4
+    },
+    {
+     "kind": "step",
+     "tread": 4,
+     "gap": 4
+    }
+   ],
+   "desc": "step(6) pit(4) pit(5) pit(3) step(4)",
+   "gen": 2,
+   "seed": 1
+  },
+  {
+   "parts": [
+    {
+     "kind": "pit",
+     "width": 5,
+     "gap": 6
+    },
+    {
+     "kind": "step",
+     "tread": 3,
+     "gap": 3
+    },
+    {
+     "kind": "wall",
+     "depth": 6,
+     "gap": 8
+    },
+    {
+     "kind": "gate",
+     "south": true,
+     "gap": 9
+    },
+    {
+     "kind": "gate",
+     "south": true,
+     "gap": 7
+    }
+   ],
+   "desc": "pit(5) step(3) wall(6) gateS gateS",
+   "gen": 3,
+   "seed": 1
+  },
+  {
+   "parts": [
+    {
+     "kind": "pit",
+     "width": 4,
+     "gap": 5
+    },
+    {
+     "kind": "pit",
+     "width": 5,
+     "gap": 4
+    },
+    {
+     "kind": "pit",
+     "width": 3,
+     "gap": 4
+    },
+    {
+     "kind": "gate",
+     "south": true,
+     "gap": 6
+    },
+    {
+     "kind": "step",
+     "tread": 4,
+     "gap": 4
+    }
+   ],
+   "desc": "pit(4) pit(5) pit(3) gateS step(4)",
+   "gen": 3,
+   "seed": 1
+  },
+  {
+   "parts": [
+    {
+     "kind": "step",
+     "tread": 5,
+     "gap": 5
+    },
+    {
+     "kind": "pit",
+     "width": 4,
+     "gap": 5
+    },
+    {
+     "kind": "pit",
+     "width": 3,
+     "gap": 5
+    },
+    {
+     "kind": "pit",
+     "width": 5,
+     "gap": 4
+    },
+    {
+     "kind": "step",
+     "tread": 4,
+     "gap": 4
+    }
+   ],
+   "desc": "step(5) pit(4) pit(3) pit(5) step(4)",
+   "gen": 3,
+   "seed": 1
+  },
+  {
+   "parts": [
+    {
+     "kind": "step",
+     "tread": 3,
+     "gap": 3
+    },
+    {
+     "kind": "pit",
+     "width": 5,
+     "gap": 6
+    },
+    {
+     "kind": "wall",
+     "depth": 6,
+     "gap": 8
+    },
+    {
+     "kind": "gate",
+     "south": true,
+     "gap": 9
+    }
+   ],
+   "desc": "step(3) pit(5) wall(6) gateS",
+   "gen": 3,
+   "seed": 1
+  },
+  {
+   "parts": [
+    {
+     "kind": "step",
+     "tread": 5,
+     "gap": 5
+    },
+    {
+     "kind": "pit",
+     "width": 4,
+     "gap": 5
+    },
+    {
+     "kind": "pit",
+     "width": 5,
+     "gap": 4
+    },
+    {
+     "kind": "pit",
+     "width": 3,
+     "gap": 5
+    },
+    {
+     "kind": "step",
+     "tread": 3,
+     "gap": 5
+    }
+   ],
+   "desc": "step(5) pit(4) pit(5) pit(3) step(3)",
+   "gen": 3,
+   "seed": 1
+  },
+  {
+   "parts": [
+    {
+     "kind": "pit",
+     "width": 5,
+     "gap": 6
+    },
+    {
+     "kind": "wall",
+     "depth": 6,
+     "gap": 8
+    },
+    {
+     "kind": "step",
+     "tread": 3,
+     "gap": 3
+    }
+   ],
+   "desc": "pit(5) wall(6) step(3)",
+   "gen": 3,
+   "seed": 1
+  },
+  {
+   "parts": [
+    {
+     "kind": "pit",
+     "width": 5,
+     "gap": 6
+    },
+    {
+     "kind": "step",
+     "tread": 3,
+     "gap": 3
+    },
+    {
+     "kind": "wall",
+     "depth": 6,
+     "gap": 8
+    },
+    {
+     "kind": "step",
+     "tread": 6,
+     "gap": 4
+    },
+    {
+     "kind": "gate",
+     "south": true,
+     "gap": 9
+    }
+   ],
+   "desc": "pit(5) step(3) wall(6) step(6) gateS",
+   "gen": 3,
+   "seed": 1
+  },
+  {
+   "parts": [
+    {
+     "kind": "step",
+     "tread": 5,
+     "gap": 5
+    },
+    {
+     "kind": "pit",
+     "width": 4,
+     "gap": 5
+    },
+    {
+     "kind": "pit",
+     "width": 5,
+     "gap": 4
+    },
+    {
+     "kind": "pit",
+     "width": 3,
+     "gap": 4
+    },
+    {
+     "kind": "gate",
+     "south": false,
+     "gap": 5
+    },
+    {
+     "kind": "step",
+     "tread": 4,
+     "gap": 4
+    }
+   ],
+   "desc": "step(5) pit(4) pit(5) pit(3) gateN step(4)",
+   "gen": 3,
+   "seed": 1
+  },
+  {
+   "parts": [
+    {
+     "kind": "step",
+     "tread": 5,
+     "gap": 5
+    },
+    {
+     "kind": "pit",
+     "width": 4,
+     "gap": 5
+    },
+    {
+     "kind": "pit",
+     "width": 5,
+     "gap": 4
+    },
+    {
+     "kind": "step",
+     "tread": 4,
+     "gap": 4
+    }
+   ],
+   "desc": "step(5) pit(4) pit(5) step(4)",
+   "gen": 3,
+   "seed": 1
+  },
+  {
+   "parts": [
+    {
+     "kind": "pit",
+     "width": 5,
+     "gap": 6
+    },
+    {
+     "kind": "wall",
+     "depth": 8,
+     "gap": 7
+    },
+    {
+     "kind": "gate",
+     "south": true,
+     "gap": 9
+    },
+    {
+     "kind": "step",
+     "tread": 3,
+     "gap": 3
+    }
+   ],
+   "desc": "pit(5) wall(8) gateS step(3)",
+   "gen": 3,
+   "seed": 1
+  },
+  {
+   "parts": [
+    {
+     "kind": "wall",
+     "depth": 9,
+     "gap": 6
+    },
+    {
+     "kind": "step",
+     "tread": 5,
+     "gap": 5
+    },
+    {
+     "kind": "pit",
+     "width": 4,
+     "gap": 5
+    },
+    {
+     "kind": "pit",
+     "width": 5,
+     "gap": 4
+    },
+    {
+     "kind": "pit",
+     "width": 3,
+     "gap": 4
+    },
+    {
+     "kind": "gate",
+     "south": true,
+     "gap": 6
+    },
+    {
+     "kind": "step",
+     "tread": 4,
+     "gap": 4
+    }
+   ],
+   "desc": "wall(9) step(5) pit(4) pit(5) pit(3) gateS step(4)",
+   "gen": 3,
+   "seed": 1
+  },
+  {
+   "parts": [
+    {
+     "kind": "step",
+     "tread": 5,
+     "gap": 5
+    },
+    {
+     "kind": "pit",
+     "width": 4,
+     "gap": 5
+    },
+    {
+     "kind": "pit",
+     "width": 5,
+     "gap": 4
+    },
+    {
+     "kind": "step",
+     "tread": 3,
+     "gap": 5
+    }
+   ],
+   "desc": "step(5) pit(4) pit(5) step(3)",
+   "gen": 4,
+   "seed": 1
+  },
+  {
+   "parts": [
+    {
+     "kind": "pit",
+     "width": 4,
+     "gap": 5
+    },
+    {
+     "kind": "pit",
+     "width": 5,
+     "gap": 4
+    },
+    {
+     "kind": "pit",
+     "width": 3,
+     "gap": 4
+    },
+    {
+     "kind": "gate",
+     "south": true,
+     "gap": 6
+    },
+    {
+     "kind": "step",
+     "tread": 5,
+     "gap": 4
+    },
+    {
+     "kind": "step",
+     "tread": 4,
+     "gap": 4
+    }
+   ],
+   "desc": "pit(4) pit(5) pit(3) gateS step(5) step(4)",
+   "gen": 4,
+   "seed": 1
+  },
+  {
+   "parts": [
+    {
+     "kind": "pit",
+     "width": 5,
+     "gap": 6
+    },
+    {
+     "kind": "wall",
+     "depth": 6,
+     "gap": 8
+    }
+   ],
+   "desc": "pit(5) wall(6)",
+   "gen": 4,
+   "seed": 1
+  },
+  {
+   "parts": [
+    {
+     "kind": "step",
+     "tread": 6,
+     "gap": 6
+    },
+    {
+     "kind": "pit",
+     "width": 4,
+     "gap": 5
+    },
+    {
+     "kind": "pit",
+     "width": 5,
+     "gap": 4
+    },
+    {
+     "kind": "pit",
+     "width": 3,
+     "gap": 5
+    },
+    {
+     "kind": "step",
+     "tread": 3,
+     "gap": 5
+    }
+   ],
+   "desc": "step(6) pit(4) pit(5) pit(3) step(3)",
+   "gen": 4,
+   "seed": 1
+  },
+  {
+   "parts": [
+    {
+     "kind": "pit",
+     "width": 4,
+     "gap": 5
+    },
+    {
+     "kind": "pit",
+     "width": 3,
+     "gap": 4
+    },
+    {
+     "kind": "pit",
+     "width": 5,
+     "gap": 4
+    },
+    {
+     "kind": "gate",
+     "south": true,
+     "gap": 6
+    },
+    {
+     "kind": "step",
+     "tread": 4,
+     "gap": 4
+    }
+   ],
+   "desc": "pit(4) pit(3) pit(5) gateS step(4)",
+   "gen": 4,
+   "seed": 1
+  }
+ ],
+ "unsolved": [
+  {
+   "parts": [
+    {
+     "kind": "pit",
+     "width": 5,
+     "gap": 6
+    },
+    {
+     "kind": "pit",
+     "width": 5,
+     "gap": 4
+    },
+    {
+     "kind": "step",
+     "tread": 3,
+     "gap": 2
+    },
+    {
+     "kind": "gate",
+     "south": true,
+     "gap": 9
+    },
+    {
+     "kind": "gate",
+     "south": false,
+     "gap": 9
+    },
+    {
+     "kind": "pit",
+     "width": 5,
+     "gap": 4
+    }
+   ],
+   "desc": "pit(5) pit(5) step(3) gateS gateN pit(5)",
+   "gen": 0,
+   "seed": 1
+  },
+  {
+   "parts": [
+    {
+     "kind": "gate",
+     "south": false,
+     "gap": 5
+    },
+    {
+     "kind": "pit",
+     "width": 4,
+     "gap": 5
+    },
+    {
+     "kind": "step",
+     "tread": 6,
+     "gap": 5
+    },
+    {
+     "kind": "gate",
+     "south": false,
+     "gap": 7
+    },
+    {
+     "kind": "step",
+     "tread": 4,
+     "gap": 2
+    }
+   ],
+   "desc": "gateN pit(4) step(6) gateN step(4)",
+   "gen": 0,
+   "seed": 1
+  },
+  {
+   "parts": [
+    {
+     "kind": "step",
+     "tread": 3,
+     "gap": 3
+    },
+    {
+     "kind": "wall",
+     "depth": 8,
+     "gap": 5
+    },
+    {
+     "kind": "step",
+     "tread": 5,
+     "gap": 4
+    },
+    {
+     "kind": "gate",
+     "south": false,
+     "gap": 6
+    },
+    {
+     "kind": "pit",
+     "width": 3,
+     "gap": 4
+    },
+    {
+     "kind": "wall",
+     "depth": 9,
+     "gap": 6
+    }
+   ],
+   "desc": "step(3) wall(8) step(5) gateN pit(3) wall(9)",
+   "gen": 1,
+   "seed": 1
+  },
+  {
+   "parts": [
+    {
+     "kind": "pit",
+     "width": 5,
+     "gap": 6
+    },
+    {
+     "kind": "wall",
+     "depth": 6,
+     "gap": 8
+    },
+    {
+     "kind": "gate",
+     "south": false,
+     "gap": 6
+    },
+    {
+     "kind": "step",
+     "tread": 4,
+     "gap": 3
+    },
+    {
+     "kind": "gate",
+     "south": true,
+     "gap": 9
+    }
+   ],
+   "desc": "pit(5) wall(6) gateN step(4) gateS",
+   "gen": 1,
+   "seed": 1
+  },
+  {
+   "parts": [
+    {
+     "kind": "step",
+     "tread": 5,
+     "gap": 5
+    },
+    {
+     "kind": "pit",
+     "width": 5,
+     "gap": 4
+    },
+    {
+     "kind": "pit",
+     "width": 3,
+     "gap": 4
+    },
+    {
+     "kind": "step",
+     "tread": 4,
+     "gap": 4
+    }
+   ],
+   "desc": "step(5) pit(5) pit(3) step(4)",
+   "gen": 2,
+   "seed": 1
+  },
+  {
+   "parts": [
+    {
+     "kind": "step",
+     "tread": 5,
+     "gap": 5
+    },
+    {
+     "kind": "pit",
+     "width": 4,
+     "gap": 5
+    },
+    {
+     "kind": "pit",
+     "width": 5,
+     "gap": 4
+    },
+    {
+     "kind": "pit",
+     "width": 4,
+     "gap": 4
+    },
+    {
+     "kind": "pit",
+     "width": 3,
+     "gap": 4
+    },
+    {
+     "kind": "step",
+     "tread": 4,
+     "gap": 4
+    }
+   ],
+   "desc": "step(5) pit(4) pit(5) pit(4) pit(3) step(4)",
+   "gen": 2,
+   "seed": 1
+  },
+  {
+   "parts": [
+    {
+     "kind": "pit",
+     "width": 5,
+     "gap": 6
+    },
+    {
+     "kind": "wall",
+     "depth": 8,
+     "gap": 8
+    },
+    {
+     "kind": "gate",
+     "south": true,
+     "gap": 9
+    }
+   ],
+   "desc": "pit(5) wall(8) gateS",
+   "gen": 2,
+   "seed": 1
+  },
+  {
+   "parts": [
+    {
+     "kind": "pit",
+     "width": 5,
+     "gap": 6
+    },
+    {
+     "kind": "gate",
+     "south": true,
+     "gap": 9
+    },
+    {
+     "kind": "wall",
+     "depth": 6,
+     "gap": 8
+    }
+   ],
+   "desc": "pit(5) gateS wall(6)",
+   "gen": 2,
+   "seed": 1
+  },
+  {
+   "parts": [
+    {
+     "kind": "pit",
+     "width": 4,
+     "gap": 5
+    },
+    {
+     "kind": "pit",
+     "width": 5,
+     "gap": 4
+    },
+    {
+     "kind": "pit",
+     "width": 4,
+     "gap": 6
+    },
+    {
+     "kind": "pit",
+     "width": 3,
+     "gap": 4
+    },
+    {
+     "kind": "gate",
+     "south": true,
+     "gap": 6
+    },
+    {
+     "kind": "step",
+     "tread": 4,
+     "gap": 4
+    }
+   ],
+   "desc": "pit(4) pit(5) pit(4) pit(3) gateS step(4)",
+   "gen": 4,
+   "seed": 1
+  },
+  {
+   "parts": [
+    {
+     "kind": "gate",
+     "south": false,
+     "gap": 7
+    },
+    {
+     "kind": "pit",
+     "width": 5,
+     "gap": 6
+    },
+    {
+     "kind": "wall",
+     "depth": 6,
+     "gap": 8
+    },
+    {
+     "kind": "step",
+     "tread": 3,
+     "gap": 3
+    }
+   ],
+   "desc": "gateN pit(5) wall(6) step(3)",
+   "gen": 4,
+   "seed": 1
+  },
+  {
+   "parts": [
+    {
+     "kind": "pit",
+     "width": 5,
+     "gap": 6
+    },
+    {
+     "kind": "step",
+     "tread": 3,
+     "gap": 3
+    },
+    {
+     "kind": "step",
+     "tread": 3,
+     "gap": 3
+    },
+    {
+     "kind": "wall",
+     "depth": 6,
+     "gap": 8
+    },
+    {
+     "kind": "step",
+     "tread": 6,
+     "gap": 4
+    },
+    {
+     "kind": "gate",
+     "south": true,
+     "gap": 9
+    }
+   ],
+   "desc": "pit(5) step(3) step(3) wall(6) step(6) gateS",
+   "gen": 4,
+   "seed": 1
+  },
+  {
+   "parts": [
+    {
+     "kind": "wall",
+     "depth": 6,
+     "gap": 8
+    },
+    {
+     "kind": "pit",
+     "width": 5,
+     "gap": 6
+    },
+    {
+     "kind": "step",
+     "tread": 3,
+     "gap": 3
+    }
+   ],
+   "desc": "wall(6) pit(5) step(3)",
+   "gen": 4,
+   "seed": 1
+  },
+  {
+   "parts": [
+    {
+     "kind": "pit",
+     "width": 5,
+     "gap": 6
+    },
+    {
+     "kind": "step",
+     "tread": 3,
+     "gap": 3
+    },
+    {
+     "kind": "wall",
+     "depth": 6,
+     "gap": 8
+    },
+    {
+     "kind": "step",
+     "tread": 6,
+     "gap": 4
+    },
+    {
+     "kind": "gate",
+     "south": true,
+     "gap": 9
+    },
+    {
+     "kind": "wall",
+     "depth": 7,
+     "gap": 7
+    }
+   ],
+   "desc": "pit(5) step(3) wall(6) step(6) gateS wall(7)",
+   "gen": 4,
+   "seed": 1
+  }
+ ]
+}

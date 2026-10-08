@@ -6,7 +6,7 @@
 // from y -10 to -4, dirt -3 to -1, grass 0. Two levels: UPPER, feet at y -4 (floor block -5, 3 high, ceiling -1) and LOWER, feet at -8 (floor -9, ceiling -5).
 import { makeRng } from './mathutil.js';
 
-export const CAVE_KINDS = ['cavewalk', 'cavemobs', 'cavedeep', 'caveescape'];
+export const CAVE_KINDS = ['cavewalk', 'cavemobs', 'cavedeep', 'caveescape', 'caveascent'];
 export const UP = -4, LOW = -8;
 /** The slab every cave course is cut into (a backed-up structure is 64 across at most: 4 + 56 = 60). */
 export const CAVE_EXT = { w: 4, e: 56, r: 16 };
@@ -63,6 +63,25 @@ export function caveCourse(kind, seed = 1, level = 1) {
     for (const [type, dx] of [['zombie', 2 + level], ['zombie', 5 + level], ['creeper', 10], ['zombie', 14]].slice(0, 2 + level)) mobs.push({ type, x: rx + dx + ri(0, 2), y: LOW, z: ri(-1, 1) });
     return { ext: { ...CAVE_EXT }, air, fill, start, goal: { x: exitX, y: 1, z: 0 }, mobs, kit, exitFeetY: 1,
       text: `You are at the dead end of a cave 12 below the surface, ${len} long, with zombies and a creeper between you and the way out (a ramp up at the far end) . Get out onto the surface (your pickaxe works too).` };
+  }
+
+  if (kind === 'caveascent') {
+    // deep in the lower level: a lava hall between you and the ramp up, mobs on both sides, a dead-end behind you. Get to the surface.
+    fy = LOW; cx = 8; cz = 0;
+    const len = 22 + level * 3, sx = cx + len;
+    air.push(box(cx, fy, -1, sx, fy + 2, 1));
+    air.push(box(cx + 14, fy, 2, cx + 17, fy + 2, 4));                    // a side pocket
+    // the lava hall: in the middle stretch the floor either side of a one-block path is lava
+    const hx = cx + 6;
+    const hl = 6 + level;                                                  // a longer hall higher up
+    fill.push({ ...box(hx, fy - 1, -1, hx + hl, fy - 1, -1), block: 'lava' }, { ...box(hx, fy - 1, 1, hx + hl, fy - 1, 1), block: 'lava' });
+    const rx = 8;
+    for (let i = 0; i <= 8; i++) air.push(box(rx - i, LOW + i, -1, rx - i, LOW + i + 2, 1));
+    start.x = sx; start.y = LOW; start.z = 0;
+    const picks = [['skeleton', hx - 3], ['zombie', hx + 9], ['zombie', hx + 11], ['creeper', sx - 3], ['skeleton', hx + 10]].slice(0, 2 + level);
+    for (const [type, mx] of picks) mobs.push({ type, x: mx, y: LOW, z: ri(0, 0) });
+    return { ext: { ...CAVE_EXT }, air, fill, start, goal: { x: rx - 9, y: 1, z: 0 }, mobs, kit, exitFeetY: 1,
+      text: 'Deep in a cave with a lava hall between you and the way out, and monsters on both sides. Reach the surface without burning.' };
   }
 
   // ---- the three walks: straight, a turn, straights with a squeeze / pool / lava, a drop (or stairs) to the lower level, straight, a turn, straight, the goal

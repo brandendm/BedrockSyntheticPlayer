@@ -10,9 +10,9 @@ test('every cave can be walked from the start to the goal, for many seeds and le
     assert.ok(path.length >= 10, `${kind} seed ${seed}: the walk is only ${path.length} cells`);
   }
 });
-test('the walk never steps on lava, and the lava course has lava next to the path', () => {
-  for (let seed = 1; seed <= 20; seed++) {
-    const c = caveCourse('cavedeep', seed, 2);
+test('the walk never steps on lava, and the lava courses have lava next to the path', () => {
+  for (let seed = 1; seed <= 20; seed++) for (const kind of ['cavedeep', 'caveascent']) {
+    const c = caveCourse(kind, seed, 2);
     const lava = new Set();
     for (const f of c.fill) if (f.block === 'lava') for (let x = f.x1; x <= f.x2; x++) for (let y = f.y1; y <= f.y2; y++) for (let z = f.z1; z <= f.z2; z++) lava.add(`${x},${y},${z}`);
     assert.ok(lava.size >= 6);
@@ -28,14 +28,14 @@ test('everything is inside the slab: rock above and below, within the extent', (
     const c = caveCourse(kind, seed, 3);
     for (const b of [...c.air, ...c.fill]) {
       assert.ok(b.y1 >= -9 || b.y1 >= LOW - 2, `${kind} ${seed}: floor too low ${b.y1}`);
-      if (kind !== 'caveescape') assert.ok(b.y2 <= UP + 2, `${kind} ${seed}: roof too high ${b.y2}`);
+      if (kind !== 'caveescape' && kind !== 'caveascent') assert.ok(b.y2 <= UP + 2, `${kind} ${seed}: roof too high ${b.y2}`);
       assert.ok(b.x1 >= -c.ext.w && b.x2 <= c.ext.e, `${kind} ${seed}: x ${b.x1}..${b.x2} outside ${-c.ext.w}..${c.ext.e}`);
       assert.ok(b.z1 >= -c.ext.r && b.z2 <= c.ext.r, `${kind} ${seed}: z ${b.z1}..${b.z2} outside ±${c.ext.r}`);
     }
   }
 });
 test('mobs stand in the open, on the cave floor', () => {
-  for (const kind of ['cavemobs', 'cavedeep', 'caveescape']) for (let seed = 1; seed <= 25; seed++) {
+  for (const kind of ['cavemobs', 'cavedeep', 'caveescape', 'caveascent']) for (let seed = 1; seed <= 25; seed++) {
     const c = caveCourse(kind, seed, 3);
     assert.ok(c.mobs.length >= 1, kind);
     const open = (x, y, z) => [...c.air, ...c.fill].some((b) => x >= b.x1 && x <= b.x2 && y >= b.y1 && y <= b.y2 && z >= b.z1 && z <= b.z2);

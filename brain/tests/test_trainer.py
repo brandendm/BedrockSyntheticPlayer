@@ -102,7 +102,7 @@ def good_sim(group, champion, seed, alive):
 
 class Cycle(unittest.TestCase):
     def test_a_better_candidate_becomes_champion_and_is_sent_to_the_bot(self):
-        w = World(lambda n, p: 0.95 if p.get("fightMargin") == 0.7 and n in T.GROUP_TESTS["combat"] else (0.9 if n in T.GUARD_TESTS else 0.15))
+        w = World(lambda n, p: 0.95 if p.get("fightMargin") == 0.7 and n in T.GROUP_TESTS["combat"] else (0.9 if n in T.GUARD_TESTS or n == T.HEALTH_TEST else 0.15))
         t = make(w, good_sim)
         t.group_i = 1                      # combat
         t.guard_baseline = [9, 10]
@@ -112,6 +112,28 @@ class Cycle(unittest.TestCase):
         self.assertTrue(w.sent[-1].startswith('policy {"fightMargin": 0.7}'))
         self.assertEqual(json.loads((t.dir / "champion.json").read_text()), {"fightMargin": 0.7})
         self.assertIn("ACCEPTED", (t.dir / "journal.jsonl").read_text())
+
+    def test_a_winner_that_fails_ordinary_play_is_not_kept(self):
+        w = World(lambda n, p: 0.0 if n == T.HEALTH_TEST else (0.95 if p.get("fightMargin") == 0.7 and n in T.GROUP_TESTS["combat"] else (0.9 if n in T.GUARD_TESTS else 0.15)))
+        t = make(w, good_sim)
+        t.group_i = 1
+        t.guard_baseline = [9, 10]
+        t.cycle()
+        self.assertEqual(t.champion, {})
+        self.assertIn("ordinary play", (t.dir / "journal.jsonl").read_text())
+
+    def test_weakest_tests_table_and_evolve_hook(self):
+        calls = []
+        w = World(lambda n, p: 0.1 if n == "caveescape" else 0.9)
+        t = make(w, good_sim)
+        t.evolve = lambda seed, alive: calls.append(seed) or {"learnable": 1}
+        t.guard_baseline = [9, 10]
+        t.cycle_n = T.EVOLVE_EVERY - 1
+        t.group_i = 0                      # tow
+        t.cycle()
+        self.assertEqual(len(calls), 1)
+        t.cells["caveescape"] = [1, 9]
+        self.assertIn("caveescape", t.write_digest())
 
     def test_a_candidate_that_does_nothing_in_the_real_game_is_dropped(self):
         w = World(lambda n, p: 0.5)

@@ -4,16 +4,27 @@
 import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
 import { runJobs } from './pool.mjs';
+import fs from 'node:fs';
 
 const range = (a, b) => Array.from({ length: b - a + 1 }, (_, i) => a + i);
 const FIXED = ['leadledge', 'leadstep', 'leadstair', 'leadturn', 'leadgate'];
 
+function withHard(sets) {
+  const hard = hardCourses().map((c, i) => ({ kind: 'parts', id: `h${i}`, parts: c.parts, name: `hard${i}:${c.desc ?? ''}`.slice(0, 60) }));
+  return { train: [...sets.train, ...hard.filter((_, i) => i % 2 === 0)], held: [...sets.held, ...hard.filter((_, i) => i % 2 === 1)] };
+}
+
 /** The job lists. Train is what the search sees; held is never searched on (other seeds, other courses). */
+/** The evolved hard courses (sim/evolve_courses.mjs): alternate ones go to train and held, so a policy cannot be fitted to all of them. */
+export function hardCourses(file = fileURLToPath(new URL('./hardcourses.json', import.meta.url))) {
+  try { return JSON.parse(fs.readFileSync(file, 'utf8')).courses ?? []; } catch { return []; }
+}
+
 export function jobSets(group) {
-  if (group === 'tow') return {
+  if (group === 'tow') return withHard({
     train: [...FIXED.map((name) => ({ kind: 'fixed', name })), ...range(2001, 2012).map((seed) => ({ kind: 'rand', seed, level: 1 })), ...range(2001, 2010).map((seed) => ({ kind: 'rand', seed, level: 2 }))],
     held: [...FIXED.map((name) => ({ kind: 'fixed', name })), ...range(1000, 1011).map((seed) => ({ kind: 'rand', seed, level: 1 })), ...range(1000, 1009).map((seed) => ({ kind: 'rand', seed, level: 2 }))],
-  };
+  });
   if (group === 'combat') return {
     train: [{ kind: 'base' }, ...range(1, 3).map((s) => ({ kind: 'zombies', seed: s, n: 40 })), ...range(1, 2).map((s) => ({ kind: 'creepers', seed: s, n: 40 }))],
     held: [{ kind: 'base' }, ...range(11, 13).map((s) => ({ kind: 'zombies', seed: s, n: 40 })), ...range(11, 12).map((s) => ({ kind: 'creepers', seed: s, n: 40 }))],

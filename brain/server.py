@@ -871,11 +871,21 @@ def _setup_trainer() -> None:
                 tail = ""
             return {"error": f"sim/train.mjs exited with code {proc.returncode} and wrote no result: {tail[:300]}"}
 
+    def evolve(seed, alive):
+        """Breed hard tow courses (sim/evolve_courses.mjs). Returns its summary, or {"error": why}; never raises."""
+        if not node or not (repo / "sim" / "evolve_courses.mjs").exists():
+            return {"error": "node or sim/evolve_courses.mjs not found"}
+        try:
+            r = subprocess.run([node, "sim/evolve_courses.mjs", "--gens", "4", "--pop", "12", "--seed", str(seed)], cwd=str(repo), capture_output=True, text=True, timeout=1500)
+            return json.loads(r.stdout.strip().splitlines()[-1]) if r.stdout.strip() else {"error": (r.stderr or "no output")[-200:]}
+        except (OSError, ValueError, subprocess.TimeoutExpired) as e:
+            return {"error": str(e)[:200]}
+
     def status():
         with _lock:
             return _status["data"], time.time() - (_status["at"] or 0)
 
-    tr = Trainer(ROOT, run_batch=ar.run_batch, send=ar.queue, sim_search=sim_search, status=status)
+    tr = Trainer(ROOT, run_batch=ar.run_batch, send=ar.queue, sim_search=sim_search, status=status, evolve=evolve)
     _train["run"] = tr
     tr.start()
 
