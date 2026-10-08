@@ -106,6 +106,12 @@ export class LeadTow {
       const k = 2 / (d || 1);
       // Along the runway if there is one (the way it was built), else straight away from the boat.
       const to = dir ? { x: p.x + dir[0] * 2, y: p.y, z: p.z + dir[1] * 2 } : { x: p.x + (p.x - b.x) * k, y: p.y, z: p.z + (p.z - b.z) * k };
+      // (u267, found by the simulator: on a runway that was one block short the walk away from the boat carried on past its end and the bot fell in the pit)
+      if (!ride) {
+        const ux = to.x - p.x, uz = to.z - p.z, ul = Math.hypot(ux, uz) || 1;
+        const under = S.blockAt({ x: p.x + (ux / ul) * 0.9, y: Math.floor(p.y + 0.01) - 1, z: p.z + (uz / ul) * 0.9 }) ?? 'air';
+        if (/^(air|cave_air|void_air|water|flowing_water|lava|flowing_lava)$/.test(under)) break;
+      }
       try { sim.moveToLocation(to, { speed: d > goal - 1.5 ? 0.4 : 1 }); } catch { /* */ }
       await S.wait(gen, 1);
     }
@@ -255,14 +261,16 @@ export class LeadTow {
         // stepped off the missing 6th cell into the pit. A jam means a stop, whatever was built.)
         if (bg.built) { m.built += bg.built; note(`bridged ${bg.jam ? 'part of ' : ''}a gap ${bg.width} wide${bg.jam ? ` (${bg.built})` : ''}`); if (!bg.jam) return plan(target); }
         // (the boat is jammed behind us: stand and let the loop's own jam handling sling it free, with a runway if need be, then take a new route)
-        // (u259 live, leadledge: the half bridge was held on, and the loop's jam handling then walked the bot off it into the pit. With a bridge begun, or the boat still below the lip, the sling is done HERE.)
+        // (u258 live, leadledge: the half bridge was held on, and the loop's jam handling then walked the bot off it into the pit (a straight walk to a flank spot or a step): 40 s.
+        // With a bridge begun, the sling is done HERE, on the bridge, as often as it takes, and the bridging goes on from where it stopped.)
         if (bg.jam && (bg.built || bg.why === 'the boat is still below the lip')) {
           for (let t = 0; t < 3; t++) {
             m.slings++; mark('sling');
+            // (nothing built yet: a runway out over the gap for the room to stretch the lead, as the loop's own sling has)
             const rw = bg.built ? null : await this.runway(gen, boat, stretchFor(3) + t * 0.8, guard);
             if (rw?.built) { note(`runway: ${rw.built} blocks`); m.built += rw.built; }
             const r = await this.sling(gen, boat, { ride: false, target: stretchFor(3) + t * 0.8, guard, dir: rw?.dir ?? null });
-            trace(`tow: sling ${bg.built ? 'on the half bridge' : 'before bridging'}: stretch ${r.stretch}, ${r.ok ? 'it came' : r.snapped ? 'LEAD BROKE' : 'it did not come'}, boat peaked ${r.peak} b/s, climbed ${r.climbed}`);
+            trace(`tow: sling on the half bridge: stretch ${r.stretch}, ${r.ok ? 'it came' : r.snapped ? 'LEAD BROKE' : 'it did not come'}, boat peaked ${r.peak} b/s, climbed ${r.climbed}`);
             if (r.snapped) { m.snapped = true; m.why = 'the lead broke in a sling'; return null; }
             if (r.ok) {
               m.slingOk++; mark('plan');
@@ -270,6 +278,9 @@ export class LeadTow {
               // bridge is finished first)
               const b2 = await this.bridgeGap(gen, boat, target, guard);
               if (b2.built) { m.built += b2.built; note(`bridged the rest of the gap (${b2.built})`); }
+              // (u267, found by the simulator: the "came" was the boat creeping up the wall face, still jammed below the lip, and the bridge stopped one cell short: the route
+              // search then took the one cell as a jump and the walker fell. A bridge that stopped on a jammed boat is slung again, not walked.)
+              if (b2.jam) { note('the boat is still jammed: sling again'); continue; }
               return plan(target);
             }
           }
