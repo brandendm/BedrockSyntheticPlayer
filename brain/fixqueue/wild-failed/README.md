@@ -1,6 +1,6 @@
 # wild: failed
 
-Rank 7, seen 5 times. Pass rate over the logged runs of `wild`: 1/6.
+Rank 4, seen 5 times. Pass rate over the logged runs of `wild`: 1/6.
 
 ## Start here
 - (no hint: grep the test's name in behavior_pack/scripts/game/scenarios.js)

@@ -1,0 +1,7 @@
+2026-10-09 04:36:31  PASS  still alive after 75 s; level 2 seed 22, lowest health 15, 10 mobs, 0 left (mode none)
+2026-10-09 04:42:43  FAIL  died; level 2 seed 20, lowest health 0, 10 mobs, 12 left (mode fight)
+2026-10-09 04:50:34  PASS  still alive after 75 s; level 2 seed 35, lowest health 17, 10 mobs, 0 left (mode none)
+2026-10-09 04:56:50  FAIL  died; level 2 seed 35, lowest health 0, 10 mobs, 17 left (mode flee)
+2026-10-09 06:10:07  PASS  still alive after 75 s; level 2 seed 10, lowest health 8, 10 mobs, 1 left (mode none)
+2026-10-09 06:13:52  PASS  still alive after 75 s; level 2 seed 18, lowest health 6, 10 mobs, 0 left (mode none)
+2026-10-09 06:25:15  PASS  still alive after 75 s; level 2 seed 34, lowest health 16, 10 mobs, 0 left (mode none)

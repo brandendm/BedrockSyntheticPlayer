@@ -1,6 +1,6 @@
 # bench stall: gather_logs / none @plan (after nothing)
 
-Rank 5, seen 8 times. Pass rate over the logged runs of `bench stall`: n/a.
+Rank 2, seen 8 times. Pass rate over the logged runs of `bench stall`: n/a.
 
 ## Start here
 - behavior_pack/scripts/game/agent.js (runAuto, planStep)

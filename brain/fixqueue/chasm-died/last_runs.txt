@@ -1,0 +1,4 @@
+2026-10-09 06:48:04  FAIL  died in 20s; level 2 seed 11, lowest health 0, 5 mobs, 8 left, started 4x (mode none, x 21/45)
+2026-10-09 06:49:41  FAIL  died in 10s; level 2 seed 27, lowest health 0, 5 mobs, 12 left, started 3x (mode none, x 21/45)
+2026-10-09 06:51:12  FAIL  died in 15s; level 2 seed 27, lowest health 0, 5 mobs, 15 left, started 2x (mode flee, x 25/45)
+2026-10-09 06:53:44  PASS  reached the gold block in 59s; level 2 seed 14, lowest health 5, 5 mobs, 2 left, started 8x (mode none, x 44/45)

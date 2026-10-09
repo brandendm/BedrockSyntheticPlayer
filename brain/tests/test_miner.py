@@ -63,3 +63,10 @@ class FixQueueTests(unittest.TestCase):
             (root / "logs" / "tests.jsonl").write_text("", encoding="utf-8")
             miner.write_fixqueue(root)
             self.assertFalse(f.exists())
+
+
+class RecencyTests(unittest.TestCase):
+    def test_night_shelter_is_not_a_stall(self):
+        rec = {"runs": [{"stalls": [{"step": "shelter", "mode": "none"}] * 3 + [{"step": "gather_logs", "mode": "none"}]}]}
+        c = miner.cluster_bench([rec])
+        self.assertEqual(sum(c.values()), 1)

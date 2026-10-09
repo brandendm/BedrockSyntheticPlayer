@@ -1,6 +1,6 @@
 # raid: died while fleeing
 
-Rank 6, seen 5 times. Pass rate over the logged runs of `raid`: 2/9.
+Rank 3, seen 5 times. Pass rate over the logged runs of `raid`: 2/9.
 
 ## Start here
 - behavior_pack/scripts/core/terrain.js (the course)

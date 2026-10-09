@@ -4,10 +4,7 @@ Ranked from the bot's own test results and benchmark runs (brain/miner.py). Fix 
 
 | count | failure |
 |---|---|
-| 19 | bench stall: shelter / none @plan (after nothing) |
-| 18 | bench stall: - / none (after nothing) |
 | 16 | bench stall: - / none @plan (after nothing) |
-| 15 | bench stall: shelter / none (after nothing) |
 | 8 | bench stall: gather_logs / none @plan (after nothing) |
 | 5 | raid: died while fleeing |
 | 5 | wild: failed |

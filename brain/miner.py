@@ -37,12 +37,17 @@ def cluster_tests(events: list) -> Counter:
     return c
 
 
+WAITING_STEPS = {"shelter", "rest", "wait_smelt", "sleep"}
+
+
 def cluster_bench(runs: list) -> Counter:
     """Benchmark records -> Counter of stall and death keys, weighted by how many stalls (each is a minute without progress)."""
     c: Counter = Counter()
     for rec in runs:
         for r in rec.get("runs") or []:
             for s in r.get("stalls") or []:
+                if s.get("step") in WAITING_STEPS:   # (holing up for the night is the plan, not a stall)
+                    continue
                 where = f" @{s['where']}" if s.get("where") else ""
                 c[f"bench stall: {s.get('step') or '-'} / {s.get('mode') or '-'}{where} (after {s.get('last') or 'nothing'})"] += 1
             for d in r.get("deaths") or []:
@@ -86,8 +91,8 @@ def _read_jsonl(f: Path, tail: int) -> list:
 
 
 def mine(root: Path) -> dict:
-    tests = _read_jsonl(root / "logs" / "tests.jsonl", 4000)
-    bench = _read_jsonl(root / "bench" / "runs.jsonl", 20)
+    tests = _read_jsonl(root / "logs" / "tests.jsonl", 1500)       # (recent: what is broken now, not what was fixed last week)
+    bench = _read_jsonl(root / "bench" / "runs.jsonl", 2)
     clusters = cluster_tests(tests) + cluster_bench(bench)
     return {"clusters": clusters.most_common(25), "rates": pass_rates(tests)}
 
