@@ -2714,6 +2714,7 @@ async function runOne(agent, player, name, arg, human = false) {
         // A physics probe (core/probes.js): a scripted experiment, every tick recorded, sent to the brain as a 'probe' event. The simulator runs the same
         // probe (sim/probes_run.mjs) and sim/calibrate.mjs makes its numbers agree with these.
         const pr = PROBES[name];
+        if (name === 'probewater') agent.newTask({ kind: 'test' }); // (a job of its own in water: the swim-out reflex left it alone; u306's first trace swam out to the wall)
         giveItem('lead', 4);
         const build = [...pr.floor(x, gy, z), ...(pr.cmds ? pr.cmds(x, gy, z) : [])];
         for (const c of build) cmd(c);
