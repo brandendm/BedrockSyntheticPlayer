@@ -116,6 +116,20 @@ class Live(unittest.TestCase):
         self.assertTrue(self.admin.console("bot", "op @s", target="Alice")["ok"])
         self.assertEqual(S.parse_players(["There are 0/10 players online:", ""]), [])
 
+    def test_auto_backup_and_corruption(self):
+        r = self.admin.server_stop()
+        self.assertTrue(r["backup"].endswith(".zip"), r)
+        self.assertEqual(len(self.admin.backups.list()), 1)
+        self.assertIsNone(self.admin.status("owner")["corrupted"])
+        (self.sd / "worlds" / "Bedrock level" / "CORRUPTED.txt").write_text("Corruption: not an sstable (bad magic number)")
+        st = self.admin.status("owner")
+        self.assertIn("sstable", st["corrupted"])
+        self.assertEqual(st["latest_backup"], self.admin.backups.list()[0]["name"])
+        self.assertTrue(self.sm.start()["ok"])
+        r = self.admin.server_stop()
+        self.assertIsNone(r["backup"])                      # a corrupted world is not backed up over the good copies
+        self.assertEqual(len(self.admin.backups.list()), 1)
+
     def test_default_chains(self):
         names = [c["name"] for c in self.admin.chains.load()]
         self.assertIn("Saddled horse + mount", names)

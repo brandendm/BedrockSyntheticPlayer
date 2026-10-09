@@ -88,6 +88,12 @@ code{background:#0e1014;padding:1px 5px;border-radius:4px}
   <div id="content">
 
     <div class="page on" id="p-overview">
+      <div class="card" id="o-warn" hidden style="border-color:#8a3333;background:#2a1a1c;margin-bottom:14px">
+        <h3 style="color:var(--bad)">World flagged corrupted</h3>
+        <div id="o-warn-note" class="mute"></div>
+        <p>Starting the server makes it try to repair the world itself (that worked earlier today). If it keeps failing, restore the latest backup.</p>
+        <div class="row"><button class="go" onclick="restoreLatest()">Restore latest backup</button><button onclick="show('backups')">Backups</button></div>
+      </div>
       <div class="grid">
         <div class="card"><h3>Server</h3><div class="big" id="o-state">...</div><div class="mute" id="o-up"></div>
           <div class="row"><button class="go" onclick="srv('start')">Start</button><button onclick="srv('restart')">Restart</button><button class="danger" onclick="srv('stop')">Stop</button></div></div>
@@ -204,8 +210,14 @@ async function status(){
     $('o-up').textContent=on?`pid ${j.server.pid} · up ${Math.round(j.server.up_s/60)} min`:'not running';
     $('o-level').textContent=j.level;$('o-bk').textContent=`${j.backups} backups · ${j.chains} chains`;
     $('info').textContent='signed in as '+j.role;
+    $('o-warn').hidden=!j.corrupted;$('o-warn-note').textContent=j.corrupted||'';latestBackup=j.latest_backup||null;
     $('gate').hidden=true;$('app').hidden=false;
   }catch{}
+}
+let latestBackup=null;
+async function restoreLatest(){
+  if(!latestBackup){say('top','There is no backup to restore yet',false);return}
+  await restore(latestBackup);
 }
 async function srv(what){
   if(what!=='start'&&!confirm(what==='stop'?'Stop the server? Players are disconnected.':'Restart the server? Players are disconnected.'))return;

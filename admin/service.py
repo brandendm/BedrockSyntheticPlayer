@@ -46,6 +46,7 @@ DEFAULTS = {
     "brain_url": "http://127.0.0.1:8765",     # chain lines "game ..." are queued here for the bot/dashboard
     "backups_dir": str(ROOT / "backups"),
     "keep_backups": 20,
+    "auto_backup": True,                      # a backup after every clean stop (the world is at rest then: a perfect copy), so there is always a good one
     "lan": True,                              # also listen on the local network so a phone can open the panel (the token is still needed)
 }
 BOT_ACTIONS = {"players", "status", "console", "console_log", "backup_create", "backups_list", "chain_run", "chains_list"}
@@ -296,6 +297,13 @@ class Backups:
     def world_dir(self) -> Path:
         return self.server_dir / "worlds" / self.level()
 
+    def corrupted(self) -> str | None:
+        """The server's own note (CORRUPTED.txt in the world folder, written when it finds the level damaged), or None."""
+        try:
+            return (self.world_dir() / "CORRUPTED.txt").read_text(encoding="utf-8", errors="replace").strip() or "level flagged corrupted"
+        except OSError:
+            return None
+
     def list(self) -> list[dict]:
         self.dest.mkdir(parents=True, exist_ok=True)
         out = []
@@ -347,7 +355,7 @@ class Backups:
 
     def prune(self):
         for old in self.list()[self.keep:]:
-            if "pre-restore" not in old["name"]:
+            if "pre-restore" not in old["name"] and "corrupted" not in old["name"]:
                 try:
                     (self.dest / old["name"]).unlink()
                 except OSError:
@@ -458,7 +466,27 @@ class Admin:
     def status(self, role):
         sv = self.server
         return {"role": role, "server": {"running": sv.alive(), "pid": sv.proc.pid if sv.alive() else None, "up_s": round(time.time() - sv.started_at) if sv.alive() else 0},
-                "level": self.backups.level(), "backups": len(self.backups.list()), "chains": len(self.chains.load())}
+                "level": self.backups.level(), "backups": len(self.backups.list()), "chains": len(self.chains.load()),
+                "corrupted": self.backups.corrupted(), "latest_backup": (self.backups.list() or [{}])[0].get("name")}
+
+    def _auto_backup(self, label):
+        """After a clean stop: a cold copy of the world, unless the server flagged it corrupted (a bad copy must not push out a good one)."""
+        if not self.cfg.get("auto_backup") or self.backups.corrupted():
+            return None
+        r = self.backups.create(label)
+        return r.get("name") if r.get("ok") else f"backup failed: {r.get('error')}"
+
+    def server_stop(self):
+        r = self.server.stop()
+        if r.get("was_running") and r.get("how") == "stopped cleanly":
+            r["backup"] = self._auto_backup("after-stop")
+        return r
+
+    def server_restart(self):
+        st = self.server_stop()
+        time.sleep(0.5)
+        r = self.server.start()
+        return {"ok": r.get("ok", False), "stop": st, "start": r}
 
     def players(self):
         try:
@@ -545,9 +573,9 @@ class Admin:
         if action == "server_start":
             return sv.start()
         if action == "server_stop":
-            return sv.stop()
+            return self.server_stop()
         if action == "server_restart":
-            return sv.restart()
+            return self.server_restart()
         if action == "backups_list":
             return {"backups": self.backups.list()}
         if action == "backup_create":
@@ -721,7 +749,7 @@ def main(argv=None):
     finally:
         if sm.alive():
             print("Stopping the server...")
-            sm.stop()
+            admin.server_stop()
 
 
 if __name__ == "__main__":
