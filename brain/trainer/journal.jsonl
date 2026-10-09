@@ -11,3 +11,6 @@
 {"t": "2026-10-09 04:57:29", "event": "cycle", "n": 5, "group": "play", "outcome": "aborted", "candidate_diff": {"attackerMemory": 220.338}, "why": "the batch ended: stopped", "search": "random step (no simulator for this group)"}
 {"t": "2026-10-09 05:32:06", "event": "switched on"}
 {"t": "2026-10-09 05:32:24", "event": "cycle", "n": 6, "group": "tow", "outcome": "aborted", "candidate_diff": {}, "why": "sim/train.mjs exited with code 13 and wrote no result: "}
+{"t": "2026-10-09 06:07:16", "event": "switched on"}
+{"t": "2026-10-09 06:10:08", "event": "bench", "outcome": "ok", "pass": [], "champion": {}}
+{"t": "2026-10-09 06:10:10", "event": "cycle", "n": 7, "group": "tow", "outcome": "aborted", "candidate_diff": {}, "why": "sim/train.mjs exited with code 1 and wrote no result:     at processTicksAndRejections (node:internal/process/task_queues:96:5) |     at async scorePolicy (file:///C:/Users/brand/source/repos/bedrock-agent/sim/evals.mjs:76:15) |     at async file:///C:/Users/brand/source/repos/bedrock-agent/sim/train.mjs:40:19"}

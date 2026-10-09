@@ -9,7 +9,8 @@ export async function runJobs(jobs, workers = Math.max(1, Math.min(os.cpus().len
   const out = new Array(jobs.length).fill(null); let next = 0, settled = 0, deaths = 0; const procs = [];
   const file = workerFile ?? fileURLToPath(new URL('./eval_worker.mjs', import.meta.url));
   const maxDeaths = 4 + jobs.length;
-  let errTail = '';
+  let errTail = '', errHead = '';
+  const why = () => (errHead.length < 700 ? errHead : `${errHead.slice(0, 500)} ... ${errTail}`).trim().replace(/\s*\n\s*/g, ' | ');
   await new Promise((resolve, reject) => {
     if (!jobs.length) return resolve();
     const finish = () => { if (settled >= jobs.length) resolve(); };
@@ -18,7 +19,7 @@ export async function runJobs(jobs, workers = Math.max(1, Math.min(os.cpus().len
       try { p = spawn(process.execPath, [file], { stdio: ['pipe', 'pipe', 'pipe'] }); } catch (e) { return reject(new Error(`cannot start a worker: ${e}`)); }
       procs.push(p);
       let buf = '', inflight = null, dead = false;
-      p.stderr.on('data', (d) => { errTail = (errTail + d).slice(-600); });
+      p.stderr.on('data', (d) => { if (errHead.length < 700) errHead += d; errTail = (errTail + d).slice(-600); });
       const feed = () => { if (next < jobs.length) { inflight = next++; try { p.stdin.write(JSON.stringify({ ...jobs[inflight], id: inflight }) + '\n'); } catch { /* the close handler deals with it */ } } else { inflight = null; try { p.stdin.end(); } catch { /* */ } } };
       p.stdout.on('data', (d) => {
         buf += d; let i;
@@ -36,7 +37,7 @@ export async function runJobs(jobs, workers = Math.max(1, Math.min(os.cpus().len
         if (inflight !== null) { out[inflight] = null; inflight = null; settled++; } // (its job is lost: scored as a failure)
         if (settled >= jobs.length) return finish();
         if (next >= jobs.length) return; // (nothing left for a new worker)
-        if (++deaths > maxDeaths) return reject(new Error(`eval workers keep dying (${why}): ${errTail.trim().split('\n').slice(-3).join(' | ')}`));
+        if (++deaths > maxDeaths) return reject(new Error(`eval workers keep dying (${why}): ${why()}`));
         launch();
       };
       p.on('error', (e) => gone(String(e)));
@@ -46,6 +47,6 @@ export async function runJobs(jobs, workers = Math.max(1, Math.min(os.cpus().len
     for (let w = 0; w < Math.min(workers, jobs.length); w++) launch();
   });
   for (const p of procs) try { p.kill(); } catch { /* */ }
-  if (jobs.length && out.every((x) => x === null)) throw new Error(`eval workers keep dying (no job finished): ${errTail.trim().split('\n').slice(-3).join(' | ')}`);
+  if (jobs.length && out.every((x) => x === null)) throw new Error(`eval workers keep dying (no job finished): ${why()}`);
   return out;
 }

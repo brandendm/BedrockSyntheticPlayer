@@ -1,0 +1,9 @@
+file:///C:/Users/brand/source/repos/bedrock-agent/sim/pool.mjs:49
+  if (jobs.length && out.every((x) => x === null)) throw new Error(`eval workers keep dying (no job finished): ${errTail.trim().split('\n').slice(-3).join(' | ')}`);
+                                                         ^
+
+Error: eval workers keep dying (no job finished):     at async ESMLoader.import (node:internal/modules/esm/loader:530:24) |     at async loadESM (node:internal/process/esm_loader:91:5) |     at async handleMainPromise (node:internal/modules/run_main:65:12)
+    at runJobs (file:///C:/Users/brand/source/repos/bedrock-agent/sim/pool.mjs:49:58)
+    at processTicksAndRejections (node:internal/process/task_queues:96:5)
+    at async scorePolicy (file:///C:/Users/brand/source/repos/bedrock-agent/sim/evals.mjs:76:15)
+    at async file:///C:/Users/brand/source/repos/bedrock-agent/sim/train.mjs:40:19

@@ -3,14 +3,14 @@
   "accepted": 0,
   "rejected": 2,
   "sim_none": 0,
-  "aborted": 4
+  "aborted": 5
  },
  "guard_baseline": [
   10,
   10
  ],
- "cycle_n": 6,
- "group_i": 6,
+ "cycle_n": 7,
+ "group_i": 7,
  "group_stats": {
   "tow": [
    0,
@@ -55,8 +55,8 @@
    3
   ],
   "thicket": [
-   3,
-   3
+   4,
+   4
   ],
   "swamp": [
    3,
@@ -72,7 +72,7 @@
   ],
   "raid": [
    0,
-   4
+   5
   ],
   "lavafield": [
    4,
@@ -83,12 +83,20 @@
    3
   ],
   "siege": [
-   3,
-   4
+   4,
+   5
   ],
   "wild": [
    1,
    4
+  ],
+  "caveascent": [
+   1,
+   1
+  ],
+  "caveescape": [
+   0,
+   1
   ]
  }
 }
