@@ -936,3 +936,7 @@ After "Level corruption detected" (10:59, world `Agent u313`) there was no good 
 ## u320 — the dashboard keeps the bot and the players when one status field breaks
 
 `agent.status()` computed everything in one object: if any field threw (goals, toggles, the where-list...), the game sent a bare `{online, error}` and the dashboard lost the bot and the player list ("no player online"). Each risky field is now computed on its own; a failure becomes an entry in `status.errors` (the rest still arrives) and is written once to the server log as `dashboard status problem: ...`. The bare fallback also carries the name and the player list.
+
+## u321 — stray Bedrock servers
+
+Found on 2026-10-09: a second `bedrock_server.exe` (from an earlier Start Agent.bat window) was running next to the admin service's, both posting to the one brain. The brain keeps the latest status it gets, so the dashboard flipped between the real one and the empty one ("bot not spawned", "no player online"), and two servers on one world is also how a LevelDB gets corrupted. The admin service now looks for other `bedrock_server` processes: it refuses to start while one is running, shows a red card on the Overview with **Stop stray servers** (force-kill, owner only), and lists the process ids in the status (`strays`).

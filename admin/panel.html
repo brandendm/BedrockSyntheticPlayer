@@ -88,6 +88,12 @@ code{background:#0e1014;padding:1px 5px;border-radius:4px}
   <div id="content">
 
     <div class="page on" id="p-overview">
+      <div class="card" id="o-stray" hidden style="border-color:#8a3333;background:#2a1a1c;margin-bottom:14px">
+        <h3 style="color:var(--bad)">Another Bedrock server is running</h3>
+        <div class="mute" id="o-stray-note"></div>
+        <p>A second server on the same world corrupts it and makes the Scout dashboard flicker between "live" and "bot not spawned". Close its window (Start Agent.bat), or stop it here.</p>
+        <div class="row"><button class="danger" onclick="killStrays()">Stop stray servers</button></div>
+      </div>
       <div class="card" id="o-warn" hidden style="border-color:#8a3333;background:#2a1a1c;margin-bottom:14px">
         <h3 style="color:var(--bad)">World flagged corrupted</h3>
         <div id="o-warn-note" class="mute"></div>
@@ -210,6 +216,7 @@ async function status(){
     $('o-up').textContent=on?`pid ${j.server.pid} · up ${Math.round(j.server.up_s/60)} min`:'not running';
     $('o-level').textContent=j.level;$('o-bk').textContent=`${j.backups} backups · ${j.chains} chains`;
     $('info').textContent='signed in as '+j.role;
+    $('o-stray').hidden=!(j.strays&&j.strays.length);$('o-stray-note').textContent=(j.strays||[]).length?'Process id '+j.strays.join(', ')+' is not the one this panel started.':'';
     $('o-warn').hidden=!j.corrupted;$('o-warn-note').textContent=j.corrupted||'';latestBackup=j.latest_backup||null;
     $('gate').hidden=true;$('app').hidden=false;
   }catch{}
@@ -218,6 +225,11 @@ let latestBackup=null;
 async function restoreLatest(){
   if(!latestBackup){say('top','There is no backup to restore yet',false);return}
   await restore(latestBackup);
+}
+async function killStrays(){
+  if(!confirm('Force-stop the other Bedrock server(s)? They are killed without saving.'))return;
+  const j=await api('POST','/v1/server/kill-strays',{});
+  say('top',j.killed&&j.killed.length?'Stopped '+j.killed.join(', '):'Nothing to stop',true);status();
 }
 async function srv(what){
   if(what!=='start'&&!confirm(what==='stop'?'Stop the server? Players are disconnected.':'Restart the server? Players are disconnected.'))return;

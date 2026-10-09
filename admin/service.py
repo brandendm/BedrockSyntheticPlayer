@@ -128,9 +128,24 @@ def parse_players(lines: list[str]) -> list[str]:
 
 # ---------- the server process ----------
 
+def process_ids(image: str) -> list[int]:
+    """Process ids of every running program with this file name (Windows: tasklist; elsewhere: pgrep -x)."""
+    try:
+        if os.name == "nt":
+            out = subprocess.run(["tasklist", "/FI", f"IMAGENAME eq {image}", "/FO", "CSV", "/NH"], capture_output=True, text=True, timeout=10).stdout
+            return [int(m.group(1)) for m in re.finditer(r'^"[^"]+","(\d+)"', out, re.M)]
+        out = subprocess.run(["pgrep", "-x", image[:15]], capture_output=True, text=True, timeout=10).stdout
+        return [int(x) for x in out.split()]
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return []
+
+
 class ServerManager:
     def __init__(self, cmd: list[str], cwd: Path, log_path: Path | None = None):
         self.cmd, self.cwd, self.log_path = cmd, cwd, log_path
+        name = Path(cmd[0]).name
+        self.image = name if name.lower().startswith("bedrock_server") else None     # (only a real Bedrock server is looked for)
+        self._stray_at, self._stray = 0.0, []
         self.proc: subprocess.Popen | None = None
         self.started_at = 0.0
         self.lines: collections.deque = collections.deque(maxlen=4000)   # (seq, time, text)
@@ -141,9 +156,36 @@ class ServerManager:
     def alive(self) -> bool:
         return self.proc is not None and self.proc.poll() is None
 
+    def strays(self, fresh: bool = False) -> list[int]:
+        """Bedrock servers running that are not ours (started by Start Agent.bat, an old window, a crashed launcher): two on one world corrupt it."""
+        if not self.image:
+            return []
+        if fresh or time.time() - self._stray_at > 5:
+            own = self.proc.pid if self.alive() else None
+            self._stray = [p for p in process_ids(self.image) if p != own]
+            self._stray_at = time.time()
+        return list(self._stray)
+
+    def kill_strays(self) -> dict:
+        killed = []
+        for pid in self.strays(fresh=True):
+            try:
+                if os.name == "nt":
+                    subprocess.run(["taskkill", "/PID", str(pid), "/F"], capture_output=True, timeout=10)
+                else:
+                    os.kill(pid, 9)
+                killed.append(pid)
+            except (OSError, subprocess.SubprocessError):
+                pass
+        self._stray_at = 0.0
+        return {"ok": True, "killed": killed}
+
     def start(self) -> dict:
         if self.alive():
             return {"ok": False, "error": "already running", "pid": self.proc.pid}
+        st = self.strays(fresh=True)
+        if st:
+            return {"ok": False, "strays": st, "error": f"another Bedrock server is already running (pid {', '.join(map(str, st))}). Two servers on one world corrupt it and the dashboard flickers. Close its window, or use 'Stop stray servers'."}
         try:
             self.proc = subprocess.Popen(self.cmd, cwd=str(self.cwd), stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                          text=True, bufsize=1, errors="replace")
@@ -467,7 +509,7 @@ class Admin:
         sv = self.server
         return {"role": role, "server": {"running": sv.alive(), "pid": sv.proc.pid if sv.alive() else None, "up_s": round(time.time() - sv.started_at) if sv.alive() else 0},
                 "level": self.backups.level(), "backups": len(self.backups.list()), "chains": len(self.chains.load()),
-                "corrupted": self.backups.corrupted(), "latest_backup": (self.backups.list() or [{}])[0].get("name")}
+                "corrupted": self.backups.corrupted(), "strays": self.server.strays(), "latest_backup": (self.backups.list() or [{}])[0].get("name")}
 
     def _auto_backup(self, label):
         """After a clean stop: a cold copy of the world, unless the server flagged it corrupted (a bad copy must not push out a good one)."""
@@ -576,6 +618,8 @@ class Admin:
             return self.server_stop()
         if action == "server_restart":
             return self.server_restart()
+        if action == "kill_strays":
+            return sv.kill_strays()
         if action == "backups_list":
             return {"backups": self.backups.list()}
         if action == "backup_create":
@@ -627,7 +671,7 @@ def phone_url(cfg: dict, token: str) -> str | None:
 
 ROUTES = {
     ("GET", "/v1/status"): "status", ("GET", "/v1/players"): "players", ("POST", "/v1/console"): "console", ("GET", "/v1/console/log"): "console_log",
-    ("POST", "/v1/server/start"): "server_start", ("POST", "/v1/server/stop"): "server_stop", ("POST", "/v1/server/restart"): "server_restart",
+    ("POST", "/v1/server/start"): "server_start", ("POST", "/v1/server/stop"): "server_stop", ("POST", "/v1/server/restart"): "server_restart", ("POST", "/v1/server/kill-strays"): "kill_strays",
     ("GET", "/v1/backups"): "backups_list", ("POST", "/v1/backups"): "backup_create", ("POST", "/v1/backups/restore"): "backup_restore",
     ("GET", "/v1/properties"): "properties_get", ("PUT", "/v1/properties"): "properties_set",
     ("GET", "/v1/chains"): "chains_list", ("PUT", "/v1/chains"): "chains_save", ("POST", "/v1/chains/run"): "chain_run",

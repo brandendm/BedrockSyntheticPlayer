@@ -130,6 +130,26 @@ class Live(unittest.TestCase):
         self.assertIsNone(r["backup"])                      # a corrupted world is not backed up over the good copies
         self.assertEqual(len(self.admin.backups.list()), 1)
 
+    def test_strays(self):
+        sm = self.sm
+        self.assertEqual(sm.strays(), [])                  # (the fake server is not named bedrock_server: nothing is looked for)
+        sm.image = "bedrock_server"
+        orig = S.process_ids
+        try:
+            S.process_ids = lambda image: [sm.proc.pid, 424242]
+            self.assertEqual(sm.strays(fresh=True), [424242])
+            self.assertEqual(self.admin.status("owner")["strays"], [424242])
+            self.admin.server_stop()
+            S.process_ids = lambda image: [424242]
+            r = sm.start()
+            self.assertFalse(r["ok"])
+            self.assertEqual(r["strays"], [424242])
+            self.assertIn("corrupt", r["error"])
+        finally:
+            S.process_ids = orig
+            sm.image = None
+        self.assertTrue(sm.start()["ok"])
+
     def test_default_chains(self):
         names = [c["name"] for c in self.admin.chains.load()]
         self.assertIn("Saddled horse + mount", names)
