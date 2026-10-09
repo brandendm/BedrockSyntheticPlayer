@@ -66,3 +66,11 @@ test('only an iron pickaxe left: a stone one is made again', async () => {
   assert.equal(s.step, 'craft');
   assert.ok(s.items.includes('stone_pickaxe'));
 });
+
+test('hardness comes from the generated Mojang-derived data (u303): cobbled deepslate is harder than deepslate, grass is 0.6', async () => {
+  const { hardness } = await import('../behavior_pack/scripts/core/costs.js');
+  assert.equal(hardness('cobbled_deepslate'), 3.5);
+  assert.equal(hardness('grass_block'), 0.6);
+  assert.equal(hardness('white_wool'), 0.8);
+  assert.equal(hardness('some_new_dirt'), 1); // (unknown names keep the old fallback)
+});

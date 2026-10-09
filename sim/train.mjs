@@ -23,6 +23,7 @@ const conc = group === 'combat' ? Math.max(1, Math.floor(os.cpus().length / 2)) 
 async function pMap(items, fn, c) { const res = new Array(items.length); let i = 0; await Promise.all(Array.from({ length: Math.min(c, items.length) }, async () => { for (;;) { const k = i++; if (k >= items.length) return; res[k] = await fn(items[k], k); } })); return res; }
 
 let evals = 0;
+const points = []; // every fully scored candidate: {p: {key: value}, cost}  (u303: the trainer reuses them as a prior)
 /** Costs for a generation with successive halving on the train jobs. */
 async function generation(policies) {
   const cut = Math.max(1, Math.ceil(train.length / 3));
@@ -31,7 +32,7 @@ async function generation(policies) {
   const order = m1.map((c, i) => i).sort((a, b) => m1[a] - m1[b]);
   const keep = new Set(order.slice(0, Math.max(2, Math.ceil(policies.length / 2))));
   const full = new Array(policies.length).fill(null);
-  await pMap([...keep], async (i) => { evals++; const rest = train.length > cut ? await scorePolicy(group, policies[i], train.slice(cut)) : { costs: [] }; full[i] = mean([...stage1[i].costs, ...rest.costs]); }, conc);
+  await pMap([...keep], async (i) => { evals++; const rest = train.length > cut ? await scorePolicy(group, policies[i], train.slice(cut)) : { costs: [] }; full[i] = mean([...stage1[i].costs, ...rest.costs]); points.push({ p: Object.fromEntries(keys.map((k) => [k, Math.round(policies[i][k] * 1000) / 1000])), cost: full[i] }); }, conc);
   const worst = Math.max(...full.filter((c) => c !== null));
   return policies.map((_, i) => (full[i] !== null ? full[i] : worst + 0.01 + m1[i]));
 }
@@ -62,6 +63,7 @@ const result = {
   at: new Date().toISOString(), group, accepted, best: changed, base: Object.fromEntries(keys.map((k) => [k, base[k]])),
   train: [mean(baseTrain.costs), trainCost], held: [mean(baseHeld.costs), heldCost], newlyLost, evals, seconds: Math.round((Date.now() - t0) / 1000), history,
   lost: { base: baseHeld.lost, best: finalHeld.lost },
+  points: points.sort((a, b) => a.cost - b.cost).slice(0, 60), ranges: Object.fromEntries(keys.map((k) => [k, [TUNABLES[k].min, TUNABLES[k].max, TUNABLES[k].v]])),
 };
 console.log(`${group}: train ${result.train[0].toFixed(3)} -> ${trainCost.toFixed(3)}, held-out ${result.held[0].toFixed(3)} -> ${heldCost.toFixed(3)}, ${evals} evaluations in ${result.seconds}s: ${accepted ? 'ACCEPTED' : 'not accepted' + (newlyLost.length ? ` (newly lost: ${newlyLost.join(', ')})` : '')}`);
 console.log(`changed: ${JSON.stringify(changed)}`);

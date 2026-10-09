@@ -252,6 +252,22 @@ class LearningHelpers(unittest.TestCase):
         t._note_levels([{"name": "cavemobs", "pass": True, "detail": "x; level 2 seed 4"}])
         self.assertIn("L:cavemobs", t._seed_map(0, 5, ["cavemobs"]))
 
+    def test_no_sim_gain_falls_back_to_optuna_over_real_runs_plus_the_sim_prior(self):
+        try:
+            import optuna  # noqa: F401
+        except ImportError:
+            self.skipTest("optuna not installed")
+        t = self._t()
+        t.cycle_n = 2
+        res = {"accepted": False, "train": [1.0, 0.99], "ranges": {"a": [0, 10, 5]}, "points": [{"p": {"a": 7.0}, "cost": 0.8}, {"p": {"a": 2.0}, "cost": 1.2}]}
+        self.assertIsNone(t._informed("tow", res))                       # (fewer than 3 real runs)
+        t._hist_add("tow", [{"params": {"a": 5.0}, "score": 0.6, "champ": True} for _ in range(3)])
+        got = t._informed("tow", res)
+        self.assertIsNotNone(got)
+        self.assertTrue(0 <= got[0]["a"] <= 10)
+        t.cycle_n = 3
+        self.assertIsNone(t._informed("tow", res))                       # (odd cycles go back to nothing)
+
     def test_learned_margin_needs_enough_fights_and_a_real_difference(self):
         t = self._t()
         self.assertIsNone(t._learned_margin())

@@ -241,6 +241,26 @@ class Trainer:
             return None
         return m
 
+    def _informed(self, group: str, res):
+        """When the simulator finds no gain, don't waste the cycle: ask Optuna for a candidate from the real runs so far plus the simulator's scored points as a
+        discounted prior (a point's value = the champion's real mean + half its relative cost gain in the sim). Only every other cycle, only with an Optuna and
+        at least 3 real runs; the candidate must then win in the real game with no simulator help. Returns (candidate, ranges) or None."""
+        if not res or self.cycle_n % 2 or not res.get("points") or not res.get("ranges"):
+            return None
+        real = self._hist(group)
+        if len(real) < 3:
+            return None
+        ranges = {k: tuple(v) for k, v in res["ranges"].items()}
+        champs = [h["score"] for h in real if h.get("champ")][-4:]
+        centre = sum(champs) / len(champs) if champs else sum(h["score"] for h in real) / len(real)
+        base_cost = max(1e-6, float(res["train"][0]))
+        prior = [{"params": p["p"], "score": centre + 0.5 * (base_cost - p["cost"]) / base_cost} for p in res["points"] if p["cost"] < 1e8]
+        cand = tpe.suggest_optuna(prior + real, ranges, self.rng, base=self.champion)
+        if cand is None:
+            return None
+        cand = {k: v for k, v in cand.items()}
+        return (cand, ranges) if {k: v for k, v in cand.items() if self.champion.get(k) != v} else None
+
     def _hist(self, group: str) -> list:
         return (self._load("tpe_hist.json", {}) or {}).get(group, [])
 
@@ -332,6 +352,7 @@ class Trainer:
         rec = {"event": "cycle", "n": self.cycle_n, "group": group, "outcome": "?", "candidate_diff": {}, "why": ""}
         # 1. SEARCH
         sim_ok = False
+        group_ranges = REAL_RANGES.get(group, {})
         if group in REAL_ONLY:
             self.state = f"cycle {self.cycle_n}: {group}: trying a small step from the champion"
             hist = self._hist(group)
@@ -374,14 +395,20 @@ class Trainer:
                 self._finish(rec)
                 self.sleep(60)          # a broken search is not retried in a tight loop
                 return
-            if not res or not res.get("accepted"):
+            inf = self._informed(group, res) if res and not res.get("accepted") else None
+            if inf is not None:
+                cand, group_ranges = inf
+                rec["search"] = f"no simulator gain: Optuna over {len(self._hist(group))} real runs plus the simulator's {len(res.get('points') or [])} scored points (as a prior)"
+            elif not res or not res.get("accepted"):
                 rec.update(outcome="no simulator gain", why=(f"train {res['train'][0]:.2f}->{res['train'][1]:.2f}, held {res['held'][0]:.2f}->{res['held'][1]:.2f}" if res else "the search did not finish"))
                 self.counts["sim_none" if res else "aborted"] += 1
                 self._finish(rec)
                 return
-            cand = {**self.champion, **res["best"]}
-            sim_ok = True
-            rec["search"] = f"sim train {res['train'][0]:.2f}->{res['train'][1]:.2f}, held {res['held'][0]:.2f}->{res['held'][1]:.2f}, {res['evals']} evaluations"
+            else:
+                cand = {**self.champion, **res["best"]}
+                sim_ok = True
+                group_ranges = {k: tuple(v) for k, v in (res.get("ranges") or {}).items()}
+                rec["search"] = f"sim train {res['train'][0]:.2f}->{res['train'][1]:.2f}, held {res['held'][0]:.2f}->{res['held'][1]:.2f}, {res['evals']} evaluations"
         rec["candidate_diff"] = {k: v for k, v in cand.items() if self.champion.get(k) != v}
         self.candidate = cand
         if not rec["candidate_diff"]:
@@ -421,12 +448,12 @@ class Trainer:
                 if verdict["verdict"] != "need_more":
                     break
         self.send("testseed clear")
-        if group in REAL_ONLY:
+        if group_ranges:
             ent = []
-            for pol, runs in ((cand, cand_g), (self.champion, champ_g)):
+            for pol, runs, ch in ((cand, cand_g, False), (self.champion, champ_g, True)):
                 ms = self._mean_score(runs)
                 if ms is not None:
-                    ent.append({"params": {k: v for k, v in {**{kk: vv[2] for kk, vv in REAL_RANGES[group].items()}, **pol}.items() if k in REAL_RANGES[group]}, "score": ms})
+                    ent.append({"params": {k: v for k, v in {**{kk: vv[2] for kk, vv in group_ranges.items()}, **pol}.items() if k in group_ranges}, "score": ms, "champ": ch})
             self._hist_add(group, ent)
         if verdict["verdict"] == "need_more":
             verdict = {"verdict": "reject", "why": "undecided after the maximum rounds: " + verdict["why"]}

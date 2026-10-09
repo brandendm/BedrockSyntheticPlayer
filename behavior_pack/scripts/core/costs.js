@@ -2,6 +2,8 @@
 // "dirt comes out fast with my fist and costs nothing; don't wear the pickaxe on it", "stand on
 // dirt, keep the cobblestone for tools". Pure, unit-tested.
 
+import { HARDNESS_DATA } from './hardness_data.js';
+
 // Hardness (Bedrock). Break time = hardness * 1.5 / toolSpeed with the right tool,
 // hardness * 5 by hand on blocks that need a tool to drop anything.
 /** @type {Array<[RegExp, number]>} */
@@ -45,6 +47,8 @@ export function canBreak(id, inv = {}) {
 }
 
 export function hardness(id) {
+  const d = HARDNESS_DATA[id];
+  if (d !== undefined) return d; // (u303: the real values, tools/gen_hardness.mjs; the patterns below are for names the data does not have)
   for (const [re, h] of HARDNESS) if (re.test(id)) return h;
   return 1;
 }
