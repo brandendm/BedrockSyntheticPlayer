@@ -26,6 +26,15 @@ export async function runBench(primary, o = {}) {
   if (spots.length < want) notes.push(`only ${spots.length} of ${want} land spots found`);
   if (!spots.length) { primary.autoEnabled = wasAuto; return { pass: false, detail: 'no dry land found to start from', result: null }; }
 
+  // The spots are far from the player: their chunks unload the moment the land search leaves them, and a bot dropped into
+  // unloaded ground sees nothing (u296: "hemmed in", drops of 95 blocks, no step for 12 minutes). Ticking areas keep them loaded.
+  const areas = [];
+  for (let i = 0; i < spots.length; i++) {
+    const nm = `scoutbench${i + 1}`;
+    try { await dim.runCommand(`tickingarea add circle ${spots[i].x} ${spots[i].y} ${spots[i].z} 3 ${nm} true`); areas.push(nm); } catch (e) { notes.push(`no ticking area for spot ${i + 1}: ${e}`); }
+  }
+  await system.waitTicks(40);
+
   /** @type {Array<{name: string, w: any, tr: Tracker, spot: any, deadSeen: boolean, lastHurt: string|null}>} */
   const bots = [];
   const base = `${CONFIG.botName}B`;
@@ -42,6 +51,11 @@ export async function runBench(primary, o = {}) {
     await system.waitTicks(5);
   }
   await system.waitTicks(30);
+  for (const b of bots) { // (stand on something we can see before starting: up to 10 s)
+    let ok = false;
+    for (let k = 0; k < 200 && !ok; k++) { try { const f = b.w.sim.location; ok = b.w.skills.blockAt({ x: Math.floor(f.x), y: Math.floor(f.y) - 1, z: Math.floor(f.z) }) != null; } catch { /* */ } if (!ok) await system.waitTicks(1); }
+    if (!ok) notes.push(`${b.name}: ground under it never loaded`);
+  }
   for (const b of bots) {
     try { b.w.sim.runCommand('clear @s'); } catch { /* */ }
     try { b.w.sim.runCommand('gamemode survival @s'); } catch { /* */ }
@@ -73,6 +87,7 @@ export async function runBench(primary, o = {}) {
   const runs = bots.map((b) => ({ name: b.name, spot: { x: b.spot.x, y: b.spot.y, z: b.spot.z }, ...b.tr.result(budgetS) }));
   const summary = summarize(runs, budgetS);
   dismissAll();
+  for (const nm of areas) { try { await dim.runCommand(`tickingarea remove ${nm}`); } catch { /* */ } }
   primary.autoEnabled = wasAuto;
   const result = { build: CONFIG.build, minutes, ran_s: Math.round(finalS), bots: runs.length, runs, summary, events: events.slice(-60), notes };
   try { await sendEvent({ type: 'bench_result', ...result }); } catch { /* the brain may be down: the test detail still has it */ }

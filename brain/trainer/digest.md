@@ -20,4 +20,13 @@ Written 2026-10-09 04:57:29.  Cycles so far: 5  (accepted 0, rejected 2, no simu
 
 ## Weakest tests (pass rate over every real run, any policy)
 
-| test | passed | tri
+| test | passed | tried |
+|---|---|---|
+| raid | 0 | 4 |
+| wild | 1 | 4 |
+| ambush | 1 | 3 |
+| siege | 3 | 4 |
+| bow | 3 | 3 |
+| hole | 3 | 3 |
+| jungle | 3 | 3 |
+| ladder | 3 | 3 |

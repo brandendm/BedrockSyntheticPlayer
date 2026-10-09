@@ -7,3 +7,5 @@
 {"t": "2026-10-08 12:44:31", "event": "cycle", "n": 3, "group": "combat", "outcome": "no simulator gain", "candidate_diff": {}, "why": "the search did not finish"}
 {"t": "2026-10-09 04:14:08", "event": "switched on"}
 {"t": "2026-10-09 04:48:09", "event": "cycle", "n": 4, "group": "play", "outcome": "rejected", "candidate_diff": {"attackerMemory": 235.491, "exploreCost": 59.223}, "why": "no gain in the real game (no difference the runs can show)", "search": "random step (no simulator for this group)", "real": {"champion": [5, 9], "candidate": [9, 13], "guard_champion": [5, 5], "guard_candidate": [5, 5]}}
+{"t": "2026-10-09 04:57:29", "event": "switched off"}
+{"t": "2026-10-09 04:57:29", "event": "cycle", "n": 5, "group": "play", "outcome": "aborted", "candidate_diff": {"attackerMemory": 220.338}, "why": "the batch ended: stopped", "search": "random step (no simulator for this group)"}
