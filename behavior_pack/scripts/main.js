@@ -118,8 +118,12 @@ function handle(text, player) {
   // "@Name <command>" from the dashboard: as if that player had typed it (come, follow me, spawn).
   if (cmd.startsWith('@') && !player) {
     const [who, ...rest] = cmd.slice(1).split(/\s+/);
-    const pl = world.getPlayers({ name: who })[0];
-    if (!pl) return console.warn(`[agent] dashboard: ${who} isn't online`);
+    // (the exact name first; then ignoring case and spaces; then, if only one real player is here, that one: a stale name in the dashboard's list should not stop a click)
+    const all = world.getPlayers(), norm = (n) => String(n).toLowerCase().replace(/\s+/g, '');
+    const humans = all.filter((x) => !x.name.startsWith(CONFIG.botName));
+    const pl = world.getPlayers({ name: who })[0] ?? all.find((x) => norm(x.name) === norm(who)) ?? (humans.length === 1 ? humans[0] : undefined);
+    if (!pl) return console.warn(`[agent] dashboard: ${who} isn't online (players here: ${all.map((x) => x.name).join(', ') || 'none'})`);
+    if (pl.name !== who) console.warn(`[agent] dashboard: "${who}" matched to ${pl.name}`);
     return handle(rest.join(' '), pl);
   }
   // "@Name /<command>" from the dashboard (a command chain): run it as that player, so @s and ~ ~ ~ mean them.

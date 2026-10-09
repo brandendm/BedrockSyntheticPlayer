@@ -139,6 +139,8 @@ async function runShow(agent, player, p) {
     await build(dim, S, wet);
     if (show.abort) return;
     try { griefWas = world.gameRules?.mobGriefing ?? null; world.gameRules.mobGriefing = false; } catch { try { dim.runCommand('gamerule mobgriefing false'); griefWas = true; } catch { /* */ } }
+    // Nothing else spawns while the show is on (the stands are dark and the night is long): the rule is put back after.
+    try { show.spawnWas = world.gameRules?.doMobSpawning ?? true; world.gameRules.doMobSpawning = false; } catch { try { dim.runCommand('gamerule domobspawning false'); show.spawnWas = true; } catch { /* */ } }
     // Against mobs it is night all through (undead burn in daylight, and the roof is glass): the time is stopped and put back after.
     if (p.mode === 'mobs') {
       try { show.time = world.getTimeOfDay(); show.cycle = world.gameRules?.doDaylightCycle ?? true; world.gameRules.doDaylightCycle = false; } catch { /* */ }
@@ -200,6 +202,7 @@ async function runShow(agent, player, p) {
       // reset the field
       for (const e of dim.getEntities({ location: { x: S.cx, y: S.G, z: S.cz }, maxDistance: 30 })) { if (/arrow|item|xp_orb/.test(e.typeId) || show.foes.includes(e)) { try { e.remove(); } catch { /* */ } } }
       show.foes = [];
+      strays(dim, S, p, show);
       for (const f of show.fighters) {
         f.out = false; f.target = null;
         if (!f.w.sim.isValid) continue;
@@ -242,7 +245,8 @@ async function runShow(agent, player, p) {
             f.w.sim.teleport({ x: S.cx + (f.team === 'A' ? -R - 3 : R + 3) + 0.5, y: S.G + 3, z: S.cz - R - 1 + 0.5 });
           }
         }
-        show.foes = show.foes.filter((m) => { try { return m.isValid; } catch { return false; } });
+        if (system.currentTick % 6 === 0) { show.foes = foesNow(dim, S, p, show); strays(dim, S, p, show); }
+        else show.foes = show.foes.filter((m) => { try { return m.isValid; } catch { return false; } });
         const a = show.fighters.filter((f) => f.team === 'A' && !f.out).length;
         const b = p.mode === 'bots' ? show.fighters.filter((f) => f.team === 'B' && !f.out).length : show.foes.filter(alive).length;
         if (system.currentTick % 10 === 0) bar(hud(show, p, a, b));
@@ -275,6 +279,7 @@ async function runShow(agent, player, p) {
       const i = crew.members.indexOf(f.w); if (i >= 0) crew.members.splice(i, 1);
     }
     try { if (griefWas !== null) world.gameRules.mobGriefing = griefWas; else dim.runCommand('gamerule mobgriefing true'); } catch { try { dim.runCommand('gamerule mobgriefing true'); } catch { /* */ } }
+    if (show.spawnWas !== undefined) { try { world.gameRules.doMobSpawning = show.spawnWas; } catch { try { dim.runCommand(`gamerule domobspawning ${show.spawnWas}`); } catch { /* */ } } }
     if (show.time !== undefined) {
       try { world.gameRules.doDaylightCycle = show.cycle; } catch { /* */ }
       try { dim.runCommand(`time set ${Math.floor(show.time)}`); } catch { /* */ }
@@ -424,3 +429,31 @@ async function mountUp(f) {
 async function dropHorse(f) {
   try { if (f.horse) { try { await f.w.horses.getOff(f.w.taskGen); } catch { try { f.w.sim.runCommand('ride @s stop_riding'); } catch { /* */ } } try { f.horse.remove(); } catch { /* */ } f.horse = null; } } catch { /* */ }
 }
+
+/** The show's mobs now: the ones spawned plus any more of their kind inside the arena (a slime's split, a zombie's reinforcement). */
+function foesNow(dim, S, p, show) {
+  if (p.mode !== 'mobs') return [];
+  const seen = new Map(show.foes.filter((m) => { try { return m.isValid; } catch { return false; } }).map((m) => [m.id, m]));
+  try {
+    for (const e of dim.getEntities({ type: `minecraft:${p.mob.id}`, location: { x: S.cx, y: S.G + 4, z: S.cz }, maxDistance: R + 8 })) {
+      const l = e.location;
+      if (Math.abs(l.x - S.cx) <= R + 1 && Math.abs(l.z - S.cz) <= R + 1 && l.y >= S.G && l.y <= S.G + H + 1) seen.set(e.id, e);
+    }
+  } catch { /* */ }
+  return [...seen.values()];
+}
+
+/** Hostile things in the arena or its stands that the show did not put there (spawned anyway, wandered in) are removed. */
+function strays(dim, S, p, show) {
+  try {
+    const b = boxOf(S);
+    const keep = new Set([...show.foes.map((m) => m.id), ...show.fighters.map((f) => f.horse?.id).filter(Boolean)]);
+    const related = p.mode === 'mobs' ? RELATED[p.mob.id] ?? [] : [];
+    for (const e of dim.getEntities({ location: { x: b.x1, y: b.y1, z: b.z1 }, volume: { x: b.x2 - b.x1 + 1, y: b.y2 - b.y1 + 1, z: b.z2 - b.z1 + 1 }, families: ['monster'] })) {
+      const t = e.typeId.replace('minecraft:', '');
+      if (keep.has(e.id) || (p.mode === 'mobs' && (t === p.mob.id || related.includes(t))) || /^simulated|player$/.test(t)) continue;
+      try { e.remove(); } catch { /* */ }
+    }
+  } catch { /* */ }
+}
+const RELATED = { evoker: ['vex'], ravager: ['pillager', 'vindicator'], witch: [], wither: ['wither_skeleton'], ender_dragon: [], zombie: ['zombie_villager', 'husk', 'drowned'], husk: ['zombie'], skeleton: ['spider'], spider: ['skeleton'], slime: ['slime'], magma_cube: ['magma_cube'] };
