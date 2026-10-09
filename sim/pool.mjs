@@ -5,18 +5,23 @@
 import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
 import os from 'node:os';
+import * as nodeModule from 'node:module';
+import { pathToFileURL } from 'node:url';
+// Node before 18.19 has no module.register (the sim's module hook, sim/hooks.mjs): its workers are started with --experimental-loader instead. (The PC's Node 16 died on this: the tow search never ran.)
+const OLD_NODE = !nodeModule.register;
+const HOOKS = pathToFileURL(fileURLToPath(new URL('./hooks.mjs', import.meta.url))).href;
 export async function runJobs(jobs, workers = Math.max(1, Math.min(os.cpus().length, 8)), workerFile = null) {
   const out = new Array(jobs.length).fill(null); let next = 0, settled = 0, deaths = 0; const procs = [];
   const file = workerFile ?? fileURLToPath(new URL('./eval_worker.mjs', import.meta.url));
   const maxDeaths = 4 + jobs.length;
   let errTail = '', errHead = '';
-  const why = () => (errHead.length < 700 ? errHead : `${errHead.slice(0, 500)} ... ${errTail}`).trim().replace(/\s*\n\s*/g, ' | ');
+  const errText = () => (errHead.length < 700 ? errHead : `${errHead.slice(0, 500)} ... ${errTail}`).trim().replace(/\s*\n\s*/g, ' | ');
   await new Promise((resolve, reject) => {
     if (!jobs.length) return resolve();
     const finish = () => { if (settled >= jobs.length) resolve(); };
     const launch = () => {
       let p;
-      try { p = spawn(process.execPath, [file], { stdio: ['pipe', 'pipe', 'pipe'] }); } catch (e) { return reject(new Error(`cannot start a worker: ${e}`)); }
+      try { p = spawn(process.execPath, OLD_NODE && !workerFile ? ['--no-warnings', '--experimental-loader', HOOKS, file] : [file], { stdio: ['pipe', 'pipe', 'pipe'] }); } catch (e) { return reject(new Error(`cannot start a worker: ${e}`)); }
       procs.push(p);
       let buf = '', inflight = null, dead = false;
       p.stderr.on('data', (d) => { if (errHead.length < 700) errHead += d; errTail = (errTail + d).slice(-600); });
@@ -37,7 +42,7 @@ export async function runJobs(jobs, workers = Math.max(1, Math.min(os.cpus().len
         if (inflight !== null) { out[inflight] = null; inflight = null; settled++; } // (its job is lost: scored as a failure)
         if (settled >= jobs.length) return finish();
         if (next >= jobs.length) return; // (nothing left for a new worker)
-        if (++deaths > maxDeaths) return reject(new Error(`eval workers keep dying (${why}): ${why()}`));
+        if (++deaths > maxDeaths) return reject(new Error(`eval workers keep dying (${why}): ${errText()}`));
         launch();
       };
       p.on('error', (e) => gone(String(e)));
@@ -47,6 +52,6 @@ export async function runJobs(jobs, workers = Math.max(1, Math.min(os.cpus().len
     for (let w = 0; w < Math.min(workers, jobs.length); w++) launch();
   });
   for (const p of procs) try { p.kill(); } catch { /* */ }
-  if (jobs.length && out.every((x) => x === null)) throw new Error(`eval workers keep dying (no job finished): ${why()}`);
+  if (jobs.length && out.every((x) => x === null)) throw new Error(`eval workers keep dying (no job finished): ${errText()}`);
   return out;
 }

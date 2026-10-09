@@ -1,6 +1,6 @@
 // One tow course, played by the bot's real code (game/leadtow.js through game/agent.js) on the simulator: the same steps game/scenarios.js's runOne takes.
 //   node sim/run_tow.mjs leadstep [-v]
-import { register } from 'node:module';
+import * as __mod from 'node:module'; const register = __mod.register ?? (() => {}); // (Node < 18.19 has none: start with --experimental-loader ./sim/hooks.mjs, sim/nodeflags.mjs)
 register('./hooks.mjs', import.meta.url);
 const SIM = await import('./server.mjs');
 const { engine, system, spawnBot, ItemStack } = SIM;

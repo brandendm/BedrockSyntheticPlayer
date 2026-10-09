@@ -661,6 +661,7 @@ def make_handler(engine: DecisionEngine, key: str | None = None):
                 except OSError:
                     pass
                 ar.set_enabled(on)
+                _switches_set("autorun", on)
                 return self._send(200, ar.info())
             if self.path == "/api/trainer":
                 tr = _train["run"]
@@ -671,6 +672,7 @@ def make_handler(engine: DecisionEngine, key: str | None = None):
                 except ValueError:
                     return self._send(400, {"error": "bad json"})
                 tr.set_enabled(on)
+                _switches_set("trainer", on)
                 return self._send(200, tr.info())
             if self.path.startswith("/api/admin/"):
                 return self._admin_post()
@@ -777,6 +779,29 @@ def _auto_server_send():
     return f() if f else None
 
 
+def _switch_file() -> Path:
+    return ROOT / "switches.json"
+
+
+def _switches_read() -> dict:
+    """(u301) Which of Auto runs / Training the dashboard last had on. They used to reset to OFF at every brain restart, which stopped the passive
+    training silently for hours; now a restart brings them back as they were (a STOP file or the dashboard switch still turns them off)."""
+    try:
+        d = json.loads(_switch_file().read_text(encoding="utf-8"))
+        return d if isinstance(d, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def _switches_set(name: str, on: bool) -> None:
+    d = _switches_read()
+    d[name] = bool(on)
+    try:
+        _switch_file().write_text(json.dumps(d), encoding="utf-8")
+    except OSError:
+        pass
+
+
 def _setup_autorun() -> None:
     """(u253) Auto runs: see brain/autorun.py. Off until switched on in the dashboard."""
     from .autorun import AutoRun
@@ -833,6 +858,8 @@ def _setup_autorun() -> None:
                  traces_since=traces_since, trace_mark=trace_mark, test_events=test_events)
     _auto["run"] = ar
     ar.start()
+    if _switches_read().get("autorun"):
+        ar.set_enabled(True)
 
 
 def _setup_trainer() -> None:
@@ -898,6 +925,8 @@ def _setup_trainer() -> None:
     tr = Trainer(ROOT, run_batch=ar.run_batch, send=ar.queue, sim_search=sim_search, status=status, evolve=evolve)
     _train["run"] = tr
     tr.start()
+    if _switches_read().get("trainer"):
+        tr.set_enabled(True)
 
 
 def main():
