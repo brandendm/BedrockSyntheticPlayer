@@ -1,0 +1,14 @@
+synced 100 files, build u295
+queued chasm, raid, chasm, raid (expect u295)
+AUTO RUN RESULT  started 2026-10-08 13:11:09  game build u295
+asked: chasm, raid  (reload: yes, expecting u295)
+why: ship u295
+outcome: ok
+  SUMMARY chasm: PASS
+  SUMMARY raid: FAIL
+  run chasm: 20.7 s, path 57.9, idle 7.4 s, jumps 0, placed 0
+  run raid: 9.5 s, path 43.4, idle 0.1 s, jumps 4, placed 0
+  chasm: PASS - reached the gold block in 21s; level 2 seed 7, lowest health 20, 5 mobs, 0 left, started 3x (mode none, x 44/45)
+  raid: FAIL - died in 9s; level 2 seed 30, lowest health 0, 4 mobs, 4 left, started 1x (mode flee, x 10/45)
+
+SHIP: FAILED (full report: brain/inbox/result.txt)

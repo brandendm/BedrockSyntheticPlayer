@@ -65,7 +65,7 @@ export async function runBench(primary, o = {}) {
       let inv = {};
       try { inv = invCounts(w.sim); } catch { /* between a death and the respawn */ }
       try { const res = w.memory.data.res ?? []; if (res.some((r) => r.c === 'crafting_table')) inv.__placed_table = 1; if (res.some((r) => r.c === 'furnace')) inv.__placed_furnace = 1; } catch { /* */ }
-      if (!dead) for (const e of b.tr.update(t, inv, w.sim.location, { step: w.autoStep, mode: w.mode, task: w.task?.kind })) events.push({ bot: b.name, ...e });
+      if (!dead) for (const e of b.tr.update(t, inv, w.sim.location, { step: w.autoStep, mode: w.mode, task: w.task?.kind, where: w.autoWhere })) events.push({ bot: b.name, ...e });
       if (b.tr.achieved.diamond === undefined) allDiamond = false;
     }
   }

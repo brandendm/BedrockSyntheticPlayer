@@ -35,7 +35,7 @@ export class Tracker {
       if (!this.anchor || Math.hypot(pos.x - this.anchor.x, pos.z - this.anchor.z) + Math.abs(pos.y - this.anchor.y) * 0.5 >= this.moveRadius) { this.anchor = { x: pos.x, y: pos.y, z: pos.z }; this.lastProgress = Math.max(this.lastProgress, t - this.stallSecs * 0.25); }
     }
     if (t - this.lastProgress >= this.stallSecs && this.stalls.length < this.maxStalls) {
-      const s = { t: Math.round(t), step: ctx.step ?? null, mode: ctx.mode ?? null, task: ctx.task ?? null, last: lastMilestone(this.achieved) };
+      const s = { t: Math.round(t), step: ctx.step ?? null, mode: ctx.mode ?? null, task: ctx.task ?? null, where: ctx.where ?? null, last: lastMilestone(this.achieved) };
       this.stalls.push(s); ev.push({ type: 'stall', ...s }); this.lastProgress = t;
     }
     return ev;
@@ -65,7 +65,7 @@ export function summarize(runs, budgetS) {
     return { id: m.id, reached: ts.length, of: n, median_s: median(ts) };
   });
   const groups = {};
-  for (const r of runs) for (const s of r.stalls ?? []) { const k = `${s.step ?? '-'} / ${s.mode ?? '-'}`; groups[k] = (groups[k] ?? 0) + 1; }
+  for (const r of runs) for (const s of r.stalls ?? []) { const k = `${s.step ?? '-'} / ${s.mode ?? '-'}${s.where ? ` @${s.where}` : ''}`; groups[k] = (groups[k] ?? 0) + 1; }
   const deaths = {};
   for (const r of runs) for (const d of r.deaths ?? []) { const k = `${d.cause ?? '?'} (after ${d.last ?? 'nothing'})`; deaths[k] = (deaths[k] ?? 0) + 1; }
   const top = (o) => Object.entries(o).sort((a, b) => b[1] - a[1]).slice(0, 6).map(([k, c]) => ({ what: k, count: c }));

@@ -1,16 +1,16 @@
 {
  "counts": {
   "accepted": 0,
-  "rejected": 0,
+  "rejected": 2,
   "sim_none": 0,
-  "aborted": 1
+  "aborted": 3
  },
  "guard_baseline": [
   10,
   10
  ],
- "cycle_n": 1,
- "group_i": 1,
+ "cycle_n": 5,
+ "group_i": 5,
  "group_stats": {
   "tow": [
    0,
@@ -18,11 +18,77 @@
   ],
   "combat": [
    0,
-   0
+   1
   ],
   "cave": [
    0,
-   0
+   1
+  ],
+  "play": [
+   0,
+   1
+  ]
+ },
+ "cells": {
+  "bench": [
+   0,
+   1
+  ],
+  "hole": [
+   3,
+   3
+  ],
+  "pit": [
+   3,
+   3
+  ],
+  "ravine": [
+   3,
+   3
+  ],
+  "ladder": [
+   3,
+   3
+  ],
+  "bow": [
+   3,
+   3
+  ],
+  "thicket": [
+   3,
+   3
+  ],
+  "swamp": [
+   3,
+   3
+  ],
+  "mobmaze": [
+   3,
+   3
+  ],
+  "jungle": [
+   3,
+   3
+  ],
+  "raid": [
+   0,
+   4
+  ],
+  "lavafield": [
+   4,
+   4
+  ],
+  "ambush": [
+   1,
+   3
+  ],
+  "siege": [
+   3,
+   4
+  ],
+  "wild": [
+   1,
+   4
   ]
  }
 }

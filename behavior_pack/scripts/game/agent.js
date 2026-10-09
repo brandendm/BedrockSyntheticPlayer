@@ -1267,15 +1267,23 @@ export class Agent {
       for (;;) {
         S.check(gen);
         S.essential = true; // (our things, before they despawn)
+        this.autoWhere = 'recoverDrops';
         await this.recoverDrops(gen);
         S.essential = false;
+        this.autoWhere = 'pickUpLoose';
         await this.pickUpLoose(gen);
+        this.autoWhere = 'calibration';
         await this.calibration.step(gen); // (once: what the game's numbers are, game/calibrate.js)
+        this.autoWhere = 'takeDownWalls';
         await this.takeDownWalls(gen);
+        this.autoWhere = 'cleanupScaffold';
         await this.skills.cleanupScaffold(gen); // pillars left standing when something took us away
+        this.autoWhere = 'maybeEat';
         await H.maybeEat(gen);
         const inv = invCounts(this.sim);
+        this.autoWhere = 'findTable';
         const near = await S.findTable(4);
+        this.autoWhere = 'plan';
         S.check(gen);
         if (near) this.memory.rememberTable(this.dim.id, near);
         const known = this.memory.nearestTable(this.dim.id, this.sim.location);
