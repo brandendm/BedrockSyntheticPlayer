@@ -252,7 +252,17 @@ export class SimPlayer extends Entity {
       this.rot.y = Math.atan2(-this.dir.x, this.dir.z) * 180 / Math.PI;
     }
     if (this.jumpQueued && ground) { this.vy = P.jump; this.jumpQueued = false; } else this.jumpQueued = false;
-    if (wet) { this.vy = this.vy * P.waterDrag - P.waterGravity; }
+    if (wet) {
+      // (u307, fitted to the real game's probewater trace: a body that is deep in water is pushed up until its feet are about buoyDepth under the surface, where it floats;
+      // a fast fall in is braked hard. Without this the sim sank a still body at 2 b/s where the real one floats.)
+      let vy = this.vy * P.waterDrag - P.waterGravity;
+      let top = Math.floor(this.y);
+      while (top < Math.floor(this.y) + 40 && w.isWater(Math.floor(this.x), top + 1, Math.floor(this.z))) top++;
+      const depth = top + 1 - this.y;
+      if (this.vy < -0.3 && depth > P.brakeDepth) vy *= P.entryBrake;
+      if (w.isWater(Math.floor(this.x), Math.floor(this.y), Math.floor(this.z)) && depth > P.buoyDepth) vy += P.buoy;
+      this.vy = vy;
+    }
     const r = move(w, this, this.vx, this.vy, this.vz, { hw: P.halfWidth, h: P.height, step: ground ? P.step : 0 });
     if (r.hitX) this.vx = 0; if (r.hitZ) this.vz = 0;
     if (r.hitY) this.vy = r.onGround ? 0 : this.vy > 0 ? 0 : this.vy;

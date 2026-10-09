@@ -14,6 +14,7 @@ import { PROBE_NAMES } from '../behavior_pack/scripts/core/probes.js';
 /** The constants the fit may move: path, lower bound, upper bound. */
 export const FIT = [
   ['player.groundAccel', 0.04, 0.2], ['player.groundFriction', 0.3, 0.8], ['player.airAccel', 0.005, 0.05], ['player.jump', 0.3, 0.55], ['player.step', 0.3, 1.0],
+  ['player.waterGravity', 0.003, 0.03], ['player.buoy', 0, 0.08], ['player.buoyDepth', 0.6, 2.2], ['player.entryBrake', 0.02, 1], ['player.brakeDepth', 1.0, 4.5],
   ['boat.landFriction', 0.2, 0.9], ['boat.wallKeep', 0, 1], ['boat.impulse', 0.05, 1], ['boat.step', 0.2, 0.8], ['boat.gravity', 0.02, 0.08],
   ['leash.rest', 2.5, 6], ['leash.k', 0.02, 0.6], ['leash.pow', 0.8, 3.5], ['leash.blend', 0.1, 1], ['leash.kVertical', 0.0, 3], ['leash.maxPull', 0.4, 3],
 ];

@@ -12,6 +12,9 @@ export const AIR_FLOOR = 0.5;      // an ordinary job
 export const OWN_AIR_FLOOR = 0.3;  // a job of its own in water: about 4.5 s of breath left, a swim up is 1-2 s
 export const SWIM_AIR_FLOOR = 0.25; // an arena that swims on purpose (the dive)
 
+/** Ticks in water with nothing moving the bot before it is taken to shore (u307: was 10, 0.5 s -- it swam out of anything it was floating in on purpose; drowning is the air floors below, this is only for a bot that would float idle for ever). */
+export const SHORE_IDLE_TICKS = 100;
+
 /** Does this job work in water by itself? */
 export const ownsWater = (task, crossing = false) => !!crossing || OWN_WATER_TASKS.has(task);
 
@@ -35,5 +38,5 @@ export function waterReflex(s) {
   // Standing on the bottom with the head in the air (a shallow pool, a puddle): not swimming, nothing to swim out of.
   if (s.onGround && !s.headUnder) return { act: null, idle: 0 };
   const idle = s.idle + s.step;
-  return idle < 10 ? { act: null, idle } : { act: 'shore', idle: 0 };
+  return idle < SHORE_IDLE_TICKS ? { act: null, idle } : { act: 'shore', idle: 0 };
 }

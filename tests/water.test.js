@@ -7,9 +7,9 @@ const wet = (o = {}) => ({ task: 'auto', crossing: false, inBoat: false, inWater
 /** Run the reflex for `ticks` ticks of the same state; the first tick it acts, or null. */
 const firstAct = (s, ticks = 400) => { let idle = s.idle; for (let t = 4; t <= ticks; t += 4) { const r = waterReflex({ ...s, idle }); if (r.act) return { act: r.act, at: t }; idle = r.idle; } return null; };
 
-test('an ordinary job in water with the motor free is taken to the shore after 0.6 s (as before)', () => {
-  assert.deepEqual(firstAct(wet()), { act: 'shore', at: 12 });
-  assert.deepEqual(firstAct(wet({ task: 'explore' })), { act: 'shore', at: 12 });
+test('an ordinary job in water with the motor free is taken to the shore only after 5 s of floating idle (u307; it was 0.6 s)', () => {
+  assert.deepEqual(firstAct(wet()), { act: 'shore', at: 100 });
+  assert.deepEqual(firstAct(wet({ task: 'explore' })), { act: 'shore', at: 100 });
 });
 
 test('a test, a tow, an arena or a calibration is never taken to the shore, however long it is in water (the u204 leadboat run, swim_out at 0.6 s)', () => {
@@ -59,5 +59,5 @@ test('the idle count resets when the conditions lapse', () => {
   r = waterReflex(wet({ idle: r.idle }));
   assert.deepEqual(r, { act: null, idle: 8 });
   assert.deepEqual(waterReflex(wet({ idle: 8, motorBusy: true })), { act: null, idle: 0 });
-  assert.deepEqual(waterReflex(wet({ idle: 8 })), { act: 'shore', idle: 0 });
+  assert.deepEqual(waterReflex(wet({ idle: 96 })), { act: 'shore', idle: 0 });
 });

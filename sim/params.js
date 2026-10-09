@@ -9,7 +9,8 @@ export const PARAMS = {
     airAccel: 0.0196, airFriction: 0.91,
     gravity: 0.08, drag: 0.98, jump: 0.42, sprintJump: 0.2,
     step: 0.6,                                             // a ground step it walks up without a jump
-    waterGravity: 0.02, waterDrag: 0.8, waterAccel: 0.02, swimUp: 0.04,
+    waterGravity: 0.019, waterDrag: 0.8, waterAccel: 0.02, swimUp: 0.04,
+    buoy: 0.036, buoyDepth: 1.23, entryBrake: 0.11, brakeDepth: 3.0,           // (fit to probewater, build u307: the raw body floats with its feet ~1.3 under the surface; a fast fall in is braked)
   },
   boat: {
     halfWidth: 0.7, height: 0.455,                         // (a boat is 1.4 across)
