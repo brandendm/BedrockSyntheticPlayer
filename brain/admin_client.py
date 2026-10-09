@@ -1,7 +1,6 @@
 """The brain's side of the Bedrock admin service (admin/service.py, a separate program that owns the server process).
 
-The brain holds the *bot* token only: the service itself decides what that token may do (status, the console log, a safe list of console
-commands, backups, and chains marked bot_ok). Config keys in brain/config.json:  "admin_url": "http://127.0.0.1:8780", "admin_bot_token": "...".
+The brain holds the *bot* token only: the service itself decides what that token may do (status, players, the console log, any console command, backups, any chain). Config keys in brain/config.json:  "admin_url": "http://127.0.0.1:8780", "admin_bot_token": "...".
 Used for: POST /admin from the game (`!bot admin ...`), and /locate when the brain does not run the server itself (AdminLocator).
 """
 import json
@@ -79,8 +78,8 @@ class AdminClient:
             return {"ok": r["ok"], "say": f"Chain ran {len(r['results'])} steps." if r["ok"] else f"Chain stopped at: {bad['line']} ({bad.get('out', '')})"}
         if act == "chains":
             r = self.chains()
-            names = [c["name"] for c in r.get("chains", []) if c.get("bot_ok")]
-            return {"ok": "chains" in r, "say": ("Chains I may run: " + ", ".join(names)) if names else r.get("error", "No chains are marked for me."), "names": names}
+            names = [c["name"] for c in r.get("chains", [])]
+            return {"ok": "chains" in r, "say": ("Chains I can run: " + ", ".join(names)) if names else r.get("error", "No chains saved."), "names": names}
         if act == "backup":
             r = self.backup(str(body.get("label", ""))[:40])
             return {"ok": bool(r.get("ok")), "say": f"Backup saved: {r['name']} ({r['mb']} MB)." if r.get("ok") else r.get("error", "backup failed")}

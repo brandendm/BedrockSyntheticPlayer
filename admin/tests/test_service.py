@@ -27,15 +27,12 @@ def make_env(tmp: Path):
 
 
 class Pure(unittest.TestCase):
-    def test_bot_vetting(self):
-        v = S.DEFAULTS["bot_verbs"]
-        self.assertTrue(S.console_allowed("bot", "time set night", v)[0])
-        self.assertTrue(S.console_allowed("bot", "/weather clear", v)[0])
-        self.assertTrue(S.console_allowed("bot", "execute as @a run give @s apple", v)[0])
-        for bad in ("op Steve", "stop", "kick x", "allowlist add x", "scriptevent a:b c", "execute as @a run op @s", "time set day\nstop", "time set day;stop", "", "execute as @a run"):
-            self.assertFalse(S.console_allowed("bot", bad, v)[0], bad)
-        self.assertTrue(S.console_allowed("owner", "stop", v)[0])
-        self.assertFalse(S.console_allowed("owner", "a\nb", v)[0])
+    def test_console_rules(self):
+        for who in ("owner", "bot"):
+            for ok in ("time set night", "/weather clear", "op Steve", "stop", "execute as @a run give @s apple"):
+                self.assertTrue(S.console_allowed(who, ok)[0], (who, ok))
+            for bad in ("", "   ", "time set day\nstop", "a\rb"):
+                self.assertFalse(S.console_allowed(who, bad)[0], (who, bad))
 
     def test_roles(self):
         t = {"owner": "o", "bot": "b"}
@@ -68,6 +65,15 @@ class Pure(unittest.TestCase):
         self.assertEqual(r, {"Bedrock level/db/a.ldb": 5, "Bedrock level/db/b.ldb": 3})
 
 
+class Qr(unittest.TestCase):
+    def test_sizes_and_limits(self):
+        from admin import qr
+        self.assertEqual(len(qr.matrix("http://192.168.1.50:8780/?token=" + "x" * 32)), 37)       # version 5
+        self.assertTrue(qr.svg("hello").startswith("<svg"))
+        with self.assertRaises(ValueError):
+            qr.matrix("x" * 300)
+
+
 class Live(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -82,7 +88,7 @@ class Live(unittest.TestCase):
         r = self.admin.console("owner", "say hi")
         self.assertTrue(r["ok"])
         self.assertIn("[Server] hi", r["lines"])
-        self.assertFalse(self.admin.console("bot", "stop")["ok"])
+        self.assertTrue(self.admin.console("bot", "op Steve")["ok"])       # the bot may use any command
         self.assertTrue(self.sm.stop(5)["was_running"])
         self.assertFalse(self.admin.console("owner", "list")["ok"])
 
@@ -107,8 +113,7 @@ class Live(unittest.TestCase):
             S.with_target("say x", 'a" run op @s')
         self.assertEqual(self.admin.players()["players"], ["Alice", "Bob"])
         self.assertTrue(self.admin.console("bot", "give @s apple", target="Alice")["ok"])
-        self.assertFalse(self.admin.console("bot", "op @s", target="Alice")["ok"])
-        self.assertFalse(self.admin.console("bot", "say hi", target="x run op")["ok"])
+        self.assertTrue(self.admin.console("bot", "op @s", target="Alice")["ok"])
         self.assertEqual(S.parse_players(["There are 0/10 players online:", ""]), [])
 
     def test_default_chains(self):
@@ -116,16 +121,12 @@ class Live(unittest.TestCase):
         self.assertIn("Saddled horse + mount", names)
 
     def test_chains(self):
-        self.admin.chains.save([{"name": "hello", "lines": ["# c", "/say one", "wait 0", "say two"], "bot_ok": True},
-                                {"name": "mine", "lines": ["/list"]},
-                                {"name": "evil", "lines": ["/op Steve"], "bot_ok": True}])
+        self.admin.chains.save([{"name": "hello", "lines": ["# c", "/say one", "wait 0", "say two"]}, {"name": "mine", "lines": ["/list"]}])
         r = self.admin.run_chain("owner", "hello")
         self.assertTrue(r["ok"], r)
         self.assertEqual(len(r["results"]), 3)
-        self.assertTrue(self.admin.run_chain("bot", "hello")["ok"] is False or True)   # 'say' is a bot verb
-        self.assertFalse(self.admin.run_chain("bot", "mine")["ok"])                    # not bot_ok
-        e = self.admin.run_chain("bot", "evil")                                         # bot_ok, but op is vetted at run time
-        self.assertFalse(e["ok"])
+        self.assertTrue(self.admin.run_chain("bot", "hello")["ok"])       # the bot may run any chain
+        self.assertTrue(self.admin.run_chain("bot", "mine", "Alice")["ok"])
         self.assertFalse(self.admin.run_chain("owner", "nope")["ok"])
         with self.assertRaises(ValueError):
             self.admin.chains.save([{"name": ""}])
@@ -174,13 +175,15 @@ class Http(unittest.TestCase):
         self.assertEqual(self.call("PUT", "/v1/properties", {"set": {}}, token="BOT")[0], 403)
         self.assertEqual(self.call("POST", "/v1/backups/restore", {"name": "x.zip"}, token="BOT")[0], 403)
         self.assertEqual(self.call("GET", "/v1/audit", token="BOT")[0], 403)
+        self.assertEqual(self.call("GET", "/v1/phone", token="BOT")[0], 403)
+        self.assertEqual(self.call("PUT", "/v1/chains", {"chains": []}, token="BOT")[0], 403)
         self.assertEqual(self.call("GET", "/v1/status", token="OWN", host="evil.example")[0], 403)
 
     def test_console_over_http(self):
         s, j, _ = self.call("POST", "/v1/console", {"command": "say yo"}, token="BOT")
         self.assertTrue(j["ok"])
         s, j, _ = self.call("POST", "/v1/console", {"command": "op me"}, token="BOT")
-        self.assertFalse(j["ok"])
+        self.assertTrue(j["ok"])
         s, j, _ = self.call("GET", "/v1/console/log?since=0", token="BOT")
         self.assertTrue(any("yo" in l["text"] for l in j["lines"]))
 
@@ -199,6 +202,14 @@ class Http(unittest.TestCase):
         s, raw, _ = self.call("GET", "/")
         self.assertEqual(s, 200)
         self.assertIn(b"Bedrock Admin", raw)
+
+    def test_phone_and_lan_hosts(self):
+        S.lan_ip = lambda: "192.168.1.50"
+        s, j, _ = self.call("GET", "/v1/phone", token="OWN")
+        self.assertTrue(j["ok"] and j["url"] == f"http://192.168.1.50:{self.cfg['port']}/?token=OWN" and "<svg" in j["svg"], j)
+        self.assertEqual(self.call("GET", "/v1/status", token="OWN", host=f"192.168.1.50:{self.port}")[0], 200)
+        self.assertEqual(self.call("GET", "/v1/status", token="OWN", host=f"8.8.8.8:{self.port}")[0], 403)
+        self.assertEqual(self.call("GET", "/v1/status", token="OWN", host=f"evil.com:{self.port}")[0], 403)
 
     def test_bad_requests(self):
         self.assertEqual(self.call("GET", "/nope", token="OWN")[0], 404)

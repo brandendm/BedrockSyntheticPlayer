@@ -8,9 +8,8 @@ backups (the server's own `save hold` / `save query` / `save resume`, files cut 
 and run saved command chains. Two kinds of caller, each with its own token and its own list of what it may do:
 
   owner   you (the panel): everything.
-  bot     the bot (through the brain: brain/admin_client.py): status, the console log, a safe list of console commands (time, weather, gamerule,
-          give, summon, event, effect, ride...), taking a backup, and the chains you have marked bot_ok. Never stop/restart/restore, op or permission
-          changes, kick, allowlist, scriptevent, properties, or editing chains.
+  bot     the bot (through the brain: brain/admin_client.py): status, players, the console log, ANY console command, backups, and any saved chain.
+          Not stop/restart/restore, properties, editing chains, the audit log or the phone link: those stay with you.
 
 Every call is written to admin/audit.jsonl (who, what, result). Standard library only.
 """
@@ -23,6 +22,7 @@ import json
 import os
 import re
 import secrets
+import socket
 import shutil
 import subprocess
 import sys
@@ -46,8 +46,7 @@ DEFAULTS = {
     "brain_url": "http://127.0.0.1:8765",     # chain lines "game ..." are queued here for the bot/dashboard
     "backups_dir": str(ROOT / "backups"),
     "keep_backups": 20,
-    "bot_verbs": ["time", "weather", "gamerule", "give", "summon", "event", "effect", "say", "tell", "tp", "teleport", "setblock", "fill", "clear",
-                  "replaceitem", "ride", "locate", "difficulty", "xp", "enchant", "playsound", "particle", "title", "list", "kill", "structure", "camera"],
+    "lan": True,                              # also listen on the local network so a phone can open the panel (the token is still needed)
 }
 BOT_ACTIONS = {"players", "status", "console", "console_log", "backup_create", "backups_list", "chain_run", "chains_list"}
 
@@ -83,31 +82,18 @@ def role_of(tokens: dict, presented: str | None) -> str | None:
     return None
 
 
-# ---------- what a role may type into the console ----------
+# ---------- what may be typed into the console ----------
 
-DENIED_ANYWHERE = re.compile(r"[\r\n;]")
+DENIED_ANYWHERE = re.compile(r"[\r\n]")
 
 
-def console_allowed(role: str, command: str, verbs) -> tuple[bool, str]:
-    """(ok, why). The owner may type anything. The bot only commands whose verb (also the verb after each `run` of an execute) is in the list."""
+def console_allowed(role: str, command: str) -> tuple[bool, str]:
+    """(ok, why). Any command, for the owner and the bot alike; only an empty command or several lines in one are refused."""
     cmd = command.strip().lstrip("/").strip()
     if not cmd:
         return False, "empty command"
     if DENIED_ANYWHERE.search(cmd):
         return False, "one command per line"
-    if role == "owner":
-        return True, ""
-    verbs = set(verbs)
-    parts = re.split(r"\brun\b", cmd) if cmd.split()[0] == "execute" else [cmd]
-    for i, part in enumerate(parts):
-        words = part.split()
-        if i == 0 and len(parts) > 1:
-            continue        # (the "execute as ... at ..." part before the first run)
-        verb = words[0].lower() if words else ""
-        if verb not in verbs:
-            return False, f"the bot may not use {verb or 'that'}"
-    if len(parts) > 1 and not parts[-1].split():
-        return False, "execute needs a command after run"
     return True, ""
 
 
@@ -399,12 +385,12 @@ class Backups:
 
 # What a fresh install starts with (they run as the target player: `execute as "Name" at @s run ...`, so @s and c=1 mean them).
 DEFAULT_CHAINS = [
-    {"name": "Saddled horse + mount", "bot_ok": False, "lines": [
+    {"name": "Saddled horse + mount", "lines": [
         "/summon horse ~ ~ ~ ~ ~ minecraft:ageable_grow_up",
         "/event entity @e[type=horse,c=1] minecraft:on_tame",
         "/replaceitem entity @e[type=horse,c=1] slot.saddle 0 saddle 1",
         "/ride @s start_riding @e[type=horse,c=1] teleport_rider"]},
-    {"name": "Day + clear weather", "bot_ok": True, "lines": ["/time set day", "/weather clear"]},
+    {"name": "Day + clear weather", "lines": ["/time set day", "/weather clear"]},
 ]
 
 
@@ -430,7 +416,7 @@ class Chains:
             if not name:
                 raise ValueError("a chain needs a name")
             lines = [str(x).strip()[:300] for x in (c.get("lines") or []) if str(x).strip()][:80]
-            clean.append({"name": name, "lines": lines, "bot_ok": bool(c.get("bot_ok"))})
+            clean.append({"name": name, "lines": lines})
         self.path.write_text(json.dumps(clean, indent=1), encoding="utf-8")
         return len(clean)
 
@@ -485,7 +471,7 @@ class Admin:
             command = with_target(command, target)
         except ValueError as e:
             return {"ok": False, "error": str(e)}
-        ok, why = console_allowed(role, command, self.cfg["bot_verbs"])
+        ok, why = console_allowed(role, command)
         if not ok:
             return {"ok": False, "error": why}
         try:
@@ -498,8 +484,6 @@ class Admin:
         chain = self.chains.get(name)
         if not chain:
             return {"ok": False, "error": f"no chain called {name}"}
-        if role == "bot" and not chain.get("bot_ok"):
-            return {"ok": False, "error": "this chain is not marked safe for the bot"}
         results, waited = [], 0.0
         for line in chain["lines"]:
             if not line or line.startswith("#"):
@@ -544,7 +528,7 @@ class Admin:
             res = {"ok": False, "error": str(e)}
         except Exception as e:      # a bug here must not take the service down
             res = {"ok": False, "error": f"{type(e).__name__}: {e}"}
-        if action not in ("status", "console_log", "audit", "players"):
+        if action not in ("status", "console_log", "audit", "players", "phone"):
             self.audit(role, action, json.dumps(body)[:200] if body else query, res.get("ok", True))
         return 200, res
 
@@ -581,6 +565,12 @@ class Admin:
             return {"ok": True, "saved": self.chains.save(b.get("chains"))}
         if action == "chain_run":
             return self.run_chain(role, str(b.get("name", "")), b.get("target") or None)
+        if action == "phone":
+            from . import qr
+            url = phone_url(self.cfg, self.cfg["tokens"]["owner"])
+            if not url:
+                return {"ok": False, "error": "no local network address found (or \"lan\" is off in admin/config.json)"}
+            return {"ok": True, "url": url, "svg": qr.svg(url, scale=6)}
         if action == "audit":
             return {"audit": self.audit_tail(int(q.get("n", 100) or 100))}
         raise ValueError(f"unknown action {action}")
@@ -588,18 +578,44 @@ class Admin:
 
 # ---------- HTTP ----------
 
+PRIVATE_HOST = re.compile(r"(?:10\.\d+\.\d+\.\d+|192\.168\.\d+\.\d+|172\.(?:1[6-9]|2\d|3[01])\.\d+\.\d+)")
+
+
+def lan_ip() -> str | None:
+    """This computer's address on the local network (the route a packet to the outside would take), or None."""
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as so:
+            so.connect(("10.255.255.255", 1))
+            ip = so.getsockname()[0]
+        return ip if PRIVATE_HOST.fullmatch(ip) else None
+    except OSError:
+        return None
+
+
+def phone_url(cfg: dict, token: str) -> str | None:
+    ip = lan_ip() if cfg.get("lan") else None
+    return f"http://{ip}:{cfg['port']}/?token={token}" if ip else None
+
+
 ROUTES = {
     ("GET", "/v1/status"): "status", ("GET", "/v1/players"): "players", ("POST", "/v1/console"): "console", ("GET", "/v1/console/log"): "console_log",
     ("POST", "/v1/server/start"): "server_start", ("POST", "/v1/server/stop"): "server_stop", ("POST", "/v1/server/restart"): "server_restart",
     ("GET", "/v1/backups"): "backups_list", ("POST", "/v1/backups"): "backup_create", ("POST", "/v1/backups/restore"): "backup_restore",
     ("GET", "/v1/properties"): "properties_get", ("PUT", "/v1/properties"): "properties_set",
     ("GET", "/v1/chains"): "chains_list", ("PUT", "/v1/chains"): "chains_save", ("POST", "/v1/chains/run"): "chain_run",
-    ("GET", "/v1/audit"): "audit",
+    ("GET", "/v1/audit"): "audit", ("GET", "/v1/phone"): "phone",
 }
 
 
 def make_handler(admin: Admin, port: int):
     hosts = {f"127.0.0.1:{port}", f"localhost:{port}", f"[::1]:{port}"}
+    lan = bool(admin.cfg.get("lan"))
+
+    def host_ok(h: str) -> bool:
+        if h in hosts:
+            return True
+        name, _, pt = h.rpartition(":")
+        return lan and pt == str(port) and bool(PRIVATE_HOST.fullmatch(name))      # (a name that is not an address could be a rebinding trick)
     tokens = admin.cfg["tokens"]
 
     class H(BaseHTTPRequestHandler):
@@ -629,7 +645,7 @@ def make_handler(admin: Admin, port: int):
             u = urlparse(self.path)
             q = parse_qs(u.query)
             host = self.headers.get("Host", "")
-            if admin.cfg["host"] in ("127.0.0.1", "localhost", "::1") and host not in hosts:
+            if not host_ok(host):
                 return self._send(403, {"error": "wrong Host header"})
             if u.path == "/health":
                 return self._send(200, {"ok": True})
@@ -684,12 +700,15 @@ def main(argv=None):
     first = not cfg_path.exists()
     cfg = load_config(cfg_path)
     admin, sm = build(cfg)
-    httpd = ThreadingHTTPServer((cfg["host"], int(cfg["port"])), make_handler(admin, int(cfg["port"])))
+    bind = "0.0.0.0" if cfg.get("lan") and cfg["host"] in ("127.0.0.1", "localhost") else cfg["host"]
+    httpd = ThreadingHTTPServer((bind, int(cfg["port"])), make_handler(admin, int(cfg["port"])))
     url = f"http://127.0.0.1:{cfg['port']}/"
     print(f"Admin service on {url}")
     if first:
         print("First run: tokens were made and saved in admin/config.json (owner = you, bot = the bot via the brain).")
     print(f"Sign in once:  {url}?token={cfg['tokens']['owner']}")
+    pu = phone_url(cfg, cfg["tokens"]["owner"])
+    print(f"Phone (same Wi-Fi; the panel's Phone page shows a QR code): {pu}" if pu else "Phone link: off (\"lan\": false in admin/config.json, or no network address found)")
     if cfg.get("autostart") and not args.no_server:
         print("Starting the server:", sm.start())
     if args.open:

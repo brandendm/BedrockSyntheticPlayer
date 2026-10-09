@@ -2,81 +2,148 @@
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Bedrock Admin</title>
 <style>
-:root{--bg:#14161a;--card:#1d2026;--ink:#e6e8eb;--mute:#8b93a1;--line:#2b3038;--acc:#4da3ff;--ok:#4cc38a;--bad:#ef6a6a;--warn:#e0b040}
+:root{--bg:#0f1115;--side:#14171d;--card:#1a1e26;--ink:#e7e9ee;--mute:#8a93a3;--line:#262b35;--acc:#5aa9ff;--ok:#4cc38a;--bad:#ef6a6a;--warn:#e0b040}
 *{box-sizing:border-box}
-body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.45 system-ui,Segoe UI,sans-serif}
-header{display:flex;gap:12px;align-items:center;padding:10px 16px;border-bottom:1px solid var(--line);flex-wrap:wrap}
-h1{font-size:16px;margin:0}
-main{display:grid;grid-template-columns:repeat(auto-fit,minmax(380px,1fr));gap:12px;padding:12px 16px}
-section{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:12px}
-section.wide{grid-column:1/-1}
-h2{font-size:13px;margin:0 0 8px;color:var(--mute);text-transform:uppercase;letter-spacing:.06em}
-button{background:#2a3038;color:var(--ink);border:1px solid var(--line);border-radius:6px;padding:5px 10px;cursor:pointer;font:inherit}
-button:hover{border-color:var(--acc)}button.go{background:#1f4a7a}button.danger{background:#6a2626}
-input,textarea,select{background:#101216;color:var(--ink);border:1px solid var(--line);border-radius:6px;padding:5px 8px;font:inherit}
-textarea{width:100%;font-family:ui-monospace,Consolas,monospace;font-size:12px}
-.dot{display:inline-block;width:10px;height:10px;border-radius:50%;background:var(--bad);margin-right:6px}.dot.on{background:var(--ok)}
+html,body{height:100%}
+body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.45 system-ui,Segoe UI,sans-serif;display:flex}
+#gate{padding:40px 16px;max-width:520px;margin:auto}
+#app{display:flex;width:100%;height:100%}
+nav{width:210px;background:var(--side);border-right:1px solid var(--line);display:flex;flex-direction:column;padding:12px 8px;flex:none}
+nav .brand{font-weight:700;font-size:15px;padding:6px 10px 14px;display:flex;align-items:center;gap:8px}
+nav a{display:flex;align-items:center;gap:10px;padding:9px 10px;border-radius:8px;color:var(--mute);text-decoration:none;cursor:pointer;margin-bottom:2px}
+nav a:hover{background:#1b2029;color:var(--ink)}nav a.on{background:#1f2a3b;color:var(--ink)}
+nav a i{font-style:normal;width:18px;text-align:center}
+nav .grow{flex:1}
+nav .who{font-size:12px;color:var(--mute);padding:8px 10px}
+.col{flex:1;min-width:0;display:flex;flex-direction:column;height:100%}
+header{display:flex;gap:10px;align-items:center;padding:10px 18px;border-bottom:1px solid var(--line);flex-wrap:wrap;background:var(--side)}
+header h1{font-size:16px;margin:0}
+header .sp{flex:1}
+#content{flex:1;overflow:auto;padding:18px}
+.page{display:none}.page.on{display:block}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px;margin-bottom:14px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px}
+.card h3{margin:0 0 6px;font-size:12px;color:var(--mute);text-transform:uppercase;letter-spacing:.06em;font-weight:600}
+.big{font-size:22px;font-weight:700}
+h2{font-size:15px;margin:0 0 10px}
+button{background:#262c37;color:var(--ink);border:1px solid var(--line);border-radius:7px;padding:6px 12px;cursor:pointer;font:inherit}
+button:hover{border-color:var(--acc)}button.go{background:#1f4f86;border-color:#2b629f}button.danger{background:#6a2626;border-color:#8a3333}
+input,textarea,select{background:#0e1014;color:var(--ink);border:1px solid var(--line);border-radius:7px;padding:6px 9px;font:inherit}
+input:focus,textarea:focus,select:focus{outline:1px solid var(--acc)}
+textarea{width:100%;font-family:ui-monospace,Consolas,monospace;font-size:12.5px}
+.dot{display:inline-block;width:10px;height:10px;border-radius:50%;background:var(--bad)}.dot.on{background:var(--ok)}
 .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:6px 0}
-#log{height:320px;overflow:auto;background:#0d0f12;border:1px solid var(--line);border-radius:6px;padding:6px;font:12px/1.35 ui-monospace,Consolas,monospace;white-space:pre-wrap}
+.mute{color:var(--mute)}
+.msg{min-height:1.3em;font-size:13px;white-space:pre-wrap}.msg.bad{color:var(--bad)}.msg.ok{color:var(--ok)}
+#log{height:calc(100vh - 230px);min-height:260px;overflow:auto;background:#0b0d10;border:1px solid var(--line);border-radius:8px;padding:8px;font:12px/1.4 ui-monospace,Consolas,monospace;white-space:pre-wrap}
 #log .e{color:var(--bad)}#log .w{color:var(--warn)}#log .a{color:var(--acc)}
-table{width:100%;border-collapse:collapse}td,th{padding:3px 6px;border-bottom:1px solid var(--line);text-align:left;font-size:13px}
-.mute{color:var(--mute)}.msg{min-height:1.3em;font-size:13px}.msg.bad{color:var(--bad)}.msg.ok{color:var(--ok)}
-.chain{border:1px solid var(--line);border-radius:6px;padding:8px;margin:6px 0}
-#gate{padding:40px 16px;max-width:520px}
+#minilog{height:170px;overflow:auto;background:#0b0d10;border:1px solid var(--line);border-radius:8px;padding:6px;font:12px/1.4 ui-monospace,Consolas,monospace;white-space:pre-wrap}
+table{width:100%;border-collapse:collapse}td,th{padding:6px 8px;border-bottom:1px solid var(--line);text-align:left;font-size:13px;vertical-align:middle}
+th{color:var(--mute);font-weight:600}
+.chains{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:12px}
+.chain .head{display:flex;gap:8px;align-items:center;margin-bottom:8px}
+.chain .head input{flex:1;min-width:0;font-weight:600}
+.pill{display:inline-block;background:#222a37;border-radius:20px;padding:2px 9px;margin:2px 4px 2px 0;font-size:12px}
+#qr{background:#fff;border-radius:10px;padding:6px;display:inline-block;max-width:100%}#qr svg{display:block;width:260px;height:260px;max-width:100%}
+code{background:#0e1014;padding:1px 5px;border-radius:4px}
 [hidden]{display:none!important}
+@media(max-width:760px){
+  #app{flex-direction:column-reverse}
+  nav{width:100%;flex-direction:row;border-right:0;border-top:1px solid var(--line);padding:4px;overflow-x:auto}
+  nav .brand,nav .who,nav .grow{display:none}
+  nav a{flex-direction:column;gap:1px;font-size:11px;padding:6px 10px;margin:0;flex:none}
+  #content{padding:12px}
+  #log{height:calc(100vh - 290px)}
+  header{padding:8px 12px}
+}
 </style></head><body>
 <div id="gate" hidden>
   <h1>Bedrock Admin</h1>
-  <p>Not signed in. Open the address the service printed when it started (it ends in <code>?token=...</code>), or paste the owner token here.</p>
+  <p>Not signed in. Open the link the service printed when it started (it ends in <code>?token=...</code>), scan the QR code from the Phone page on your computer, or paste the owner token here.</p>
   <div class="row"><input id="tok" size="36" placeholder="owner token"><button class="go" onclick="signIn()">Sign in</button></div>
 </div>
+
 <div id="app" hidden>
-<header>
-  <h1>Bedrock Admin</h1>
-  <span><span class="dot" id="dot"></span><span id="state">...</span></span>
-  <span class="mute" id="info"></span>
-  <span style="flex:1"></span>
-  <label class="mute">Target <select id="target" title="Commands and chains run as this player, where they stand (@s means them)"><option value="">Server (nobody)</option></select></label>
-  <button onclick="loadPlayers()" title="Refresh the player list">&#8635;</button>
-  <button class="go" onclick="srv('start')">Start</button>
-  <button onclick="srv('restart')">Restart</button>
-  <button class="danger" onclick="srv('stop')">Stop</button>
-</header>
-<div class="msg" id="top" style="padding:0 16px"></div>
-<main>
-  <section class="wide">
-    <h2>Console</h2>
-    <div class="row" id="quick"></div>
-    <div id="log"></div>
-    <div class="row"><input id="cmd" style="flex:1" placeholder="a server console command (runs as the target if one is picked), e.g. say hello" autocomplete="off"><button class="go" onclick="sendCmd()">Send</button>
-      <label class="mute"><input type="checkbox" id="follow" checked> follow</label></div>
-  </section>
-  <section>
-    <h2>Backups</h2>
-    <div class="row"><input id="blabel" placeholder="label (optional)"><button class="go" onclick="backup()">Back up now</button><button onclick="loadBackups()">Refresh</button></div>
-    <div class="msg" id="bmsg"></div>
-    <table id="btab"></table>
-    <p class="mute">Backups use the server's own save hold / query / resume, so the world can keep running. Restoring stops the server, keeps the current world as a "pre-restore" zip, unpacks the chosen one and starts it again.</p>
-  </section>
-  <section>
-    <h2>server.properties</h2>
-    <div class="row"><button onclick="loadProps()">Reload</button><button class="go" onclick="saveProps()">Save changes</button><span class="mute">(applied on the next restart)</span></div>
-    <div class="msg" id="pmsg"></div>
-    <table id="ptab"></table>
-  </section>
-  <section class="wide">
-    <h2>Command chains</h2>
-    <div class="mute">One line each: <code>/command</code> (server console), <code>game text</code> (queued for the bot via the brain), <code>backup [label]</code>, <code>wait 3</code>, <code># note</code>. "Bot may run" lets the bot use it (its commands are still vetted).</div>
-    <div class="row"><button onclick="addChain()">New chain</button><button class="go" onclick="saveChains()">Save all</button></div>
-    <div class="msg" id="cmsg"></div>
-    <div id="chains"></div>
-  </section>
-  <section class="wide">
-    <h2>Audit (latest first)</h2>
-    <div class="row"><button onclick="loadAudit()">Refresh</button></div>
-    <table id="atab"></table>
-  </section>
-</main>
+<nav id="nav">
+  <div class="brand"><span class="dot" id="dot"></span>Bedrock Admin</div>
+  <a data-p="overview" class="on"><i>&#9632;</i>Overview</a>
+  <a data-p="console"><i>&#9002;</i>Console</a>
+  <a data-p="chains"><i>&#9889;</i>Chains</a>
+  <a data-p="backups"><i>&#9707;</i>Backups</a>
+  <a data-p="settings"><i>&#9881;</i>Settings</a>
+  <a data-p="audit"><i>&#9776;</i>Audit</a>
+  <a data-p="phone"><i>&#9633;</i>Phone</a>
+  <div class="grow"></div>
+  <div class="who" id="info"></div>
+</nav>
+<div class="col">
+  <header>
+    <h1 id="title">Overview</h1>
+    <span class="mute" id="state"></span>
+    <span class="sp"></span>
+    <label class="mute">Run as <select id="target" title="Commands and chains run as this player, where they stand (@s means them)"><option value="">Server (nobody)</option></select></label>
+    <button onclick="loadPlayers()" title="Refresh the player list">&#8635;</button>
+  </header>
+  <div class="msg" id="top" style="padding:6px 18px 0"></div>
+  <div id="content">
+
+    <div class="page on" id="p-overview">
+      <div class="grid">
+        <div class="card"><h3>Server</h3><div class="big" id="o-state">...</div><div class="mute" id="o-up"></div>
+          <div class="row"><button class="go" onclick="srv('start')">Start</button><button onclick="srv('restart')">Restart</button><button class="danger" onclick="srv('stop')">Stop</button></div></div>
+        <div class="card"><h3>Players online</h3><div class="big" id="o-count">0</div><div id="o-players" class="mute">nobody</div></div>
+        <div class="card"><h3>World</h3><div class="big" id="o-level">-</div><div class="mute" id="o-bk"></div>
+          <div class="row"><button class="go" onclick="backup('')">Back up now</button></div></div>
+      </div>
+      <div class="card" style="margin-bottom:14px"><h3>Quick commands <span class="mute" style="text-transform:none;letter-spacing:0">(run as the selected player; greyed ones need one)</span></h3><div class="row" id="quick"></div></div>
+      <div class="card" style="margin-bottom:14px"><h3>Your chains</h3><div id="o-chains" class="row"></div></div>
+      <div class="card"><h3>Console (latest)</h3><div id="minilog"></div></div>
+    </div>
+
+    <div class="page" id="p-console">
+      <div id="log"></div>
+      <div class="row"><input id="cmd" style="flex:1;min-width:160px" placeholder="a console command (runs as the selected player if one is picked), e.g. say hello" autocomplete="off"><button class="go" onclick="sendCmd()">Send</button>
+        <label class="mute"><input type="checkbox" id="follow" checked> follow</label></div>
+    </div>
+
+    <div class="page" id="p-chains">
+      <div class="row"><button class="go" onclick="addChain()">+ New chain</button><button onclick="saveChains()">Save all</button>
+        <span class="mute">One line each: <code>/command</code> (console), <code>game text</code> (to the bot via the brain), <code>backup [label]</code>, <code>wait 3</code>, <code># note</code>. &#9654; saves, then runs as the selected player. The bot can run any chain.</span></div>
+      <div class="msg" id="cmsg"></div>
+      <div class="chains" id="chains"></div>
+    </div>
+
+    <div class="page" id="p-backups">
+      <div class="row"><input id="blabel" placeholder="label (optional)"><button class="go" onclick="backup($('blabel').value)">Back up now</button><button onclick="loadBackups()">Refresh</button></div>
+      <div class="msg" id="bmsg"></div>
+      <div class="card"><table id="btab"></table></div>
+      <p class="mute">Backups use the server's own save hold / query / resume, so the world keeps running. Restoring stops the server, keeps the current world as a "pre-restore" zip, unpacks the chosen one and starts the server again.</p>
+    </div>
+
+    <div class="page" id="p-settings">
+      <div class="row"><button onclick="loadProps()">Reload</button><button class="go" onclick="saveProps()">Save changes</button><span class="mute">server.properties &mdash; applied on the next restart</span></div>
+      <div class="msg" id="pmsg"></div>
+      <div class="card"><table id="ptab"></table></div>
+    </div>
+
+    <div class="page" id="p-audit">
+      <div class="row"><button onclick="loadAudit()">Refresh</button></div>
+      <div class="card"><table id="atab"></table></div>
+    </div>
+
+    <div class="page" id="p-phone">
+      <div class="card" style="max-width:420px">
+        <h2>Open this panel on your phone</h2>
+        <p class="mute">Phone on the same Wi-Fi: scan, and it signs in. The code contains your owner token, so don't share a screenshot of it.</p>
+        <div id="qr" hidden></div>
+        <div class="msg" id="phmsg"></div>
+        <p class="mute" style="word-break:break-all" id="phurl"></p>
+        <p class="mute">Windows asks once whether to let Python through the firewall: allow it for Private networks.</p>
+      </div>
+    </div>
+
+  </div>
+</div>
 </div>
 <script>
 const $=(i)=>document.getElementById(i);
@@ -91,27 +158,52 @@ function say(id,t,ok){const e=$(id);e.textContent=t||'';e.className='msg '+(ok==
 function showGate(){$('gate').hidden=false;$('app').hidden=true}
 async function signIn(){location.href='/?token='+encodeURIComponent($('tok').value.trim())}
 
+const TITLES={overview:'Overview',console:'Console',chains:'Command chains',backups:'Backups',settings:'Settings',audit:'Audit log',phone:'Phone'};
+const LOADERS={chains:()=>loadChains(),backups:()=>loadBackups(),settings:()=>loadProps(),audit:()=>loadAudit(),phone:()=>loadPhone(),console:()=>{const b=$('log');b.scrollTop=b.scrollHeight}};
+function show(p){
+  if(!TITLES[p])p='overview';
+  document.querySelectorAll('.page').forEach(e=>e.classList.toggle('on',e.id==='p-'+p));
+  document.querySelectorAll('nav a').forEach(a=>a.classList.toggle('on',a.dataset.p===p));
+  $('title').textContent=TITLES[p];
+  if(location.hash!=='#'+p)history.replaceState(null,'','#'+p);
+  say('top','');
+  if(LOADERS[p])LOADERS[p]();
+}
+document.querySelectorAll('nav a').forEach(a=>a.onclick=()=>show(a.dataset.p));
+
 let since=0;
-function lineClass(t){return /ERROR|Error|error/.test(t)?'e':/WARN/.test(t)?'w':/^\[admin\]|^>/.test(t)?'a':''}
+const lineClass=(t)=>/ERROR|Error|error/.test(t)?'e':/WARN/.test(t)?'w':/^\[admin\]|^>/.test(t)?'a':'';
+function addLine(box,text,cls){const d=document.createElement('div');d.textContent=text;if(cls)d.className=cls;box.appendChild(d);while(box.childNodes.length>1500)box.removeChild(box.firstChild)}
 async function poll(){
   try{
     const j=await api('GET','/v1/console/log?since='+since+'&n=300');
     if(j.lines&&j.lines.length){
-      const box=$('log'),stick=$('follow').checked;
-      for(const l of j.lines){const d=document.createElement('div');d.textContent=l.text;const c=lineClass(l.text);if(c)d.className=c;box.appendChild(d)}
-      while(box.childNodes.length>1500)box.removeChild(box.firstChild);
-      if(stick)box.scrollTop=box.scrollHeight;
+      for(const l of j.lines){const c=lineClass(l.text);addLine($('log'),l.text,c);addLine($('minilog'),l.text,c)}
+      if($('follow').checked)$('log').scrollTop=$('log').scrollHeight;
+      $('minilog').scrollTop=$('minilog').scrollHeight;
     }
     if(typeof j.next==='number')since=j.next;
   }catch{}
 }
+async function sendCmd(){
+  const c=$('cmd').value.trim();if(!c)return;$('cmd').value='';
+  addLine($('log'),'> '+c+(target()?'   (as '+target()+')':''),'a');
+  const j=await api('POST','/v1/console',{command:c,target:target()});
+  if(j.error)say('top',j.error,false);else say('top','');
+  poll();
+}
+$('cmd').addEventListener('keydown',e=>{if(e.key==='Enter')sendCmd()});
+
 async function status(){
   try{
     const j=await api('GET','/v1/status');
     const on=j.server&&j.server.running;
     $('dot').className='dot'+(on?' on':'');
     $('state').textContent=on?'server running':'server stopped';
-    $('info').textContent=on?`pid ${j.server.pid} · up ${Math.round(j.server.up_s/60)} min · world "${j.level}" · ${j.backups} backups`:`world "${j.level}" · ${j.backups} backups`;
+    $('o-state').textContent=on?'Running':'Stopped';
+    $('o-up').textContent=on?`pid ${j.server.pid} · up ${Math.round(j.server.up_s/60)} min`:'not running';
+    $('o-level').textContent=j.level;$('o-bk').textContent=`${j.backups} backups · ${j.chains} chains`;
+    $('info').textContent='signed in as '+j.role;
     $('gate').hidden=true;$('app').hidden=false;
   }catch{}
 }
@@ -121,23 +213,41 @@ async function srv(what){
   const j=await api('POST','/v1/server/'+what,{});
   say('top',j.error||(j.ok?('Server '+what+' done'):JSON.stringify(j)),!!j.ok);status();
 }
-async function sendCmd(){
-  const c=$('cmd').value.trim();if(!c)return;$('cmd').value='';
-  const d=document.createElement('div');d.className='a';d.textContent='> '+c;$('log').appendChild(d);
-  const j=await api('POST','/v1/console',{command:c,target:target()});
-  if(j.error)say('top',j.error,false);else say('top','');
-  poll();
+
+const target=()=>$('target').value||undefined;
+async function loadPlayers(){
+  const keep=$('target').value||localStorage.getItem('target')||'';
+  let names=[];try{names=(await api('GET','/v1/players')).players||[]}catch{}
+  const sel=$('target');
+  sel.innerHTML='<option value="">Server (nobody)</option>'+names.map(n=>`<option value="${esc(n)}">${esc(n)}</option>`).join('');
+  if(names.includes(keep))sel.value=keep;else if(names.length===1)sel.value=names[0];
+  $('o-count').textContent=names.length;
+  $('o-players').innerHTML=names.length?names.map(n=>`<span class="pill">${esc(n)}</span>`).join(''):'nobody';
+  drawQuick();
 }
-$('cmd').addEventListener('keydown',e=>{if(e.key==='Enter')sendCmd()});
+$('target').addEventListener('change',()=>{try{localStorage.setItem('target',$('target').value)}catch{};drawQuick()});
+
+const QUICK=[['Day','/time set day'],['Night','/time set night'],['Clear weather','/weather clear'],['Keep inventory','/gamerule keepinventory true'],
+  ['Creative','/gamemode creative @s',1],['Survival','/gamemode survival @s',1],['Bring bot to me','/tp Scout @s',1],['Go to bot','/tp @s Scout',1],['Give bot a pickaxe','/give Scout stone_pickaxe']];
+function drawQuick(){
+  $('quick').innerHTML=QUICK.map((q,i)=>`<button onclick="quick(${i})" ${q[2]&&!target()?'disabled style="opacity:.45"':''}>${esc(q[0])}</button>`).join('');
+}
+async function quick(i){
+  const [name,cmd,needs]=QUICK[i];
+  if(needs&&!target()){say('top','Pick a player in "Run as" first ('+name+')',false);return}
+  const j=await api('POST','/v1/console',{command:cmd,target:target()});
+  say('top',j.error||name+': done',!j.error);poll();
+}
 
 async function loadBackups(){
   const j=await api('GET','/v1/backups');
-  $('btab').innerHTML='<tr><th>Backup</th><th>MB</th><th></th></tr>'+(j.backups||[]).map(b=>`<tr><td>${esc(b.name)}<div class="mute">${new Date(b.t*1000).toLocaleString()}</div></td><td>${b.mb}</td><td><button onclick="restore('${esc(b.name)}')">Restore</button></td></tr>`).join('');
+  $('btab').innerHTML='<tr><th>Backup</th><th>MB</th><th></th></tr>'+((j.backups||[]).map(b=>`<tr><td>${esc(b.name)}<div class="mute">${new Date(b.t*1000).toLocaleString()}</div></td><td>${b.mb}</td><td><button onclick="restore('${esc(b.name)}')">Restore</button></td></tr>`).join('')||'<tr><td class="mute" colspan="3">No backups yet.</td></tr>');
 }
-async function backup(){
-  say('bmsg','Backing up...');
-  const j=await api('POST','/v1/backups',{label:$('blabel').value});
-  say('bmsg',j.ok?`Saved ${j.name} (${j.mb} MB)`:(j.error||'failed'),!!j.ok);loadBackups();status();
+async function backup(label){
+  say('top','Backing up...');say('bmsg','Backing up...');
+  const j=await api('POST','/v1/backups',{label});
+  const t=j.ok?`Saved ${j.name} (${j.mb} MB)`:(j.error||'failed');
+  say('top',t,!!j.ok);say('bmsg',t,!!j.ok);loadBackups();status();
 }
 async function restore(name){
   if(!confirm(`Restore ${name}?\nThe server stops, the current world is kept as a pre-restore zip, then this backup is unpacked.`))return;
@@ -149,7 +259,7 @@ async function restore(name){
 let props={};
 async function loadProps(){
   const j=await api('GET','/v1/properties');props=j.properties||{};
-  $('ptab').innerHTML=Object.keys(props).sort().map(k=>`<tr><td>${esc(k)}</td><td><input data-k="${esc(k)}" value="${esc(props[k])}" size="28"></td></tr>`).join('');
+  $('ptab').innerHTML=Object.keys(props).sort().map(k=>`<tr><td>${esc(k)}</td><td><input data-k="${esc(k)}" value="${esc(props[k])}" style="width:100%;max-width:340px"></td></tr>`).join('');
 }
 async function saveProps(){
   const set={};document.querySelectorAll('#ptab input').forEach(i=>{if(i.value!==props[i.dataset.k])set[i.dataset.k]=i.value});
@@ -160,54 +270,45 @@ async function saveProps(){
 
 let chains=[];
 function drawChains(){
-  $('chains').innerHTML=chains.map((c,i)=>`<div class="chain"><div class="row">
-    <input data-i="${i}" data-f="name" value="${esc(c.name)}" size="30">
-    <label class="mute"><input type="checkbox" data-i="${i}" data-f="bot" ${c.bot_ok?'checked':''}> Bot may run</label>
-    <span style="flex:1"></span><button class="go" onclick="runChain(${i})">&#9654; Run</button><button class="danger" onclick="delChain(${i})">Delete</button></div>
-    <textarea rows="${Math.max(3,c.lines.length+1)}" data-i="${i}" data-f="lines">${esc(c.lines.join('\n'))}</textarea>
+  $('chains').innerHTML=chains.map((c,i)=>`<div class="card chain"><div class="head">
+    <input data-i="${i}" data-f="name" value="${esc(c.name)}">
+    <button class="go" onclick="runChain(${i})" title="Save, then run as the selected player">&#9654; Run</button><button class="danger" onclick="delChain(${i})" title="Delete">&#10005;</button></div>
+    <textarea rows="${Math.max(4,c.lines.length+1)}" data-i="${i}" data-f="lines" spellcheck="false">${esc(c.lines.join('\n'))}</textarea>
     <div class="msg" id="r${i}"></div></div>`).join('')||'<div class="mute">No chains yet.</div>';
+  $('o-chains').innerHTML=chains.map((c,i)=>`<button onclick="runChain(${i},true)">&#9654; ${esc(c.name)}</button>`).join('')||'<span class="mute">None yet (Chains page).</span>';
 }
 function gather(){
   document.querySelectorAll('#chains [data-i]').forEach(e=>{const c=chains[+e.dataset.i];
-    if(e.dataset.f==='name')c.name=e.value;else if(e.dataset.f==='bot')c.bot_ok=e.checked;else c.lines=e.value.split('\n').map(x=>x.trim()).filter(Boolean)});
+    if(e.dataset.f==='name')c.name=e.value;else c.lines=e.value.split('\n').map(x=>x.trim()).filter(Boolean)});
 }
 async function loadChains(){chains=(await api('GET','/v1/chains')).chains||[];drawChains()}
-function addChain(){gather();chains.push({name:'New chain',lines:['/say hello'],bot_ok:false});drawChains()}
-function delChain(i){if(!confirm('Delete this chain?'))return;gather();chains.splice(i,1);drawChains()}
-async function saveChains(){gather();const j=await api('PUT','/v1/chains',{chains});say('cmsg',j.ok?`Saved ${j.saved} chains`:(j.error||'failed'),!!j.ok)}
-async function runChain(i){
-  gather();await saveChains();
-  say('r'+i,'Running...');
-  const j=await api('POST','/v1/chains/run',{name:chains[i].name,target:target()});
-  say('r'+i,j.error||(j.results||[]).map(r=>(r.ok?'ok  ':'FAIL ')+r.line+(r.out?'  -> '+r.out:'')).join('\n'),!!j.ok);
-  $('r'+i).style.whiteSpace='pre-wrap';poll();
+function addChain(){gather();chains.push({name:'New chain',lines:['/say hello']});drawChains()}
+function delChain(i){if(!confirm('Delete this chain?'))return;gather();chains.splice(i,1);drawChains();saveChains()}
+async function saveChains(){gather();const j=await api('PUT','/v1/chains',{chains});say('cmsg',j.ok?`Saved ${j.saved} chains`:(j.error||'failed'),!!j.ok);drawChains()}
+async function runChain(i,quiet){
+  if(!quiet)await saveChains();
+  const name=chains[i].name;
+  say(quiet?'top':'r'+i,'Running...');
+  const j=await api('POST','/v1/chains/run',{name,target:target()});
+  const t=j.error||(j.results||[]).map(r=>(r.ok?'ok   ':'FAIL ')+r.line+(r.out?'  -> '+r.out:'')).join('\n');
+  say(quiet?'top':'r'+i,quiet?(j.ok?`${name}: ran ${j.results.length} steps`:t):t,!!j.ok);poll();
 }
 
 async function loadAudit(){
-  const j=await api('GET','/v1/audit?n=60');
-  $('atab').innerHTML='<tr><th>When</th><th>Who</th><th>Action</th><th>Detail</th></tr>'+(j.audit||[]).reverse().map(a=>`<tr><td>${esc(a.t)}</td><td>${esc(a.who)}</td><td>${esc(a.action)}${a.ok?'':' <span style="color:var(--bad)">(failed)</span>'}</td><td class="mute">${esc(a.detail)}</td></tr>`).join('');
+  const j=await api('GET','/v1/audit?n=100');
+  $('atab').innerHTML='<tr><th>When</th><th>Who</th><th>Action</th><th>Detail</th></tr>'+((j.audit||[]).reverse().map(a=>`<tr><td>${esc(a.t)}</td><td>${esc(a.who)}</td><td>${esc(a.action)}${a.ok?'':' <span style="color:var(--bad)">(failed)</span>'}</td><td class="mute">${esc(a.detail)}</td></tr>`).join('')||'<tr><td class="mute" colspan="4">Nothing yet.</td></tr>');
+}
+async function loadPhone(){
+  const j=await api('GET','/v1/phone');
+  if(j.ok){$('qr').hidden=false;$('qr').innerHTML=j.svg;$('phurl').textContent=j.url;say('phmsg','')}
+  else{$('qr').hidden=true;$('phurl').textContent='';say('phmsg',j.error||'not available',false)}
 }
 
-// ---- target: who commands run as ----
-const target=()=>$('target').value||undefined;
-async function loadPlayers(){
-  const keep=$('target').value||localStorage.getItem('target')||'';
-  let names=[];try{names=(await api('GET','/v1/players')).players||[]}catch{}
-  const sel=$('target');
-  sel.innerHTML='<option value="">Server (nobody)</option>'+names.map(n=>`<option value="${esc(n)}">${esc(n)}</option>`).join('');
-  if(names.includes(keep))sel.value=keep;else if(names.length===1)sel.value=names[0];
-}
-$('target').addEventListener('change',()=>{try{localStorage.setItem('target',$('target').value)}catch{}});
-// ---- quick commands (run as the target; the last two need a target) ----
-const QUICK=[['Day','/time set day'],['Night','/time set night'],['Clear weather','/weather clear'],['Keep inventory','/gamerule keepinventory true'],
-  ['Creative','/gamemode creative @s',1],['Survival','/gamemode survival @s',1],['Bring bot to target','/tp Scout @s',1],['Target to bot','/tp @s Scout',1],['Give bot a pickaxe','/give Scout stone_pickaxe']];
-$('quick').innerHTML=QUICK.map((q,i)=>`<button onclick="quick(${i})">${esc(q[0])}</button>`).join('');
-async function quick(i){
-  const [name,cmd,needs]=QUICK[i];
-  if(needs&&!target()){say('top','Pick a target player first ('+name+')',false);return}
-  const j=await api('POST','/v1/console',{command:cmd,target:target()});
-  say('top',j.error||name+': done',!j.error);poll();
-}
-
-(async()=>{await status();if(!$('app').hidden){loadPlayers();loadBackups();loadProps();loadChains();loadAudit();setInterval(poll,1000);setInterval(status,5000);setInterval(loadPlayers,30000);poll()}else showGate()})();
+(async()=>{
+  await status();
+  if($('app').hidden){showGate();return}
+  loadPlayers();loadChains();drawQuick();
+  show((location.hash||'#overview').slice(1));
+  setInterval(poll,1000);setInterval(status,5000);setInterval(loadPlayers,45000);poll();
+})();
 </script></body></html>

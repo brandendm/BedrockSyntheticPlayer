@@ -1,6 +1,6 @@
 // The bot's line to the Bedrock admin service (admin/service.py, a separate program that owns the server): one HTTP request to the brain's /admin,
-// which adds the bot token and passes it on. The service decides what the bot may do (status, a safe list of console commands, backups, the chains
-// marked "Bot may run"); the game never sees a token.
+// which adds the bot token and passes it on. The service decides what the bot may do (status, any console command, backups, any saved chain); the game
+// never sees a token.
 import { http, HttpRequest, HttpRequestMethod, HttpHeader } from '@minecraft/server-net';
 import { CONFIG } from '../config.js';
 
