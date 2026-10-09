@@ -31,6 +31,9 @@ import { chainStep, chainItem, chainOutline, held } from '../core/chain.js';
 import { Horses } from './horse.js';
 import { LeadTow } from './leadtow.js';
 import { Boating } from './boating.js';
+import { Fishing } from './fishing.js';
+import { Campfire } from './campfire.js';
+import { wantCampfire } from '../core/angling.js';
 import { waterReflex, airFloor, ownsWater } from '../core/water.js';
 import { TowLearn } from './towlearn.js';
 import { Capsules } from './capsule.js';
@@ -124,6 +127,8 @@ export class Agent {
     this.horses = new Horses(this);
     this.tow = new LeadTow(this);
     this.boating = new Boating(this);
+    this.fishing = new Fishing(this);
+    this.campfire = new Campfire(this);
     this.towlearn = new TowLearn(this);
     this.capsule = new Capsules(this);
     this.portal = new Portals(this);
@@ -1583,6 +1588,8 @@ export class Agent {
             break;
           }
           case 'wait_smelt': await H.waitSmelt(gen); break;
+          case 'campfire_cook': { const r = await this.campfire.cook(gen); if (!r.ok && !r.got) this.campfireFailAt = Date.now() + 600000; break; }
+          case 'fish': { const r = await this.fishing.fish(gen, { want: 3, maxS: 90 }); if (!r.caught) this.fishFailAt = Date.now() + 300000; break; }
           case 'build_house': await H.buildHouse(gen); break;
           case 'repair_house': await H.repairHouse(gen); break;
           case 'clear_house': await H.clearHouse(gen); break;
@@ -2127,6 +2134,8 @@ export class Agent {
       case 'get_iron': return `mining for iron (${step.need} more${step.why === 'bucket' ? ', for a bucket' : ''})`;
       case 'fill_bucket': return 'filling the water bucket (for long falls)';
       case 'smelt': return step.input === 'log' ? 'loading the furnace: logs into charcoal' : step.input === 'ore' ? 'loading the furnace: smelting iron' : 'loading the furnace: cooking food';
+      case 'fish': return 'fishing for food';
+      case 'campfire_cook': return 'cooking the meat on a campfire';
       case 'craft': return `crafting ${step.items.join(', ').replace(/_/g, ' ')}`;
       default: return (STEP_WORDS[step.step] ?? step.step).replace(/_/g, ' ');
     }
@@ -2323,7 +2332,16 @@ export class Agent {
       shortfall: H.project ? H.houseNeeds(H.project, H.project.dir, { fittings: true }) : H.shortfall ?? null,
       packFull: H.freeSlots() <= FULL_SLOTS && Date.now() - (this.memory.data.nothingToStoreAt ?? 0) > 600000,
       chestFull: Date.now() - (this.memory.data.chestFullAt ?? 0) < 600000,
+      campfire: Date.now() > (this.campfireFailAt ?? 0) && wantCampfire(inv, { furnaceHandy: false }),
+      fishOk: Date.now() > (this.fishFailAt ?? 0) && this.fishing.hasRod() && this.shoreNearby(),
     };
+  }
+
+  /** A shore to fish from within 14 blocks (looked for at most every 30 s). */
+  shoreNearby() {
+    const now = Date.now();
+    if (!this._shoreAt || now - this._shoreAt > 30000) { this._shoreAt = now; try { this._shore = !!this.fishing.findShore(this.sim.location); } catch { this._shore = false; } }
+    return this._shore;
   }
 
   resume(task) {

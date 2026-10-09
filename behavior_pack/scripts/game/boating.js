@@ -158,13 +158,20 @@ export class Boating {
     // In: interacted with (a player's way), else the game's call, else the ride command the boat arena sat its bot down with.
     const seated = () => !!a.boatUnder(sim);
     const board = async () => {
-      for (let tryN = 0; tryN < 5 && !seated() && boat.isValid; tryN++) {
+      // (u310: more ways in. First the boat is let settle and we get within reach of it; then interact, the game call, the ride command with
+      // and without a teleport, and last we are put beside it and interact again. Each try says which it was.)
+      for (let k = 0; k < 20 && boat.isValid; k++) { const v = boat.getVelocity(); if (Math.hypot(v.x, v.z) < 0.04) break; await S.wait(gen, 1); }
+      const ways = ['interacted with it', 'interacted with it', 'by the game call', 'by command', 'by command (no teleport)', 'put beside it, interacted', 'put beside it, game call'];
+      for (let tryN = 0; tryN < ways.length && !seated() && boat.isValid; tryN++) {
+        const bl = boat.location;
+        if (flat(sim.location, bl) > 2.4 && tryN !== 5 && tryN !== 6) await S.goNear(gen, { x: bl.x, y: sim.location.y, z: bl.z }, 1.8, 1).catch(() => false);
+        if (tryN >= 5) { try { sim.teleport({ x: bl.x + 1.6, y: bl.y + 0.3, z: bl.z }); } catch { /* */ } await S.wait(gen, 2); }
         try { sim.lookAtLocation({ x: boat.location.x, y: boat.location.y + 0.5, z: boat.location.z }); } catch { /* */ }
         await S.wait(gen, tryN ? 3 : 2);
-        const how1 = tryN < 2 ? 'interacted with it' : tryN === 2 ? 'by the game call' : 'by command';
-        if (tryN < 2) { try { hold(sim, null); sim.interactWithEntity(boat); } catch { /* */ } }
-        else if (tryN === 2) { try { boat.getComponent('minecraft:rideable')?.addRider(sim); } catch { /* */ } }
-        else { const l = boat.location; try { sim.runCommand(`ride @s start_riding @e[type=boat,x=${l.x},y=${l.y},z=${l.z},c=1] teleport_rider`); } catch { /* */ } }
+        const how1 = ways[tryN];
+        if (tryN < 2 || tryN === 5) { try { hold(sim, null); sim.interactWithEntity(boat); } catch { /* */ } }
+        else if (tryN === 2 || tryN === 6) { try { boat.getComponent('minecraft:rideable')?.addRider(sim); } catch { /* */ } }
+        else { const l = boat.location; try { sim.runCommand(`ride @s start_riding @e[type=boat,x=${l.x},y=${l.y},z=${l.z},c=1]${tryN === 3 ? ' teleport_rider' : ''}`); } catch { /* */ } }
         for (let k = 0; k < 8 && !seated(); k++) await S.wait(gen, 1);
         if (seated()) { how.boarded ||= how1; return true; }
       }

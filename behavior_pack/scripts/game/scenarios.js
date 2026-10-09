@@ -89,7 +89,7 @@ function extFor(name) {
   return name === 'farm' || name === 'farmrace' ? { w: 22, e: 36, r: 24 } : name === 'horserace' || name === 'elytra' || name === 'boatcross' ? { w: 8, e: 54, r: 10 } : name === 'bow' ? { w: 14, e: 34, r: 14 }
     : name === 'villagerferry' || name === 'villagerferryhorse' ? { w: 17, e: 44, r: 12 } : name === 'villagerhaulhorse' ? { w: 12, e: 44, r: 12 } : name === 'leadboat' || name === 'villagerhaul' ? { w: 12, e: 44, r: 12 } : name === 'forest' ? { w: 6, e: 34, r: 20 } : { w: 14, e: 18, r: 12 };
 }
-const NAMES = ['roof', 'tower', 'hole', 'pit', 'trap', 'climb', 'ledge', 'ladder', 'husk', 'creeper', 'sheep', 'pen', 'smelt', 'smeltlogs', 'shelter', 'house', 'resume', 'ghostlog', 'quarry', 'dark', 'replant', 'litter', 'trader', 'iron', 'farm', 'equip', 'water', 'bucketfarm', 'treetop', 'corner', 'leap', 'bridge', 'fall', 'vines', 'stairgap', 'loot', 'shield', 'skel', 'rest', 'nights', 'calibrate', 'portal', 'horse', 'leadboat', 'leadsling', 'bow', 'duel', 'horserace', 'pillarrace', 'woodrace', 'lavacross', 'obsidian', 'mineore', 'enderman', 'blaze', 'ghast', 'witherskeleton', 'placerate', 'farmrace', 'creepers', 'ravine', 'elytra', 'villagerhaul', 'villagerferry', 'villagerhaulhorse', 'villagerferryhorse', 'forest', 'vineclimb', 'boatcross', ...CAVE_KINDS, ...OCEAN_KINDS, ...TERRAIN_KINDS, 'wild', 'bench', ...TOW_NAMES, ...TOW_NAMES.map((n) => `${n}horse`), ...PROBE_NAMES];
+const NAMES = ['roof', 'tower', 'hole', 'pit', 'trap', 'climb', 'ledge', 'ladder', 'husk', 'creeper', 'sheep', 'pen', 'smelt', 'smeltlogs', 'shelter', 'house', 'resume', 'ghostlog', 'quarry', 'dark', 'replant', 'litter', 'trader', 'iron', 'farm', 'equip', 'water', 'bucketfarm', 'treetop', 'corner', 'leap', 'bridge', 'fall', 'vines', 'stairgap', 'loot', 'shield', 'skel', 'rest', 'nights', 'calibrate', 'portal', 'horse', 'leadboat', 'leadsling', 'bow', 'duel', 'horserace', 'pillarrace', 'woodrace', 'lavacross', 'obsidian', 'mineore', 'enderman', 'blaze', 'ghast', 'witherskeleton', 'placerate', 'farmrace', 'creepers', 'ravine', 'elytra', 'villagerhaul', 'villagerferry', 'villagerhaulhorse', 'villagerferryhorse', 'forest', 'vineclimb', 'boatcross', 'fish', 'campfire', ...CAVE_KINDS, ...OCEAN_KINDS, ...TERRAIN_KINDS, 'wild', 'bench', ...TOW_NAMES, ...TOW_NAMES.map((n) => `${n}horse`), ...PROBE_NAMES];
 let running = false;
 /** The bot's last forest turn (its logs and trees), for your turn to be compared with. @type {{logs: number, trees: number, cut: number, build: string} | null} */
 let forestBot = null;
@@ -869,6 +869,37 @@ async function runOne(agent, player, name, arg, human = false) {
         const fp = H.smeltJob?.pos ?? agent.memory.list('furnace', dim.id, sim.location)[0]?.pos;
         if (fp) agent.memory.forgetNear('furnace', dim.id, fp, 0.5);
         H.smeltJob = null;
+        break;
+      }
+      case 'fish': {
+        // A pool 7 x 7 and 4 deep three blocks east of us, a fishing rod in the pack: fish until one is in the pack (a bite takes 5 to 30 s a cast, so
+        // two minutes). The result says how far it got (hook seen, bite seen, reeled) so a failure is readable.
+        cmd(`fill ${x + 3} ${gy - 3} ${z - 3} ${x + 9} ${gy} ${z + 3} water`);
+        cmd(`fill ${x + 3} ${gy + 1} ${z - 3} ${x + 9} ${gy + 5} ${z + 3} air`);
+        tp(x + 1, gy + 1, z);
+        await system.waitTicks(15);
+        const inv = sim.getComponent('minecraft:inventory').container;
+        inv.addItem(new ItemStack('minecraft:fishing_rod', 1));
+        const gen = agent.newTask({ kind: 'test' });
+        const r = await agent.fishing.fish(gen, { want: 1, maxS: 130 }).catch((e) => ({ ok: false, caught: 0, casts: 0, bites: 0, hooks: 0, why: `threw ${e}`, notes: [] }));
+        agent.newTask(null);
+        pass = r.caught >= 1;
+        detail = `${r.caught} fish in ${secs()}s: ${r.casts} casts, hook seen ${r.hooks}x, ${r.bites} bites${r.why ? `, ${r.why}` : ''}${r.notes.length ? ` (${r.notes.slice(0, 4).join('; ')})` : ''}`;
+        break;
+      }
+      case 'campfire': {
+        // Sticks, a coal, three logs and raw meat in the pack, a table beside us: a campfire is made and put down, the meat put on it, and 30 s later
+        // picked up cooked.
+        tp(x, gy + 1, z);
+        await system.waitTicks(10);
+        const inv = sim.getComponent('minecraft:inventory').container;
+        for (const [id, n] of /** @type {Array<[string, number]>} */ ([['crafting_table', 1], ['stick', 3], ['coal', 1], ['oak_log', 3], ['beef', 2], ['porkchop', 1]])) inv.addItem(new ItemStack(`minecraft:${id}`, n));
+        const gen = agent.newTask({ kind: 'test' });
+        const r = await agent.campfire.cook(gen).catch((e) => ({ ok: false, put: 0, got: 0, why: `threw ${e}`, notes: [], how: '' }));
+        agent.newTask(null);
+        pass = r.ok;
+        detail = `${r.put} on the fire, ${r.got} cooked back in ${secs()}s${r.how ? ` (put on via ${r.how})` : ''}${r.why ? `, ${r.why}` : ''}${r.notes?.length ? ` (${r.notes.slice(0, 4).join('; ')})` : ''}`;
+        cleanup.push(() => { try { for (let dx = -6; dx <= 6; dx++) for (let dz = -6; dz <= 6; dz++) { const b = dim.getBlock({ x: x + dx, y: gy + 1, z: z + dz }); if (b?.typeId === 'minecraft:campfire') b.setType('minecraft:air'); } } catch { /* */ } });
         break;
       }
       case 'climb': {

@@ -163,6 +163,8 @@ export function settleStep(f) {
   // Sheep first while we need wool: they're food too (mutton), other animals can wait.
   if (sheepNow && wool(inv) < 3 && !f.house) return { step: 'hunt', what: 'sheep', need: 3 - wool(inv) };
   if (on('hunting') && armed && f.animals > 0 && foodCount(inv) < FOOD_GOAL && !sheepNow) return { step: 'hunt', what: 'food' };
+  // No animals near but a rod in the pack and a shore by: fish for it (game/fishing.js).
+  if (f.fishOk && f.animals === 0 && foodCount(inv) < FOOD_GOAL && !sheepNow) return { step: 'fish' };
 
   // 2. Bed. Crafted at a table that's already there (the wool keeps): not a new table put down
   // wherever the last sheep fell. With none near, it's made at the house's table at bedtime
@@ -244,6 +246,8 @@ export function settleStep(f) {
   // (A furnace nearby, or one to put down: not an 80-block walk home to cook in the middle of the day.)
   const furnaceHandy = has(inv, 'furnace') || (f.furnace?.dist ?? Infinity) <= 48;
   if (!f.smelt && rawId && furnaceHandy && planFuel(inv, rawId, inv[rawId], { keepSticks })) return { step: 'smelt', input: 'food', n: Object.keys(RAW).reduce((a, id) => a + (inv[id] ?? 0), 0), fuelPlanks: 0 };
+  // No furnace near but a campfire in the pack (or the stuff for one): cook on that (no fuel, 30 s).
+  if (rawId && !furnaceHandy && f.campfire) return { step: 'campfire_cook' };
   // Not done while something's still missing: no sheep for the bed yet (go and find some:
   // grassland, see core/biomes.js), or the charcoal for the torches is still cooking.
   // Torches by the door first if we have them: seconds of work here, before a long sheep search.

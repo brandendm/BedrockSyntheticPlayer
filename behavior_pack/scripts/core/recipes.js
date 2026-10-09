@@ -55,6 +55,8 @@ export const RECIPES = {
   bed: { out: 1, table: true, inputs: [{ match: (id) => isWool(id), n: 3, sameId: true }, { match: isPlanks, n: 3 }] },
   wooden_door: { out: 3, table: true, inputs: [{ match: isPlanks, n: 6 }] },
   chest: { out: 1, table: true, inputs: [{ match: isPlanks, n: 8 }] },
+  fishing_rod: { out: 1, table: true, inputs: [{ match: 'stick', n: 3 }, { match: 'string', n: 2 }] }, // (string is never made: it has to be in the pack)
+  campfire: { out: 1, table: true, inputs: [{ match: 'stick', n: 3 }, { match: (id) => id === 'charcoal' || id === 'coal', n: 1 }, { match: (id) => isLog(id) && !id.startsWith('stripped_'), n: 3 }] },
   boat: { out: 1, table: true, inputs: [{ match: isPlanks, n: 5 }] }, // (oak_boat, spruce_boat... by the planks: applyCraft)
   oak_sign: { out: 3, table: true, inputs: [{ match: isPlanks, n: 6 }, { match: 'stick', n: 1 }] }, // (for the chest room's labels)
   // Farming.
