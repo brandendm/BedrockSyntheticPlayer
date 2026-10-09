@@ -28,8 +28,28 @@ if not exist "server\bedrock_server.exe" (
   pause
   exit /b 1
 )
+rem The Bedrock admin service (Start Admin.bat) owns the server when brain\config.json names it (admin_url). Then this starts the brain ALONE (a second server on the
+rem same world is how it got corrupted), starts the admin service if it is not running yet, and leaves the world alone (a new world under a running server is no good).
+set "ADMIN="
+if exist "brain\config.json" findstr /r /c:"admin_url.*http" "brain\config.json" >nul 2>&1 && set "ADMIN=1"
+if defined ADMIN (
+  netstat -ano | findstr /c:":8780 " | findstr LISTENING >nul 2>&1 || start "Bedrock Admin" cmd /k call "%~dp0Start Admin.bat"
+  if defined PY (
+    start "Bedrock Agent - brain" cmd /k %PY% -m brain.server
+    timeout /t 3 >nul
+    start "" http://127.0.0.1:8765/
+    echo Started the brain. The Bedrock server belongs to the admin service: start it from its panel ^(http://127.0.0.1:8780^).
+  ) else (
+    echo Python 3 is needed for the brain and the admin service.
+    pause
+  )
+  timeout /t 10
+  exit /b 0
+)
 rem A new world for each update (tools\new_world.ps1): only when the build changed; "Start Agent.bat keep" skips it.
 if /i "%~1"=="keep" (set "NEWWORLD=-Keep") else (set "NEWWORLD=")
+rem (and never a new world under a server that is already running)
+tasklist /FI "IMAGENAME eq bedrock_server.exe" 2>nul | find /i "bedrock_server.exe" >nul && set "NEWWORLD=-Keep"
 powershell -NoProfile -ExecutionPolicy Bypass -File "tools\new_world.ps1" %NEWWORLD%
 
 if defined PY (

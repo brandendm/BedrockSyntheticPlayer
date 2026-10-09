@@ -342,6 +342,15 @@ def build_engine(cfg: dict) -> DecisionEngine:
     return DecisionEngine(jev, llm, cfg["min_confidence"], bool(cfg.get("mc_commands", True)))
 
 
+def _other_servers() -> list:
+    """Ids of Bedrock server processes already running (the admin service's check, shared)."""
+    try:
+        from admin.service import process_ids
+        return process_ids("bedrock_server.exe" if os.name == "nt" else "bedrock_server")
+    except Exception:
+        return []
+
+
 def lan_ip() -> str:
     """This PC's address on the local network (what a phone types), or 127.0.0.1 if there's none."""
     import socket
@@ -1045,7 +1054,11 @@ def main():
     _setup_autorun()
     _setup_trainer()
     httpd = ThreadingHTTPServer((host, port), make_handler(engine, key))
-    if "--server" in sys.argv:
+    if "--server" in sys.argv and _server["admin"].configured:
+        log.warning("--server ignored: the admin service (%s) owns the Bedrock server; start and stop it from its panel", cfg.get("admin_url"))
+    elif "--server" in sys.argv and _other_servers():
+        log.warning("--server ignored: a Bedrock server is already running (pids %s); a second one on the same world corrupts it", _other_servers())
+    elif "--server" in sys.argv:
         # The Bedrock server as our child (its console is this window): needed for /locate answers.
         from .serverproc import ServerProc
         exe = ROOT.parent / "server" / ("bedrock_server.exe" if os.name == "nt" else "bedrock_server")

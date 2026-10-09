@@ -529,3 +529,9 @@ def test_new_world_session_resets_logs_but_a_respawn_does_not():
     assert len(s._traces) == 0
     s.append_traces([{"tick": 5000, "msg": "later"}])
     assert s.new_session("world-b", "u145", 100) is True            # the game restarted (ticks went back)
+
+
+class OtherServersTest(unittest.TestCase):
+    def test_returns_a_list_and_never_raises(self):
+        from brain import server
+        self.assertIsInstance(server._other_servers(), list)
