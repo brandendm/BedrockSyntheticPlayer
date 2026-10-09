@@ -394,24 +394,28 @@ world.afterEvents.playerSpawn.subscribe((ev) => {
 /** Ids of the bots in the show that is on now (so a clean-up of roaming bots leaves them alone). */
 export function colosseumKeepIds() { return SHOW ? SHOW.fighters.map((f) => f.w.sim?.id).filter(Boolean) : []; }
 
-/** A horse for this bot: spawned under it, tamed and saddled by command, and sat on. Without one it fights on foot. */
+/** A horse for this bot, made the way that works in the game: summoned grown-up, tamed by event, saddled by replaceitem, and ridden by command (all run as the bot). */
+export const HORSE_CHAIN = [
+  'summon horse ~ ~ ~ ~ ~ minecraft:ageable_grow_up',
+  'event entity @e[type=horse,c=1] minecraft:on_tame',
+  'replaceitem entity @e[type=horse,c=1] slot.saddle 0 saddle 1',
+  'ride @s start_riding @e[type=horse,c=1] teleport_rider',
+];
+
 async function mountUp(f) {
   const a = f.w, sim = a.sim, dim = a.dim;
   try {
-    const l = sim.location;
-    const h = dim.spawnEntity('minecraft:horse', { x: l.x, y: l.y, z: l.z });
-    f.horse = h;
-    try { h.getComponent('minecraft:tamemount')?.setTamed(false); } catch { /* */ }
-    try { h.getComponent('minecraft:inventory').container.setItem(0, new ItemStack('minecraft:saddle', 1)); } catch { /* */ }
-    await wait(6);
-    let ok = false;
-    try { ok = await a.horses.getOn(a.taskGen, h); } catch { /* */ }
-    if (!ok) {
-      const hl = h.location;
-      try { sim.runCommand(`ride @s start_riding @e[type=horse,x=${hl.x},y=${hl.y},z=${hl.z},c=1] teleport_rider`); } catch { /* */ }
-      await wait(6);
-      ok = !!a.horses.mounted();
+    for (const c of HORSE_CHAIN) {
+      try { sim.runCommand(c); } catch (e) { console.warn(`[colosseum] ${f.name}: "${c}" failed: ${e}`); }
+      await wait(3);
     }
+    try {
+      const hs = dim.getEntities({ type: 'minecraft:horse', location: sim.location, maxDistance: 5 });
+      hs.sort((x, y) => d3(sim.location, x.location) - d3(sim.location, y.location));
+      f.horse = hs[0] ?? null;
+    } catch { /* */ }
+    let ok = !!a.horses.mounted();
+    if (!ok && f.horse) { try { ok = await a.horses.getOn(a.taskGen, f.horse); } catch { /* the old way, if the ride command did not take */ } }
     f.mounted = ok;
     if (!ok) console.warn(`[colosseum] ${f.name} could not get on its horse: fighting on foot`);
   } catch (e) { console.warn(`[colosseum] horse for ${f.name}: ${e}`); }

@@ -272,6 +272,21 @@
       <button id="runadmin">Run</button>
     </div>
     <p class="note">@P means the player picked above. Commands run as the server, with full permissions.</p>
+    <h2 style="margin-top:14px">Command chains <span class="muted">saved, one click runs every line in order</span></h2>
+    <div class="row" id="chains"></div>
+    <details id="chedit" style="margin:6px 0"><summary class="muted">New / edit a chain</summary>
+      <div class="row">
+        <input id="chname" placeholder="Name, e.g. Saddled horse + mount" size="30">
+        <label class="muted">Run commands as <select id="chas"><option value="player">the picked player (@s and ~ ~ ~ mean them)</option><option value="server">the server</option></select></label>
+      </div>
+      <textarea id="chlines" rows="6" style="width:100%;font-family:var(--mono)" placeholder="One per line. /commands run as above; plain lines go to the bot (e.g. colosseum zombie 4); 'wait 2' pauses 2 seconds; # starts a comment."></textarea>
+      <div class="row" style="margin-top:6px">
+        <button class="primary" id="chsave">Save chain</button>
+        <button id="chrun">Run without saving</button>
+        <button id="chnew">Clear form</button>
+        <button class="danger" id="chdel">Delete this chain</button>
+      </div>
+    </details>
   </section>
 
   <section class="wide" id="arenasec">
@@ -438,14 +453,15 @@ $('theme').onclick = () => {
 
 function toast(msg) { const t = $('toast'); t.textContent = msg; t.classList.add('show'); clearTimeout(toast.h); toast.h = setTimeout(() => t.classList.remove('show'), 1800); }
 
-async function send(text) {
+async function send(text, quiet = false) {
   const p = $('player').value;
-  if (text.includes('@P')) { if (!p) return toast('Pick a player first'); text = text.replaceAll('@P', p); }
-  if (text.startsWith('@ ')) { if (!p) return toast('Pick a player first'); text = `@${p} ${text.slice(2)}`; }
+  if (text.includes('@P')) { if (!p) { toast('Pick a player first'); return false; } text = text.replaceAll('@P', p); }
+  if (text.startsWith('@ ')) { if (!p) { toast('Pick a player first'); return false; } text = `@${p} ${text.slice(2)}`; }
   try {
     const r = await fetch('/api/command', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text }) });
-    toast(r.ok ? `Sent: ${text}` : 'Could not send');
-  } catch { toast('Brain not reachable'); }
+    if (!quiet) toast(r.ok ? `Sent: ${text}` : 'Could not send');
+    return r.ok;
+  } catch { toast('Brain not reachable'); return false; }
 }
 
 const testOpts = () => `${$('testwho') && $('testwho').value ? ' ' + $('testwho').value : ''}${$('testcycle') && $('testcycle').checked ? ' daycycle' : ''}${$('testalso') && $('testalso').checked ? ' alsobot' : ''}`;
@@ -458,6 +474,67 @@ $('cmd').onkeydown = (e) => { if (e.key === 'Enter') $('send').click(); };
 $('runadmin').onclick = () => { const v = $('admin').value.trim().replace(/^\//, ''); if (v) { send('/' + v); $('admin').value = ''; } };
 $('admin').onkeydown = (e) => { if (e.key === 'Enter') $('runadmin').click(); };
 
+
+
+// ---- Command chains: named lists of commands, saved on this computer (brain/chains.json), run line by line with one click ----
+const CHAIN_DEFAULTS = [
+  { name: 'Saddled horse + mount', as: 'player', lines: ['/summon horse ~ ~ ~ ~ ~ minecraft:ageable_grow_up', '/event entity @e[type=horse,c=1] minecraft:on_tame', '/replaceitem entity @e[type=horse,c=1] slot.saddle 0 saddle 1', '/ride @s start_riding @e[type=horse,c=1] teleport_rider'] },
+  { name: 'Day + clear weather', as: 'server', lines: ['/time set day', '/weather clear'] },
+];
+let chains = CHAIN_DEFAULTS.map((c) => ({ ...c })), chainSel = -1;
+async function loadChains() {
+  const d = await getJSON('/api/chains');
+  if (d && Array.isArray(d.chains)) chains = d.chains;
+  else { try { const l = JSON.parse(localStorage.getItem('chains') || 'null'); if (Array.isArray(l)) chains = l; } catch {} }
+  renderChains();
+}
+async function saveChains() {
+  try { localStorage.setItem('chains', JSON.stringify(chains)); } catch {}
+  try { const r = await fetch('/api/chains', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ chains }) }); if (!r.ok) toast('Could not save on the brain; kept in this browser'); } catch { toast('Brain not reachable; kept in this browser'); }
+}
+function renderChains() {
+  const el = $('chains');
+  el.innerHTML = chains.length ? '' : '<span class="muted">No chains yet: make one below.</span>';
+  chains.forEach((c, i) => {
+    const run = document.createElement('button'); run.className = 'primary'; run.textContent = `▶ ${c.name}`; run.title = c.lines.join('\n');
+    run.onclick = () => runChain(c);
+    const ed = document.createElement('button'); ed.textContent = '✎'; ed.title = 'Edit this chain'; ed.onclick = () => editChain(i);
+    el.append(run, ed);
+  });
+}
+function editChain(i) {
+  chainSel = i; const c = i >= 0 ? chains[i] : { name: '', as: 'player', lines: [] };
+  $('chname').value = c.name; $('chas').value = c.as; $('chlines').value = c.lines.join('\n'); $('chedit').open = true;
+}
+function formChain() { return { name: $('chname').value.trim(), as: $('chas').value, lines: $('chlines').value.split('\n').map((l) => l.trim()).filter(Boolean) }; }
+let chainBusy = false;
+async function runChain(c) {
+  if (chainBusy) return toast('A chain is already running');
+  chainBusy = true; let n = 0;
+  try {
+    for (const raw of c.lines) {
+      const line = raw.trim();
+      if (!line || line.startsWith('#')) continue;
+      const w = /^wait\s+(\d+(?:\.\d+)?)$/i.exec(line);
+      if (w) { await new Promise((r) => setTimeout(r, Math.min(60, +w[1]) * 1000)); continue; }
+      // (a /command goes as the picked player so @s and ~ ~ ~ mean them, or as the server; anything else is told to the bot)
+      const text = line.startsWith('/') && c.as === 'player' ? `@ ${line}` : line;
+      if (!(await send(text, true))) return toast(`Stopped at "${line.slice(0, 40)}" (${n} sent)`);
+      n++;
+    }
+    toast(`Ran "${c.name}": ${n} step${n === 1 ? '' : 's'}`);
+  } finally { chainBusy = false; }
+}
+$('chsave').onclick = async () => {
+  const c = formChain(); if (!c.name) return toast('Give the chain a name'); if (!c.lines.length) return toast('Add at least one line');
+  const i = chainSel >= 0 ? chainSel : chains.findIndex((x) => x.name === c.name);
+  if (i >= 0) chains[i] = c; else { chains.push(c); chainSel = chains.length - 1; }
+  renderChains(); await saveChains(); toast(`Saved "${c.name}"`);
+};
+$('chrun').onclick = () => { const c = formChain(); if (c.lines.length) runChain({ ...c, name: c.name || 'unsaved chain' }); };
+$('chnew').onclick = () => editChain(-1);
+$('chdel').onclick = async () => { if (chainSel < 0) return toast('Pick a chain with ✎ first'); const [g] = chains.splice(chainSel, 1); editChain(-1); renderChains(); await saveChains(); toast(`Deleted "${g.name}"`); };
+loadChains();
 
 // ---- Colosseum (bots in gear against a mob or each other) ----
 const AR_MOBS = ['zombie','husk','drowned','zombie villager','skeleton','stray','bogged','wither skeleton','creeper','spider','cave spider','enderman','endermite','silverfish','witch','slime','magma cube','blaze','ghast','piglin','piglin brute','hoglin','zoglin','pillager','vindicator','evoker','vex','ravager','phantom','guardian','elder guardian','shulker','warden','breeze','creaking','wither','ender dragon','iron golem','snow golem','wolf','polar bear','panda','bee','goat','llama','fox','dolphin','cat','ocelot','cow','pig','sheep','chicken','rabbit','horse','donkey','mule','zombie horse','skeleton horse','camel','villager','wandering trader','squid','glow squid','cod','salmon','pufferfish','tropical fish','axolotl','turtle','frog','sniffer','armadillo','bat','parrot','strider','allay','random'];

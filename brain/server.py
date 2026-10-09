@@ -36,6 +36,34 @@ _lock = threading.Lock()
 _status = {"data": None, "at": 0.0}
 _fight_n = [0]
 _commands: collections.deque = collections.deque(maxlen=50)
+CHAINS_FILE = ROOT / "chains.json"
+
+
+def load_chains():
+    """The dashboard's saved command chains: a list of {name, as, lines}, or None when none were ever saved (the page shows its defaults)."""
+    try:
+        return json.loads(CHAINS_FILE.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+
+
+def save_chains(chains) -> int:
+    """Validate and keep the chains: at most 60, each with a name, who runs it ('player' or 'server') and up to 60 lines."""
+    if not isinstance(chains, list) or len(chains) > 60:
+        raise ValueError("chains must be a list of at most 60")
+    clean = []
+    for c in chains:
+        if not isinstance(c, dict):
+            raise ValueError("bad chain")
+        name = str(c.get("name", "")).strip()[:60]
+        lines = [str(x).strip()[:300] for x in (c.get("lines") or []) if str(x).strip()][:60]
+        if not name:
+            raise ValueError("a chain needs a name")
+        clean.append({"name": name, "as": "server" if c.get("as") == "server" else "player", "lines": lines})
+    CHAINS_FILE.write_text(json.dumps(clean, indent=1), encoding="utf-8")
+    return len(clean)
+
+
 def _about() -> dict:
     """What this brain is: the commit it runs from (if git is there), Python, when it started."""
     import platform
@@ -527,6 +555,8 @@ def make_handler(engine: DecisionEngine, key: str | None = None):
                 return
             if self.path.startswith("/api/admin/"):
                 return self._admin_get()
+            if self.path == "/api/chains":
+                return self._send(200, {"chains": load_chains()})
             if self.path == "/api/status":
                 j = engine.jev
                 with _lock:
@@ -677,6 +707,11 @@ def make_handler(engine: DecisionEngine, key: str | None = None):
                 return self._send(200, tr.info())
             if self.path.startswith("/api/admin/"):
                 return self._admin_post()
+            if self.path == "/api/chains":
+                try:
+                    return self._send(200, {"saved": save_chains(self._read_json().get("chains"))})
+                except ValueError as e:
+                    return self._send(400, {"error": str(e)})
             if self.path == "/api/command":
                 try:
                     text = str(self._read_json().get("text", "")).strip()[:480]

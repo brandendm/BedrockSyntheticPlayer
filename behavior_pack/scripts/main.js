@@ -122,6 +122,14 @@ function handle(text, player) {
     if (!pl) return console.warn(`[agent] dashboard: ${who} isn't online`);
     return handle(rest.join(' '), pl);
   }
+  // "@Name /<command>" from the dashboard (a command chain): run it as that player, so @s and ~ ~ ~ mean them.
+  if (cmd.startsWith('/') && player) {
+    try {
+      const r = player.runCommand(cmd.slice(1));
+      console.warn(`[agent] ran ${cmd} as ${player.name} (${r.successCount} ok)`);
+    } catch (e) { console.warn(`[agent] ${cmd} as ${player.name}: ${e}`); reply(player, `That command failed: ${e}`); }
+    return;
+  }
   // "/<command>" from the dashboard: run it as the server (time, weather, gamemode, give...).
   if (cmd.startsWith('/') && !player) {
     try {
