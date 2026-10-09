@@ -25,7 +25,7 @@ import time
 from pathlib import Path
 from typing import Callable, Optional
 
-from . import miner, runstats, tpe
+from . import curriculum, miner, runstats, tpe
 
 GROUPS = ["tow", "combat", "cave", "play"]
 # What each group's real-game confirmation runs, and the guards that must not get worse whatever the group. (Names: behavior_pack/scripts/game/scenarios.js.)
@@ -268,9 +268,23 @@ class Trainer:
                 del lst[:-8]
         self._save("hard_seeds.json", hs)
 
+    def _note_levels(self, res: list) -> None:
+        """Which level each levelled test really ran at (it says so in its detail) and whether it passed: the curriculum's table."""
+        tab = self._load("curriculum.json", {}) or {}
+        for r in res:
+            lv = curriculum.level_of(r.get("detail"))
+            if lv:
+                curriculum.record(tab, r["name"], lv, r["pass"])
+        self._save("curriculum.json", tab)
+
     def _seed_map(self, rnd: int, base: int, tests: list) -> dict:
         """The same seeds for both arms of a round. Odd rounds replay a remembered hard seed per test where there is one."""
         m = {"*": base}
+        tab = self._load("curriculum.json", {}) or {}
+        for t in tests:
+            lv = curriculum.choose(tab, t, self.rng)
+            if lv:
+                m[f"L:{t}"] = lv
         if rnd % 2 == 1:
             hs = self._load("hard_seeds.json", {}) or {}
             for t in tests:
@@ -322,8 +336,12 @@ class Trainer:
             self.state = f"cycle {self.cycle_n}: {group}: trying a small step from the champion"
             hist = self._hist(group)
             if len(hist) >= 6:
-                cand = tpe.suggest(hist, REAL_RANGES[group], self.rng, base=self.champion)
-                rec["search"] = f"TPE suggestion from {len(hist)} past real runs"
+                cand = tpe.suggest_optuna(hist, REAL_RANGES[group], self.rng, base=self.champion)
+                eng = "Optuna TPE"
+                if cand is None:
+                    cand = tpe.suggest(hist, REAL_RANGES[group], self.rng, base=self.champion)
+                    eng = "built-in TPE (pip install optuna for the better one)"
+                rec["search"] = f"{eng} suggestion from {len(hist)} past real runs"
             else:
                 cand = perturb(self.champion, self.rng, REAL_RANGES[group], n_keys=1 + self.rng.randrange(2))
                 rec["search"] = f"random step ({len(hist)} past runs: too few for TPE)"
@@ -387,6 +405,7 @@ class Trainer:
                 self.send("testseed " + json.dumps(seeds))
                 res, outcome = self._arm(pol, tests)
                 self._note_hard_seeds(res)
+                self._note_levels(res)
                 if outcome != "ok":
                     self.send("testseed clear")
                     rec.update(outcome="aborted", why=f"the batch ended: {outcome}")

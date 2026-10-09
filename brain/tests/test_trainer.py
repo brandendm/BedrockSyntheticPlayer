@@ -246,6 +246,12 @@ class LearningHelpers(unittest.TestCase):
         self.assertEqual(t._seed_map(0, 9, ["cavemobs"]), {"*": 9})
         self.assertEqual(t._seed_map(1, 9, ["cavemobs", "wild"]), {"*": 9, "cavemobs": 17})
 
+    def test_the_curriculum_level_goes_in_the_seed_map_once_a_test_is_known_to_have_levels(self):
+        t = self._t()
+        self.assertNotIn("L:cavemobs", t._seed_map(0, 5, ["cavemobs"]))
+        t._note_levels([{"name": "cavemobs", "pass": True, "detail": "x; level 2 seed 4"}])
+        self.assertIn("L:cavemobs", t._seed_map(0, 5, ["cavemobs"]))
+
     def test_learned_margin_needs_enough_fights_and_a_real_difference(self):
         t = self._t()
         self.assertIsNone(t._learned_margin())

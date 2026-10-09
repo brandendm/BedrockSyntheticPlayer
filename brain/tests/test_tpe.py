@@ -34,5 +34,31 @@ class TpeTests(unittest.TestCase):
         self.assertGreater(t, r + 0.005)
 
 
+try:
+    import optuna  # noqa: F401
+    HAVE = True
+except ImportError:
+    HAVE = False
+
+
+@unittest.skipUnless(HAVE, "optuna not installed")
+class OptunaTests(unittest.TestCase):
+    def test_optuna_homes_in_on_the_hill(self):
+        def run(seed):
+            rng = random.Random(seed)
+            hist, best = [], -9
+            for _ in range(40):
+                p = tpe.suggest_optuna(hist, R, rng)
+                hist.append({"params": p, "score": score(p) + rng.gauss(0, 0.01)})
+                best = max(best, score(p))
+            return best
+        self.assertGreater(sum(run(s) for s in range(5)) / 5, -0.05)
+
+    def test_keeps_base_and_range(self):
+        s = tpe.suggest_optuna([], R, random.Random(2), base={"other": 3})
+        self.assertEqual(s["other"], 3)
+        self.assertTrue(0 <= s["a"] <= 10)
+
+
 if __name__ == "__main__":
     unittest.main()

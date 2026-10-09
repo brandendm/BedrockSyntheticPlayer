@@ -55,3 +55,27 @@ def suggest(history: list, ranges: dict, rng: random.Random, *, base: dict | Non
         lo, hi, _ = ranges[k]
         out[k] = round(lo + v * (hi - lo), 3)
     return out
+
+
+def suggest_optuna(history: list, ranges: dict, rng: random.Random, *, base: dict | None = None, min_hist: int = 6):
+    """The same job done by Optuna's TPE sampler (u302: on a noisy 5-parameter hill it got within 0.03 of the best where the pure-Python one above did no better than random). The
+    history is replayed into a fresh study each call, so nothing is kept in memory. Returns None when optuna is not installed (the caller falls back to `suggest`)."""
+    try:
+        import optuna
+        from optuna.distributions import FloatDistribution
+    except ImportError:
+        return None
+    optuna.logging.set_verbosity(optuna.logging.ERROR)
+    keys = sorted(ranges)
+    dist = {k: FloatDistribution(ranges[k][0], ranges[k][1]) for k in keys}
+    study = optuna.create_study(direction="maximize", sampler=optuna.samplers.TPESampler(seed=rng.randrange(1 << 30), n_startup_trials=min_hist, multivariate=True))
+    for h in history:
+        if h.get("score") is None:
+            continue
+        ps = {k: min(ranges[k][1], max(ranges[k][0], h["params"].get(k, ranges[k][2]))) for k in keys}
+        study.add_trial(optuna.trial.create_trial(params=ps, distributions=dist, value=float(h["score"])))
+    t = study.ask(dist)
+    out = dict(base or {})
+    for k in keys:
+        out[k] = round(t.params[k], 3)
+    return out

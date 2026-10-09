@@ -12,3 +12,4 @@ brain/settings.json
 brain/inbox/
 brain/reports/
 brain/inbox/regress_state.json
+tools/.mobcache/
