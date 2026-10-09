@@ -917,3 +917,7 @@ Not run in the real game yet: first look is `!bot colosseum zombie 4`.
 - In game: `!bot admin status | run <console command> | chain <name> | chains | backup [label]`.
 - Tests: `python3 -m unittest discover -s admin/tests -t .` (uses a fake Bedrock server script).
 
+
+## u317 — target selector; commands moved out of the bot dashboard
+
+The bot dashboard no longer has the server-commands row or the command chains (they live in the admin panel now; the Colosseum and bot controls stay). The admin panel has a **Target** selector (online players, refreshed from the console's `list`; `GET /v1/players`): console input, quick buttons and chains run as that player with `execute as "Name" at @s run ...`, so `@s`, `~ ~ ~` and `@e[type=horse,c=1]` mean them (pick "Server" to run as the console). The bot role's command list still applies after the wrapping. A fresh `admin/chains.json` starts with "Saddled horse + mount" and "Day + clear weather". The brain's `/api/chains` and `chains.json` are gone.

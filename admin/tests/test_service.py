@@ -100,6 +100,21 @@ class Live(unittest.TestCase):
         self.assertTrue(any("pre-restore" in b["name"] for b in self.admin.backups.list()))
         self.assertFalse(self.admin.backups.restore("../x.zip")["ok"])
 
+    def test_target(self):
+        self.assertEqual(S.with_target("/ride @s start_riding @e[type=horse,c=1]", "Alice"), 'execute as "Alice" at @s run ride @s start_riding @e[type=horse,c=1]')
+        self.assertEqual(S.with_target("/time set day", None), "time set day")
+        with self.assertRaises(ValueError):
+            S.with_target("say x", 'a" run op @s')
+        self.assertEqual(self.admin.players()["players"], ["Alice", "Bob"])
+        self.assertTrue(self.admin.console("bot", "give @s apple", target="Alice")["ok"])
+        self.assertFalse(self.admin.console("bot", "op @s", target="Alice")["ok"])
+        self.assertFalse(self.admin.console("bot", "say hi", target="x run op")["ok"])
+        self.assertEqual(S.parse_players(["There are 0/10 players online:", ""]), [])
+
+    def test_default_chains(self):
+        names = [c["name"] for c in self.admin.chains.load()]
+        self.assertIn("Saddled horse + mount", names)
+
     def test_chains(self):
         self.admin.chains.save([{"name": "hello", "lines": ["# c", "/say one", "wait 0", "say two"], "bot_ok": True},
                                 {"name": "mine", "lines": ["/list"]},

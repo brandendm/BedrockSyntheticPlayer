@@ -49,7 +49,7 @@ DEFAULTS = {
     "bot_verbs": ["time", "weather", "gamerule", "give", "summon", "event", "effect", "say", "tell", "tp", "teleport", "setblock", "fill", "clear",
                   "replaceitem", "ride", "locate", "difficulty", "xp", "enchant", "playsound", "particle", "title", "list", "kill", "structure", "camera"],
 }
-BOT_ACTIONS = {"status", "console", "console_log", "backup_create", "backups_list", "chain_run", "chains_list"}
+BOT_ACTIONS = {"players", "status", "console", "console_log", "backup_create", "backups_list", "chain_run", "chains_list"}
 
 
 # ---------- config ----------
@@ -109,6 +109,34 @@ def console_allowed(role: str, command: str, verbs) -> tuple[bool, str]:
     if len(parts) > 1 and not parts[-1].split():
         return False, "execute needs a command after run"
     return True, ""
+
+
+# ---------- a target player ----------
+
+TARGET_OK = re.compile(r"[A-Za-z0-9 _.-]{1,32}")
+
+
+def with_target(command: str, target: str | None) -> str:
+    """Run `command` as the target player, standing where they stand (so @s, ~ ~ ~ and @e[...,c=1] mean them): execute as "Name" at @s run ... ."""
+    cmd = command.strip().lstrip("/").strip()
+    if not target:
+        return cmd
+    if not TARGET_OK.fullmatch(target):
+        raise ValueError("bad target name")
+    return f'execute as "{target}" at @s run {cmd}'
+
+
+def parse_players(lines: list[str]) -> list[str]:
+    """The names in the server's answer to `list`: 'There are 2/10 players online:' then 'Alice, Bob'."""
+    for i, text in enumerate(lines):
+        if re.search(r"players online", text, re.I):
+            names = []
+            for nxt in lines[i + 1:i + 3]:
+                body = re.sub(r"^\s*\[[^\]]*\]\s*", "", nxt).strip()
+                if body and not re.search(r"players online", body, re.I):
+                    names += [n.strip() for n in body.split(",") if n.strip()]
+            return names
+    return []
 
 
 # ---------- the server process ----------
@@ -369,6 +397,17 @@ class Backups:
 
 # ---------- chains ----------
 
+# What a fresh install starts with (they run as the target player: `execute as "Name" at @s run ...`, so @s and c=1 mean them).
+DEFAULT_CHAINS = [
+    {"name": "Saddled horse + mount", "bot_ok": False, "lines": [
+        "/summon horse ~ ~ ~ ~ ~ minecraft:ageable_grow_up",
+        "/event entity @e[type=horse,c=1] minecraft:on_tame",
+        "/replaceitem entity @e[type=horse,c=1] slot.saddle 0 saddle 1",
+        "/ride @s start_riding @e[type=horse,c=1] teleport_rider"]},
+    {"name": "Day + clear weather", "bot_ok": True, "lines": ["/time set day", "/weather clear"]},
+]
+
+
 class Chains:
     """Named lists of lines. Grammar: `/command` or `console command` -> the server console; `game text` -> the brain's command queue (the bot and the
     dashboard); `backup [label]`; `wait N` (seconds, at most 60 in all); `# comment`."""
@@ -380,7 +419,7 @@ class Chains:
         try:
             return json.loads(self.path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
-            return []
+            return [dict(c, lines=list(c["lines"])) for c in DEFAULT_CHAINS] if not self.path.exists() else []
 
     def save(self, chains) -> int:
         if not isinstance(chains, list) or len(chains) > 80:
@@ -435,17 +474,27 @@ class Admin:
         return {"role": role, "server": {"running": sv.alive(), "pid": sv.proc.pid if sv.alive() else None, "up_s": round(time.time() - sv.started_at) if sv.alive() else 0},
                 "level": self.backups.level(), "backups": len(self.backups.list()), "chains": len(self.chains.load())}
 
-    def console(self, role, command, wait=1.5):
+    def players(self):
+        try:
+            return {"ok": True, "players": parse_players(self.server.run("list", wait=1.5))}
+        except RuntimeError as e:
+            return {"ok": False, "players": [], "error": str(e)}
+
+    def console(self, role, command, wait=1.5, target=None):
+        try:
+            command = with_target(command, target)
+        except ValueError as e:
+            return {"ok": False, "error": str(e)}
         ok, why = console_allowed(role, command, self.cfg["bot_verbs"])
         if not ok:
             return {"ok": False, "error": why}
         try:
-            out = self.server.run(command.strip().lstrip("/"), wait=min(10.0, max(0.3, float(wait))))
+            out = self.server.run(command, wait=min(10.0, max(0.3, float(wait))))
         except RuntimeError as e:
             return {"ok": False, "error": str(e)}
         return {"ok": True, "lines": out}
 
-    def run_chain(self, role, name):
+    def run_chain(self, role, name, target=None):
         chain = self.chains.get(name)
         if not chain:
             return {"ok": False, "error": f"no chain called {name}"}
@@ -469,7 +518,7 @@ class Admin:
                 results.append({"line": line, "ok": r.get("ok", False), "out": r.get("name") or r.get("error")})
             else:
                 cmd = line[8:] if line.lower().startswith("console ") else line
-                r = self.console(role, cmd)
+                r = self.console(role, cmd, target=target)
                 results.append({"line": line, "ok": r["ok"], "out": " | ".join(r.get("lines", []))[:300] or r.get("error", "")})
             if not results[-1]["ok"]:
                 break
@@ -495,7 +544,7 @@ class Admin:
             res = {"ok": False, "error": str(e)}
         except Exception as e:      # a bug here must not take the service down
             res = {"ok": False, "error": f"{type(e).__name__}: {e}"}
-        if action not in ("status", "console_log", "audit"):
+        if action not in ("status", "console_log", "audit", "players"):
             self.audit(role, action, json.dumps(body)[:200] if body else query, res.get("ok", True))
         return 200, res
 
@@ -504,7 +553,9 @@ class Admin:
         if action == "status":
             return self.status(role)
         if action == "console":
-            return self.console(role, str(b.get("command", "")), b.get("wait", 1.5))
+            return self.console(role, str(b.get("command", "")), b.get("wait", 1.5), b.get("target") or None)
+        if action == "players":
+            return self.players()
         if action == "console_log":
             return sv.tail(int(q.get("since", 0) or 0), int(q.get("n", 200) or 200))
         if action == "server_start":
@@ -529,7 +580,7 @@ class Admin:
         if action == "chains_save":
             return {"ok": True, "saved": self.chains.save(b.get("chains"))}
         if action == "chain_run":
-            return self.run_chain(role, str(b.get("name", "")))
+            return self.run_chain(role, str(b.get("name", "")), b.get("target") or None)
         if action == "audit":
             return {"audit": self.audit_tail(int(q.get("n", 100) or 100))}
         raise ValueError(f"unknown action {action}")
@@ -538,7 +589,7 @@ class Admin:
 # ---------- HTTP ----------
 
 ROUTES = {
-    ("GET", "/v1/status"): "status", ("POST", "/v1/console"): "console", ("GET", "/v1/console/log"): "console_log",
+    ("GET", "/v1/status"): "status", ("GET", "/v1/players"): "players", ("POST", "/v1/console"): "console", ("GET", "/v1/console/log"): "console_log",
     ("POST", "/v1/server/start"): "server_start", ("POST", "/v1/server/stop"): "server_stop", ("POST", "/v1/server/restart"): "server_restart",
     ("GET", "/v1/backups"): "backups_list", ("POST", "/v1/backups"): "backup_create", ("POST", "/v1/backups/restore"): "backup_restore",
     ("GET", "/v1/properties"): "properties_get", ("PUT", "/v1/properties"): "properties_set",

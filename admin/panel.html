@@ -36,6 +36,8 @@ table{width:100%;border-collapse:collapse}td,th{padding:3px 6px;border-bottom:1p
   <span><span class="dot" id="dot"></span><span id="state">...</span></span>
   <span class="mute" id="info"></span>
   <span style="flex:1"></span>
+  <label class="mute">Target <select id="target" title="Commands and chains run as this player, where they stand (@s means them)"><option value="">Server (nobody)</option></select></label>
+  <button onclick="loadPlayers()" title="Refresh the player list">&#8635;</button>
   <button class="go" onclick="srv('start')">Start</button>
   <button onclick="srv('restart')">Restart</button>
   <button class="danger" onclick="srv('stop')">Stop</button>
@@ -44,8 +46,9 @@ table{width:100%;border-collapse:collapse}td,th{padding:3px 6px;border-bottom:1p
 <main>
   <section class="wide">
     <h2>Console</h2>
+    <div class="row" id="quick"></div>
     <div id="log"></div>
-    <div class="row"><input id="cmd" style="flex:1" placeholder="a server console command, e.g. list  or  say hello" autocomplete="off"><button class="go" onclick="sendCmd()">Send</button>
+    <div class="row"><input id="cmd" style="flex:1" placeholder="a server console command (runs as the target if one is picked), e.g. say hello" autocomplete="off"><button class="go" onclick="sendCmd()">Send</button>
       <label class="mute"><input type="checkbox" id="follow" checked> follow</label></div>
   </section>
   <section>
@@ -121,7 +124,7 @@ async function srv(what){
 async function sendCmd(){
   const c=$('cmd').value.trim();if(!c)return;$('cmd').value='';
   const d=document.createElement('div');d.className='a';d.textContent='> '+c;$('log').appendChild(d);
-  const j=await api('POST','/v1/console',{command:c});
+  const j=await api('POST','/v1/console',{command:c,target:target()});
   if(j.error)say('top',j.error,false);else say('top','');
   poll();
 }
@@ -175,7 +178,7 @@ async function saveChains(){gather();const j=await api('PUT','/v1/chains',{chain
 async function runChain(i){
   gather();await saveChains();
   say('r'+i,'Running...');
-  const j=await api('POST','/v1/chains/run',{name:chains[i].name});
+  const j=await api('POST','/v1/chains/run',{name:chains[i].name,target:target()});
   say('r'+i,j.error||(j.results||[]).map(r=>(r.ok?'ok  ':'FAIL ')+r.line+(r.out?'  -> '+r.out:'')).join('\n'),!!j.ok);
   $('r'+i).style.whiteSpace='pre-wrap';poll();
 }
@@ -185,5 +188,26 @@ async function loadAudit(){
   $('atab').innerHTML='<tr><th>When</th><th>Who</th><th>Action</th><th>Detail</th></tr>'+(j.audit||[]).reverse().map(a=>`<tr><td>${esc(a.t)}</td><td>${esc(a.who)}</td><td>${esc(a.action)}${a.ok?'':' <span style="color:var(--bad)">(failed)</span>'}</td><td class="mute">${esc(a.detail)}</td></tr>`).join('');
 }
 
-(async()=>{await status();if(!$('app').hidden){loadBackups();loadProps();loadChains();loadAudit();setInterval(poll,1000);setInterval(status,5000);poll()}else showGate()})();
+// ---- target: who commands run as ----
+const target=()=>$('target').value||undefined;
+async function loadPlayers(){
+  const keep=$('target').value||localStorage.getItem('target')||'';
+  let names=[];try{names=(await api('GET','/v1/players')).players||[]}catch{}
+  const sel=$('target');
+  sel.innerHTML='<option value="">Server (nobody)</option>'+names.map(n=>`<option value="${esc(n)}">${esc(n)}</option>`).join('');
+  if(names.includes(keep))sel.value=keep;else if(names.length===1)sel.value=names[0];
+}
+$('target').addEventListener('change',()=>{try{localStorage.setItem('target',$('target').value)}catch{}});
+// ---- quick commands (run as the target; the last two need a target) ----
+const QUICK=[['Day','/time set day'],['Night','/time set night'],['Clear weather','/weather clear'],['Keep inventory','/gamerule keepinventory true'],
+  ['Creative','/gamemode creative @s',1],['Survival','/gamemode survival @s',1],['Bring bot to target','/tp Scout @s',1],['Target to bot','/tp @s Scout',1],['Give bot a pickaxe','/give Scout stone_pickaxe']];
+$('quick').innerHTML=QUICK.map((q,i)=>`<button onclick="quick(${i})">${esc(q[0])}</button>`).join('');
+async function quick(i){
+  const [name,cmd,needs]=QUICK[i];
+  if(needs&&!target()){say('top','Pick a target player first ('+name+')',false);return}
+  const j=await api('POST','/v1/console',{command:cmd,target:target()});
+  say('top',j.error||name+': done',!j.error);poll();
+}
+
+(async()=>{await status();if(!$('app').hidden){loadPlayers();loadBackups();loadProps();loadChains();loadAudit();setInterval(poll,1000);setInterval(status,5000);setInterval(loadPlayers,30000);poll()}else showGate()})();
 </script></body></html>

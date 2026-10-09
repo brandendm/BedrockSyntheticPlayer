@@ -14,7 +14,8 @@ for line in sys.stdin:
     elif c == "save resume":
         print("Changes to the world are resumed.", flush=True)
     elif c == "list":
-        print("There are 0/10 players online:", flush=True)
+        print("There are 2/10 players online:", flush=True)
+        print("Alice, Bob", flush=True)
     elif c.startswith("say "):
         print("[Server] " + c[4:], flush=True)
     else:
