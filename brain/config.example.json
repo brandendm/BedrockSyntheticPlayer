@@ -14,5 +14,8 @@
   "mc_commands": true,
 
   "ollama_url": "http://127.0.0.1:11434",
-  "ollama_model": "llama3.2:3b"
+  "ollama_model": "llama3.2:3b",
+
+  "admin_url": "",
+  "admin_bot_token": ""
 }

@@ -13,3 +13,10 @@ brain/inbox/
 brain/reports/
 brain/inbox/regress_state.json
 tools/.mobcache/
+
+# (u316) admin service: tokens, audit, backups, logs, its saved chains
+admin/config.json
+admin/audit.jsonl
+admin/chains.json
+admin/backups/
+admin/logs/

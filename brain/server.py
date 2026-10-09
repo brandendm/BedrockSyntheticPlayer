@@ -407,7 +407,7 @@ def authorized(client_ip: str, cookie: str, query_key: str, key: str | None) -> 
     return "no"
 
 
-_server = {"proc": None, "jobs": None}
+_server = {"proc": None, "jobs": None, "admin": None}
 _train: dict = {"run": None}   # (u290) brain/trainer.py: the bot trains itself (off until switched on in the dashboard)
 _auto: dict = {"run": None}   # (u253) brain/autorun.py: Claude starts bot tests while you are away (off until switched on in the dashboard)
 
@@ -665,8 +665,18 @@ def make_handler(engine: DecisionEngine, key: str | None = None):
                     return self._send(400, {"error": "bad json"})
                 sp = _server["proc"]
                 if sp is None:
-                    return self._send(200, {"error": "the server is not run by the brain (start it with Start Agent.bat)"})
+                    return self._send(200, {"error": "the server is not run by the brain (start it with Start Agent.bat, or set up the admin service)"})
                 return self._send(200, _server["jobs"].ask(str(body.get("kind", "")), str(body.get("name", "")), body.get("x"), body.get("z")))
+            if self.path == "/admin":
+                # The bot asks the Bedrock admin service (a separate program) for something, with the bot token it is allowed: the game never sees the token.
+                ad = _server["admin"]
+                if ad is None or not ad.configured:
+                    return self._send(200, {"ok": False, "say": "The admin service is not set up (admin_url and admin_bot_token in brain/config.json)."})
+                try:
+                    body = self._read_json()
+                except ValueError:
+                    return self._send(400, {"error": "bad json"})
+                return self._send(200, ad.act(body))
             if self.path == "/api/live_report":
                 # The dashboard's full report, rewritten every few seconds: brain/logs/live_report.txt.
                 try:
@@ -1021,6 +1031,14 @@ def main():
     if key:
         log.info("PHONE: on the same Wi-Fi, open  http://%s:%d/?key=%s", lan_ip(), port, key)
         log.info("(first time only: allow Python through the Windows firewall for Private networks)")
+    from .admin_client import AdminClient, AdminLocator
+    _server["admin"] = AdminClient(cfg.get("admin_url", ""), cfg.get("admin_bot_token", ""))
+    if _server["admin"].configured and "--server" not in sys.argv:
+        # The Bedrock admin service owns the server: /locate and the auto runs' console commands go through it (as the bot).
+        from .serverproc import LocateJobs
+        loc = AdminLocator(_server["admin"])
+        _server["proc"], _server["jobs"] = loc, LocateJobs(loc)
+        log.info("admin service at %s: /locate and console commands go through it", cfg.get("admin_url"))
     _setup_autorun()
     _setup_trainer()
     httpd = ThreadingHTTPServer((host, port), make_handler(engine, key))

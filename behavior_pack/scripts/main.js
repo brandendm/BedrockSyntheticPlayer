@@ -11,6 +11,8 @@ import { Agent } from './game/agent.js';
 import { runTests, setTestSeeds } from './game/scenarios.js';
 import { arenaCommand } from './game/arenas.js';
 import { colosseumCommand, colosseumKeepIds } from './game/colosseum.js';
+import { adminCall } from './game/adminlink.js';
+import { parseAdmin } from './core/admincmd.js';
 import { ironFarmCommand } from './game/ironfarm.js';
 import { farmBuildCommand } from './game/farmbuild.js';
 import { poll, sendEvent } from './game/bridge.js';
@@ -523,6 +525,13 @@ function handle(text, player) {
   if (lower === 'ironfarm' || lower.startsWith('ironfarm ')) {
     // The iron golem farm (game/ironfarm.js), built with game commands: no bot needed.
     ironFarmCommand(player, lower.split(/\s+/).slice(1));
+    return;
+  }
+  if (lower === 'admin' || lower.startsWith('admin ')) {
+    // The Bedrock admin service (a separate program), through the brain with the bot's limited token: status, a console command, a saved chain, a backup.
+    const q = parseAdmin(cmd.split(/\s+/).slice(1).map((w, i) => (i === 0 ? w.toLowerCase() : w)));
+    if (q.error) return reply(player, `usage: !bot ${q.error}`);
+    adminCall(q).then((r) => reply(player, `[admin] ${r.ok ? '' : 'refused/failed: '}${r.say}`));
     return;
   }
   if (lower === 'colosseum' || lower.startsWith('colosseum ')) {

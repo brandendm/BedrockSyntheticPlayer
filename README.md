@@ -904,3 +904,16 @@ Not run in the real game yet: first look is `!bot colosseum zombie 4`.
 ## u315 — no stray spawns, tolerant dashboard player lookup
 - **Stray hostile mobs in the arena and stands**: natural spawning (`doMobSpawning`) is switched off for the show and put back after, and every second the arena box (floor, air, glass, all four stands) is swept: any `monster`-family entity that is not one of the show's mobs (or its kind: a slime's split, a zombie's reinforcement, an evoker's vexes) or a fighter's horse is removed. The show's foe list now also picks up more of the same kind inside the arena, so a split slime still counts for the round.
 - **"BrandenDM isn't online"**: the `@Name command` lookup now tries the exact name, then ignoring case/spaces, then the only real player in the world, and the warning lists who is there. If it still says that, the game really does not have that player (a stale name in the dashboard list after leaving the world).
+
+## u316 — Bedrock admin service (a separate program)
+
+`admin/service.py` is a small stdlib-only Python program that **owns the Bedrock server process**, separate from the brain and the game. The bot is a client of it with a limited token, so a bug in the bot cannot stop the server or wipe the world.
+
+- Start it with `Start Admin.bat` (or `python -m admin.service --open`). The first run writes `admin/config.json` with a random **owner** token and **bot** token (not committed). The panel opens signed in (`/?token=...` sets a cookie). Then run the brain alone (`python -m brain.server`, no `--server`).
+- Panel: start/stop/restart, live console with input, hot backups (the server's own `save hold` / `save query` / `save resume`; files are cut to the lengths it reports) and restore (stops the server, keeps the current world as a `pre-restore` zip), `server.properties` editor (existing keys only, applied on restart), saved command chains, audit log.
+- Chain lines: `/command` (server console), `game text` (queued for the bot via the brain), `backup [label]`, `wait N`, `# note`. A chain has a **Bot may run** box; only those can be run by the bot.
+- Bot role: status, console log, console commands whose verb is in `bot_verbs` (time, weather, gamerule, give, summon, event, effect, say, tp, setblock, fill, ride, locate, ... also the verb after each `run` of an `execute`), backups, bot_ok chains. Never stop/restart/restore, op, kick, allowlist, scriptevent, properties, or editing chains. One command per line (no `;` or newlines). Every call is in `admin/audit.jsonl`.
+- Wiring: in `brain/config.json` set `"admin_url": "http://127.0.0.1:8780"` and `"admin_bot_token": "<bot token>"`. The brain then proxies `POST /admin` for the game and answers `/locate` (and the auto runs' console commands) through the admin console.
+- In game: `!bot admin status | run <console command> | chain <name> | chains | backup [label]`.
+- Tests: `python3 -m unittest discover -s admin/tests -t .` (uses a fake Bedrock server script).
+

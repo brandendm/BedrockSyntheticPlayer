@@ -1,0 +1,189 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Bedrock Admin</title>
+<style>
+:root{--bg:#14161a;--card:#1d2026;--ink:#e6e8eb;--mute:#8b93a1;--line:#2b3038;--acc:#4da3ff;--ok:#4cc38a;--bad:#ef6a6a;--warn:#e0b040}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.45 system-ui,Segoe UI,sans-serif}
+header{display:flex;gap:12px;align-items:center;padding:10px 16px;border-bottom:1px solid var(--line);flex-wrap:wrap}
+h1{font-size:16px;margin:0}
+main{display:grid;grid-template-columns:repeat(auto-fit,minmax(380px,1fr));gap:12px;padding:12px 16px}
+section{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:12px}
+section.wide{grid-column:1/-1}
+h2{font-size:13px;margin:0 0 8px;color:var(--mute);text-transform:uppercase;letter-spacing:.06em}
+button{background:#2a3038;color:var(--ink);border:1px solid var(--line);border-radius:6px;padding:5px 10px;cursor:pointer;font:inherit}
+button:hover{border-color:var(--acc)}button.go{background:#1f4a7a}button.danger{background:#6a2626}
+input,textarea,select{background:#101216;color:var(--ink);border:1px solid var(--line);border-radius:6px;padding:5px 8px;font:inherit}
+textarea{width:100%;font-family:ui-monospace,Consolas,monospace;font-size:12px}
+.dot{display:inline-block;width:10px;height:10px;border-radius:50%;background:var(--bad);margin-right:6px}.dot.on{background:var(--ok)}
+.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:6px 0}
+#log{height:320px;overflow:auto;background:#0d0f12;border:1px solid var(--line);border-radius:6px;padding:6px;font:12px/1.35 ui-monospace,Consolas,monospace;white-space:pre-wrap}
+#log .e{color:var(--bad)}#log .w{color:var(--warn)}#log .a{color:var(--acc)}
+table{width:100%;border-collapse:collapse}td,th{padding:3px 6px;border-bottom:1px solid var(--line);text-align:left;font-size:13px}
+.mute{color:var(--mute)}.msg{min-height:1.3em;font-size:13px}.msg.bad{color:var(--bad)}.msg.ok{color:var(--ok)}
+.chain{border:1px solid var(--line);border-radius:6px;padding:8px;margin:6px 0}
+#gate{padding:40px 16px;max-width:520px}
+[hidden]{display:none!important}
+</style></head><body>
+<div id="gate" hidden>
+  <h1>Bedrock Admin</h1>
+  <p>Not signed in. Open the address the service printed when it started (it ends in <code>?token=...</code>), or paste the owner token here.</p>
+  <div class="row"><input id="tok" size="36" placeholder="owner token"><button class="go" onclick="signIn()">Sign in</button></div>
+</div>
+<div id="app" hidden>
+<header>
+  <h1>Bedrock Admin</h1>
+  <span><span class="dot" id="dot"></span><span id="state">...</span></span>
+  <span class="mute" id="info"></span>
+  <span style="flex:1"></span>
+  <button class="go" onclick="srv('start')">Start</button>
+  <button onclick="srv('restart')">Restart</button>
+  <button class="danger" onclick="srv('stop')">Stop</button>
+</header>
+<div class="msg" id="top" style="padding:0 16px"></div>
+<main>
+  <section class="wide">
+    <h2>Console</h2>
+    <div id="log"></div>
+    <div class="row"><input id="cmd" style="flex:1" placeholder="a server console command, e.g. list  or  say hello" autocomplete="off"><button class="go" onclick="sendCmd()">Send</button>
+      <label class="mute"><input type="checkbox" id="follow" checked> follow</label></div>
+  </section>
+  <section>
+    <h2>Backups</h2>
+    <div class="row"><input id="blabel" placeholder="label (optional)"><button class="go" onclick="backup()">Back up now</button><button onclick="loadBackups()">Refresh</button></div>
+    <div class="msg" id="bmsg"></div>
+    <table id="btab"></table>
+    <p class="mute">Backups use the server's own save hold / query / resume, so the world can keep running. Restoring stops the server, keeps the current world as a "pre-restore" zip, unpacks the chosen one and starts it again.</p>
+  </section>
+  <section>
+    <h2>server.properties</h2>
+    <div class="row"><button onclick="loadProps()">Reload</button><button class="go" onclick="saveProps()">Save changes</button><span class="mute">(applied on the next restart)</span></div>
+    <div class="msg" id="pmsg"></div>
+    <table id="ptab"></table>
+  </section>
+  <section class="wide">
+    <h2>Command chains</h2>
+    <div class="mute">One line each: <code>/command</code> (server console), <code>game text</code> (queued for the bot via the brain), <code>backup [label]</code>, <code>wait 3</code>, <code># note</code>. "Bot may run" lets the bot use it (its commands are still vetted).</div>
+    <div class="row"><button onclick="addChain()">New chain</button><button class="go" onclick="saveChains()">Save all</button></div>
+    <div class="msg" id="cmsg"></div>
+    <div id="chains"></div>
+  </section>
+  <section class="wide">
+    <h2>Audit (latest first)</h2>
+    <div class="row"><button onclick="loadAudit()">Refresh</button></div>
+    <table id="atab"></table>
+  </section>
+</main>
+</div>
+<script>
+const $=(i)=>document.getElementById(i);
+const esc=(s)=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+async function api(method,path,body){
+  const r=await fetch(path,{method,headers:{'Content-Type':'application/json'},body:body?JSON.stringify(body):undefined,cache:'no-store'});
+  let j={};try{j=await r.json()}catch{}
+  if(r.status===401){showGate();throw new Error('not signed in')}
+  return j;
+}
+function say(id,t,ok){const e=$(id);e.textContent=t||'';e.className='msg '+(ok===true?'ok':ok===false?'bad':'')}
+function showGate(){$('gate').hidden=false;$('app').hidden=true}
+async function signIn(){location.href='/?token='+encodeURIComponent($('tok').value.trim())}
+
+let since=0;
+function lineClass(t){return /ERROR|Error|error/.test(t)?'e':/WARN/.test(t)?'w':/^\[admin\]|^>/.test(t)?'a':''}
+async function poll(){
+  try{
+    const j=await api('GET','/v1/console/log?since='+since+'&n=300');
+    if(j.lines&&j.lines.length){
+      const box=$('log'),stick=$('follow').checked;
+      for(const l of j.lines){const d=document.createElement('div');d.textContent=l.text;const c=lineClass(l.text);if(c)d.className=c;box.appendChild(d)}
+      while(box.childNodes.length>1500)box.removeChild(box.firstChild);
+      if(stick)box.scrollTop=box.scrollHeight;
+    }
+    if(typeof j.next==='number')since=j.next;
+  }catch{}
+}
+async function status(){
+  try{
+    const j=await api('GET','/v1/status');
+    const on=j.server&&j.server.running;
+    $('dot').className='dot'+(on?' on':'');
+    $('state').textContent=on?'server running':'server stopped';
+    $('info').textContent=on?`pid ${j.server.pid} · up ${Math.round(j.server.up_s/60)} min · world "${j.level}" · ${j.backups} backups`:`world "${j.level}" · ${j.backups} backups`;
+    $('gate').hidden=true;$('app').hidden=false;
+  }catch{}
+}
+async function srv(what){
+  if(what!=='start'&&!confirm(what==='stop'?'Stop the server? Players are disconnected.':'Restart the server? Players are disconnected.'))return;
+  say('top','Working...');
+  const j=await api('POST','/v1/server/'+what,{});
+  say('top',j.error||(j.ok?('Server '+what+' done'):JSON.stringify(j)),!!j.ok);status();
+}
+async function sendCmd(){
+  const c=$('cmd').value.trim();if(!c)return;$('cmd').value='';
+  const d=document.createElement('div');d.className='a';d.textContent='> '+c;$('log').appendChild(d);
+  const j=await api('POST','/v1/console',{command:c});
+  if(j.error)say('top',j.error,false);else say('top','');
+  poll();
+}
+$('cmd').addEventListener('keydown',e=>{if(e.key==='Enter')sendCmd()});
+
+async function loadBackups(){
+  const j=await api('GET','/v1/backups');
+  $('btab').innerHTML='<tr><th>Backup</th><th>MB</th><th></th></tr>'+(j.backups||[]).map(b=>`<tr><td>${esc(b.name)}<div class="mute">${new Date(b.t*1000).toLocaleString()}</div></td><td>${b.mb}</td><td><button onclick="restore('${esc(b.name)}')">Restore</button></td></tr>`).join('');
+}
+async function backup(){
+  say('bmsg','Backing up...');
+  const j=await api('POST','/v1/backups',{label:$('blabel').value});
+  say('bmsg',j.ok?`Saved ${j.name} (${j.mb} MB)`:(j.error||'failed'),!!j.ok);loadBackups();status();
+}
+async function restore(name){
+  if(!confirm(`Restore ${name}?\nThe server stops, the current world is kept as a pre-restore zip, then this backup is unpacked.`))return;
+  say('bmsg','Restoring...');
+  const j=await api('POST','/v1/backups/restore',{name});
+  say('bmsg',j.ok?`Restored ${j.restored}; previous world kept as ${j.kept_previous||'(none)'}${j.restarted?'; server restarted':''}`:(j.error||'failed'),!!j.ok);loadBackups();status();
+}
+
+let props={};
+async function loadProps(){
+  const j=await api('GET','/v1/properties');props=j.properties||{};
+  $('ptab').innerHTML=Object.keys(props).sort().map(k=>`<tr><td>${esc(k)}</td><td><input data-k="${esc(k)}" value="${esc(props[k])}" size="28"></td></tr>`).join('');
+}
+async function saveProps(){
+  const set={};document.querySelectorAll('#ptab input').forEach(i=>{if(i.value!==props[i.dataset.k])set[i.dataset.k]=i.value});
+  if(!Object.keys(set).length){say('pmsg','Nothing changed');return}
+  const j=await api('PUT','/v1/properties',{set});
+  say('pmsg',j.ok?`Changed: ${j.changed.join(', ')||'nothing'}. ${j.note}`:(j.error||'failed'),!!j.ok);loadProps();
+}
+
+let chains=[];
+function drawChains(){
+  $('chains').innerHTML=chains.map((c,i)=>`<div class="chain"><div class="row">
+    <input data-i="${i}" data-f="name" value="${esc(c.name)}" size="30">
+    <label class="mute"><input type="checkbox" data-i="${i}" data-f="bot" ${c.bot_ok?'checked':''}> Bot may run</label>
+    <span style="flex:1"></span><button class="go" onclick="runChain(${i})">&#9654; Run</button><button class="danger" onclick="delChain(${i})">Delete</button></div>
+    <textarea rows="${Math.max(3,c.lines.length+1)}" data-i="${i}" data-f="lines">${esc(c.lines.join('\n'))}</textarea>
+    <div class="msg" id="r${i}"></div></div>`).join('')||'<div class="mute">No chains yet.</div>';
+}
+function gather(){
+  document.querySelectorAll('#chains [data-i]').forEach(e=>{const c=chains[+e.dataset.i];
+    if(e.dataset.f==='name')c.name=e.value;else if(e.dataset.f==='bot')c.bot_ok=e.checked;else c.lines=e.value.split('\n').map(x=>x.trim()).filter(Boolean)});
+}
+async function loadChains(){chains=(await api('GET','/v1/chains')).chains||[];drawChains()}
+function addChain(){gather();chains.push({name:'New chain',lines:['/say hello'],bot_ok:false});drawChains()}
+function delChain(i){if(!confirm('Delete this chain?'))return;gather();chains.splice(i,1);drawChains()}
+async function saveChains(){gather();const j=await api('PUT','/v1/chains',{chains});say('cmsg',j.ok?`Saved ${j.saved} chains`:(j.error||'failed'),!!j.ok)}
+async function runChain(i){
+  gather();await saveChains();
+  say('r'+i,'Running...');
+  const j=await api('POST','/v1/chains/run',{name:chains[i].name});
+  say('r'+i,j.error||(j.results||[]).map(r=>(r.ok?'ok  ':'FAIL ')+r.line+(r.out?'  -> '+r.out:'')).join('\n'),!!j.ok);
+  $('r'+i).style.whiteSpace='pre-wrap';poll();
+}
+
+async function loadAudit(){
+  const j=await api('GET','/v1/audit?n=60');
+  $('atab').innerHTML='<tr><th>When</th><th>Who</th><th>Action</th><th>Detail</th></tr>'+(j.audit||[]).reverse().map(a=>`<tr><td>${esc(a.t)}</td><td>${esc(a.who)}</td><td>${esc(a.action)}${a.ok?'':' <span style="color:var(--bad)">(failed)</span>'}</td><td class="mute">${esc(a.detail)}</td></tr>`).join('');
+}
+
+(async()=>{await status();if(!$('app').hidden){loadBackups();loadProps();loadChains();loadAudit();setInterval(poll,1000);setInterval(status,5000);poll()}else showGate()})();
+</script></body></html>
