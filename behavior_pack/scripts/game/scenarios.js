@@ -2050,7 +2050,9 @@ async function runOne(agent, player, name, arg, human = false) {
         const mobsLeft = () => { try { return dim.getEntities({ families: ['monster'], location: { x: x + 26, y: gy - 4, z }, maxDistance: 44 }).length; } catch { return -1; } };
         const hpMin = { v: agent.health() };
         let starts = 0;
-        const begin = () => { starts++; if (escape) { agent.newTask({ kind: 'test' }); agent.apply([{ type: 'surface' }]); } else agent.startGoto(goalAt, 1); };
+        // (Escape: the surface task ends when the bot is no longer trapped. A bot left standing in a one-block notch under open sky is "out" to it, so the next
+        // starts walk to the exit point on top: walking out of a notch is ordinary pathing, not the escape's job.)
+        const begin = () => { starts++; if (escape && starts === 1) { agent.newTask({ kind: 'test' }); agent.apply([{ type: 'surface' }]); } else agent.startGoto(goalAt, 1); };
         begin();
         const limit = capFor(name) - 30;
         for (let i = 0; i < limit * 4 && !done() && agent.health() > 0 && !agent.testSkipped && !agent.testAbort; i++) {
@@ -2074,6 +2076,9 @@ async function runOne(agent, player, name, arg, human = false) {
         const cmds = terrainCommands(T, x, gy, z);
         for (let i = 0; i < cmds.length; i++) { cmd(cmds[i]); if (i % 40 === 39) await system.waitTicks(1); }
         for (const [id, n] of T.kit) if (n > 0) giveItem(id, n);
+        if (name === 'raid') { // (a player meeting a raid party is in iron: vindicators hit for 13 on hard, so a bare bot is a corpse whatever it does)
+          for (const [slot, it] of [['head', 'iron_helmet'], ['chest', 'iron_chestplate'], ['legs', 'iron_leggings'], ['feet', 'iron_boots']]) { try { sim.runCommand(`replaceitem entity @s slot.armor.${slot} 0 ${it}`); } catch { /* */ } }
+        }
         tp(x + T.start.x + 0.5, gy + T.start.y, z + T.start.z + 0.5);
         await system.waitTicks(15);
         const summon = (m) => cmd(`summon ${m.type} ${x + m.x + 0.5} ${gy + (m.y ?? 1)} ${z + m.z + 0.5}`);

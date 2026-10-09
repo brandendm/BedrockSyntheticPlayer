@@ -9,3 +9,5 @@
 {"t": "2026-10-09 04:48:09", "event": "cycle", "n": 4, "group": "play", "outcome": "rejected", "candidate_diff": {"attackerMemory": 235.491, "exploreCost": 59.223}, "why": "no gain in the real game (no difference the runs can show)", "search": "random step (no simulator for this group)", "real": {"champion": [5, 9], "candidate": [9, 13], "guard_champion": [5, 5], "guard_candidate": [5, 5]}}
 {"t": "2026-10-09 04:57:29", "event": "switched off"}
 {"t": "2026-10-09 04:57:29", "event": "cycle", "n": 5, "group": "play", "outcome": "aborted", "candidate_diff": {"attackerMemory": 220.338}, "why": "the batch ended: stopped", "search": "random step (no simulator for this group)"}
+{"t": "2026-10-09 05:32:06", "event": "switched on"}
+{"t": "2026-10-09 05:32:24", "event": "cycle", "n": 6, "group": "tow", "outcome": "aborted", "candidate_diff": {}, "why": "sim/train.mjs exited with code 13 and wrote no result: "}

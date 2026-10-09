@@ -15,7 +15,7 @@ export const BENCH_MAX_MIN = 30;
 
 /** @param {import('./agent.js').Agent} primary  @param {{minutes?: number, bots?: number, aborted?: () => boolean}} o */
 export async function runBench(primary, o = {}) {
-  const minutes = Math.max(2, Math.min(BENCH_MAX_MIN, Math.floor(o.minutes ?? 12)));
+  const minutes = Math.max(2, Math.min(BENCH_MAX_MIN, Math.floor(o.minutes ?? 20)));
   const want = Math.max(1, Math.min(6, Math.floor(o.bots ?? BENCH_BOTS)));
   const dim = primary.dim, aborted = o.aborted ?? (() => false);
   const budgetS = minutes * 60;
@@ -33,6 +33,7 @@ export async function runBench(primary, o = {}) {
     const nm = `scoutbench${i + 1}`;
     try { await dim.runCommand(`tickingarea add circle ${spots[i].x} ${spots[i].y} ${spots[i].z} 3 ${nm} true`); areas.push(nm); } catch (e) { notes.push(`no ticking area for spot ${i + 1}: ${e}`); }
   }
+  try { await dim.runCommand('time set 0'); } catch { /* */ } // (a full day's light first: night at minute 10, not minute 2)
   await system.waitTicks(40);
 
   /** @type {Array<{name: string, w: any, tr: Tracker, spot: any, deadSeen: boolean, lastHurt: string|null}>} */

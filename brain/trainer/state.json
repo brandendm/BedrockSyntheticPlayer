@@ -3,14 +3,14 @@
   "accepted": 0,
   "rejected": 2,
   "sim_none": 0,
-  "aborted": 3
+  "aborted": 4
  },
  "guard_baseline": [
   10,
   10
  ],
- "cycle_n": 5,
- "group_i": 5,
+ "cycle_n": 6,
+ "group_i": 6,
  "group_stats": {
   "tow": [
    0,
