@@ -1,0 +1,86 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { DOCTRINE, KEYS, defaults, norm, flag, realPolicy, spacing, shootNow, pickTarget, describeChange, labLoad, table, fromStyle } from '../behavior_pack/scripts/core/doctrine.js';
+import { parseShow } from '../behavior_pack/scripts/core/colosseum.js';
+import { applyPolicy, TUNABLES } from '../behavior_pack/scripts/core/tunables.js';
+import { fightMove } from '../behavior_pack/scripts/core/tactics.js';
+
+test('every knob has a default inside its range and a sentence', () => {
+  assert.ok(KEYS.length >= 20);
+  for (const k of KEYS) { const d = DOCTRINE[k]; assert.ok(d.v >= d.min && d.v <= d.max, k); assert.ok(d.about.length > 10, k); }
+});
+
+test('norm clamps, drops junk and keeps backing off inside the hold', () => {
+  const d = norm({ holdAt: 99, bowFrom: -5, nope: 1, strafePeriod: 'x', backOff: 3.0 });
+  assert.equal(d.holdAt, DOCTRINE.holdAt.max);
+  assert.equal(d.bowFrom, DOCTRINE.bowFrom.min);
+  assert.equal(d.strafePeriod, DOCTRINE.strafePeriod.v);
+  assert.ok(!('nope' in d));
+  const e = norm({ holdAt: 2.0, backOff: 3.0 });
+  assert.ok(e.backOff <= e.holdAt - 0.14);
+});
+
+test('the real-fight policy holds only what moved off the default', () => {
+  assert.deepEqual(realPolicy(defaults()), {});
+  const p = realPolicy(norm({ holdAt: 2.4, retreatHp: 9 }));
+  assert.equal(p.holdAt, 2.4);
+  assert.equal(p.fleeHealth, 7.5);
+  for (const k of Object.keys(p)) assert.ok(TUNABLES[k], `${k} is a real tunable`);
+});
+
+test('the real fight reads the tunables (holdAt, backOff, shieldRange)', () => {
+  const me = { x: 0, y: 0, z: 0 }, mob = { x: 2.9, y: 0, z: 0 };
+  applyPolicy({});
+  assert.equal(fightMove({ me, mob, melee: true, t: 0, shield: true, canSwing: false }).block, true);
+  applyPolicy({ shieldRange: 2 });
+  assert.equal(fightMove({ me, mob, melee: true, t: 0, shield: true, canSwing: false }).block, false);
+  applyPolicy({ backOff: 3.0, holdAt: 3.0 });
+  assert.ok(fightMove({ me, mob: { x: 2.7, y: 0, z: 0 }, melee: true, t: 0 }).goal, 'inside backOff: steps back');
+  applyPolicy({});
+});
+
+test('spacing: on a horse it stands nearer, never inside the weapon minimum', () => {
+  const wr = { reach: 3.2, minReach: 0, cooldown: 10 };
+  const foot = spacing(defaults(), wr, false), ride = spacing({ ...defaults(), rideHold: 1.4 }, wr, true);
+  assert.ok(foot.near < foot.far);
+  assert.ok(ride.near <= 1.4 + 1e-9);
+  assert.ok(spacing(defaults(), { reach: 4, minReach: 2.5, cooldown: 12 }, false).near >= 2.75);
+});
+
+test('shooting rules', () => {
+  const d = defaults(), base = { hasBow: true, arrows: 10, clear: true, dist: 12, flying: false, creeper: false, nextShotOk: true };
+  assert.equal(shootNow(d, base), true);
+  assert.equal(shootNow(d, { ...base, dist: 5 }), false);
+  assert.equal(shootNow(d, { ...base, dist: 5, creeper: true }), true);
+  assert.equal(shootNow(d, { ...base, dist: 4, flying: true }), true);
+  assert.equal(shootNow(d, { ...base, clear: false }), false);
+  assert.equal(shootNow({ ...d, useBow: 0 }, base), false);
+  assert.equal(shootNow(d, { ...base, arrows: 0 }), false);
+});
+
+test('target choice: sticks unless another is clearly better; likes the hurt one', () => {
+  const d = norm({ switchMargin: 4, focusLow: 0 });
+  const foes = [{ id: 'a', dist: 6, hp: 20 }, { id: 'b', dist: 3, hp: 20 }];
+  assert.equal(pickTarget(d, foes, 'a'), 'a');
+  assert.equal(pickTarget(d, [{ id: 'a', dist: 9, hp: 20 }, { id: 'b', dist: 3, hp: 20 }], 'a'), 'b');
+  assert.equal(pickTarget(norm({ switchMargin: 0, focusLow: 1 }), [{ id: 'a', dist: 4, hp: 20 }, { id: 'b', dist: 5, hp: 2 }], null), 'b');
+  assert.equal(pickTarget(d, [], null), null);
+});
+
+test('the switches decide the gear; the table is what the lab gets', () => {
+  const l = labLoad({ armor: 'iron', weapon: 'iron', weapons: ['sword', 'axe'], shield: true, bow: true }, norm({ useHorse: 1, useBow: 0 }));
+  assert.deepEqual([l.mount, l.bow, l.shield, l.weapons], [true, false, true, ['sword']]);
+  assert.equal(Object.keys(table()).length, KEYS.length);
+  assert.ok(flag(1) && !flag(0.5));
+  assert.ok(fromStyle({ bowFrom: 6, strafe: 22, close: 3.4 }).bowFrom === 6);
+  assert.ok(describeChange(norm({ holdAt: 2.2 }))[0].startsWith('holdAt 2.8 -> 2.2'));
+});
+
+test('colosseum lab command', () => {
+  const p = parseShow(['lab', 'bouts', '12']);
+  assert.equal(p.cmd, 'show');
+  assert.equal(p.lab.bouts, 12);
+  assert.equal(p.team, 1);
+  assert.equal(parseShow(['lab']).lab.bouts, 9999);
+  assert.deepEqual(parseShow(['lab', 'report']), { cmd: 'lab', sub: 'report' });
+});

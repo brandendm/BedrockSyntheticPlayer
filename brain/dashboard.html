@@ -259,62 +259,118 @@
   </section>
 
   <section class="wide" id="arenasec">
-    <h2>Colosseum <span class="muted">bots in gear fight any mob (or each other) while you watch</span></h2>
-    <div class="row" id="arpresets">
-      <span class="muted">One click:</span>
-      <button data-ar='{"mode":"mobs","mob":"zombie","count":6}'>Zombie horde</button>
-      <button data-ar='{"mode":"mobs","mob":"skeleton","count":5}'>Skeletons</button>
-      <button data-ar='{"mode":"mobs","mob":"creeper","count":4}'>Creepers</button>
-      <button data-ar='{"mode":"mobs","mob":"iron golem","count":2}'>Iron golems</button>
-      <button data-ar='{"mode":"mobs","mob":"wither","count":1}'>Wither</button>
-      <button data-ar='{"mode":"mobs","mob":"ender dragon","count":1}'>Ender dragon</button>
-      <button data-ar='{"mode":"bots"}'>Red vs Blue</button>
+    <h2>Colosseum <span class="muted">an arena in the sky: bots fight mobs, each other, or train themselves</span></h2>
+    <style>
+      #arenasec .tabs { display: flex; gap: 6px; margin-bottom: 12px; flex-wrap: wrap; }
+      #arenasec .tabs button { padding: 8px 16px; }
+      #arenasec .tabs button.on { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+      #arenasec .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; margin-bottom: 12px; }
+      #arenasec .box { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; }
+      #arenasec .box h3 { margin: 0 0 8px; font-size: 13px; }
+      #arenasec .box .row { margin-bottom: 6px; }
+      #arenasec .chips label { background: var(--chip); border-radius: 14px; padding: 3px 10px; cursor: pointer; }
+      #arenasec .big { font-size: 16px; padding: 10px 22px; }
+      #arenasec pre { background: var(--chip); border-radius: 8px; padding: 10px; max-height: 340px; overflow: auto; white-space: pre-wrap; font: 12px/1.45 var(--mono); }
+    </style>
+    <div class="tabs" id="artabs">
+      <button data-tab="mobs">Fight mobs</button>
+      <button data-tab="bots">Red vs Blue</button>
+      <button data-tab="lab">Learn (lab)</button>
     </div>
-    <div class="row">
-      <label class="muted">Fight <select id="armode"><option value="mobs">a mob</option><option value="bots">red vs blue bots</option></select></label>
-      <span id="armobrow"><input id="armob" list="armoblist" placeholder="any mob: zombie, iron golem…" size="22"> <label class="muted">how many <input id="arcount" type="number" min="1" max="12" value="4" style="width:64px"></label></span>
-      <label class="muted">bots per team <input id="arteam" type="number" min="1" max="3" value="2" style="width:56px"></label>
-      <label class="muted">rounds (best of) <input id="arrounds" type="number" min="1" max="9" value="3" style="width:56px"></label>
+    <select id="armode" hidden><option value="mobs">a mob</option><option value="bots">red vs blue bots</option><option value="lab">lab</option></select>
+
+    <div id="arpane-mobs-bots">
+      <div class="grid">
+        <div class="box" id="arwho">
+          <h3>1. Who fights</h3>
+          <div class="row chips" id="arpresets">
+            <button data-ar='{"mob":"zombie","count":6}'>Zombies</button>
+            <button data-ar='{"mob":"skeleton","count":5}'>Skeletons</button>
+            <button data-ar='{"mob":"creeper","count":4}'>Creepers</button>
+            <button data-ar='{"mob":"spider","count":4}'>Spiders</button>
+            <button data-ar='{"mob":"witch","count":2}'>Witches</button>
+            <button data-ar='{"mob":"iron golem","count":2}'>Iron golems</button>
+            <button data-ar='{"mob":"wither","count":1}'>Wither</button>
+            <button data-ar='{"mob":"ender dragon","count":1}'>Dragon</button>
+            <button data-ar='{"mob":"random","count":3}'>Surprise me</button>
+          </div>
+          <div class="row" id="armobrow">
+            <label class="muted">Mob <input id="armob" list="armoblist" placeholder="any mob" size="16"></label>
+            <label class="muted">How many <input id="arcount" type="number" min="1" max="12" value="4" style="width:60px"></label>
+          </div>
+          <div class="row">
+            <label class="muted">Bots on the team <input id="arteam" type="number" min="1" max="3" value="2" style="width:56px"></label>
+            <label class="muted">Rounds <input id="arrounds" type="number" min="1" max="9" value="3" style="width:56px"></label>
+          </div>
+          <p class="note">Best of the rounds. A bot at 2 hearts is knocked out (healed, benched), not killed.</p>
+        </div>
+        <div class="box">
+          <h3>2. What they carry</h3>
+          <div class="row">
+            <label class="muted">Armor <select id="ararmor"><option>diamond</option><option>netherite</option><option>iron</option><option>gold</option><option>chain</option><option>leather</option><option>none</option></select></label>
+            <label class="muted">Weapon tier <select id="arweapon"><option>diamond</option><option>netherite</option><option>iron</option><option>gold</option><option>stone</option><option>wood</option></select></label>
+          </div>
+          <div class="row chips">
+            <label><input type="checkbox" data-aw="sword" checked> sword</label><label><input type="checkbox" data-aw="axe" checked> axe</label><label><input type="checkbox" data-aw="spear" checked> spear</label>
+            <label><input type="checkbox" data-aw="mace"> mace</label><label><input type="checkbox" data-aw="trident"> trident</label>
+          </div>
+          <div class="row chips">
+            <label><input type="checkbox" id="arbow" checked> bow</label><label><input type="checkbox" id="arshield" checked> shield</label>
+            <label><input type="checkbox" id="arench"> enchanted</label><label><input type="checkbox" id="armount"> on a horse</label>
+          </div>
+          <details><summary class="muted">Pick enchantments yourself</summary>
+            <div class="row chips"><span class="muted" style="min-width:64px">Weapons</span>
+              <label><input type="checkbox" data-e="w:sharpness"> Sharpness</label><label><input type="checkbox" data-e="w:smite"> Smite</label><label><input type="checkbox" data-e="w:bane_of_arthropods"> Bane</label>
+              <label><input type="checkbox" data-e="w:fire_aspect"> Fire Aspect</label><label><input type="checkbox" data-e="w:knockback"> Knockback</label><label><input type="checkbox" data-e="w:looting"> Looting</label>
+              <label><input type="checkbox" data-e="w:density"> Density</label><label><input type="checkbox" data-e="w:breach"> Breach</label><label><input type="checkbox" data-e="w:impaling"> Impaling</label>
+              <label><input type="checkbox" data-e="w:unbreaking"> Unbreaking</label></div>
+            <div class="row chips"><span class="muted" style="min-width:64px">Bow</span>
+              <label><input type="checkbox" data-e="b:power"> Power</label><label><input type="checkbox" data-e="b:punch"> Punch</label><label><input type="checkbox" data-e="b:flame"> Flame</label><label><input type="checkbox" data-e="b:infinity"> Infinity</label><label><input type="checkbox" data-e="b:unbreaking"> Unbreaking</label></div>
+            <div class="row chips"><span class="muted" style="min-width:64px">Armor</span>
+              <label><input type="checkbox" data-e="a:protection"> Protection</label><label><input type="checkbox" data-e="a:blast_protection"> Blast</label><label><input type="checkbox" data-e="a:projectile_protection"> Projectile</label><label><input type="checkbox" data-e="a:fire_protection"> Fire</label>
+              <label><input type="checkbox" data-e="a:thorns"> Thorns</label><label><input type="checkbox" data-e="a:feather_falling"> Feather Falling</label><label><input type="checkbox" data-e="a:unbreaking"> Unbreaking</label></div>
+            <p class="note">Each at its highest level. Overrides "enchanted".</p>
+          </details>
+        </div>
+        <div class="box" id="arblue" hidden>
+          <h3>Blue team's gear <span class="muted">(blank = same as red)</span></h3>
+          <div class="row">
+            <label class="muted">Armor <select id="arbarmor"><option value="">same as red</option><option>diamond</option><option>netherite</option><option>iron</option><option>gold</option><option>chain</option><option>leather</option><option>none</option></select></label>
+            <label class="muted">Weapon tier <select id="arbweapon"><option value="">same as red</option><option>diamond</option><option>netherite</option><option>iron</option><option>gold</option><option>stone</option><option>wood</option></select></label>
+          </div>
+        </div>
+        <div class="box">
+          <h3>3. The arena</h3>
+          <div class="row chips"><label><input type="checkbox" id="arpark" checked> clear roaming bots and hold the main bot still <span class="muted">(saves performance)</span></label></div>
+          <p class="note">Built high above you. Spectators are fenced in, the stands are lit, mob griefing is off and mobs do not spawn while it runs, so nothing in it can be destroyed. You are put in the top row (creative) and back where you were after.</p>
+        </div>
+      </div>
     </div>
-    <datalist id="armoblist"></datalist>
-    <div class="row">
-      <label class="muted">Armor <select id="ararmor"><option>diamond</option><option>netherite</option><option>iron</option><option>gold</option><option>chain</option><option>leather</option><option>none</option></select></label>
-      <label class="muted">Weapons <select id="arweapon"><option>diamond</option><option>netherite</option><option>iron</option><option>gold</option><option>stone</option><option>wood</option></select></label>
-      <label><input type="checkbox" data-aw="sword" checked> sword</label>
-      <label><input type="checkbox" data-aw="axe" checked> axe</label>
-      <label><input type="checkbox" data-aw="spear" checked> spear</label>
-      <label><input type="checkbox" data-aw="mace"> mace</label>
-      <label><input type="checkbox" data-aw="trident"> trident</label>
-      <label><input type="checkbox" id="arbow" checked> bow</label>
-      <label><input type="checkbox" id="arshield" checked> shield</label>
-      <label><input type="checkbox" id="arench"> enchanted (standard)</label>
-      <label><input type="checkbox" id="armount"> on horseback</label>
+
+    <div id="arpane-lab" hidden>
+      <div class="grid">
+        <div class="box">
+          <h3>Train the bots</h3>
+          <p class="note" style="margin:0 0 8px">One bot fights mobs, bout after bout. Every pair of bouts is the same fight played twice: with the best doctrine so far and with a slightly changed one. The change has to win over several pairs to take over. About 25-40 pairs an hour. Nothing is spent but time.</p>
+          <div class="row"><label class="muted">Stop after (bouts) <input id="arbouts" type="number" min="1" max="9999" value="200" style="width:80px"></label></div>
+          <div class="row"><button class="primary big" id="arlabstart">▶ Start learning</button><button class="danger" id="arlabstop">■ Stop</button></div>
+          <div class="row"><button id="arlabapply" title="Sets the real fight's constants (stand distance, shield range, flee health) from the champion">Use the champion in real fights</button><button id="arlabreset" title="Throws away every bout and the champion">Start over</button></div>
+        </div>
+        <div class="box" style="grid-column: span 2">
+          <h3>What it has learned <span class="muted" id="arlabinfo"></span></h3>
+          <pre id="arlabreport">Loading…</pre>
+        </div>
+      </div>
     </div>
-    <details style="margin:0 0 10px"><summary class="muted">Choose enchantments (overrides "enchanted"; the highest level of each is used)</summary>
-      <div class="row"><span class="muted" style="min-width:64px">Weapons</span>
-        <label><input type="checkbox" data-e="w:sharpness"> Sharpness V</label><label><input type="checkbox" data-e="w:smite"> Smite V</label><label><input type="checkbox" data-e="w:bane_of_arthropods"> Bane V</label>
-        <label><input type="checkbox" data-e="w:fire_aspect"> Fire Aspect II</label><label><input type="checkbox" data-e="w:knockback"> Knockback II</label><label><input type="checkbox" data-e="w:looting"> Looting III</label>
-        <label><input type="checkbox" data-e="w:density"> Density V (mace)</label><label><input type="checkbox" data-e="w:breach"> Breach IV (mace)</label><label><input type="checkbox" data-e="w:impaling"> Impaling V (trident)</label>
-        <label><input type="checkbox" data-e="w:unbreaking"> Unbreaking III</label></div>
-      <div class="row"><span class="muted" style="min-width:64px">Bow</span>
-        <label><input type="checkbox" data-e="b:power"> Power V</label><label><input type="checkbox" data-e="b:punch"> Punch II</label><label><input type="checkbox" data-e="b:flame"> Flame</label><label><input type="checkbox" data-e="b:infinity"> Infinity</label><label><input type="checkbox" data-e="b:unbreaking"> Unbreaking III</label></div>
-      <div class="row"><span class="muted" style="min-width:64px">Armor</span>
-        <label><input type="checkbox" data-e="a:protection"> Protection IV</label><label><input type="checkbox" data-e="a:blast_protection"> Blast Prot. IV</label><label><input type="checkbox" data-e="a:projectile_protection"> Projectile Prot. IV</label><label><input type="checkbox" data-e="a:fire_protection"> Fire Prot. IV</label>
-        <label><input type="checkbox" data-e="a:thorns"> Thorns III</label><label><input type="checkbox" data-e="a:feather_falling"> Feather Falling IV</label><label><input type="checkbox" data-e="a:unbreaking"> Unbreaking III</label></div>
-    </details>
-    <div class="row" id="arblue" hidden>
-      <span class="muted">Blue team:</span>
-      <label class="muted">Armor <select id="arbarmor"><option value="">same as red</option><option>diamond</option><option>netherite</option><option>iron</option><option>gold</option><option>chain</option><option>leather</option><option>none</option></select></label>
-      <label class="muted">Weapons <select id="arbweapon"><option value="">same as red</option><option>diamond</option><option>netherite</option><option>iron</option><option>gold</option><option>stone</option><option>wood</option></select></label>
-    </div>
-    <div class="row">
-      <button class="primary" id="arstart" style="font-size:16px;padding:10px 22px">▶ Start the show</button>
+
+    <div class="row" id="arrun">
+      <button class="primary big" id="arstart">▶ Start the show</button>
       <button class="danger" id="arstop">■ Stop (puts you back)</button>
       <button id="arclear" title="Removes the arena from the sky; it is otherwise kept for the next show">Take the arena down</button>
       <button id="arlist">Mob names</button>
-      <button data-cmd="despawn others" title="Removes bots roaming the world that are not in the show">Remove roaming bots</button>
     </div>
-    <p class="note">Needs the bot spawned and a player picked under Control (you are moved to the stands and put back after; your respawn point is the stands while it runs). Against mobs it is night all through. Settings are remembered. <span class="muted" id="arpreview" style="font-family:var(--mono)"></span></p>
+    <datalist id="armoblist"></datalist>
+    <p class="note">Needs the bot spawned and a player picked under Control. Settings are remembered. Sends: <span class="muted" id="arpreview" style="font-family:var(--mono)"></span></p>
   </section>
 
   <section class="wide">
@@ -446,12 +502,12 @@ $('cmd').onkeydown = (e) => { if (e.key === 'Enter') $('send').click(); };
 // ---- Colosseum (bots in gear against a mob or each other) ----
 const AR_MOBS = ['zombie','husk','drowned','zombie villager','skeleton','stray','bogged','wither skeleton','creeper','spider','cave spider','enderman','endermite','silverfish','witch','slime','magma cube','blaze','ghast','piglin','piglin brute','hoglin','zoglin','pillager','vindicator','evoker','vex','ravager','phantom','guardian','elder guardian','shulker','warden','breeze','creaking','wither','ender dragon','iron golem','snow golem','wolf','polar bear','panda','bee','goat','llama','fox','dolphin','cat','ocelot','cow','pig','sheep','chicken','rabbit','horse','donkey','mule','zombie horse','skeleton horse','camel','villager','wandering trader','squid','glow squid','cod','salmon','pufferfish','tropical fish','axolotl','turtle','frog','sniffer','armadillo','bat','parrot','strider','allay','random'];
 $('armoblist').innerHTML = AR_MOBS.map((m) => `<option value="${m}">`).join('');
-const AR_DEF = { mode: 'mobs', mob: 'zombie', count: 4, team: 2, rounds: 3, armor: 'diamond', weapon: 'diamond', weapons: ['sword', 'axe', 'spear'], bow: true, shield: true, ench: false, mount: false, es: [], barmor: '', bweapon: '' };
+const AR_DEF = { park: true, bouts: 200, mode: 'mobs', mob: 'zombie', count: 4, team: 2, rounds: 3, armor: 'diamond', weapon: 'diamond', weapons: ['sword', 'axe', 'spear'], bow: true, shield: true, ench: false, mount: false, es: [], barmor: '', bweapon: '' };
 function arRead() {
   return {
     mode: $('armode').value, mob: $('armob').value.trim().toLowerCase() || 'zombie', count: +$('arcount').value || 1, team: +$('arteam').value || 1, rounds: +$('arrounds').value || 1,
     armor: $('ararmor').value, weapon: $('arweapon').value, weapons: [...document.querySelectorAll('[data-aw]')].filter((c) => c.checked).map((c) => c.dataset.aw),
-    bow: $('arbow').checked, shield: $('arshield').checked, ench: $('arench').checked, mount: $('armount').checked, es: [...document.querySelectorAll('[data-e]')].filter((c) => c.checked).map((c) => c.dataset.e), barmor: $('arbarmor').value, bweapon: $('arbweapon').value,
+    bow: $('arbow').checked, shield: $('arshield').checked, ench: $('arench').checked, mount: $('armount').checked, es: [...document.querySelectorAll('[data-e]')].filter((c) => c.checked).map((c) => c.dataset.e), barmor: $('arbarmor').value, bweapon: $('arbweapon').value, park: $('arpark').checked, bouts: +$('arbouts').value || 200,
   };
 }
 function arWrite(c) {
@@ -459,10 +515,11 @@ function arWrite(c) {
   $('ararmor').value = c.armor; $('arweapon').value = c.weapon; $('arbow').checked = !!c.bow; $('arshield').checked = !!c.shield; $('arench').checked = !!c.ench; $('armount').checked = !!c.mount;
   document.querySelectorAll('[data-e]').forEach((x) => { x.checked = (c.es || []).includes(x.dataset.e); });
   document.querySelectorAll('[data-aw]').forEach((x) => { x.checked = c.weapons.includes(x.dataset.aw); });
-  $('arbarmor').value = c.barmor; $('arbweapon').value = c.bweapon;
+  $('arbarmor').value = c.barmor; $('arbweapon').value = c.bweapon; $('arpark').checked = c.park !== false; $('arbouts').value = c.bouts || 200;
 }
 function arCommand(c) {
   const out = ['colosseum'];
+  if (c.mode === 'lab') { out.push('lab', 'bouts', String(Math.max(1, Math.min(9999, c.bouts)))); if (!c.park) out.push('park=off'); return out.join(' '); }
   if (c.mode === 'bots') out.push('bots'); else out.push(c.mob === 'random' ? 'random' : c.mob, String(Math.max(1, Math.min(12, c.count))));
   out.push('team', String(Math.max(1, Math.min(3, c.team))), 'rounds', String(Math.max(1, Math.min(9, c.rounds))));
   if (c.armor !== AR_DEF.armor) out.push(`armor=${c.armor}`);
@@ -473,18 +530,36 @@ function arCommand(c) {
   if (c.ench) out.push('enchant=on');
   if (c.mount) out.push('mount=on');
   for (const [g, key] of [['w', 'weaponench'], ['b', 'bowench'], ['a', 'armorench']]) { const l = c.es.filter((e) => e.startsWith(g + ':')).map((e) => e.slice(2)); if (l.length) out.push(`${key}=${l.join(',')}`); }
+  if (!c.park) out.push('park=off');
   if (c.mode === 'bots') { if (c.barmor) out.push(`blue.armor=${c.barmor}`); if (c.bweapon) out.push(`blue.weapon=${c.bweapon}`); }
   return out.join(' ');
 }
 function arRefresh() {
   const c = arRead();
   $('armobrow').hidden = c.mode === 'bots'; $('arblue').hidden = c.mode !== 'bots';
+  $('arpresets').hidden = c.mode === 'bots';
+  $('arpane-mobs-bots').hidden = c.mode === 'lab'; $('arpane-lab').hidden = c.mode !== 'lab'; $('arrun').hidden = c.mode === 'lab';
+  document.querySelectorAll('#artabs [data-tab]').forEach((b) => b.classList.toggle('on', b.dataset.tab === c.mode));
   $('arpreview').textContent = '!bot ' + arCommand(c);
   try { localStorage.setItem('arena', JSON.stringify(c)); } catch {}
 }
 { let c = AR_DEF; try { c = { ...AR_DEF, ...JSON.parse(localStorage.getItem('arena') || '{}') }; } catch {} arWrite(c); arRefresh(); }
 document.querySelectorAll('#arenasec input, #arenasec select').forEach((e) => { e.onchange = arRefresh; e.oninput = arRefresh; });
-document.querySelectorAll('[data-ar]').forEach((b) => b.onclick = () => { arWrite({ ...arRead(), ...JSON.parse(b.dataset.ar) }); arRefresh(); $('arstart').click(); });
+document.querySelectorAll('[data-ar]').forEach((b) => b.onclick = () => { arWrite({ ...arRead(), mode: 'mobs', ...JSON.parse(b.dataset.ar) }); arRefresh(); $('arstart').click(); });
+document.querySelectorAll('#artabs [data-tab]').forEach((b) => b.onclick = () => { $('armode').value = b.dataset.tab; arRefresh(); if (b.dataset.tab === 'lab') labRefresh(); });
+$('arlabstart').onclick = () => send('@ ' + arCommand({ ...arRead(), mode: 'lab' }));
+$('arlabstop').onclick = () => send('@ colosseum stop');
+$('arlabapply').onclick = () => send('@ colosseum lab apply');
+$('arlabreset').onclick = async () => { if (!confirm('Throw away every bout, the champion and the report?')) return; try { await fetch('/api/lab', { method: 'POST', body: JSON.stringify({ action: 'reset' }) }); } catch {} labRefresh(); };
+async function labRefresh() {
+  if ($('armode').value !== 'lab') return;
+  try {
+    const r = await (await fetch('/api/lab')).json();
+    $('arlabreport').textContent = r.report || '';
+    $('arlabinfo').textContent = `${r.bouts} bouts, ${r.promotions} promotions${r.cand ? `, testing: ${r.cand.changed.join(', ')} (${r.cand.pairs.length} pairs in)` : ''}`;
+  } catch { $('arlabreport').textContent = 'The brain did not answer.'; }
+}
+setInterval(labRefresh, 5000);
 $('arstart').onclick = () => send('@ ' + arCommand(arRead()));
 $('arstop').onclick = () => send('@ colosseum stop');
 $('arclear').onclick = () => send('@ colosseum clear');

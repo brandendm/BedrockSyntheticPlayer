@@ -382,6 +382,7 @@ def authorized(client_ip: str, cookie: str, query_key: str, key: str | None) -> 
 
 
 _server = {"proc": None, "jobs": None, "admin": None}
+_lab: dict = {"run": None}   # (u323) brain/lab.py: the arena lab
 _train: dict = {"run": None}   # (u290) brain/trainer.py: the bot trains itself (off until switched on in the dashboard)
 _auto: dict = {"run": None}   # (u253) brain/autorun.py: Claude starts bot tests while you are away (off until switched on in the dashboard)
 
@@ -581,6 +582,12 @@ def make_handler(engine: DecisionEngine, key: str | None = None):
             if self.path == "/api/trainer":
                 tr = _train["run"]
                 return self._send(200, tr.info() if tr else {"enabled": False, "state": "not available"})
+            if self.path == "/api/lab":
+                with _lock:
+                    if _lab["run"] is None:
+                        from .lab import Lab
+                        _lab["run"] = Lab(ROOT)
+                    return self._send(200, _lab["run"].info())
             if self.path == "/api/bench":
                 from . import bench as _bench
                 return self._send(200, {"runs": _bench.read(ROOT, 12), "leaderboard": _bench.write_leaderboard(ROOT)})
@@ -639,6 +646,35 @@ def make_handler(engine: DecisionEngine, key: str | None = None):
                 if sp is None:
                     return self._send(200, {"error": "the server is not run by the brain (start it with Start Agent.bat, or set up the admin service)"})
                 return self._send(200, _server["jobs"].ask(str(body.get("kind", "")), str(body.get("name", "")), body.get("x"), body.get("z")))
+            if self.path in ("/lab/next", "/lab/result"):
+                # The colosseum's lab loop (game/lab.js): the next bout to play, and a bout's record.
+                try:
+                    body = self._read_json()
+                except ValueError:
+                    return self._send(400, {"error": "bad json"})
+                with _lock:
+                    if _lab["run"] is None:
+                        from .lab import Lab
+                        _lab["run"] = Lab(ROOT)
+                    lb = _lab["run"]
+                try:
+                    if self.path == "/lab/next":
+                        return self._send(200, lb.next(body.get("table") or {}))
+                    return self._send(200, lb.result(str(body.get("id", "")), body.get("rec") or {}))
+                except Exception as e:
+                    return self._send(200, {"ok": False, "say": f"lab: {e}"})
+            if self.path == "/api/lab":
+                try:
+                    body = self._read_json()
+                except ValueError:
+                    return self._send(400, {"error": "bad json"})
+                with _lock:
+                    if _lab["run"] is None:
+                        from .lab import Lab
+                        _lab["run"] = Lab(ROOT)
+                    if body.get("action") == "reset":
+                        _lab["run"].reset()
+                    return self._send(200, _lab["run"].info())
             if self.path == "/admin":
                 # The bot asks the Bedrock admin service (a separate program) for something, with the bot token it is allowed: the game never sees the token.
                 ad = _server["admin"]

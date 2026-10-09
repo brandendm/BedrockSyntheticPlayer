@@ -21,6 +21,9 @@ export const TUNABLES = {
   noticeMelee:        { v: 12, min: 7, max: 18, group: 'combat' },        // a melee mob this close (and seen) is a threat
   noticeRanged:       { v: 16, min: 10, max: 24, group: 'combat' },       // an archer this close (and seen) is a threat
   creeperNotice:      { v: 8, min: 5, max: 12, group: 'combat' },         // a seen creeper this close is dealt with
+  holdAt:             { v: 2.8, min: 2.0, max: 3.2, group: 'combat' },    // closing in on a melee mob: walk in until this close
+  backOff:            { v: 2.6, min: 1.4, max: 3.0, group: 'combat' },    // a melee mob nearer than this: step back while swinging
+  shieldRange:        { v: 3.7, min: 0, max: 8, group: 'combat' },        // shield up between swings when a melee mob is nearer than this
   creeperAlert:       { v: 12, min: 8, max: 16, group: 'combat' },        // ... when it is after us, or we are already alert
   // --- caves (scored only by the real game: the cave and ocean tests) ---
   quarryTorchLight:   { v: 3, min: 1, max: 7, group: 'cave' },            // lay a torch in a covered dark spot when the light is at or below this

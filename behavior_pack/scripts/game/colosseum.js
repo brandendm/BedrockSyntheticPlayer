@@ -13,7 +13,10 @@ import { hold, invCounts } from './inventory.js';
 import { Builder, kit, giveKit, topUp, tell } from './arena.js';
 import { shootAt } from './aim.js';
 import { weaponReach, bestWeapon } from '../core/tactics.js';
-import { MOB_LIST, AQUATIC, FLYERS, parseShow, roundWinner, KO_HP, personality, loadoutKit, meleeIds, describeLoadout } from '../core/colosseum.js';
+import { MOB_LIST, AQUATIC, FLYERS, parseShow, roundWinner, KO_HP, personality, loadoutKit, meleeIds, describeLoadout, LOADOUT_DEFAULT } from '../core/colosseum.js';
+import { norm, flag, fromStyle, spacing, shootNow, pickTarget, labLoad } from '../core/doctrine.js';
+import { makeLab, labAdmin } from './lab.js';
+import { applyPolicy, diffFromDefaults } from '../core/tunables.js';
 
 const R = 12;               // inner half-size: the floor is 25 x 25
 const H = 10;               // wall height
@@ -38,8 +41,9 @@ export function colosseumCommand(agent, player, words) {
   const say = (m) => (player ? player.sendMessage(`§6[Colosseum]§r ${m}`) : tell(m));
   const p = parseShow(words);
   if (p.cmd === 'help') {
-    return say('`!bot colosseum <mob> [count] [team N] [rounds N]` (e.g. zombie 6, iron golem 2, wither, random), `!bot colosseum bots [team N] [rounds N]` (red vs blue), `list`, `stop`, `clear`. Gear: armor=none|leather|chain|iron|gold|diamond|netherite weapon=wood|stone|iron|gold|diamond|netherite weapons=sword,axe,spear,mace,trident bow=on|off shield=on|off enchant=on|off park=on|off (park: remove roaming bots and hold the main bot still during the show, default on) (blue.armor=... for the blue team). Default: full diamond, sword/axe/spear, bow, shield.');
+    return say('`!bot colosseum <mob> [count] [team N] [rounds N]` (e.g. zombie 6, iron golem 2, wither, random), `!bot colosseum bots [team N] [rounds N]` (red vs blue), `list`, `stop`, `clear`. `lab [bouts N]` is the learning loop (one bot, bout after bout, the brain keeps the best doctrine; `lab report|apply|reset`). Gear: armor=none|leather|chain|iron|gold|diamond|netherite weapon=wood|stone|iron|gold|diamond|netherite weapons=sword,axe,spear,mace,trident bow=on|off shield=on|off enchant=on|off park=on|off (park: remove roaming bots and hold the main bot still during the show, default on) (blue.armor=... for the blue team). Default: full diamond, sword/axe/spear, bow, shield.');
   }
+  if (p.cmd === 'lab') { labAdmin(p.sub, agent, applyPolicy, diffFromDefaults).then((ls) => ls.forEach(say)).catch((e) => say(`lab: ${e}`)); return; }
   if (p.cmd === 'list') return say(`Mobs: ${MOB_LIST.join(', ')}. Any other id is tried as typed.`);
   if (p.cmd === 'stop') { if (SHOW) { SHOW.abort = true; return say('Stopping the show.'); } return say(player && recoverPlayer(player) ? 'No show is running; put you back where you were.' : 'No show is running.'); }
   if (p.cmd === 'clear') { if (player) recoverPlayer(player); clearArena(agent).then((n) => say(n ? 'The colosseum is taken down.' : 'There is none standing.')).catch((e) => say(`could not: ${e}`)); return; }
@@ -115,6 +119,16 @@ async function build(dim, s, wet) {
     B.fill(cx + o, G + 1, cz - R - 1, cx + o, G + k, cz + R + 1, 'stone_bricks');
     B.fill(cx - o, G + 1, cz - R - 1, cx - o, G + k, cz + R + 1, 'stone_bricks');
   }
+  // The spectators cannot fall out: the whole outer square has a floor (the corners were open air), and a glass wall stands round it, four blocks above the top row.
+  const w = R + TIERS + 2;
+  B.fill(cx - w, G, cz - w, cx + w, G, cz + w, 'stone_bricks', 'keep');
+  for (const [x1, z1, x2, z2] of [[cx - w, cz - w, cx + w, cz - w], [cx - w, cz + w, cx + w, cz + w], [cx - w, cz - w, cx - w, cz + w], [cx + w, cz - w, cx + w, cz + w]]) B.fill(x1, G + 1, z1, x2, G + TIERS + 4, z2, 'glass');
+  // Lit so nothing hostile can spawn there: a sea lantern in the steps every five blocks, and in the corners.
+  for (let k = 1; k <= TIERS; k += 2) {
+    const o = R + 1 + k;
+    for (let i = -R; i <= R; i += 5) { B.set(cx + i, G + k, cz + o, 'sea_lantern'); B.set(cx + i, G + k, cz - o, 'sea_lantern'); B.set(cx + o, G + k, cz + i, 'sea_lantern'); B.set(cx - o, G + k, cz + i, 'sea_lantern'); }
+  }
+  for (const sx of [-1, 1]) for (const sz of [-1, 1]) for (const r of [R + 3, w - 1]) for (const q of [R + 3, w - 1]) B.set(cx + sx * r, G, cz + sz * q, 'sea_lantern');
   if (wet) B.fill(cx - R, G + 1, cz - R, cx + R, G + 2, cz + R, 'water');
   const fails = await B.run(() => SHOW?.abort);
   if (fails) console.warn(`[colosseum] ${fails} build commands failed, first: ${B.failed.join(' | ')}`);
@@ -192,7 +206,7 @@ async function runShow(agent, player, p) {
         const label = NAMES[nm++ % NAMES.length];
         try { w.sim.nameTag = `${team === 'A' ? '§c' : '§9'}${label}`; } catch { /* */ }
         const load = team === 'B' ? p.blueGear : p.gear;
-        const f = { w, team, name, label, style, load, kit: ((l) => kit(l.slots, l.worn))(loadoutKit(load)), melee: meleeIds(load), out: false, kills: 0, dmg: 0, hits: 0, kos: 0, target: null };
+        const f = { w, team, name, label, style, doctrine: fromStyle(style), rec: newRec(), load, kit: ((l) => kit(l.slots, l.worn))(loadoutKit(load)), melee: meleeIds(load), out: false, kills: 0, dmg: 0, hits: 0, kos: 0, target: null };
         show.fighters.push(f);
         show.stats.set(w.sim.id, f);
         await wait(5);
@@ -201,7 +215,20 @@ async function runShow(agent, player, p) {
     await wait(30);
     // who hit whom, who killed whom
     const wa = /** @type {any} */ (world.afterEvents);
-    const hs = wa.entityHurt.subscribe((ev) => { try { const f = show.stats.get(ev.damageSource?.damagingEntity?.id); if (f) { f.hits++; f.dmg += ev.damage; } } catch { /* */ } });
+    const hs = wa.entityHurt.subscribe((ev) => {
+      try {
+        const cause = String(ev.damageSource?.cause ?? '');
+        const f = show.stats.get(ev.damageSource?.damagingEntity?.id);
+        if (f) { f.hits++; f.dmg += ev.damage; if (cause === 'projectile') { f.rec.hitsArrow++; f.rec.dealtArrow += ev.damage; } else { f.rec.hitsMelee++; f.rec.dealtMelee += ev.damage; } }
+        const g = show.stats.get(ev.hurtEntity?.id);
+        if (g) {
+          const k = cause === 'projectile' ? 'takenArrow' : /explosion/i.test(cause) ? 'takenBlast' : cause === 'entityAttack' ? 'takenMelee' : 'takenOther';
+          g.rec[k] += ev.damage;
+          const from = String(ev.damageSource?.damagingEntity?.typeId ?? cause).replace('minecraft:', '');
+          g.rec.takenFrom[from] = (g.rec.takenFrom[from] ?? 0) + ev.damage;
+        }
+      } catch { /* */ }
+    });
     const ds = wa.entityDie.subscribe((ev) => {
       try {
         const f = show.stats.get(ev.damageSource?.damagingEntity?.id);
@@ -214,9 +241,24 @@ async function runShow(agent, player, p) {
     say(p.mode === 'bots' ? `§cRed§r: ${describeLoadout(p.gear)}. §9Blue§r: ${describeLoadout(p.blueGear)}.` : `The bots: ${describeLoadout(p.gear)}.`);
     const score = { A: 0, B: 0, draws: 0 };
     const teamName = (t) => (p.mode === 'bots' ? (t === 'A' ? '§cRed' : '§9Blue') : t === 'A' ? '§cThe bots' : `§2The ${pretty(p.mob.id)}${p.count > 1 ? 's' : ''}`);
-    const needed = Math.floor(p.rounds / 2) + 1;
+    const needed = p.lab ? Infinity : Math.floor(p.rounds / 2) + 1;
+    const lab = p.lab ? makeLab(p.lab.bouts, say) : null;
+    if (lab) say('§bLab:§r one bot, bout after bout, against mobs; the brain keeps the best way of fighting. `!bot colosseum stop` ends it, `!bot colosseum lab report` says how it is going.');
     for (let rd = 1; rd <= p.rounds && !show.abort && score.A < needed && score.B < needed; rd++) {
       show.round = rd; show.over = true;
+      if (lab) {
+        // the next bout from the brain: this scenario, with this doctrine's switches (shield, bow, horse) deciding the gear
+        const b = await lab.next();
+        const f0 = show.fighters[0];
+        if (!b || show.abort) { show.abort = true; break; }
+        if (!f0 || !f0.w.sim.isValid) { say('§cLab: the fighter is gone; stopping.'); show.abort = true; break; }
+        p.mob = { id: b.mob, known: true }; p.count = b.count;
+        f0.doctrine = norm(b.doctrine);
+        f0.load = labLoad({ ...LOADOUT_DEFAULT, ...b.gear }, f0.doctrine);
+        const lk = loadoutKit(f0.load);
+        f0.kit = kit(lk.slots, lk.worn); f0.melee = meleeIds(f0.load);
+        f0.rec = newRec(); f0.mounted = false; f0.boutLimit = b.limit;
+      } else for (const f of show.fighters) f.rec = newRec();
       // reset the field
       for (const e of dim.getEntities({ location: { x: S.cx, y: S.G, z: S.cz }, maxDistance: 30 })) { if (/arrow|item|xp_orb/.test(e.typeId) || show.foes.includes(e)) { try { e.remove(); } catch { /* */ } } }
       show.foes = [];
@@ -242,13 +284,14 @@ async function runShow(agent, player, p) {
       } else {
         
       }
-      title(`Round ${rd}`, `${teamName('A')}§r vs ${teamName('B')}`);
-      for (let c = 3; c >= 1 && !show.abort; c--) { bar(`§e${c}...`); await wait(20); }
+      if (!lab) title(`Round ${rd}`, `${teamName('A')}§r vs ${teamName('B')}`);
+      for (let c = lab ? 1 : 3; c >= 1 && !show.abort; c--) { bar(`§e${c}...`); await wait(20); }
       if (show.abort) break;
       show.over = false;
       const myRound = rd;
       for (const f of show.fighters) drive(f, show, myRound, S, p).catch((e) => console.warn(`[colosseum] ${f.name}: ${e}`));
-      const t0 = system.currentTick, limit = (p.mode === 'mobs' && /wither|ender_dragon|warden|elder/.test(p.mob.id) ? 240 : 100) * 20;
+      const t0 = system.currentTick, limit = lab ? 60 * 20 : (p.mode === 'mobs' && /wither|ender_dragon|warden|elder/.test(p.mob.id) ? 240 : 100) * 20;
+      const foeHp0 = show.foes.reduce((t, m) => t + hpOf(m), 0);
       let win = '';
       while (!win && !show.abort) {
         await wait(2);
@@ -274,11 +317,21 @@ async function runShow(agent, player, p) {
       if (show.abort) break;
       const w = win === 'bots' ? 'A' : win === 'foes' ? 'B' : null;
       if (w) score[w]++; else score.draws++;
+      if (lab) {
+        const f0 = show.fighters[0];
+        const dead = !alive(f0.w.sim);
+        await lab.done({
+          ...f0.rec, takenFrom: f0.rec.takenFrom, outcome: f0.out ? (dead ? 'dead' : 'ko') : win === 'bots' ? 'cleared' : 'timeout', ticks: system.currentTick - t0, limit, hp0: 20, hpEnd: f0.out ? 0 : hpOf(f0.w.sim),
+          foeHp0, foeHpEnd: show.foes.filter(alive).reduce((t, m) => t + hpOf(m), 0), mob: p.mob.id, count: p.count, mounted: !!f0.mounted, weapon: f0.rec.weapon || 'fist', armor: f0.load.armor,
+        });
+        await wait(30);
+        continue;
+      }
       title(w ? `${teamName(w)} take round ${rd}` : `Round ${rd}: a draw`, `${score.A} - ${score.B}`);
       say(`Round ${rd}: ${w ? `${teamName(w)}§r win` : 'a draw'}. Score ${score.A}-${score.B}.`);
       await wait(70);
     }
-    if (!show.abort) {
+    if (!show.abort && !lab) {
       const champ = score.A > score.B ? 'A' : score.B > score.A ? 'B' : null;
       title(champ ? `${teamName(champ)}§r are the champions!` : 'The series is a draw', `${score.A} - ${score.B}`);
       for (const f of show.fighters) say(`§e${f.label}§r (${f.style.name}): ${f.kills} kills, ${Math.round(f.dmg)} damage in ${f.hits} hits, knocked out ${f.kos}x.`);
@@ -327,55 +380,87 @@ function enemiesOf(f, show, p) {
   return show.foes.filter(alive);
 }
 
+/** What a bout is measured by (sent to the lab with the outcome): how the damage went both ways, what was used and how far off the fight was. */
+function newRec() {
+  return { swings: 0, shots: 0, hitsMelee: 0, hitsArrow: 0, dealtMelee: 0, dealtArrow: 0, takenMelee: 0, takenArrow: 0, takenBlast: 0, takenOther: 0, takenFrom: {}, mountedTicks: 0, shieldTicks: 0, bowTicks: 0, retreatTicks: 0, retreats: 0, jumps: 0, distSum: 0, distN: 0, hpMin: 20, weapon: '', weaponTicks: {} };
+}
+
+// One bot's fight. Every number it is decided by is in f.doctrine (core/doctrine.js); f.rec is what gets measured.
 async function drive(f, show, round, S, p) {
-  const a = f.w, sim = a.sim;
-  let lastSwing = -99, strafe = 1, nextStrafe = 0, nextShot = 0, chosen = '', lastPos = null, lastPosT = 0;
+  const a = f.w, sim = a.sim, D = f.doctrine, rec = f.rec;
+  let lastSwing = -99, strafe = 1, nextStrafe = 0, nextShot = 0, chosen = '', lastPos = null, lastPosT = 0, lastT = system.currentTick;
+  let retreatUntil = 0, noRetreatUntil = 0, jumpAt = -99;
   const live = () => !show.over && show.round === round && !f.out && alive(sim) && a.sim === sim;
   while (live()) {
     await wait(2);
     if (!live()) break;
-    const t = system.currentTick;
+    const t = system.currentTick, dt = t - lastT; lastT = t;
     const foes = enemiesOf(f, show, p);
     if (!foes.length) { a.setBlocking(false); continue; }
-    const me = sim.location;
-    foes.sort((x, y) => d3(me, x.location) - d3(me, y.location));
-    // stay on a target unless another is clearly nearer
-    let tgt = foes.find((e) => e.id === f.target?.id) ?? foes[0];
-    if (tgt !== foes[0] && d3(me, tgt.location) > d3(me, foes[0].location) + 4) tgt = foes[0];
+    const me = sim.location, myHp = hpOf(sim);
+    rec.hpMin = Math.min(rec.hpMin, myHp);
+    const info = foes.map((e) => ({ id: e.id, e, dist: d3(me, e.location), hp: hpOf(e) }));
+    const pick = pickTarget(D, info, f.target?.id);
+    const tgt = (info.find((x) => x.id === pick) ?? info[0]).e;
     f.target = tgt;
     const you = tgt.location, d = d2(me, you), dy = you.y - me.y;
     const dx = (you.x - me.x) / (d || 1), dz = (you.z - me.z) / (d || 1);
-    if (t >= nextStrafe) { strafe = -strafe; nextStrafe = t + f.style.strafe + Math.floor(Math.random() * 20); }
+    if (t >= nextStrafe) { strafe = -strafe; nextStrafe = t + Math.round(D.strafePeriod) + Math.floor(Math.random() * (D.strafeJitter + 1)); }
     const flying = FLYERS.has(String(tgt.typeId).replace('minecraft:', '')) || dy > 2.5;
     const creeper = /creeper/.test(tgt.typeId);
     const arrows = invCounts(sim).arrow ?? 0;
+    rec.distSum += d * dt; rec.distN += dt;
     // Eyes on the target the whole time (the motor's idle head drift turned them away between swings and shots): the view is set and held.
     try { const aimAt = tgt.getHeadLocation ? tgt.getHeadLocation() : { x: you.x, y: you.y + 1.2, z: you.z }; a.motor.setFocus(aimAt); sim.lookAtLocation(aimAt); } catch { /* */ }
     const clear = clearShot(a.dim, sim.getHeadLocation(), tgt);
-    const bowNow = f.load.bow && arrows > 0 && clear && ((d > f.style.bowFrom && !(f.style.name === 'brawler' && d < 10)) || (flying && d > 3) || (creeper && d < 9));
-    if (bowNow) {
+    const riding = !!f.horse && f.horse.isValid && !!a.horses.mounted();
+    if (riding) rec.mountedTicks += dt;
+    const shield = f.load.shield && flag(D.useShield);
+    // Hurt: break off and keep away (behind the shield, shooting if there is a bow) for a while, then go back in.
+    if (t >= retreatUntil && t >= noRetreatUntil && myHp <= D.retreatHp && d < 9) { retreatUntil = t + Math.round(D.retreatTicks); noRetreatUntil = retreatUntil + Math.round(D.retreatTicks); rec.retreats++; }
+    const retreating = t < retreatUntil;
+    if (retreating) {
+      rec.retreatTicks += dt;
+      const canShoot = shootNow(D, { hasBow: f.load.bow, arrows, clear, dist: d, flying, creeper, nextShotOk: true }) || (f.load.bow && flag(D.useBow) && arrows > 0 && clear && d > 4);
+      a.setBlocking(shield && d < 8);
+      if (shield && d < 8) rec.shieldTicks += dt;
+      a.body.move(-dx * 0.7 - dz * strafe * 0.7, -dz * 0.7 + dx * strafe * 0.7, 1);
+      if (canShoot && t >= nextShot) { if (chosen !== 'bow') { hold(sim, 'bow'); chosen = 'bow'; } a.setBlocking(false); rec.bowTicks += dt; if (await shootAt(a, tgt, { strafe: { x: -dz * strafe, z: dx * strafe }, stop: () => !live() })) rec.shots++; nextShot = system.currentTick + Math.round(D.bowGap); }
+      continue;
+    }
+    if (shootNow(D, { hasBow: f.load.bow, arrows, clear, dist: d, flying, creeper, nextShotOk: true })) {
       if (chosen !== 'bow') { hold(sim, 'bow'); chosen = 'bow'; }
       a.setBlocking(false);
-      const away = creeper && d < 7 ? -1 : 0;
-      a.body.move(away ? -dx : -dz * strafe, away ? -dz : dx * strafe, away ? 1 : 0.6);
-      if (t >= nextShot) { await shootAt(a, tgt, { strafe: { x: -dz * strafe, z: dx * strafe }, stop: () => !live() }); nextShot = system.currentTick + 4; }
+      rec.bowTicks += dt;
+      const away = creeper && d < D.creeperAway ? -1 : 0;
+      a.body.move(away ? -dx : -dz * strafe, away ? -dz : dx * strafe, away ? 1 : D.bowStrafe);
+      if (t >= nextShot) { if (await shootAt(a, tgt, { strafe: { x: -dz * strafe, z: dx * strafe }, stop: () => !live() })) rec.shots++; nextShot = system.currentTick + Math.round(D.bowGap); }
       continue;
     }
     const weapon = bestWeapon(f.melee.filter((id) => invCounts(sim)[id]).map((id) => ({ id }))) ?? f.melee.find((id) => invCounts(sim)[id]) ?? null;
     if (chosen !== (weapon ?? 'fist')) { hold(sim, weapon); chosen = weapon ?? 'fist'; }
-    const wr = weaponReach(weapon), every = Math.max(10, wr.cooldown);
-    const riding = !!f.horse && f.horse.isValid && !!a.horses.mounted();
-    const far = Math.max(2.4, wr.reach - 0.3), near = riding ? Math.max(1.2, wr.minReach + 0.2) : Math.max(f.style.close - 1, wr.minReach + 0.25);
+    rec.weaponTicks[chosen] = (rec.weaponTicks[chosen] ?? 0) + dt;
+    if (!rec.weapon || rec.weaponTicks[chosen] > (rec.weaponTicks[rec.weapon] ?? 0)) rec.weapon = chosen;
+    const wr = weaponReach(weapon), every = Math.max(10, wr.cooldown) + Math.round(D.swingWait);
+    const { far, near } = spacing(D, wr, riding);
     try { sim.lookAtEntity(tgt); } catch { /* */ }
     // Behind a pillar or the glass: no shot, and the way round (a step to the side as it closes in) instead of walking into it.
-    if (d > far) a.body.move(clear ? dx : dx - dz * strafe * 0.9, clear ? dz : dz + dx * strafe * 0.9, 1);
+    const lat = (clear ? 0.25 : 1) * D.weave;
+    if (d > far) a.body.move(dx - dz * strafe * lat, dz + dx * strafe * lat, 1);
     else if (d < near) a.body.move(-dx, -dz, 1);
-    else a.body.move(-dz * strafe, dx * strafe, 0.8);
+    else a.body.move(-dz * strafe, dx * strafe, D.strafeSpeed);
     // wedged against a pillar or a step: hop
     if (t - lastPosT >= 10) { if (lastPos && d > far && Math.hypot(me.x - lastPos.x, me.z - lastPos.z) < 0.25) { try { sim.jump(); } catch { /* */ } nextStrafe = 0; } lastPos = { ...me }; lastPosT = t; }
     const ready = t - lastSwing >= every;
-    a.setBlocking(!ready && d < 5);
-    if (ready && d3(me, you) <= wr.reach + 0.3 && d >= wr.minReach && a.facing({ x: you.x, y: me.y, z: you.z }, 24)) { try { sim.attackEntity(tgt); } catch { /* */ } lastSwing = t; }
+    const block = shield && !ready && d < D.shieldRange;
+    a.setBlocking(block);
+    if (block) rec.shieldTicks += dt;
+    const inReach = d3(me, you) <= wr.reach + D.swingSlack && d >= wr.minReach && a.facing({ x: you.x, y: me.y, z: you.z }, 24);
+    if (ready && inReach) {
+      // a hit while falling is a critical: some of the time it jumps first and swings on the way down
+      if (jumpAt < 0 && !riding && Math.random() < D.critJump) { try { sim.jump(); rec.jumps++; jumpAt = t; } catch { /* */ } }
+      if (jumpAt < 0 || t - jumpAt >= 7) { try { sim.attackEntity(tgt); rec.swings++; } catch { /* */ } lastSwing = t; jumpAt = -99; }
+    }
   }
   try { a.setBlocking(false); a.body.stop?.(); a.motor.setFocus(null); } catch { /* */ }
 }

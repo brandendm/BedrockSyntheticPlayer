@@ -49,7 +49,12 @@ export function parseShow(args) {
   const gear = gearFrom(opts, 'red'), blueGear = gearFrom(opts, 'blue', gear.load);
   const warn = [...gear.warn, ...blueGear.warn];
   const take = (key) => { const i = a.indexOf(key); if (i < 0) return null; const n = Number(a[i + 1]); a = a.filter((_, j) => j !== i && j !== i + 1); return Number.isFinite(n) ? n : null; };
-  const rounds = take('rounds'), team = take('team');
+  const rounds = take('rounds'), team = take('team'), bouts = take('bouts');
+  if (a[0] === 'lab') {
+    // the learning loop: `lab [bouts N]` runs, `lab report|apply|reset|status` talk to the brain's lab
+    if (['report', 'apply', 'reset', 'status'].includes(a[1])) return { cmd: 'lab', sub: a[1] };
+    return { cmd: 'show', mode: 'mobs', mob: { id: 'zombie', known: true }, count: 1, team: 1, rounds: 9999, park: truth(opts.park, true), gear: gear.load, blueGear: blueGear.load, warn, lab: { bouts: Math.max(1, Math.min(9999, Math.floor(bouts ?? 9999))) } };
+  }
   const out = { cmd: 'show', mode: 'mobs', mob: null, count: 1, team: 2, rounds: Math.max(1, Math.min(9, Math.floor(rounds ?? 3))), park: truth(opts.park, true), gear: gear.load, blueGear: blueGear.load, warn };
   if (a[0] === 'bots' || a[0] === 'bot') {
     out.mode = 'bots'; out.team = Math.max(1, Math.min(3, Math.floor(team ?? Number(a[1]) ?? 1) || 1));

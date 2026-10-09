@@ -20,3 +20,4 @@ admin/audit.jsonl
 admin/chains.json
 admin/backups/
 admin/logs/
+brain/lab/

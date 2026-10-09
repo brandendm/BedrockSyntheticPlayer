@@ -35,24 +35,24 @@ export function fightMove({ me, mob, melee, t, shield = false, canSwing = true, 
   const witch = type === 'witch';
   if (d > STOP_AT) {
     out.goal = { x: mob.x, y: mob.y, z: mob.z };
-    out.tolerance = HOLD_AT - 0.2;
+    out.tolerance = tune.holdAt - 0.2;
     out.urgent = d > 7 || witch;
     // A skeleton: don't run straight down the arrow line; weave a little while it's far off.
     if (kind === 'ranged' && d > 6) {
       const side = Math.sin(t / 10) * 2.5, nx = -(mob.z - me.z) / d, nz = (mob.x - me.x) / d;
       out.goal = { x: mob.x + nx * side, y: mob.y, z: mob.z + nz * side };
-      out.tolerance = HOLD_AT + 0.5;
+      out.tolerance = tune.holdAt + 0.5;
     }
     if (witch && d > 6) out.tolerance = REACH_HIT - 0.6;
-  } else if (melee && d < BACK_OFF) {
-    out.goal = standOff(me, mob, HOLD_AT + 0.3);
+  } else if (melee && d < tune.backOff) {
+    out.goal = standOff(me, mob, tune.holdAt + 0.3);
     out.tolerance = 0.6;
   } else out.stop = true;
   // Shield up between our own swings when something's about to hit us: a melee mob closing in, or
   // an archer at range while we can't hit back (arrows come in a line: facing it stops them). Down
   // for the swing itself (a raised shield in Bedrock lowers when you attack).
   if (shield && !out.swing && !witch) {
-    if (melee && d < REACH_HIT + 0.5) out.block = true;
+    if (melee && d < tune.shieldRange) out.block = true;
     // Walking in on an archer behind the shield: slow (a crouch), but its arrows stop at the shield
     // instead of costing half our hearts on the way.
     if (kind === 'ranged' && d > REACH_HIT) { out.block = true; out.urgent = false; }
