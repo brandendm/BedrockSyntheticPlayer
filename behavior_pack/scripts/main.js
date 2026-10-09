@@ -10,7 +10,7 @@ import { spawnSimulatedPlayer } from '@minecraft/server-gametest';
 import { Agent } from './game/agent.js';
 import { runTests, setTestSeeds } from './game/scenarios.js';
 import { arenaCommand } from './game/arenas.js';
-import { colosseumCommand, colosseumKeepIds } from './game/colosseum.js';
+import { colosseumCommand, colosseumKeepIds, removeExtraBots } from './game/colosseum.js';
 import { adminCall } from './game/adminlink.js';
 import { parseAdmin } from './core/admincmd.js';
 import { ironFarmCommand } from './game/ironfarm.js';
@@ -552,12 +552,7 @@ function handle(text, player) {
   if (lower === 'despawn others' || lower === 'despawn extras' || lower === 'cleanup bots') {
     // Every simulated player that is not the main bot (nor fighting in a colosseum show now): hired workers, benchmark bots, orphans left by a script reload.
     const keep = new Set([agent?.sim?.id, ...colosseumKeepIds()].filter(Boolean));
-    let n = 0;
-    for (const p of world.getPlayers()) {
-      if (keep.has(p.id) || !p.name.startsWith(CONFIG.botName)) continue;
-      try { p.dimension.runCommand(`kick "${p.name}"`); n++; } catch { try { p.kill(); n++; } catch { /* */ } }
-    }
-    for (let i = crew.members.length - 1; i >= 0; i--) if (!keep.has(crew.members[i].sim?.id)) { try { crew.members[i].newTask(null); } catch { /* */ } crew.members.splice(i, 1); }
+    const n = removeExtraBots(keep);
     return reply(player, n ? `Removed ${n} extra bot${n === 1 ? '' : 's'}.` : 'No extra bots found.');
   }
   if (lower === 'despawn') {

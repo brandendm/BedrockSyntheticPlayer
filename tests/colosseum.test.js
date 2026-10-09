@@ -107,3 +107,9 @@ test('enchantments in the kit: chosen ones replace the standard preset, per item
   assert.equal(loadoutKit(parseShow(['zombie', 'bowench=infinity']).gear).slots.filter((s) => s[1] === 'arrow').length, 1);
   assert.equal(loadoutKit(parseShow(['zombie', 'enchant=on', 'armorench=none']).gear).worn.Chest[1], undefined);
 });
+
+test('park option: on by default, park=off keeps the main bot working', () => {
+  assert.equal(parseShow(['zombie', '4']).park, true);
+  assert.equal(parseShow(['zombie', '4', 'park=off']).park, false);
+  assert.equal(parseShow(['bots', 'park=no']).park, false);
+});

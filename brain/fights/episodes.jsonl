@@ -14,3 +14,5 @@
 {"t": "2026-10-09 11:12:39", "build": "u319", "ratio": 0.495, "margin": 0.6, "n": 1, "ranged": false, "hp0": 20, "lost": 2.5, "died": false, "secs": 8.2, "armor": 0, "shield": false, "night": false, "types": ["zombie"]}
 {"t": "2026-10-09 11:18:55", "build": "u319", "ratio": 0.583, "margin": 0.6, "n": 2, "ranged": false, "hp0": 18.5, "lost": 2.5, "died": false, "secs": 3, "armor": 0, "shield": false, "night": false, "types": ["zombie_villager_v2", "zombie_villager_v2"]}
 {"t": "2026-10-09 11:21:21", "build": "u319", "ratio": 0.288, "margin": 0.6, "n": 1, "ranged": false, "hp0": 12.5, "lost": 2.5, "died": false, "secs": 3.8, "armor": 0, "shield": false, "night": true, "types": ["drowned"]}
+{"t": "2026-10-09 11:21:49", "build": "u319", "ratio": 0.36, "margin": 0.6, "n": 1, "ranged": false, "hp0": 10, "lost": 2.5, "died": false, "secs": 5, "armor": 0, "shield": false, "night": true, "types": ["zombie"]}
+{"t": "2026-10-09 11:22:17", "build": "u319", "ratio": 0.584, "margin": 0.6, "n": 1, "ranged": true, "hp0": 7.5, "lost": 5, "died": false, "secs": 14.6, "armor": 0, "shield": false, "night": true, "types": ["skeleton"]}

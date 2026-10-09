@@ -50,7 +50,7 @@ export function parseShow(args) {
   const warn = [...gear.warn, ...blueGear.warn];
   const take = (key) => { const i = a.indexOf(key); if (i < 0) return null; const n = Number(a[i + 1]); a = a.filter((_, j) => j !== i && j !== i + 1); return Number.isFinite(n) ? n : null; };
   const rounds = take('rounds'), team = take('team');
-  const out = { cmd: 'show', mode: 'mobs', mob: null, count: 1, team: 2, rounds: Math.max(1, Math.min(9, Math.floor(rounds ?? 3))), gear: gear.load, blueGear: blueGear.load, warn };
+  const out = { cmd: 'show', mode: 'mobs', mob: null, count: 1, team: 2, rounds: Math.max(1, Math.min(9, Math.floor(rounds ?? 3))), park: truth(opts.park, true), gear: gear.load, blueGear: blueGear.load, warn };
   if (a[0] === 'bots' || a[0] === 'bot') {
     out.mode = 'bots'; out.team = Math.max(1, Math.min(3, Math.floor(team ?? Number(a[1]) ?? 1) || 1));
     return out;

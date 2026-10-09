@@ -38,7 +38,7 @@ export function colosseumCommand(agent, player, words) {
   const say = (m) => (player ? player.sendMessage(`§6[Colosseum]§r ${m}`) : tell(m));
   const p = parseShow(words);
   if (p.cmd === 'help') {
-    return say('`!bot colosseum <mob> [count] [team N] [rounds N]` (e.g. zombie 6, iron golem 2, wither, random), `!bot colosseum bots [team N] [rounds N]` (red vs blue), `list`, `stop`, `clear`. Gear: armor=none|leather|chain|iron|gold|diamond|netherite weapon=wood|stone|iron|gold|diamond|netherite weapons=sword,axe,spear,mace,trident bow=on|off shield=on|off enchant=on|off (blue.armor=... for the blue team). Default: full diamond, sword/axe/spear, bow, shield.');
+    return say('`!bot colosseum <mob> [count] [team N] [rounds N]` (e.g. zombie 6, iron golem 2, wither, random), `!bot colosseum bots [team N] [rounds N]` (red vs blue), `list`, `stop`, `clear`. Gear: armor=none|leather|chain|iron|gold|diamond|netherite weapon=wood|stone|iron|gold|diamond|netherite weapons=sword,axe,spear,mace,trident bow=on|off shield=on|off enchant=on|off park=on|off (park: remove roaming bots and hold the main bot still during the show, default on) (blue.armor=... for the blue team). Default: full diamond, sword/axe/spear, bow, shield.');
   }
   if (p.cmd === 'list') return say(`Mobs: ${MOB_LIST.join(', ')}. Any other id is tried as typed.`);
   if (p.cmd === 'stop') { if (SHOW) { SHOW.abort = true; return say('Stopping the show.'); } return say(player && recoverPlayer(player) ? 'No show is running; put you back where you were.' : 'No show is running.'); }
@@ -54,9 +54,10 @@ function siteFor(agent, player) {
   const ref = player ? player.location : agent.sim.location;
   const dim = agent.dim;
   let top = Math.floor(ref.y);
-  for (const [dx, dz] of [[0, 0], [20, 0], [-20, 0], [0, 20], [0, -20]]) { try { const b = dim.getTopmostBlock({ x: Math.floor(ref.x) + 40 + dx, z: Math.floor(ref.z) + dz }); if (b) top = Math.max(top, b.location.y); } catch { /* */ } }
+  for (const [dx, dz] of [[0, 0], [20, 0], [-20, 0], [0, 20], [0, -20]]) { try { const b = dim.getTopmostBlock({ x: Math.floor(ref.x) + dx, z: Math.floor(ref.z) + dz }); if (b) top = Math.max(top, b.location.y); } catch { /* */ } }
   const G = Math.min(dim.heightRange.max - H - 8, top + 40);
-  const s = { cx: Math.floor(ref.x) + 40, G, cz: Math.floor(ref.z), dim: dim.id };
+  // Straight above where the player (or the bot) is: chunks are whole columns, so a sky arena over ground that is loaded anyway costs no extra chunks (one 40 blocks to the side did).
+  const s = { cx: Math.floor(ref.x), G, cz: Math.floor(ref.z), dim: dim.id };
   try { world.setDynamicProperty(SITE_KEY, JSON.stringify(s)); } catch { /* */ }
   return s;
 }
@@ -119,6 +120,17 @@ async function build(dim, s, wet) {
   if (fails) console.warn(`[colosseum] ${fails} build commands failed, first: ${B.failed.join(' | ')}`);
 }
 
+/** Every simulated player that is not in `keep` and is named like the bot (hired workers, benchmark bots, orphans left by a script reload) is removed; returns how many. */
+export function removeExtraBots(keep) {
+  let n = 0;
+  for (const pl of world.getPlayers()) {
+    if (keep.has(pl.id) || !pl.name.startsWith(CONFIG.botName)) continue;
+    try { pl.dimension.runCommand(`kick "${pl.name}"`); n++; } catch { try { pl.kill(); n++; } catch { /* */ } }
+  }
+  for (let i = crew.members.length - 1; i >= 0; i--) if (!keep.has(crew.members[i].sim?.id)) { try { crew.members[i].newTask(null); } catch { /* */ } crew.members.splice(i, 1); }
+  return n;
+}
+
 // ---------- the show ----------
 
 async function runShow(agent, player, p) {
@@ -159,6 +171,12 @@ async function runShow(agent, player, p) {
       try { player.setSpawnPoint({ dimension: dim, x: Math.floor(seat.x), y: Math.floor(seat.y), z: Math.floor(seat.z) }); } catch (e) { console.warn(`[colosseum] spawn point: ${e}`); }
       player.teleport(seat, { facingLocation: { x: S.cx, y: S.G + 3, z: S.cz }, dimension: dim });
     }
+    // Nothing else is simulated while the show is on: bots roaming the world (each keeps its own chunks ticking and runs its own scripts) are removed, and the main bot stands still.
+    try {
+      const gone = removeExtraBots(new Set([agent.sim.id]));
+      if (gone) say(`Removed ${gone} roaming bot${gone === 1 ? '' : 's'} (they only cost performance).`);
+      if (p.park !== false) { show.parked = { auto: agent.autoEnabled }; agent.autoEnabled = false; agent.newTask(null); }
+    } catch (e) { console.warn(`[colosseum] tidy: ${e}`); }
     // the fighters
     const sides = p.mode === 'bots' ? [['A', p.team], ['B', p.team]] : [['A', p.team]];
     let nm = 0;
@@ -269,6 +287,7 @@ async function runShow(agent, player, p) {
     }
   } finally {
     show.over = true; show.abort = true;
+    try { if (show.parked) { agent.autoEnabled = show.parked.auto; if (show.parked.auto) agent.startAuto(); } } catch { /* */ }
     for (const u of subs) { try { u(); } catch { /* */ } }
     for (const e of show.foes) { try { e.remove(); } catch { /* */ } }
     try { for (const e of dim.getEntities({ location: { x: S.cx, y: S.G, z: S.cz }, maxDistance: 30, type: 'minecraft:arrow' })) e.remove(); } catch { /* */ }

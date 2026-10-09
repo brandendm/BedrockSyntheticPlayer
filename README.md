@@ -940,3 +940,8 @@ After "Level corruption detected" (10:59, world `Agent u313`) there was no good 
 ## u321 — stray Bedrock servers
 
 Found on 2026-10-09: a second `bedrock_server.exe` (from an earlier Start Agent.bat window) was running next to the admin service's, both posting to the one brain. The brain keeps the latest status it gets, so the dashboard flipped between the real one and the empty one ("bot not spawned", "no player online"), and two servers on one world is also how a LevelDB gets corrupted. The admin service now looks for other `bedrock_server` processes: it refuses to start while one is running, shows a red card on the Overview with **Stop stray servers** (force-kill, owner only), and lists the process ids in the status (`strays`).
+
+## u322 — a lighter colosseum
+
+- The arena is built **straight above** the player (or the bot) instead of 40 blocks to the side: chunks are whole columns, so a sky arena over ground that is loaded anyway costs no extra chunks, and the ticking area overlaps what is already ticking. (An arena already built keeps its place until `!bot colosseum clear`.) Height alone saves nothing.
+- At show start every roaming bot (hired workers, benchmark bots, orphans) is removed (`removeExtraBots`, also behind `!bot despawn others`) and the main bot is parked: `park=off` leaves it working. Its auto mode is put back when the show ends.
