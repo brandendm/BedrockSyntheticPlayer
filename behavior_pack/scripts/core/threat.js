@@ -64,7 +64,28 @@ export const MOBS = {
   parched: { hp: 16, dps: 2, kind: 'ranged' }, // (the desert skeleton: 16 hp, 2 a hit)
   zombie_nautilus: { hp: 15, dps: 3, kind: 'melee' },
   warden: { hp: 500, dps: 30, kind: 'melee', never: true },
+  // (u309) Neutral animals and pets: not a threat until one has hit us or is after us (neutral), then fought like any other. Wolves, tamed or wild, bees, bears...
+  wolf: { hp: 8, dps: 4, kind: 'melee', neutral: true },
+  bee: { hp: 10, dps: 2, kind: 'melee', neutral: true, flying: true },
+  polar_bear: { hp: 30, dps: 6, kind: 'melee', neutral: true },
+  panda: { hp: 20, dps: 6, kind: 'melee', neutral: true },
+  llama: { hp: 22, dps: 1.5, kind: 'ranged', neutral: true },
+  trader_llama: { hp: 22, dps: 1.5, kind: 'ranged', neutral: true },
+  dolphin: { hp: 10, dps: 3, kind: 'melee', neutral: true },
+  goat: { hp: 10, dps: 3, kind: 'melee', neutral: true },
+  fox: { hp: 10, dps: 2, kind: 'melee', neutral: true },
 };
+
+/**
+ * (u309) Anything that hits us is something to defend against, whether or not the table above knows it (a modded or newly added mob, a pet, a golem...).
+ * An unknown type is added as a neutral melee mob with the health the game reports: it is a threat exactly as long as it has hit us or is after us.
+ * Players are never learnt (the owner testing the bot is not an enemy). Returns the entry (existing or new), or null if it must not be learnt.
+ */
+export function learnMob(type, hp) {
+  if (!type || type === 'player' || /^(item|xp_orb|arrow|fishing_hook|boat|chest_boat|minecart|armor_stand|painting|npc)$/.test(type)) return null;
+  if (!MOBS[type]) MOBS[type] = { hp: Number.isFinite(hp) && hp > 0 ? Math.min(hp, 200) : 20, dps: 3, kind: 'melee', neutral: true, learned: true };
+  return MOBS[type];
+}
 
 // Melee/axe damage in Bedrock (base, no enchantments).
 export const WEAPON_DAMAGE = {

@@ -9,7 +9,7 @@ import { Calibration } from './calibrate.js';
 import { Bandit } from '../core/bandit.js';
 import { searchJob, smoothPath, findPath, Cell, DEFAULT_COSTS } from '../core/pathfinder.js';
 import { dist3D, makeRng } from '../core/mathutil.js';
-import { decide, fleePoint, weaponDamage, MOBS, REACH_HIT, STOP_AT, BOW_MIN, crowdOf } from '../core/threat.js';
+import { decide, fleePoint, weaponDamage, MOBS, REACH_HIT, STOP_AT, BOW_MIN, crowdOf, learnMob } from '../core/threat.js';
 import { fleeJabOrder, avoidCreepers, towerWorth, TOWER_H, fightMove, creeperFight, creeperMove, Stalemate, pickRefuge, bestWeapon, barricadeCells, SPEAR_DAMAGE, weaponReach, pickCreeperSwing, creeperWeapon, isSpear, awayPath, knockbackRoom, blockOffCells, guardCell, fleeJab, killSlotCells, killSlotWorth, pinchWallCells, alcoveCells, dodgeArrow, CREEPER_LIGHT, CREEPER_CALM, creeperPlan, awayPathFrom } from '../core/tactics.js';
 import { nextStep, STONE_TARGETS, TOOL_STONE, count, isLog, isPlanks } from '../core/recipes.js';
 import { settleStep, foodCount, FOOD_GOAL, isNight, chooseFood } from '../core/settle.js';
@@ -749,6 +749,17 @@ export class Agent {
       // (In a test arena, what it names as the fight: an iron golem isn't a 'monster'.)
       for (const ty of this.arenaHook?.mobTypes ?? []) {
         for (const e of this.dim.getEntities({ location: pos, maxDistance: radius, type: `minecraft:${ty}` })) if (!ents.some((x) => x.id === e.id)) ents.push(e);
+      }
+    } catch { /* unloading */ }
+    // (u309) Anything that has hit us lately or is after us, monster or not (a tamed wolf, a bee, a golem, a mob the table has never heard of): defended against.
+    try {
+      const have = new Set(ents.map((e) => e.id));
+      for (const e of this.dim.getEntities({ location: pos, maxDistance: Math.max(radius, 24) })) {
+        if (have.has(e.id) || e.typeId === 'minecraft:player' || !e.isValid) continue;
+        const hitAt = this.attackers.get(e.id);
+        let after = false;
+        try { after = e.target?.id === this.sim.id; } catch { /* */ }
+        if ((hitAt !== undefined && t - hitAt < live.attackerMemory) || after) { let hp; try { hp = e.getComponent('minecraft:health')?.defaultValue; } catch { /* */ } if (learnMob(e.typeId.replace('minecraft:', ''), hp)) ents.push(e); }
       }
     } catch { /* unloading */ }
     const out = [];

@@ -4,7 +4,7 @@ import { VANILLA } from '../behavior_pack/scripts/core/vanilla.js';
 import { MOBS } from '../behavior_pack/scripts/core/threat.js';
 
 // Our hp table is held to Mojang's data (bedrock-samples, via tools/gen_vanilla.mjs). Slimes and magma cubes vary with size (the data holds the biggest).
-const SIZED = new Set(['slime', 'magma_cube']);
+const SIZED = new Set(['slime', 'magma_cube', 'llama', 'trader_llama']); // (llamas roll their health: 15-30)
 test('every MOBS entry is a real entity with the vanilla hp', () => {
   for (const [k, m] of Object.entries(MOBS)) {
     if (k === 'evoker') continue; // (kept beside evocation_illager, the real id)

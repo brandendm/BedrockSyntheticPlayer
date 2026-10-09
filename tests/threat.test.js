@@ -207,3 +207,17 @@ test('a vindicator: a run when bare, a fight in iron (armoredFight), never at lo
   assert.equal(decide({ health: 4, damage: d, armor: 15, mobs: v }).mode, 'flee', 'hurt: run');
   assert.equal(decide({ health: 20, damage: d, armor: 15, mobs: [mob('ravager', 6, { targetingMe: true })] }).mode, 'flee', 'a ravager stays a run');
 });
+
+test('anything that hits us is defended against, known mob or not (u309): a wolf that bit us is fought, an unknown mob is learnt as neutral, players never', async () => {
+  const { decide, learnMob, MOBS } = await import('../behavior_pack/scripts/core/threat.js');
+  const wolf = (o) => ({ id: 1, type: 'wolf', dist: 2, visible: true, targetingMe: false, attackedMe: false, canReach: true, ...o });
+  assert.equal(decide({ health: 20, damage: 6, mobs: [wolf({})] }).mode, 'none');                       // a wolf minding its business
+  assert.equal(decide({ health: 20, damage: 6, mobs: [wolf({ attackedMe: true })] }).mode, 'fight');   // one that bit us
+  assert.equal(learnMob('player', 20), null);
+  assert.equal(learnMob('item', 1), null);
+  assert.ok(learnMob('strange_new_mob', 30).neutral);
+  assert.equal(MOBS.strange_new_mob.hp, 30);
+  const m = { id: 2, type: 'strange_new_mob', dist: 2, visible: true, targetingMe: true, attackedMe: true, canReach: true };
+  assert.equal(decide({ health: 20, damage: 6, mobs: [m] }).mode, 'fight');
+  delete MOBS.strange_new_mob;
+});

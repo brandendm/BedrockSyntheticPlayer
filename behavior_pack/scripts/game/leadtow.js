@@ -21,6 +21,7 @@ import { isWalkMove } from '../core/pathfinder.js';
 import { slingCame, stuckTrack, learnedStretch } from '../core/towlearn.js';
 import { liftPlan } from '../core/liftmodel.js';
 import { pullPath, flankSpots, climbSpot, LEAD_SLACK } from '../core/towline.js';
+import { newReach, reached, rideSpeed, RIDE_REACH, WELCOME_ABOARD } from '../core/towreach.js';
 
 const pt3 = (p) => (p ? [Math.round(p.x * 10) / 10, Math.round(p.y * 10) / 10, Math.round(p.z * 10) / 10] : null);
 const flat = (p, q) => Math.hypot(p.x - q.x, p.z - q.z);
@@ -340,6 +341,8 @@ export class LeadTow {
     };
 
     try { a.capsule.towOn = true; } catch { /* */ }
+    const reachSt = newReach();
+    let overlapSince = null;
     let wetTicks = 0, stopErr = null, lastPos = { ...subject().location }, stillSince = system.currentTick, stillSaid = 0; a.towLast = null;
     // (u244: a run stopped by hand, or replaced, is recorded like any other: what it did so far, and where the boat and we were)
     try {
@@ -348,6 +351,13 @@ export class LeadTow {
       if (!boat.isValid || !this.isLeashed(boat)) { m.snapped = true; m.why = 'the lead broke'; break; }
       const pos = subject().location, d = sep();
       m.maxSep = Math.max(m.maxSep, d);
+      // (u309) An animal can sit in a boat: a horse that walked over the boat it was towing sat IN it, and the tow stood still. Anything that is not a villager or us
+      // is lifted out every half second; a horse and a boat on top of each other for 2 s are pulled apart.
+      if (ride && tick % 10 === 0) {
+        const ev = await this.evict(boat, mount);
+        if (ev) note(`${ev} lifted out of the boat`);
+        if (flat(mount.location, boat.location) < 1.3) { overlapSince ??= system.currentTick; if (system.currentTick - overlapSince > 40) { this.pullApart(boat, mount, wi < (route?.length ?? 0) ? route[wi] : goal); note('horse and boat on top of each other: boat moved back'); overlapSince = null; lastBoatMoveTick = system.currentTick; } } else overlapSince = null;
+      }
       // (u242 live, leadstair: a boat rocking at a step moved more than 0.05 every tick, so it was always "moving" and the bot waited 43 s at the guard distance: it has moved when it is 0.4 from where it was last counted)
       if (flat(boat.location, lastBoat) > 0.4) { if (m.pullAt === null) m.pullAt = d; lastBoat = { ...boat.location }; lastBoatMoveTick = system.currentTick; }
       // (u241 live: the walker reached the gold block with the boat left jammed 5.5 short, and that was "arrived". With `boatZone` the tow is
@@ -405,9 +415,9 @@ export class LeadTow {
         continue;
       }
       // (the end of the route, with the boat still short of its zone: wait here, unless the boat is stuck, which is handled below)
-      if (wp.hold && flat(pos, wp) < 1.1 && !stuck) { mark('hold at the end'); await S.wait(gen, 2); continue; }
+      if (wp.hold && flat(pos, wp) < (ride ? RIDE_REACH : 1.1) && !stuck) { mark('hold at the end'); try { sim.stopMoving(); } catch { /* */ } await S.wait(gen, 2); continue; }
       // (u248 live, leadledge: the first step counted as reached from beside it, and the next waypoint, 2 up, was then walked at without a hop: a waypoint above us counts only once we are up on it)
-      if (!wp.hold && flat(pos, wp) < 1.1 && pos.y >= wp.y - 0.6) { wi++; continue; }
+      if (!wp.hold && reached(reachSt, wi, flat(pos, wp), { ride }) && pos.y >= wp.y - 0.6) { wi++; continue; }
       // Stuck: the boat hasn't moved while the lead is taut, or the lead is nearly at the guard distance.
       if (stuck) {
         mark('jam');
@@ -500,7 +510,7 @@ export class LeadTow {
       }
       // Full speed (what snaps a lead is being stuck, not going fast); a hop at a step up.
       mark('walk');
-      move(wp, Math.max(0.2, Math.min(1, (opts.speed ?? 1) * (d > guard - 2.5 ? 0.5 : 1))));
+      move(wp, Math.max(0.2, Math.min(1, (opts.speed ?? 1) * (d > guard - 2.5 ? 0.5 : 1) * (ride ? rideSpeed(flat(pos, wp)) : 1))));
       if (wp.y - pos.y > 0.6 && flat(pos, wp) < 1.7 && system.currentTick - lastJump > 8) { try { a.body.jump(); m.steps++; lastJump = system.currentTick; } catch { /* */ } } // (body.jump: afloat, a hop out onto the bank, where sim.jump does nothing)
       await S.wait(gen, 1);
     }
@@ -529,6 +539,37 @@ export class LeadTow {
     a.towLast = m;
     if (stopErr) throw stopErr;
     return m;
+  }
+
+  /** (u309) Whatever is sitting in the boat that should not be (an animal, our own horse) is taken out. Returns what was lifted out (a type name) or ''. */
+  async evict(boat, mount) {
+    let out = '';
+    try {
+      const rd = boat.getComponent('minecraft:rideable');
+      for (const r of rd?.getRiders?.() ?? []) {
+        if (WELCOME_ABOARD.test(r.typeId)) continue;
+        out = String(r.typeId).replace('minecraft:', '');
+        try { rd.ejectRider(r); } catch { /* */ }
+        try { r.runCommand('ride @s stop_riding'); } catch { /* */ }
+        if (mount && r.id === mount.id) {
+          // our own horse: stood beside the boat again, and we back on it if the lift-out shook us off
+          const b = boat.location;
+          try { r.teleport({ x: b.x - 2.4, y: b.y + 0.2, z: b.z }); } catch { /* */ }
+          await system.waitTicks(4);
+          if (!this.a.horses.mounted()) await this.a.horses.getOn(null, r).catch(() => false);
+        } else { const b = boat.location; try { r.teleport({ x: b.x + 2.2, y: b.y, z: b.z + 2.2 }); } catch { /* */ } }
+      }
+    } catch { /* the boat went */ }
+    return out;
+  }
+
+  /** (u309) The boat moved to 3 blocks behind the horse, away from where it is going, the lead kept. */
+  pullApart(boat, horse, toward) {
+    try {
+      const h = horse.location, dx = h.x - toward.x, dz = h.z - toward.z, l = Math.hypot(dx, dz) || 1;
+      const to = { x: h.x + (dx / l) * 3, y: h.y + 0.1, z: h.z + (dz / l) * 3 };
+      boat.teleport(to);
+    } catch { /* */ }
   }
 
   /** (u241) Is there a solid block on the straight line from the boat to us (at the boat's height)? A jump cannot pull a boat through a wall. */
