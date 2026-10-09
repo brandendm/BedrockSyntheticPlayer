@@ -838,3 +838,8 @@ The bot can improve itself with nobody watching. Switch **Training** on in the d
 - **Tactic bandit** (`core/bandit.js`, `agent.bandit`, saved in world memory): stairs-or-pillar on the way up is the cost model's choice until the record of how each really went says otherwise (per situation: by hand/tool × open/rock).
 - **Simulator refit** (`server.py refit`, `Trainer.refit`): before a tow search, once 12+ new real tow runs have come in, `sim/fit_outcomes.mjs --apply` refits the sim's physics to them.
 - **Node 16** runs the simulator (loader flag), **Auto runs/Training persist** across brain restarts (`brain/switches.json`).
+
+## u302 — established learning methods (no new API spend, all local)
+- **TPE** (`brain/tpe.py`): the real-game-only groups (cave, play) now suggest candidates with a Tree-structured Parzen Estimator over every past confirm run (`trainer/tpe_hist.json`) once 6+ exist, instead of one random step from the champion.
+- **Paired seeds** (`!bot testseed`, `pickSeed`): champion and candidate face the same random courses each round; odd rounds also replay the seeds the bot has failed (`trainer/hard_seeds.json`), so training concentrates on its real weak spots.
+- **Learned fight margin** (`brain/fights.py`): the game logs each fight it takes (kill-vs-die race, outcome) as `fight_episode`; a logistic fit (`brain/fights/report.md`, `suggest.json`) gives the race ratio where risk becomes unacceptable. After 150 fights the trainer tries it as a `fightMargin` candidate in the combat group, confirmed in the real game like any other.

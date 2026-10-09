@@ -239,6 +239,7 @@ export function decide({ health, damage = FIST_DAMAGE, isNight = false, prevMode
   const outranged = engaged.some((m) => MOBS[m.type].potions && m.dist <= 16);
   const margin = Math.max(toeToToe ? live.committedMargin : prevMode === 'fight' ? live.keepFightingMargin : live.fightMargin, outranged ? 1 : 0);
   const why = `kill ${ttk.toFixed(1)}s vs die ${ttd.toFixed(1)}s`;
+  const race = { ttk: +ttk.toFixed(2), ttd: Number.isFinite(ttd) ? +ttd.toFixed(2) : 99, n: engagedCount, ranged: engaged.some((m) => MOBS[m.type].kind === 'ranged'), margin: +margin.toFixed(2) };
 
   // In water we swing slowly, can't dodge and drowned out-swim us: get to land first.
   if (inWater) return { mode: 'flee', threats, reason: `in water (${why})` };
@@ -253,9 +254,9 @@ export function decide({ health, damage = FIST_DAMAGE, isNight = false, prevMode
     const hpLeft = (m) => m.hp ?? MOBS[m.type].hp;
     const faced = engaged.filter(inFace).sort((a, b) => hpLeft(a) - hpLeft(b) || (b.attackedMe ? 1 : 0) - (a.attackedMe ? 1 : 0));
     const target = faced[0] || engaged.find((m) => m.attackedMe) || engaged[0];
-    return { mode: 'fight', target: target.id, threats, reason: why };
+    return { mode: 'fight', target: target.id, threats, reason: why, race };
   }
-  return { mode: 'flee', threats, reason: why };
+  return { mode: 'flee', threats, reason: why, race };
 }
 
 /** Point `distance` blocks away from the threats, weighted toward the closest ones. */

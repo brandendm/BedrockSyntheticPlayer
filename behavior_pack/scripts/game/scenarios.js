@@ -95,6 +95,19 @@ let running = false;
 let forestBot = null;
 /** How many sky sites have been used this session (each test gets a new one, 120 blocks further). */
 let siteCounter = 0;
+/**
+ * The seeds the random-course tests use (u301). The trainer sends the same ones to the champion's arm and the candidate's, so both face the same
+ * courses (a paired comparison: far fewer runs to tell them apart), and replays courses the bot has failed. { '*': base, name: seed }; null = random.
+ * @type {Record<string, number> | null}
+ */
+let testSeeds = null;
+export function setTestSeeds(o) { testSeeds = o && typeof o === 'object' ? o : null; }
+export function pickSeed(name) {
+  const t = testSeeds;
+  if (t && Number.isFinite(t[name])) return 1 + (Math.abs(Math.floor(t[name])) % 40);
+  if (t && Number.isFinite(t['*'])) { let h = 0; for (const ch of name) h = (h * 31 + ch.charCodeAt(0)) >>> 0; return 1 + ((h + Math.abs(Math.floor(t['*']))) % 40); }
+  return 1 + Math.floor(Math.random() * 40);
+}
 /** Which of the eight sky sites a running test holds (parallel batches: a test never lands on a site another is using), and the ring's centre and radius for such a batch. */
 const busySlots = new Set();
 let ring = null; // { x, z, r } while a parallel batch runs
@@ -2037,7 +2050,7 @@ async function runOne(agent, player, name, arg, human = false) {
         // A cave cut into the slab's rock (core/caves.js, solvable by construction): dark, with turns, a squeeze, a pool, a drop, lava, and hostile mobs waiting.
         // `test cavemobs 3` is the level (1 easy .. 3); the course is one of 40 random ones, its seed in the detail so a failure can be rebuilt.
         const lvl = Math.min(3, Math.max(1, arg !== undefined && Number.isFinite(Number(arg)) ? Number(arg) : 2));
-        const seed = 1 + Math.floor(Math.random() * 40);
+        const seed = pickSeed(name);
         const C = caveCourse(name, seed, lvl);
         for (const c of caveCommands(C, x, gy, z)) cmd(c);
         for (const [id, n] of C.kit) if (n > 0) giveItem(id, n);
@@ -2071,7 +2084,7 @@ async function runOne(agent, player, name, arg, human = false) {
         // dense trees, webs, water, lava or a labyrinth with hostile mobs about, or (siege) stay alive for a time. In ambush, mobs arrive in waves as you go and animals
         // stand about as bait: the test fails if the bot loses so much time to them that it does not arrive.
         const lvl = Math.min(3, Math.max(1, arg !== undefined && Number.isFinite(Number(arg)) ? Number(arg) : 2));
-        const seed = 1 + Math.floor(Math.random() * 40);
+        const seed = pickSeed(name);
         const T = terrainCourse(name, seed, lvl);
         tp(x - 2.5, gy + 1, z + 0.5);        // (out of the way first: the course may fill the cell the bot stands in)
         const cmds = terrainCommands(T, x, gy, z);
@@ -2116,7 +2129,7 @@ async function runOne(agent, player, name, arg, human = false) {
         // A pool 44 wide and 9 deep with no shore within 14 blocks. oceandrop: dropped on the surface; oceandeep: on the bottom. From level 2, drowned about.
         // `test oceandeep 3`; the course is one of 40 random ones (seed in the detail). Pass: standing on land, alive, before the cap.
         const lvl = Math.min(3, Math.max(1, arg !== undefined && Number.isFinite(Number(arg)) ? Number(arg) : 2));
-        const seed = 1 + Math.floor(Math.random() * 40);
+        const seed = pickSeed(name);
         const O = oceanCourse(name, seed, lvl);
         for (const c of oceanCommands(O, x, gy, z)) cmd(c);
         for (const [id, n] of O.kit) if (n > 0) giveItem(id, n);

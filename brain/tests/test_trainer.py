@@ -236,6 +236,32 @@ class Cycle(unittest.TestCase):
         self.assertIn("fightMargin", t.write_digest())
 
 
+class LearningHelpers(unittest.TestCase):
+    def _t(self):
+        return Trainer(Path(tempfile.mkdtemp()) , run_batch=None, send=None, sim_search=None, status=lambda: ({}, 0), seed=3)
+
+    def test_failed_seeds_are_remembered_and_replayed_on_odd_rounds(self):
+        t = self._t()
+        t._note_hard_seeds([{"name": "cavemobs", "pass": False, "detail": "x; level 3 seed 17, y"}, {"name": "cavemobs", "pass": True, "detail": "seed 5"}])
+        self.assertEqual(t._seed_map(0, 9, ["cavemobs"]), {"*": 9})
+        self.assertEqual(t._seed_map(1, 9, ["cavemobs", "wild"]), {"*": 9, "cavemobs": 17})
+
+    def test_learned_margin_needs_enough_fights_and_a_real_difference(self):
+        t = self._t()
+        self.assertIsNone(t._learned_margin())
+        (t.dir.parent / "fights").mkdir()
+        (t.dir.parent / "fights" / "suggest.json").write_text(json.dumps({"enough": True, "margin": 0.45}))
+        self.assertEqual(t._learned_margin(), 0.45)
+        t.champion = {"fightMargin": 0.46}
+        self.assertIsNone(t._learned_margin())
+
+    def test_tpe_history_is_kept_per_group(self):
+        t = self._t()
+        t._hist_add("play", [{"params": {"calmResume": 40}, "score": 0.7}])
+        self.assertEqual(len(t._hist("play")), 1)
+        self.assertEqual(t._hist("cave"), [])
+
+
 if __name__ == "__main__":
     unittest.main()
 

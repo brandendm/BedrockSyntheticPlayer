@@ -18,13 +18,14 @@ appears in brain/trainer/. If the champion's guard tests fall well below what th
 from __future__ import annotations
 
 import json
+import re
 import random
 import threading
 import time
 from pathlib import Path
 from typing import Callable, Optional
 
-from . import miner, runstats
+from . import miner, runstats, tpe
 
 GROUPS = ["tow", "combat", "cave", "play"]
 # What each group's real-game confirmation runs, and the guards that must not get worse whatever the group. (Names: behavior_pack/scripts/game/scenarios.js.)
@@ -222,12 +223,60 @@ class Trainer:
         self.send("policy " + json.dumps(diff(policy)) if policy else "policy clear")
         self.sleep(2)
         outcome, events = self.run_batch(tests, workers, self._alive, **({"timeout": timeout} if timeout else {}))
-        res = [{"name": e.get("name"), "pass": bool(e.get("pass")), "secs": e.get("secs") or 0, "score": e.get("score")} for e in events if e.get("type") == "test_result" and e.get("who") != "human"]
+        res = [{"name": e.get("name"), "pass": bool(e.get("pass")), "secs": e.get("secs") or 0, "score": e.get("score"), "detail": e.get("detail") or ""} for e in events if e.get("type") == "test_result" and e.get("who") != "human"]
         for r in res:
             c = self.cells.setdefault(r["name"], [0, 0])
             c[0] += 1 if r["pass"] else 0
             c[1] += 1
         return res, outcome
+
+    def _learned_margin(self):
+        """The fightMargin the logged fights point to, once there are enough of them and it differs from the champion's."""
+        try:
+            sg = json.loads((self.dir.parent / "fights" / "suggest.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
+        m = sg.get("margin")
+        if not sg.get("enough") or m is None or abs(m - self.champion.get("fightMargin", 0.6)) < 0.03:
+            return None
+        return m
+
+    def _hist(self, group: str) -> list:
+        return (self._load("tpe_hist.json", {}) or {}).get(group, [])
+
+    def _hist_add(self, group: str, entries: list) -> None:
+        allh = self._load("tpe_hist.json", {}) or {}
+        allh[group] = (allh.get(group, []) + entries)[-200:]
+        self._save("tpe_hist.json", allh)
+
+    @staticmethod
+    def _mean_score(runs: list):
+        sc = [r["score"] if r.get("score") is not None else (1.0 if r["pass"] else 0.0) for r in runs]
+        return sum(sc) / len(sc) if sc else None
+
+    def _note_hard_seeds(self, res: list) -> None:
+        """Failed random-course runs: remember their seeds so later rounds replay them (the courses the bot actually loses on)."""
+        hs = self._load("hard_seeds.json", {}) or {}
+        for r in res:
+            m = re.search(r"seed (\d+)", r.get("detail") or "")
+            if m and not r["pass"]:
+                lst = hs.setdefault(r["name"], [])
+                sd = int(m.group(1))
+                if sd in lst:
+                    lst.remove(sd)
+                lst.append(sd)
+                del lst[:-8]
+        self._save("hard_seeds.json", hs)
+
+    def _seed_map(self, rnd: int, base: int, tests: list) -> dict:
+        """The same seeds for both arms of a round. Odd rounds replay a remembered hard seed per test where there is one."""
+        m = {"*": base}
+        if rnd % 2 == 1:
+            hs = self._load("hard_seeds.json", {}) or {}
+            for t in tests:
+                if hs.get(t):
+                    m[t] = self.rng.choice(hs[t])
+        return m
 
     def _measure_baseline(self) -> bool:
         """Once: how the defaults do on the guard tests, so a later collapse can be told from noise."""
@@ -271,8 +320,17 @@ class Trainer:
         sim_ok = False
         if group in REAL_ONLY:
             self.state = f"cycle {self.cycle_n}: {group}: trying a small step from the champion"
-            cand = perturb(self.champion, self.rng, REAL_RANGES[group], n_keys=1 + self.rng.randrange(2))
-            rec["search"] = "random step (no simulator for this group)"
+            hist = self._hist(group)
+            if len(hist) >= 6:
+                cand = tpe.suggest(hist, REAL_RANGES[group], self.rng, base=self.champion)
+                rec["search"] = f"TPE suggestion from {len(hist)} past real runs"
+            else:
+                cand = perturb(self.champion, self.rng, REAL_RANGES[group], n_keys=1 + self.rng.randrange(2))
+                rec["search"] = f"random step ({len(hist)} past runs: too few for TPE)"
+        elif group == "combat" and self._learned_margin() is not None and self.cycle_n % 2 == 0:
+            m = self._learned_margin()
+            cand = {**self.champion, "fightMargin": m}
+            rec["search"] = f"learned fight margin {m} (fitted from the logged fights, brain/fights/report.md)"
         else:
             if group == "tow" and self.evolve and self.cycle_n % EVOLVE_EVERY == 0:
                 self.state = f"cycle {self.cycle_n}: breeding harder tow courses"
@@ -323,10 +381,14 @@ class Trainer:
                 self._finish(rec)
                 return
             order = [("champ", self.champion), ("cand", cand)] if rnd % 2 == 0 else [("cand", cand), ("champ", self.champion)]
+            seeds = self._seed_map(rnd, self.rng.randrange(1, 40), tests)
             for label, pol in order:
                 self.state = f"cycle {self.cycle_n}: {group}: real game, round {rnd + 1}, {'champion' if label == 'champ' else 'candidate'}"
+                self.send("testseed " + json.dumps(seeds))
                 res, outcome = self._arm(pol, tests)
+                self._note_hard_seeds(res)
                 if outcome != "ok":
+                    self.send("testseed clear")
                     rec.update(outcome="aborted", why=f"the batch ended: {outcome}")
                     self.counts["aborted"] += 1
                     self._finish(rec)
@@ -339,6 +401,14 @@ class Trainer:
                 verdict = judge(champ_g, cand_g, champ_x, cand_x, sim_ok=sim_ok)
                 if verdict["verdict"] != "need_more":
                     break
+        self.send("testseed clear")
+        if group in REAL_ONLY:
+            ent = []
+            for pol, runs in ((cand, cand_g), (self.champion, champ_g)):
+                ms = self._mean_score(runs)
+                if ms is not None:
+                    ent.append({"params": {k: v for k, v in {**{kk: vv[2] for kk, vv in REAL_RANGES[group].items()}, **pol}.items() if k in REAL_RANGES[group]}, "score": ms})
+            self._hist_add(group, ent)
         if verdict["verdict"] == "need_more":
             verdict = {"verdict": "reject", "why": "undecided after the maximum rounds: " + verdict["why"]}
         rec["real"] = {"champion": [sum(1 for r in champ_g if r["pass"]), len(champ_g)], "candidate": [sum(1 for r in cand_g if r["pass"]), len(cand_g)],

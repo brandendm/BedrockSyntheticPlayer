@@ -205,6 +205,22 @@ export class Agent {
   setSetting(key, on) { this.memory.data.settings = { ...(this.memory.data.settings ?? {}), [key]: !!on }; this.memory.save(); this.keepSetting(key, on); }
 
   /** Kept on this computer by the brain (brain/settings.json), so the next world starts with the same goals on and off. */
+  /** Fight episodes for the brain's margin model (brain/fights.py): opened when a fight starts on the kill-vs-die race, closed when the combat ends or we die. */
+  logFight(d, t) {
+    try {
+      const ep = this.fightEp, hp = this.health();
+      if (!ep && d.mode === 'fight' && d.race && this.mode !== 'fight') {
+        this.fightEp = { t0: t, hp0: hp, hpMin: hp, armor: this.armor?.points ?? 0, shield: !!this.shield, night: this.isNight(), ratio: d.race.ttk / Math.max(0.1, d.race.ttd), race: d.race, types: d.threats.slice(0, 3).map((m) => m.type) };
+      } else if (ep) {
+        ep.hpMin = Math.min(ep.hpMin, hp);
+        if (d.mode === 'none' || hp <= 0) {
+          this.fightEp = null;
+          if (t - ep.t0 >= 20) sendEvent({ type: 'fight_episode', build: CONFIG.build, ratio: +ep.ratio.toFixed(3), margin: ep.race.margin, n: ep.race.n, ranged: ep.race.ranged, hp0: ep.hp0, lost: Math.max(0, ep.hp0 - ep.hpMin), died: hp <= 0, secs: +((t - ep.t0) / 20).toFixed(1), armor: ep.armor, shield: ep.shield, night: ep.night, types: ep.types }).catch(() => {});
+        }
+      }
+    } catch { /* logging never breaks the reflexes */ }
+  }
+
   keepSetting(key, on) { sendEvent({ type: 'setting', key, on: !!on }).catch(() => {}); }
 
   /**
@@ -882,6 +898,7 @@ export class Agent {
     if (!this.armor || t - (this.armorAt ?? -1e9) >= 100) { this.armor = armorTotal(this.worn()); this.armorAt = t; } // (worn out, taken off)
     const d = decide({ health: this.health(), damage: this.damage, isNight: this.isNight(), prevMode: this.mode, mobs, inWater, shield: this.shield, slot: this.slotHolds(), witches: this.toggles().witches, armor: this.armor?.points ?? 0, toughness: this.armor?.toughness ?? 0, bow: (() => { const iv = invCounts(this.sim); return !!iv.bow && (iv.arrow ?? 0) >= 3; })() });
     this.threatsNow = d.threats;
+    this.logFight(d, t);
     // Cornered with nowhere better to run: fight the nearest thing that can be fought.
     // (Or squeezed and the creeper walled off behind us, out of sight and not hissing: the rest.)
     const pw = this.pinchWall;

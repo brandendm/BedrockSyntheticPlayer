@@ -8,7 +8,7 @@ import { topColumn, findLand } from './game/landfinder.js';
 import { system, world, GameMode, EquipmentSlot } from '@minecraft/server';
 import { spawnSimulatedPlayer } from '@minecraft/server-gametest';
 import { Agent } from './game/agent.js';
-import { runTests } from './game/scenarios.js';
+import { runTests, setTestSeeds } from './game/scenarios.js';
 import { arenaCommand } from './game/arenas.js';
 import { ironFarmCommand } from './game/ironfarm.js';
 import { farmBuildCommand } from './game/farmbuild.js';
@@ -484,6 +484,12 @@ function handle(text, player) {
       sendEvent({ type: 'policy', policy: diffFromDefaults(applied) });
       reply(player, `policy: ${JSON.stringify(diffFromDefaults(applied))}`);
     } catch (e) { reply(player, `policy: ${e}`); }
+    return;
+  }
+  // !bot testseed {"*": 123, "raid": 7} | testseed clear: the seeds the random-course tests use (the trainer pairs the champion's and the candidate's runs on the same courses).
+  if (lower === 'testseed' || lower.startsWith('testseed ')) {
+    const arg = cmd.slice(8).trim();
+    try { if (!arg || arg === 'clear') setTestSeeds(null); else { const o = JSON.parse(arg); setTestSeeds(o && typeof o === 'object' && !Array.isArray(o) ? o : typeof o === 'number' ? { '*': o } : null); } reply(player, `testseed: ${arg || 'clear'}`); } catch (e) { reply(player, `testseed: ${e}`); }
     return;
   }
   if (lower === 'done') { if (agent) /** @type {any} */ (agent).testDone = true; return; } // finished the house you were building for the test

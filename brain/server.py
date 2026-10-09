@@ -34,6 +34,7 @@ LOG_DIR = ROOT / "logs"
 # Dashboard state (in memory; the game resends status every second).
 _lock = threading.Lock()
 _status = {"data": None, "at": 0.0}
+_fight_n = [0]
 _commands: collections.deque = collections.deque(maxlen=50)
 def _about() -> dict:
     """What this brain is: the commit it runs from (if git is there), Python, when it started."""
@@ -700,6 +701,16 @@ def make_handler(engine: DecisionEngine, key: str | None = None):
                     _bench.store(ROOT, {**evt, "policy": (_train["run"].champion if _train.get("run") else None)})
                 except Exception as e:  # noqa: BLE001 - a bad result never takes the brain down
                     log.warning("bench result not stored: %s", e)
+                return self._send(200, {"actions": []})
+            if evt.get("type") == "fight_episode":
+                try:
+                    from . import fights as _fights
+                    _fights.store(ROOT, evt)
+                    _fight_n[0] += 1
+                    if _fight_n[0] % 25 == 0:
+                        _fights.write_report(ROOT)
+                except Exception as e:  # noqa: BLE001
+                    log.warning("fight episode not stored: %s", e)
                 return self._send(200, {"actions": []})
             if evt.get("type") == "demo":
                 store_demo(evt)
