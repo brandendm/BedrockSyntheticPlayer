@@ -10,6 +10,7 @@ import { spawnSimulatedPlayer } from '@minecraft/server-gametest';
 import { Agent } from './game/agent.js';
 import { runTests, setTestSeeds } from './game/scenarios.js';
 import { arenaCommand } from './game/arenas.js';
+import { colosseumCommand } from './game/colosseum.js';
 import { ironFarmCommand } from './game/ironfarm.js';
 import { farmBuildCommand } from './game/farmbuild.js';
 import { poll, sendEvent } from './game/bridge.js';
@@ -510,6 +511,12 @@ function handle(text, player) {
   if (lower === 'ironfarm' || lower.startsWith('ironfarm ')) {
     // The iron golem farm (game/ironfarm.js), built with game commands: no bot needed.
     ironFarmCommand(player, lower.split(/\s+/).slice(1));
+    return;
+  }
+  if (lower === 'colosseum' || lower.startsWith('colosseum ')) {
+    // Bots in diamond gear against any mob (or each other) in a glass arena with stands (game/colosseum.js).
+    if (!agent?.sim.isValid) return reply(player, 'spawn first');
+    colosseumCommand(agent, player, lower.split(/\s+/).slice(1));
     return;
   }
   if (lower === 'arena' || lower.startsWith('arena ')) {
