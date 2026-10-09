@@ -79,7 +79,7 @@ class World:
         self.sent.append(text)
         self.policy = json.loads(text[7:]) if text.startswith("policy {") else {}
 
-    def run_batch(self, tests, workers, alive):
+    def run_batch(self, tests, workers, alive, timeout=None):
         self.batches.append((list(tests), dict(self.policy)))
         ev = [{"type": "test_result", "name": n, "pass": self.rng.random() < self.rate_for(n, self.policy), "secs": 30} for n in tests]
         return "ok", ev
@@ -91,6 +91,7 @@ class World:
 def make(world, sim, root=None):
     root = root or Path(tempfile.mkdtemp())
     t = Trainer(root, run_batch=world.run_batch, send=world.send, sim_search=sim, status=world.status, clock=world.clock, sleep=world.sleep, seed=2)
+    t.bench_every = 0                  # (the benchmark has its own test below)
     t.set_enabled(True)
     t._pick_group = lambda: T.GROUPS[t.group_i % len(T.GROUPS)]      # (the tests choose the group with group_i)
     return t
@@ -121,6 +122,15 @@ class Cycle(unittest.TestCase):
         t.cycle()
         self.assertEqual(t.champion, {})
         self.assertIn("ordinary play", (t.dir / "journal.jsonl").read_text())
+
+    def test_the_progression_benchmark_runs_on_the_champion_every_few_cycles(self):
+        w = World(lambda n, p: 0.9)
+        t = make(w, lambda *a: {"accepted": False, "train": [1, 1], "held": [1, 1], "evals": 1})
+        t.bench_every = 6
+        t.guard_baseline = [9, 10]
+        t.cycle()
+        self.assertEqual(w.batches[0][0], ["bench"])
+        self.assertIn('"event": "bench"', (t.dir / "journal.jsonl").read_text())
 
     def test_weakest_tests_table_and_evolve_hook(self):
         calls = []

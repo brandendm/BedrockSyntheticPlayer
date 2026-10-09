@@ -37,6 +37,8 @@ GROUP_TESTS = {
 GUARD_TESTS = ["ravine", "hole", "pit", "bow", "ladder"]
 # Normal play for 5 minutes with no setup: run once after a policy is accepted (a champion that dies in ordinary play is undone), and it feeds the weakest-tests table.
 HEALTH_TEST = "wild"
+BENCH_EVERY = 6      # every 6th cycle (the first, then the 7th ...) the progression benchmark runs on the champion: the real measure of progress (brain/bench.py)
+BENCH_TIMEOUT_S = 40 * 60
 EVOLVE_EVERY = 5     # every 5th tow cycle first breeds new hard courses (sim/evolve_courses.mjs)
 # Ranges for the real-only (cave) steps: mirrors tunables.js (kept in step by tests/test_trainer.py).
 REAL_RANGES = {"cave": {"quarryTorchLight": (1, 7, 3)},
@@ -92,6 +94,7 @@ class Trainer:
         self.dir.mkdir(parents=True, exist_ok=True)
         self.run_batch, self.send, self.sim_search, self.status = run_batch, send, sim_search, status
         self.evolve = evolve
+        self.bench_every = BENCH_EVERY
         self.clock, self.sleep = clock, sleep
         self.rng = random.Random(seed)
         self.enabled = False            # off at every start
@@ -207,11 +210,11 @@ class Trainer:
                 self.state = f"error: {e}"
                 self.sleep(30)
 
-    def _arm(self, policy: dict, tests: list, workers: int = WORKERS):
+    def _arm(self, policy: dict, tests: list, workers: int = WORKERS, timeout: Optional[float] = None):
         """Run `tests` with `policy` in force. Returns (results, outcome); results are {name, pass, secs}."""
         self.send("policy " + json.dumps(diff(policy)) if policy else "policy clear")
         self.sleep(2)
-        outcome, events = self.run_batch(tests, workers, self._alive)
+        outcome, events = self.run_batch(tests, workers, self._alive, **({"timeout": timeout} if timeout else {}))
         res = [{"name": e.get("name"), "pass": bool(e.get("pass")), "secs": e.get("secs") or 0} for e in events if e.get("type") == "test_result" and e.get("who") != "human"]
         for r in res:
             c = self.cells.setdefault(r["name"], [0, 0])
@@ -249,6 +252,12 @@ class Trainer:
         group = self._pick_group()
         self.group_i += 1
         self.cycle_n += 1
+        if self.bench_every and self.cycle_n % self.bench_every == 1:
+            self.state = f"cycle {self.cycle_n}: progression benchmark on the champion"
+            res, outcome = self._arm(self.champion, ["bench"], 1, BENCH_TIMEOUT_S)
+            self.journal({"event": "bench", "outcome": outcome, "pass": [r["pass"] for r in res if r["name"] == "bench"], "champion": self.champion})
+            if not self._alive():
+                return
         self.current_group = group
         rec = {"event": "cycle", "n": self.cycle_n, "group": group, "outcome": "?", "candidate_diff": {}, "why": ""}
         # 1. SEARCH

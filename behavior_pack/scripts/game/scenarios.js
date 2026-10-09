@@ -73,6 +73,7 @@ import { hire, dismissAll, MAX_WORKERS } from './crew.js';
 import { nextSlot, siteAt, queueOf } from '../core/poolplan.js';
 import { caveCourse, caveCommands, CAVE_KINDS, CAVE_EXT } from '../core/caves.js';
 import { terrainCourse, terrainCommands, TERRAIN_KINDS, TERRAIN_EXT } from '../core/terrain.js';
+import { runBench } from './bench.js';
 import { oceanCourse, oceanCommands, onLand, OCEAN_KINDS, OCEAN_EXT } from '../core/ocean.js';
 import { ARENAS, testArena, arenaCommand } from './arenas.js';
 
@@ -87,7 +88,7 @@ function extFor(name) {
   return name === 'farm' || name === 'farmrace' ? { w: 22, e: 36, r: 24 } : name === 'horserace' || name === 'elytra' || name === 'boatcross' ? { w: 8, e: 54, r: 10 } : name === 'bow' ? { w: 14, e: 34, r: 14 }
     : name === 'villagerferry' || name === 'villagerferryhorse' ? { w: 17, e: 44, r: 12 } : name === 'villagerhaulhorse' ? { w: 12, e: 44, r: 12 } : name === 'leadboat' || name === 'villagerhaul' ? { w: 12, e: 44, r: 12 } : name === 'forest' ? { w: 6, e: 34, r: 20 } : { w: 14, e: 18, r: 12 };
 }
-const NAMES = ['roof', 'tower', 'hole', 'pit', 'trap', 'climb', 'ledge', 'ladder', 'husk', 'creeper', 'sheep', 'pen', 'smelt', 'smeltlogs', 'shelter', 'house', 'resume', 'ghostlog', 'quarry', 'dark', 'replant', 'litter', 'trader', 'iron', 'farm', 'equip', 'water', 'bucketfarm', 'treetop', 'corner', 'leap', 'bridge', 'fall', 'vines', 'stairgap', 'loot', 'shield', 'skel', 'rest', 'nights', 'calibrate', 'portal', 'horse', 'leadboat', 'leadsling', 'bow', 'duel', 'horserace', 'pillarrace', 'woodrace', 'lavacross', 'obsidian', 'mineore', 'enderman', 'blaze', 'ghast', 'witherskeleton', 'placerate', 'farmrace', 'creepers', 'ravine', 'elytra', 'villagerhaul', 'villagerferry', 'villagerhaulhorse', 'villagerferryhorse', 'forest', 'vineclimb', 'boatcross', ...CAVE_KINDS, ...OCEAN_KINDS, ...TERRAIN_KINDS, 'wild', ...TOW_NAMES, ...TOW_NAMES.map((n) => `${n}horse`), ...PROBE_NAMES];
+const NAMES = ['roof', 'tower', 'hole', 'pit', 'trap', 'climb', 'ledge', 'ladder', 'husk', 'creeper', 'sheep', 'pen', 'smelt', 'smeltlogs', 'shelter', 'house', 'resume', 'ghostlog', 'quarry', 'dark', 'replant', 'litter', 'trader', 'iron', 'farm', 'equip', 'water', 'bucketfarm', 'treetop', 'corner', 'leap', 'bridge', 'fall', 'vines', 'stairgap', 'loot', 'shield', 'skel', 'rest', 'nights', 'calibrate', 'portal', 'horse', 'leadboat', 'leadsling', 'bow', 'duel', 'horserace', 'pillarrace', 'woodrace', 'lavacross', 'obsidian', 'mineore', 'enderman', 'blaze', 'ghast', 'witherskeleton', 'placerate', 'farmrace', 'creepers', 'ravine', 'elytra', 'villagerhaul', 'villagerferry', 'villagerhaulhorse', 'villagerferryhorse', 'forest', 'vineclimb', 'boatcross', ...CAVE_KINDS, ...OCEAN_KINDS, ...TERRAIN_KINDS, 'wild', 'bench', ...TOW_NAMES, ...TOW_NAMES.map((n) => `${n}horse`), ...PROBE_NAMES];
 let running = false;
 /** The bot's last forest turn (its logs and trees), for your turn to be compared with. @type {{logs: number, trees: number, cut: number, build: string} | null} */
 let forestBot = null;
@@ -103,18 +104,18 @@ const parallelClass = (n) => (GROUND.has(n) || NIGHT.has(n) || SERIAL_ONLY.has(n
 // Tests that wait out real time (a 5 minute despawn, a night, a furnace, a long walk): left out of
 // `!bot test all quick`. Their real durations are in the batch report (`secs`), so this list can be
 // corrected from data: anything over QUICK_S in the last report belongs here.
-const SLOW = new Set(['wild', 'villagerhaul', 'villagerferry', 'villagerhaulhorse', 'villagerferryhorse', ...TOW_NAMES.map((n) => `${n}horse`), 'forest', 'loot', 'nights', 'rest', 'shelter', 'house', 'resume', 'quarry', 'farm', 'bucketfarm', 'iron', 'sheep', 'pen', 'smelt', 'smeltlogs', 'trader', 'ghostlog', 'stairgap', 'portal', 'horse', 'leadboat', 'leadsling', 'duel', 'horserace', ...TOW_NAMES, ...PROBE_NAMES]);
+const SLOW = new Set(['bench', 'wild', 'villagerhaul', 'villagerferry', 'villagerhaulhorse', 'villagerferryhorse', ...TOW_NAMES.map((n) => `${n}horse`), 'forest', 'loot', 'nights', 'rest', 'shelter', 'house', 'resume', 'quarry', 'farm', 'bucketfarm', 'iron', 'sheep', 'pen', 'smelt', 'smeltlogs', 'trader', 'ghostlog', 'stairgap', 'portal', 'horse', 'leadboat', 'leadsling', 'duel', 'horserace', ...TOW_NAMES, ...PROBE_NAMES]);
 /** Tests that need you there (you are the opponent). */
 const PLAYER_ONLY = new Set(['duel', 'horserace', 'pillarrace', 'woodrace', 'farmrace']);
 const QUICK_S = 60;
 // The ones that need monsters about (and the world's own difficulty); the rest run peaceful with monsters cleared.
 /** Tests that stay on the real ground (trees, water, ores, the night, long walks); everything else is built in the sky. */
-const GROUND = new Set(['wild', 'water', 'bucketfarm', 'treetop', 'vines', 'ghostlog', 'nights', 'calibrate', 'quarry', 'dark', 'iron', 'loot', 'rest', 'house', 'resume', 'shelter']);
+const GROUND = new Set(['bench', 'wild', 'water', 'bucketfarm', 'treetop', 'vines', 'ghostlog', 'nights', 'calibrate', 'quarry', 'dark', 'iron', 'loot', 'rest', 'house', 'resume', 'shelter']);
 /** Tests that need the day and night going round (the rest are kept at day while the tests run). */
-const NIGHT = new Set(['shelter', 'house', 'resume', 'nights', 'rest', 'dark', 'loot']);
+const NIGHT = new Set(['bench', 'shelter', 'house', 'resume', 'nights', 'rest', 'dark', 'loot']);
 /** Tests that need the natural terrain or water as it is: no floor is laid for them. */
 const NATURAL = new Set(['water', 'bucketfarm', 'treetop', 'vines', 'ghostlog', 'nights', 'calibrate']);
-const COMBAT = new Set([...TERRAIN_KINDS, 'cavemobs', 'cavedeep', 'caveescape', 'caveascent', 'oceandrop', 'oceandeep', 'husk', 'creeper', 'skel', 'shield', 'dark', 'duel', 'enderman', 'blaze', 'ghast', 'witherskeleton', 'creepers', 'villagerferry', 'villagerferryhorse']);
+const COMBAT = new Set(['bench', ...TERRAIN_KINDS, 'cavemobs', 'cavedeep', 'caveescape', 'caveascent', 'oceandrop', 'oceandeep', 'husk', 'creeper', 'skel', 'shield', 'dark', 'duel', 'enderman', 'blaze', 'ghast', 'witherskeleton', 'creepers', 'villagerferry', 'villagerferryhorse']);
 // The ones a player can do too (`!bot test <name> me`): a goal the player can reach and the test can see.
 const HUMAN_OK = new Set(['tower', 'hole', 'pit', 'climb', 'ladder', 'corner', 'leap', 'bridge', 'ledge', 'bow', 'husk', 'sheep', 'pen', 'replant', 'litter', 'house', 'lavacross', 'obsidian', 'mineore', 'enderman', 'blaze', 'ghast', 'witherskeleton', 'creepers', 'ravine', 'leadboat', 'elytra', 'villagerhaul', 'villagerferry', 'villagerhaulhorse', 'villagerferryhorse', ...TOW_NAMES.map((n) => `${n}horse`), 'forest', 'vineclimb', 'boatcross', ...TOW_NAMES]);
 // No single test runs longer than this (the task is ended and the test left to report what it has).
@@ -388,7 +389,7 @@ export async function runTests(agent, player, args) {
   }
 }
 
-const capFor = (n) => (n === 'wild' ? 420 : TERRAIN_KINDS.includes(n) ? 300 : PROBES[n] ? Math.max(CAP_S, (PROBES[n].secs ?? 0) + 60) : ['leadboat', 'leadsling', 'villagerhaul', 'villagerferry', 'villagerhaulhorse', 'villagerferryhorse'].includes(n) || TOW_META[n] || TOW_META[n.replace(/horse$/, '')] ? 480 : CAP_S);
+const capFor = (n) => (n === 'bench' ? 2400 : n === 'wild' ? 420 : TERRAIN_KINDS.includes(n) ? 300 : PROBES[n] ? Math.max(CAP_S, (PROBES[n].secs ?? 0) + 60) : ['leadboat', 'leadsling', 'villagerhaul', 'villagerferry', 'villagerhaulhorse', 'villagerferryhorse'].includes(n) || TOW_META[n] || TOW_META[n.replace(/horse$/, '')] ? 480 : CAP_S);
 
 /**
  * A batch of the bot's own tests on several bots at once (`!bot test all workers 4`). Only tests that stay on their own sky slab and touch nothing global (parallelClass); the
@@ -2133,6 +2134,12 @@ async function runOne(agent, player, name, arg, human = false) {
         pass = done() && agent.health() > 0;
         const r = rel();
         detail = `${pass ? 'on land' : `still in the water at ${r.x.toFixed(0)},${r.y.toFixed(0)},${r.z.toFixed(0)}`} in ${secs()}s; level ${lvl} seed ${seed}, lowest health ${hpMin.v.toFixed(0)}, ${O.mobs.length} drowned put in, started ${starts}x (mode ${agent.mode})`;
+        break;
+      }
+      case 'bench': {
+        // The progression benchmark (game/bench.js): `test bench 15` = 3 bots, 15 minutes, fresh start on dry land far apart. Run it alone.
+        const r = await runBench(agent, { minutes: arg !== undefined && Number.isFinite(Number(arg)) ? Number(arg) : 12, aborted: () => !!(agent.testSkipped || agent.testAbort) });
+        pass = r.pass; detail = r.detail;
         break;
       }
       case 'wild': {

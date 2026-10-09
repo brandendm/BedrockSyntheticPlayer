@@ -16,12 +16,14 @@ const MAX_PER_CATEGORY = 24;
 const exact = (cat) => cat === 'crafting_table' || cat === 'furnace';
 
 export class WorldMemory {
-  constructor() {
+  /** key: the dynamic property it lives in; null = this bot's notes are not kept (a benchmark bot, u296: its own notes, gone with it). */
+  constructor(key = KEY) {
+    this.key = key;
     this.data = { v: 3, res: [] };
     this.unreachable = new Map();
     this.dirty = false;
     try {
-      const raw = world.getDynamicProperty(KEY);
+      const raw = key ? world.getDynamicProperty(key) : undefined;
       if (typeof raw === 'string') this.load(JSON.parse(raw));
     } catch (e) {
       console.warn(`[agent] memory load: ${e}`);
@@ -45,12 +47,12 @@ export class WorldMemory {
 
   /** Coalesce writes: at most one save every 5 s. */
   save() {
-    if (this.dirty) return;
+    if (!this.key || this.dirty) return;
     this.dirty = true;
     system.runTimeout(() => {
       this.dirty = false;
       try {
-        world.setDynamicProperty(KEY, JSON.stringify(this.data));
+        world.setDynamicProperty(this.key, JSON.stringify(this.data));
       } catch (e) {
         console.warn(`[agent] memory save: ${e}`);
       }
@@ -59,7 +61,8 @@ export class WorldMemory {
 
   /** Write right away (for things we must not lose: a house we've started). */
   saveNow() {
-    try { world.setDynamicProperty(KEY, JSON.stringify(this.data)); } catch (e) { console.warn(`[agent] memory save: ${e}`); }
+    if (!this.key) return;
+    try { world.setDynamicProperty(this.key, JSON.stringify(this.data)); } catch (e) { console.warn(`[agent] memory save: ${e}`); }
   }
 
   remember(cat, dimId, p, n = 1) {

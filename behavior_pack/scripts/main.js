@@ -3,6 +3,8 @@
 //   !bot despawn          remove it
 //   !bot <anything else>  sent to the brain (come, follow me, goto x y z, stop, ...)
 // Same commands without chat:  /scriptevent agent:cmd <text>
+import { goodSpawnColumn } from './core/spawnpick.js';
+import { topColumn, findLand } from './game/landfinder.js';
 import { system, world, GameMode, EquipmentSlot } from '@minecraft/server';
 import { spawnSimulatedPlayer } from '@minecraft/server-gametest';
 import { Agent } from './game/agent.js';
@@ -32,6 +34,26 @@ function reply(player, msg) {
 }
 
 /** Where to spawn: next to the player, or (from the console) on the surface at world spawn. */
+/** A safe world spawn (u296): if the world spawn is not on dry land at the surface (a fresh world from tools/new_world.py had (0,0,0): bedrock level), find the nearest
+ * column that is, and set the world spawn there. Runs once per world; nothing is moved when the spawn is already fine. */
+async function fixWorldSpawn(force = false) {
+  if (!force && world.getDynamicProperty('agent:spawnChecked') === true) return 'checked before';
+  const dim = world.getDimension('overworld');
+  const s = world.getDefaultSpawnLocation();
+  const cur = await topColumn(dim, Math.floor(s.x), Math.floor(s.z));
+  let msg;
+  if (cur && goodSpawnColumn(cur.id, cur.y) && Math.abs(s.y - (cur.y + 1)) <= 3) msg = `world spawn ${Math.floor(s.x)} ${Math.floor(s.y)} ${Math.floor(s.z)} is fine (${cur.id} at y ${cur.y})`;
+  else {
+    msg = `world spawn ${Math.floor(s.x)} ${Math.floor(s.y)} ${Math.floor(s.z)} is not on dry land (${cur ? `${cur.id} at y ${cur.y}` : 'not loaded'}); searching`;
+    const f = await findLand(dim, Math.floor(s.x), Math.floor(s.z), { step: 48, tries: 60 });
+    if (f) { try { dim.runCommand(`setworldspawn ${f.x} ${f.y} ${f.z}`); msg += `; world spawn set to ${f.x} ${f.y} ${f.z} (${f.id})`; } catch (e) { msg += `; setworldspawn failed: ${e}`; } }
+    else msg += '; found nothing in 60 tries';
+  }
+  world.setDynamicProperty('agent:spawnChecked', true);
+  console.warn(`[agent] spawn: ${msg}`);
+  return msg;
+}
+
 async function spawnPoint(player) {
   if (player) {
     const l = player.location;
@@ -62,10 +84,10 @@ function surfaceY(dim, x, z) {
 }
 
 // How a hired bot is made (game/crew.js): its own simulated player and Agent, sharing the main bot's memory.
-setCrewFactory((name, where, primary) => {
+setCrewFactory((name, where, primary, opts = {}) => {
   const sim = spawnSimulatedPlayer(where, name, GameMode.Survival);
   try { sim.setSpawnPoint({ dimension: where.dimension, x: Math.floor(where.x), y: Math.floor(where.y), z: Math.floor(where.z) }); } catch { /* */ }
-  return new Agent(sim, { worker: true, memory: primary.memory });
+  return new Agent(sim, { worker: true, memory: opts.memory ?? primary.memory });
 });
 
 async function spawnAgent(player) {
@@ -112,6 +134,7 @@ function handle(text, player) {
     spawnAgent(player).catch((e) => reply(player, `spawn failed: ${e}`));
     return;
   }
+  if (lower === 'fixspawn') { fixWorldSpawn(true).then((m) => reply(player, m)).catch((e) => reply(player, `fixspawn failed: ${e}`)); return; }
   if (lower === 'version') return reply(player, `Bedrock Agent build ${CONFIG.build}`);
   // !bot learn on [name] | off | status: record a player's play so it can learn from it (game/demo.js).
   if (lower === 'learn' || lower.startsWith('learn ')) {
@@ -522,6 +545,24 @@ system.afterEvents.scriptEventReceive.subscribe((ev) => {
 });
 
 // Remember who hits us: provoked neutral mobs become threats, and we hit back at the right one.
+// (u296) A fresh world: make sure the world spawn is dry land, and a player's first join that landed underground or in water is moved to it.
+system.runTimeout(() => { fixWorldSpawn().catch((e) => console.warn(`[agent] spawn check: ${e}`)); }, 60);
+world.afterEvents.playerSpawn.subscribe((ev) => {
+  if (!ev.initialSpawn || ev.player.id === agent?.sim.id) return;
+  (async () => {
+    const p = ev.player;
+    if (p.getDynamicProperty('agent:seen') === true) return;
+    p.setDynamicProperty('agent:seen', true);
+    for (let i = 0; i < 40 && world.getDynamicProperty('agent:spawnChecked') !== true; i++) await system.waitTicks(20);
+    let wet = false;
+    try { wet = p.dimension.getBlock(p.location)?.isLiquid ?? false; } catch { /* */ }
+    if (p.location.y < 55 || wet) {
+      const s = world.getDefaultSpawnLocation();
+      p.teleport({ x: s.x + 0.5, y: s.y, z: s.z + 0.5 }, { dimension: world.getDimension('overworld') });
+      console.warn(`[agent] moved ${p.name} from ${Math.floor(p.location.x)} ${Math.floor(p.location.y)} ${Math.floor(p.location.z)} to the world spawn`);
+    }
+  })().catch(() => {});
+});
 world.afterEvents.playerSpawn.subscribe((ev) => { try { if (ev.initialSpawn && ev.player.id !== agent?.sim.id) agent?.demo.restoreOnJoin(ev.player); } catch { /* */ } });
 world.afterEvents.playerBreakBlock.subscribe((ev) => { try { agent?.demo.onBreak(ev); } catch { /* recording never breaks play */ } });
 world.afterEvents.playerPlaceBlock.subscribe((ev) => { try { agent?.demo.onPlace(ev); } catch { /* */ } });
@@ -592,6 +633,10 @@ system.runInterval(() => {
   polling = true;
   let status;
   try { status = agent?.sim.isValid ? agent.status() : { online: false, name: CONFIG.botName, players: world.getPlayers().map((pl) => pl.name) }; } catch (e) { status = { online: !!agent, error: `${e}` }; }
+  // (u296) The hired bots too: who is out there and what each is doing (the dashboard and the benchmark read this).
+  try {
+    if (crew.members.length) status = { ...status, crew: crew.members.filter((w) => w.sim?.isValid).map((w) => { const l = w.sim.location; return { name: w.sim.name, hp: Math.round(w.health()), mode: w.mode, task: w.task?.kind ?? null, step: w.autoStep ?? null, pos: [Math.round(l.x), Math.round(l.y), Math.round(l.z)] }; }) };
+  } catch { /* the status goes out without it */ }
   poll(status).then((cmds) => { for (const c of cmds) handle(String(c), undefined); })
     .catch(() => {}).finally(() => { polling = false; });
 }, 20);

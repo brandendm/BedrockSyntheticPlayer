@@ -578,6 +578,9 @@ def make_handler(engine: DecisionEngine, key: str | None = None):
             if self.path == "/api/trainer":
                 tr = _train["run"]
                 return self._send(200, tr.info() if tr else {"enabled": False, "state": "not available"})
+            if self.path == "/api/bench":
+                from . import bench as _bench
+                return self._send(200, {"runs": _bench.read(ROOT, 12), "leaderboard": _bench.write_leaderboard(ROOT)})
             if self.path == "/api/trainer/digest":
                 tr = _train["run"]
                 return self._send(200, {"text": tr.write_digest() if tr else ""})
@@ -689,6 +692,13 @@ def make_handler(engine: DecisionEngine, key: str | None = None):
                 evt = json.loads(self.rfile.read(n) or b"{}")
             except ValueError:
                 return self._send(400, {"error": "bad json"})
+            if evt.get("type") == "bench_result":
+                try:
+                    from . import bench as _bench
+                    _bench.store(ROOT, {**evt, "policy": (_train["run"].champion if _train.get("run") else None)})
+                except Exception as e:  # noqa: BLE001 - a bad result never takes the brain down
+                    log.warning("bench result not stored: %s", e)
+                return self._send(200, {"actions": []})
             if evt.get("type") == "demo":
                 store_demo(evt)
                 return self._send(200, {"actions": []})
