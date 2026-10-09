@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { DOCTRINE, KEYS, defaults, norm, flag, realPolicy, spacing, shootNow, pickTarget, describeChange, labLoad, table, fromStyle } from '../behavior_pack/scripts/core/doctrine.js';
+import { pickWeapon, kindOf, speedOf, DOCTRINE, KEYS, defaults, norm, flag, realPolicy, spacing, shootNow, pickTarget, describeChange, labLoad, table, fromStyle } from '../behavior_pack/scripts/core/doctrine.js';
 import { parseShow } from '../behavior_pack/scripts/core/colosseum.js';
 import { applyPolicy, TUNABLES } from '../behavior_pack/scripts/core/tunables.js';
 import { fightMove } from '../behavior_pack/scripts/core/tactics.js';
@@ -68,8 +68,11 @@ test('target choice: sticks unless another is clearly better; likes the hurt one
 });
 
 test('the switches decide the gear; the table is what the lab gets', () => {
-  const l = labLoad({ armor: 'iron', weapon: 'iron', weapons: ['sword', 'axe'], shield: true, bow: true }, norm({ useHorse: 1, useBow: 0 }));
-  assert.deepEqual([l.mount, l.bow, l.shield, l.weapons], [true, false, true, ['sword']]);
+  const scn = { armor: 'iron', weapon: 'iron', weapons: ['sword', 'axe'], shield: true, ranged: 'both', horse: true };
+  const l = labLoad(scn, norm({ useHorse: 1, useBow: 0 }));
+  assert.deepEqual([l.mount, l.bow, l.crossbow, l.shield, l.weapons], [true, false, false, true, ['sword', 'axe']]);
+  const m = labLoad({ ...scn, weapons: [], shield: false, horse: false, ranged: 'crossbow' }, norm({ useHorse: 1 }));
+  assert.deepEqual([m.mount, m.bow, m.crossbow, m.shield, m.weapons], [false, false, true, false, []]);
   assert.equal(Object.keys(table()).length, KEYS.length);
   assert.ok(flag(1) && !flag(0.5));
   assert.ok(fromStyle({ bowFrom: 6, strafe: 22, close: 3.4 }).bowFrom === 6);
@@ -83,4 +86,24 @@ test('colosseum lab command', () => {
   assert.equal(p.team, 1);
   assert.equal(parseShow(['lab']).lab.bouts, 9999);
   assert.deepEqual(parseShow(['lab', 'report']), { cmd: 'lab', sub: 'report' });
+});
+
+test('weapon choice: by damage a second times the doctrine weight; a spear can win when it is liked', () => {
+  const items = [{ id: 'iron_sword', rate: 7 }, { id: 'iron_spear', rate: 2.1 }, { id: 'iron_axe', rate: 5 }];
+  assert.equal(pickWeapon(defaults(), items), 'iron_sword');
+  assert.equal(pickWeapon(norm({ wSpear: 4 }), items), 'iron_spear');
+  assert.equal(pickWeapon(norm({ wSword: 0.2 }), items), 'iron_axe');
+  assert.equal(pickWeapon(norm({ wSpear: 2, reachSpear: 1 }), items, { fast: true }), 'iron_spear');
+  assert.equal(pickWeapon(defaults(), []), null);
+  assert.equal(kindOf('minecraft:diamond_spear'), 'spear');
+  assert.equal(kindOf('trident'), 'trident');
+  assert.equal(kindOf('stick'), null);
+});
+
+test('crowds make an axe likelier; babies are faster', () => {
+  const items = [{ id: 'iron_sword', rate: 7 }, { id: 'iron_axe', rate: 5 }];
+  assert.equal(pickWeapon(norm({ crowdAxe: 1.5 }), items, { foes: 1 }), 'iron_sword');
+  assert.equal(pickWeapon(norm({ crowdAxe: 1.5 }), items, { foes: 4 }), 'iron_axe');
+  assert.ok(speedOf('zombie', true) > speedOf('zombie', false));
+  assert.ok(speedOf('zombie', true) > defaults().kiteMaxSpeed);
 });

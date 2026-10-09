@@ -33,9 +33,23 @@ export const DOCTRINE = {
   // --- choosing who to hit
   switchMargin: { v: 4, min: 0, max: 10, group: 'targeting', about: 'a nearer target must be this much nearer (blocks) before it changes target' },
   focusLow:     { v: 0.3, min: 0, max: 1, group: 'targeting', about: 'how much it prefers a hurt target over a near one' },
+  // --- which weapon (each is a weight on the weapon's damage per second; 1 = as the damage numbers say)
+  wSword:       { v: 1, min: 0.2, max: 4, group: 'weapon', about: 'how much it likes a sword (its damage a second is multiplied by this)' },
+  wAxe:         { v: 1, min: 0.2, max: 4, group: 'weapon', about: 'how much it likes an axe' },
+  wSpear:       { v: 1, min: 0.2, max: 4, group: 'weapon', about: 'how much it likes a spear (reach 4, slow recovery)' },
+  wMace:        { v: 1, min: 0.2, max: 4, group: 'weapon', about: 'how much it likes a mace' },
+  wTrident:     { v: 1, min: 0.2, max: 4, group: 'weapon', about: 'how much it likes a trident in the hand' },
+  crowdAxe:     { v: 0, min: 0, max: 1.5, group: 'weapon', about: 'extra liking for an axe per extra enemy (a crowd)' },
+  reachSpear:   { v: 0, min: 0, max: 2, group: 'weapon', about: 'extra liking for a spear against fast or far enemies (it hits from 4 blocks)' },
+  xbowPref:     { v: 0.5, min: 0, max: 1, group: 'bow', about: 'with both a bow and a crossbow: above 0.5 it shoots the crossbow' },
+  kiteMaxSpeed: { v: 0.3, min: 0.1, max: 0.45, group: 'health', about: 'it only backs away from enemies no faster than this (a baby zombie or a spider outruns it)' },
   // --- the horse
   useHorse:     { v: 0, min: 0, max: 1, group: 'horse', about: 'fight from a saddled horse (it must be ridden in; a hit knocks you off nothing, but the horse moves you)' },
 };
+
+/** Walking speed of mobs (the game's movement attribute) for when the entity does not say; a baby is faster. */
+export const FOE_SPEED = { zombie: 0.23, husk: 0.23, drowned: 0.23, zombie_villager: 0.23, skeleton: 0.25, stray: 0.25, creeper: 0.25, spider: 0.3, cave_spider: 0.3, enderman: 0.3, witch: 0.25, pillager: 0.35, vindicator: 0.35, iron_golem: 0.25, blaze: 0.23, wither_skeleton: 0.25 };
+export const speedOf = (type, baby = false) => (FOE_SPEED[String(type).replace('minecraft:', '')] ?? 0.25) * (baby ? 1.5 : 1);
 
 export const KEYS = Object.keys(DOCTRINE);
 export const defaults = () => Object.fromEntries(KEYS.map((k) => [k, DOCTRINE[k].v]));
@@ -99,18 +113,41 @@ export function describeChange(d, base = defaults()) {
   }).sort((a, b) => b.size - a.size).map((c) => `${c.k} ${+c.from.toFixed(2)} -> ${+c.to.toFixed(2)} (${c.about})`);
 }
 
+// ---------- choosing the weapon ----------
+
+const DPS = { sword: 1, axe: 1, spear: 1, mace: 1, trident: 1 };
+export const kindOf = (id) => { const k = String(id ?? '').replace('minecraft:', ''); return /sword/.test(k) ? 'sword' : /axe/.test(k) ? 'axe' : /spear/.test(k) ? 'spear' : k === 'mace' ? 'mace' : k === 'trident' ? 'trident' : null; };
+
+/**
+ * The weapon to hold. items: [{ id, rate }] where rate is its damage a second (from the game's own numbers); ctx: { foes, fast, far }.
+ * Score = rate x the doctrine's weight for its kind, with the situation's extra liking (axe in a crowd, spear against fast or far enemies). Returns an id or null (bare hands).
+ */
+export function pickWeapon(d, items, ctx = {}) {
+  let best = null, bs = -1;
+  for (const it of items) {
+    const k = kindOf(it.id);
+    if (!k) continue;
+    let w = d[`w${k[0].toUpperCase()}${k.slice(1)}`] ?? DPS[k];
+    if (k === 'axe') w *= 1 + d.crowdAxe * Math.max(0, (ctx.foes ?? 1) - 1) / 3;
+    if (k === 'spear' && (ctx.fast || ctx.far)) w *= 1 + d.reachSpear;
+    const sc = it.rate * w;
+    if (sc > bs) { bs = sc; best = it.id; }
+  }
+  return best;
+}
+
 // ---------- the scenarios a lab bout is played in ----------
 // What the bot meets and wears: survival-like, so a doctrine is judged on what it will really face. The brain picks one per pair (both doctrines play the same).
 
-export const LAB_MOBS = [
-  { mob: 'zombie', counts: [2, 3, 4] }, { mob: 'husk', counts: [2, 3] }, { mob: 'skeleton', counts: [1, 2, 3] }, { mob: 'creeper', counts: [1, 2] },
-  { mob: 'spider', counts: [1, 2, 3] }, { mob: 'witch', counts: [1] }, { mob: 'pillager', counts: [1, 2] }, { mob: 'vindicator', counts: [1] }, { mob: 'enderman', counts: [1] },
-];
-export const LAB_GEAR = [
-  { armor: 'iron', weapon: 'iron' }, { armor: 'chain', weapon: 'stone' }, { armor: 'diamond', weapon: 'iron' }, { armor: 'iron', weapon: 'diamond' },
-];
-
-/** The gear a doctrine takes into a bout: the scenario's tiers, the switches from the doctrine. (core/colosseum.js LOADOUT shape.) */
-export function labLoad(base, d) {
-  return { ...base, weapons: ['sword'], apples: 0, enchant: false, wench: null, bench: null, aench: null, bow: flag(d.useBow), shield: flag(d.useShield), mount: flag(d.useHorse) };
+/**
+ * The gear a doctrine takes into a bout. scn (picked by the brain): { armor, weapon (tier), weapons: ['sword', ...] (what it HAS: may be nothing), ranged: 'none'|'bow'|'crossbow'|'both',
+ * shield, horse (one is available) }. The doctrine decides which of what it has it is willing to use (the use* switches). (core/colosseum.js LOADOUT shape.)
+ */
+export function labLoad(scn, d) {
+  const r = scn.ranged ?? 'none', willing = flag(d.useBow);
+  return {
+    armor: scn.armor ?? 'iron', weapon: scn.weapon ?? 'iron', weapons: [...(scn.weapons ?? ['sword'])], apples: 0, enchant: false, wench: null, bench: null, aench: null,
+    bow: willing && (r === 'bow' || r === 'both'), crossbow: willing && (r === 'crossbow' || r === 'both'),
+    shield: !!scn.shield && flag(d.useShield), mount: !!scn.horse && flag(d.useHorse),
+  };
 }

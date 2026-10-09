@@ -1,6 +1,6 @@
 """The arena lab (u323): the colosseum plays bouts and learns how to fight.
 
-A bout is one bot in gear against a set of mobs in the sky arena. Every pair of bouts is the SAME scenario (mob, count, gear) played twice: once with the
+A bout is one bot in gear against a set of mobs in the sky arena. Every pair of bouts is the SAME scenario (who it fights, and what it carries: armor, weapons or none, bow, crossbow, shield, horse) played twice: once with the
 champion doctrine, once with a candidate (the champion with one to three numbers changed, or a TPE suggestion). The candidate has to beat the champion over a
 short trial of pairs before it takes over. Everything is kept (brain/lab/bouts.jsonl), and from it the lab writes a plain-language report: what the champion
 does differently from the defaults, what each knob is worth (a ridge regression over every bout, scenario difficulty removed), what separates won bouts from
@@ -22,7 +22,13 @@ from . import tpe
 TRIAL_PAIRS = 3          # pairs a candidate plays before it is judged
 PROMOTE_MARGIN = 0.10    # its mean score gain over the champion it must beat
 MOBS = [("zombie", [2, 3, 4]), ("husk", [2, 3]), ("skeleton", [1, 2, 3]), ("creeper", [1, 2]), ("spider", [1, 2, 3]), ("witch", [1]), ("pillager", [1, 2]), ("vindicator", [1]), ("enderman", [1])]
-GEARS = [{"armor": "iron", "weapon": "iron"}, {"armor": "chain", "weapon": "stone"}, {"armor": "diamond", "weapon": "iron"}, {"armor": "iron", "weapon": "diamond"}]
+BABY_OK = {"zombie", "husk", "zombie_villager"}
+JOCKEYS = [("skeleton", "spider"), ("zombie", "chicken")]   # (rider, mount): the rider is the mob, and for the chicken jockey it is a baby
+ARMORS = ["none", "leather", "chain", "iron", "diamond"]
+TIERS = ["stone", "iron", "diamond"]
+WEAPON_SETS = [[], ["sword"], ["axe"], ["spear"], ["mace"], ["trident"], ["sword", "axe"], ["sword", "spear"], ["axe", "spear"], ["sword", "axe", "spear", "mace", "trident"]]
+RANGED = ["none", "bow", "crossbow", "both"]
+SCN_KEYS = ("mob", "count", "baby", "jockey", "armor", "weapon", "weapons", "ranged", "shield", "horse")
 LIMIT = 60 * 20          # a bout's time limit in ticks (the game enforces it; the score uses it)
 
 
@@ -38,7 +44,8 @@ def score(rec: dict) -> float:
     ko = out in ("ko", "dead")
     left = 0.0 if ko else min(1.0, max(0.0, float(rec.get("hpEnd") or 0) / 20.0))
     t = min(1.0, float(rec.get("ticks") or 0) / float(rec.get("limit") or LIMIT))
-    return round(2.0 * frac - (1.0 if ko else 0.0) + (0.8 * left if out == "cleared" else 0.0) - 0.4 * t, 4)
+    taken = sum(float(rec.get(k) or 0) for k in ("takenMelee", "takenArrow", "takenBlast", "takenOther"))
+    return round(2.0 * frac - (1.0 if ko else 0.0) + (0.8 * left if out == "cleared" else 0.0) - 0.4 * t - 0.5 * min(1.5, taken / 20.0), 4)
 
 
 def _mean(xs):
@@ -90,11 +97,17 @@ def effects(rows: list, table: dict, lam: float = 2.0) -> list:
     by = {}
     for r in rows:
         by.setdefault(r["scn"], []).append(r["score"])
-    mu = {s: _mean(v) for s, v in by.items()}
+    rows = [r for r in rows if len(by[r["scn"]]) >= 2]   # (a bout is only compared with its pair-mate: the same scenario, so its difficulty cancels)
+    if len(rows) < 8:
+        return []
+    mu = {k: _mean(v) for k, v in by.items()}
     ys = [r["score"] - mu[r["scn"]] for r in rows]
-    X = []
-    for r in rows:
-        X.append([((r["doctrine"].get(k, table[k]["v"]) - table[k]["min"]) / ((table[k]["max"] - table[k]["min"]) or 1)) - 0.5 for k in keys])
+    raw = [[((r["doctrine"].get(k, table[k]["v"]) - table[k]["min"]) / ((table[k]["max"] - table[k]["min"]) or 1)) for k in keys] for r in rows]
+    mx = {}
+    for r, x in zip(rows, raw):
+        mx.setdefault(r["scn"], []).append(x)
+    mx = {sc: [_mean(col) for col in zip(*xs)] for sc, xs in mx.items()}
+    X = [[v - m for v, m in zip(x, mx[r["scn"]])] for r, x in zip(rows, raw)]   # (centred inside the pair too: only what differs between pair-mates counts)
     n, p = len(X), len(keys)
     xtx = [[sum(X[i][a] * X[i][b] for i in range(n)) + (lam if a == b else 0.0) for b in range(p)] for a in range(p)]
     xty = [sum(X[i][a] * ys[i] for i in range(n)) for a in range(p)]
@@ -108,7 +121,12 @@ def effects(rows: list, table: dict, lam: float = 2.0) -> list:
 
 
 def _scn(b: dict) -> str:
-    return f"{b['mob']}x{b['count']}/{b['gear']['armor']}-{b['gear']['weapon']}"
+    """The scenario a bout was played in: one per pair (both bouts of a pair share it)."""
+    return f"pair{b['pair']}"
+
+
+def _label(b: dict) -> str:
+    return f"{'baby ' if b.get('baby') else ''}{b['mob']} x{b['count']}{' on a ' + b['jockey'] if b.get('jockey') else ''}"
 
 
 class Lab:
@@ -191,9 +209,28 @@ class Lab:
             changed = [k]
         return {"doctrine": cand, "changed": changed, "source": src, "pairs": [], "id": self.state["seq"] + 1}
 
+    def _balanced(self, key: str, options: list):
+        """The option played least so far (ties at random): every kind of fight gets trained, not just the likely ones."""
+        cnt = self.state.setdefault("seen", {}).setdefault(key, {})
+        names = [json.dumps(o) for o in options]
+        low = min(cnt.get(n, 0) for n in names)
+        pick = self.rng.choice([o for o, n in zip(options, names) if cnt.get(n, 0) == low])
+        cnt[json.dumps(pick)] = cnt.get(json.dumps(pick), 0) + 1
+        return pick
+
     def _scenario(self) -> dict:
-        mob, counts = self.rng.choice(MOBS)
-        return {"mob": mob, "count": self.rng.choice(counts), "gear": dict(self.rng.choice(GEARS))}
+        """Who it fights (kind, count, baby or on a mount) and what it has (armor, which weapons, if any, a bow or crossbow or neither, a shield, a horse to ride)."""
+        jockey = None
+        baby = False
+        if self.rng.random() < 0.15:
+            rider, mount = self.rng.choice(JOCKEYS)
+            mob, counts, jockey, baby = rider, [1, 2], mount, rider == "zombie"
+        else:
+            mob, counts = self.rng.choice(MOBS)
+            baby = mob in BABY_OK and self.rng.random() < 0.3
+        return {"mob": mob, "count": self.rng.choice(counts), "baby": baby, "jockey": jockey,
+                "armor": self._balanced("armor", ARMORS), "weapon": self.rng.choice(TIERS), "weapons": self._balanced("weapons", WEAPON_SETS),
+                "ranged": self._balanced("ranged", RANGED), "shield": self._balanced("shield", [True, False]), "horse": self.rng.random() < 0.4}
 
     def _new_pair(self) -> None:
         s = self.state
@@ -237,7 +274,7 @@ class Lab:
             s["served"].pop(bout_id, None)
             sc = score(rec)
             doc = s["champion"] if b["role"] == "champ" else s["cand"]["doctrine"]
-            row = {"t": now(), "id": bout_id, "pair": b["pair"], "role": b["role"], "cand": b["cand"], "mob": b["mob"], "count": b["count"], "gear": b["gear"], "doctrine": doc, "score": sc, "rec": rec, "since": s["since"]}
+            row = {"t": now(), "id": bout_id, "pair": b["pair"], "role": b["role"], "cand": b["cand"], **{k: b.get(k) for k in SCN_KEYS}, "doctrine": doc, "score": sc, "rec": rec, "since": s["since"]}
             self._append("bouts.jsonl", row)
             s["bouts"] += 1
             out = {"ok": True, "score": sc, "event": None}
@@ -349,11 +386,54 @@ class Lab:
             k = max(4, len(srt) // 3)
             L += ["", "## What the best bouts have that the worst do not", ""]
             L += [f"- {w}" for w in compare([b["rec"] for b in srt[:k]], [b["rec"] for b in srt[-k:]], "best third", "worst third")]
+        # which fights are hard, and which weapons did well
+        sc = self._scenarios(bouts)
+        if sc:
+            L += ["", "## Which fights are hard for the champion", ""] + [f"- {x}" for x in sc]
+        wp = self._weapons(bouts)
+        if wp:
+            L += ["", "## Weapons (score against the other bout of the same pair)", ""] + [f"- {x}" for x in wp]
         # the horse
         hz = self._horse(bouts)
         if hz:
             L += ["", "## The horse", ""] + [f"- {x}" for x in hz]
         return "\n".join(L) + "\n"
+
+    def _scenarios(self, bouts: list) -> list:
+        """Mean score of the champion's bouts by enemy kind, armor, what it carried: the lower, the harder that fight."""
+        ch = [b for b in bouts if b["role"] == "champ"]
+        out = []
+
+        def grp(name, fn, minn=3):
+            g = {}
+            for b in ch:
+                g.setdefault(fn(b), []).append(b["score"])
+            items = sorted(((k, _mean(v), len(v)) for k, v in g.items() if len(v) >= minn), key=lambda x: x[1])
+            if len(items) >= 2:
+                out.append(f"{name}: " + "; ".join(f"{k} {m:+.2f} (n={n})" for k, m, n in items))
+
+        grp("by enemy", lambda b: _label(b).split(" x")[0] if not b.get("jockey") and not b.get("baby") else _label(b).split(" x")[0] + (" (jockey)" if b.get("jockey") else " (baby)"))
+        grp("by armor", lambda b: b.get("armor"))
+        grp("by ranged weapon", lambda b: b.get("ranged"))
+        grp("by weapons carried", lambda b: "+".join(b.get("weapons") or []) or "none (fists)" if len(b.get("weapons") or []) < 5 else "all five")
+        grp("with a shield", lambda b: "yes" if b.get("shield") else "no")
+        return out
+
+    @staticmethod
+    def _weapons(bouts: list) -> list:
+        """Per weapon kind actually used most in a bout: its average advantage over the other bout of the pair. (Honest only where the pair-mates used different weapons.)"""
+        by_pair = {}
+        for b in bouts:
+            by_pair.setdefault(b["pair"], []).append(b)
+        adv = {}
+        for rows in by_pair.values():
+            if len(rows) != 2:
+                continue
+            for me, other in (rows[0], rows[1]), (rows[1], rows[0]):
+                wm, wo = me["rec"].get("weapon") or "fist", other["rec"].get("weapon") or "fist"
+                if wm != wo:
+                    adv.setdefault(_kind(wm), []).append(me["score"] - other["score"])
+        return [f"{k}: {_mean(v):+.2f} when it used {k} and the pair-mate used something else (n={len(v)})" for k, v in sorted(adv.items(), key=lambda kv: -_mean(kv[1])) if len(v) >= 3]
 
     @staticmethod
     def _horse(bouts: list) -> list:
@@ -369,6 +449,13 @@ class Lab:
         if bouts and not allm:
             out.append("No bout has been fought mounted yet (the horse switch is still off in every doctrine tried).")
         return out
+
+
+def _kind(w: str) -> str:
+    for k in ("sword", "axe", "spear", "mace", "trident"):
+        if k in w:
+            return k
+    return "fists" if w in ("fist", "") else w
 
 
 def compare(a: list, b: list, an: str = "the winner", bn: str = "the loser") -> list:
@@ -416,6 +503,18 @@ def compare(a: list, b: list, an: str = "the winner", bn: str = "the loser") -> 
     db = m(b, lambda r: float(r.get("distSum", 0)) / max(1.0, float(r.get("distN", 1))))
     if abs(da - db) >= 0.7:
         out.append(f"it fought from {da:.1f} blocks away on average against {db:.1f}")
+    def early(r):
+        tl = r.get("hpTL") or []
+        return (tl[0] - tl[min(5, len(tl) - 1)]) if len(tl) >= 3 else None
+
+    def late(r):
+        tl = r.get("hpTL") or []
+        return (tl[min(5, len(tl) - 1)] - tl[-1]) if len(tl) >= 8 else None
+
+    for fn, label in ((early, "in the first 5 seconds"), (late, "after the first 5 seconds")):
+        xs, ys = [fn(r) for r in a if fn(r) is not None], [fn(r) for r in b if fn(r) is not None]
+        if len(xs) >= 2 and len(ys) >= 2 and abs(_mean(xs) - _mean(ys)) >= 1.5:
+            out.append(f"{an} lost {_mean(xs):.1f} hp {label} against {_mean(ys):.1f}")
     ja, jb = m(a, lambda r: float(r.get("jumps", 0))), m(b, lambda r: float(r.get("jumps", 0)))
     if abs(ja - jb) >= 2:
         out.append(f"{ja:.1f} jump-attacks per bout against {jb:.1f}")

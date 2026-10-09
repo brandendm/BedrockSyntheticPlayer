@@ -101,7 +101,7 @@ const ARMOR_PREFIX = { leather: 'leather', chain: 'chainmail', iron: 'iron', gol
 const TIER_PREFIX = { wood: 'wooden', stone: 'stone', iron: 'iron', gold: 'golden', diamond: 'diamond', netherite: 'netherite' };
 const TIERED = new Set(['sword', 'axe', 'spear']);
 
-export const LOADOUT_DEFAULT = { armor: 'diamond', weapon: 'diamond', weapons: ['sword', 'axe', 'spear'], bow: true, shield: true, enchant: false, apples: 4, mount: false, wench: null, bench: null, aench: null };
+export const LOADOUT_DEFAULT = { armor: 'diamond', weapon: 'diamond', weapons: ['sword', 'axe', 'spear'], bow: true, crossbow: false, shield: true, enchant: false, apples: 4, mount: false, wench: null, bench: null, aench: null };
 
 // Enchantments: what each kind of item takes (id -> top level), and the ones that exclude each other.
 export const ENCH_MELEE = { sharpness: 5, smite: 5, bane_of_arthropods: 5, knockback: 2, fire_aspect: 2, looting: 3, unbreaking: 3, mending: 1 };
@@ -161,6 +161,7 @@ export function gearFrom(opts, team = 'red', base = null) {
     load.weapons = [...new Set(ok)];
   }
   load.bow = truth(get('bow'), load.bow);
+  load.crossbow = truth(get('crossbow'), load.crossbow);
   load.shield = truth(get('shield'), load.shield);
   load.enchant = truth(get('enchant'), load.enchant);
   load.mount = truth(get('mount'), load.mount);
@@ -185,9 +186,10 @@ export function loadoutKit(load) {
   const alist = load.aench ?? (load.enchant ? [['protection', 4], ['unbreaking', 3]] : null);
   let i = 0;
   for (const id of meleeIds(load)) slots.push([i++, id, 1, fitEnch(wlist, id === 'mace' ? ENCH_MACE : id === 'trident' ? ENCH_TRIDENT : ENCH_MELEE)]);
-  if (load.bow) {
-    slots.push([i++, 'bow', 1, fitEnch(blist, ENCH_BOW)]);
-    if (!(blist ?? []).some(([id]) => id === 'infinity')) slots.push([i++, 'arrow', 64], [i++, 'arrow', 64]);
+  if (load.crossbow) slots.push([i++, 'crossbow', 1]);
+  if (load.bow) slots.push([i++, 'bow', 1, fitEnch(blist, ENCH_BOW)]);
+  if (load.bow || load.crossbow) {
+    if (!load.bow || !(blist ?? []).some(([id]) => id === 'infinity')) slots.push([i++, 'arrow', 64], [i++, 'arrow', 64]);
     else slots.push([i++, 'arrow', 1]);
   }
   if (load.apples > 0) slots.push([i++, 'golden_apple', load.apples]);
@@ -202,7 +204,7 @@ export function loadoutKit(load) {
 
 /** One line for chat. */
 export function describeLoadout(load) {
-  const w = [...meleeIds(load).map((x) => x.replace(/_/g, ' ')), ...(load.bow ? ['bow'] : [])];
+  const w = [...meleeIds(load).map((x) => x.replace(/_/g, ' ')), ...(load.bow ? ['bow'] : []), ...(load.crossbow ? ['crossbow'] : [])];
   const nice = (l) => l.map(([id, lv]) => `${id.replace(/_/g, ' ')} ${lv}`).join(', ');
   const ench = [load.wench ? `weapons: ${nice(load.wench) || 'plain'}` : '', load.bench ? `bow: ${nice(load.bench) || 'plain'}` : '', load.aench ? `armor: ${nice(load.aench) || 'plain'}` : ''].filter(Boolean);
   return `${load.armor === 'none' ? 'no armor' : `${load.armor} armor`}${load.shield ? ' + shield' : ''}, ${w.join(', ') || 'bare hands'}${load.enchant && !ench.length ? ', enchanted' : ''}${ench.length ? `, enchanted (${ench.join('; ')})` : ''}${load.mount ? ', on horseback' : ''}`;

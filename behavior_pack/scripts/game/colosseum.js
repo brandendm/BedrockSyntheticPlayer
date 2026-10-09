@@ -11,10 +11,10 @@ import { crew } from './crew.js';
 import { WorldMemory } from './memory.js';
 import { hold, invCounts } from './inventory.js';
 import { Builder, kit, giveKit, topUp, tell } from './arena.js';
-import { shootAt } from './aim.js';
+import { shootAt, shootCrossbow } from './aim.js';
 import { weaponReach, bestWeapon } from '../core/tactics.js';
 import { MOB_LIST, AQUATIC, FLYERS, parseShow, roundWinner, KO_HP, personality, loadoutKit, meleeIds, describeLoadout, LOADOUT_DEFAULT } from '../core/colosseum.js';
-import { norm, flag, fromStyle, spacing, shootNow, pickTarget, labLoad } from '../core/doctrine.js';
+import { norm, flag, fromStyle, spacing, shootNow, pickTarget, labLoad, pickWeapon, speedOf } from '../core/doctrine.js';
 import { makeLab, labAdmin } from './lab.js';
 import { applyPolicy, diffFromDefaults } from '../core/tunables.js';
 
@@ -152,7 +152,7 @@ async function runShow(agent, player, p) {
   if (dim.id !== 'minecraft:overworld') { tell('The colosseum is built in the overworld.'); return; }
   const wet = p.mode === 'mobs' && AQUATIC.has(p.mob.id);
   const S = siteFor(agent, player);
-  const show = { abort: false, round: 0, over: true, fighters: [], foes: [], stats: new Map(), saved: null };
+  const show = { abort: false, round: 0, over: true, fighters: [], foes: [], mounts: [], stats: new Map(), saved: null };
   SHOW = show;
   const say = (m) => { tell(m); };
   const title = (t, sub = '') => { try { for (const pl of world.getPlayers()) pl.onScreenDisplay.setTitle(t, { subtitle: sub, fadeInDuration: 6, stayDuration: 50, fadeOutDuration: 10 }); } catch { /* */ } };
@@ -217,6 +217,7 @@ async function runShow(agent, player, p) {
     const wa = /** @type {any} */ (world.afterEvents);
     const hs = wa.entityHurt.subscribe((ev) => {
       try {
+        if (ev.damage < 0.2 && ev.damage > 0) return; // (the nudge that makes a mob angry at a fighter, see provoke)
         const cause = String(ev.damageSource?.cause ?? '');
         const f = show.stats.get(ev.damageSource?.damagingEntity?.id);
         if (f) { f.hits++; f.dmg += ev.damage; if (cause === 'projectile') { f.rec.hitsArrow++; f.rec.dealtArrow += ev.damage; } else { f.rec.hitsMelee++; f.rec.dealtMelee += ev.damage; } }
@@ -252,16 +253,16 @@ async function runShow(agent, player, p) {
         const f0 = show.fighters[0];
         if (!b || show.abort) { show.abort = true; break; }
         if (!f0 || !f0.w.sim.isValid) { say('§cLab: the fighter is gone; stopping.'); show.abort = true; break; }
-        p.mob = { id: b.mob, known: true }; p.count = b.count;
+        p.mob = { id: b.mob, known: true }; p.count = b.count; p.baby = !!b.baby; p.jockey = b.jockey || null;
         f0.doctrine = norm(b.doctrine);
-        f0.load = labLoad({ ...LOADOUT_DEFAULT, ...b.gear }, f0.doctrine);
+        f0.load = labLoad(b, f0.doctrine);
         const lk = loadoutKit(f0.load);
         f0.kit = kit(lk.slots, lk.worn); f0.melee = meleeIds(f0.load);
         f0.rec = newRec(); f0.mounted = false; f0.boutLimit = b.limit;
       } else for (const f of show.fighters) f.rec = newRec();
       // reset the field
-      for (const e of dim.getEntities({ location: { x: S.cx, y: S.G, z: S.cz }, maxDistance: 30 })) { if (/arrow|item|xp_orb/.test(e.typeId) || show.foes.includes(e)) { try { e.remove(); } catch { /* */ } } }
-      show.foes = [];
+      for (const e of dim.getEntities({ location: { x: S.cx, y: S.G, z: S.cz }, maxDistance: 30 })) { if (/arrow|item|xp_orb/.test(e.typeId) || show.foes.includes(e) || show.mounts.includes(e)) { try { e.remove(); } catch { /* */ } } }
+      show.foes = []; show.mounts = [];
       strays(dim, S, p, show);
       for (const f of show.fighters) {
         f.out = false; f.target = null;
@@ -276,7 +277,7 @@ async function runShow(agent, player, p) {
         for (let i = 0; i < p.count; i++) {
           const fly = FLYERS.has(p.mob.id);
           const at = { x: S.cx + 3 + Math.random() * (R - 5) + 0.5, y: G + (fly ? 3 : 0), z: S.cz + (Math.random() * 2 - 1) * (R - 3) + 0.5 };
-          try { show.foes.push(dim.spawnEntity(`minecraft:${p.mob.id}`, at)); } catch (e) {
+          try { show.foes.push(...spawnFoe(dim, p, at, show)); } catch (e) {
             if (!i) { say(`§cCannot spawn "${p.mob.id}" (${e}). \`!bot colosseum list\` has the names.`); show.abort = true; break; }
           }
         }
@@ -288,6 +289,7 @@ async function runShow(agent, player, p) {
       for (let c = lab ? 1 : 3; c >= 1 && !show.abort; c--) { bar(`§e${c}...`); await wait(20); }
       if (show.abort) break;
       show.over = false;
+      provoke(show, p);
       const myRound = rd;
       for (const f of show.fighters) drive(f, show, myRound, S, p).catch((e) => console.warn(`[colosseum] ${f.name}: ${e}`));
       const t0 = system.currentTick, limit = lab ? 60 * 20 : (p.mode === 'mobs' && /wither|ender_dragon|warden|elder/.test(p.mob.id) ? 240 : 100) * 20;
@@ -306,6 +308,7 @@ async function runShow(agent, player, p) {
             f.w.sim.teleport({ x: S.cx + (f.team === 'A' ? -R - 3 : R + 3) + 0.5, y: S.G + 3, z: S.cz - R - 1 + 0.5 });
           }
         }
+        if (system.currentTick % 40 === 0) provoke(show, p);
         if (system.currentTick % 6 === 0) { show.foes = foesNow(dim, S, p, show); strays(dim, S, p, show); }
         else show.foes = show.foes.filter((m) => { try { return m.isValid; } catch { return false; } });
         const a = show.fighters.filter((f) => f.team === 'A' && !f.out).length;
@@ -322,7 +325,7 @@ async function runShow(agent, player, p) {
         const dead = !alive(f0.w.sim);
         await lab.done({
           ...f0.rec, takenFrom: f0.rec.takenFrom, outcome: f0.out ? (dead ? 'dead' : 'ko') : win === 'bots' ? 'cleared' : 'timeout', ticks: system.currentTick - t0, limit, hp0: 20, hpEnd: f0.out ? 0 : hpOf(f0.w.sim),
-          foeHp0, foeHpEnd: show.foes.filter(alive).reduce((t, m) => t + hpOf(m), 0), mob: p.mob.id, count: p.count, mounted: !!f0.mounted, weapon: f0.rec.weapon || 'fist', armor: f0.load.armor,
+          foeHp0, foeHpEnd: show.foes.filter(alive).reduce((t, m) => t + hpOf(m), 0), mob: p.mob.id, count: p.count, mounted: !!f0.mounted, weapon: f0.rec.weapon || 'fist', armor: f0.load.armor, tier: f0.load.weapon, baby: !!p.baby, jockey: p.jockey || '', have: { weapons: f0.melee, ranged: (b.ranged || 'none'), shield: !!b.shield, horse: !!b.horse },
         });
         await wait(30);
         continue;
@@ -342,7 +345,7 @@ async function runShow(agent, player, p) {
     show.over = true; show.abort = true;
     try { if (show.parked) { agent.autoEnabled = show.parked.auto; if (show.parked.auto) agent.startAuto(); } } catch { /* */ }
     for (const u of subs) { try { u(); } catch { /* */ } }
-    for (const e of show.foes) { try { e.remove(); } catch { /* */ } }
+    for (const e of [...show.foes, ...show.mounts]) { try { e.remove(); } catch { /* */ } }
     try { for (const e of dim.getEntities({ location: { x: S.cx, y: S.G, z: S.cz }, maxDistance: 30, type: 'minecraft:arrow' })) e.remove(); } catch { /* */ }
     for (const f of show.fighters) {
       try { f.horse?.remove(); } catch { /* */ }
@@ -382,7 +385,7 @@ function enemiesOf(f, show, p) {
 
 /** What a bout is measured by (sent to the lab with the outcome): how the damage went both ways, what was used and how far off the fight was. */
 function newRec() {
-  return { swings: 0, shots: 0, hitsMelee: 0, hitsArrow: 0, dealtMelee: 0, dealtArrow: 0, takenMelee: 0, takenArrow: 0, takenBlast: 0, takenOther: 0, takenFrom: {}, mountedTicks: 0, shieldTicks: 0, bowTicks: 0, retreatTicks: 0, retreats: 0, jumps: 0, distSum: 0, distN: 0, hpMin: 20, weapon: '', weaponTicks: {} };
+  return { swings: 0, shots: 0, hitsMelee: 0, hitsArrow: 0, dealtMelee: 0, dealtArrow: 0, takenMelee: 0, takenArrow: 0, takenBlast: 0, takenOther: 0, takenFrom: {}, mountedTicks: 0, shieldTicks: 0, bowTicks: 0, retreatTicks: 0, retreats: 0, jumps: 0, distSum: 0, distN: 0, hpMin: 20, weapon: '', weaponTicks: {}, hpTL: [], foeTL: [], rangedTicks: {}, foeSpeed: 0, lastTL: -99 };
 }
 
 // One bot's fight. Every number it is decided by is in f.doctrine (core/doctrine.js); f.rec is what gets measured.
@@ -416,28 +419,41 @@ async function drive(f, show, round, S, p) {
     const riding = !!f.horse && f.horse.isValid && !!a.horses.mounted();
     if (riding) rec.mountedTicks += dt;
     const shield = f.load.shield && flag(D.useShield);
+    const fspeed = speedNow(tgt);
+    if (!rec.foeSpeed) rec.foeSpeed = Math.round(fspeed * 1000) / 1000;
+    // a reading every second: my health, and what is left of the enemies' (as a share of the start)
+    if (t - rec.lastTL >= 20) { rec.lastTL = t; rec.hpTL.push(Math.round(myHp * 10) / 10); rec.foeTL.push(Math.round(info.reduce((n, x) => n + x.hp, 0))); }
+    // which ranged weapon it would use (what it has, and its preference when it has both)
+    const ranged = f.load.crossbow && (!f.load.bow || D.xbowPref > 0.5) ? 'crossbow' : f.load.bow ? 'bow' : null;
+    const hasRanged = !!ranged && flag(D.useBow);
+    const shoot = async (opts) => {
+      if (chosen !== ranged) { hold(sim, ranged); chosen = ranged; }
+      rec.rangedTicks[ranged] = (rec.rangedTicks[ranged] ?? 0) + 1;
+      return ranged === 'crossbow' ? shootCrossbow(a, tgt, opts) : shootAt(a, tgt, opts);
+    };
     // Hurt: break off and keep away (behind the shield, shooting if there is a bow) for a while, then go back in.
-    if (t >= retreatUntil && t >= noRetreatUntil && myHp <= D.retreatHp && d < 9) { retreatUntil = t + Math.round(D.retreatTicks); noRetreatUntil = retreatUntil + Math.round(D.retreatTicks); rec.retreats++; }
+    if (t >= retreatUntil && t >= noRetreatUntil && myHp <= D.retreatHp && d < 9 && fspeed <= D.kiteMaxSpeed) { retreatUntil = t + Math.round(D.retreatTicks); noRetreatUntil = retreatUntil + Math.round(D.retreatTicks); rec.retreats++; }
     const retreating = t < retreatUntil;
     if (retreating) {
       rec.retreatTicks += dt;
-      const canShoot = shootNow(D, { hasBow: f.load.bow, arrows, clear, dist: d, flying, creeper, nextShotOk: true }) || (f.load.bow && flag(D.useBow) && arrows > 0 && clear && d > 4);
+      const canShoot = shootNow(D, { hasBow: hasRanged, arrows, clear, dist: d, flying, creeper, nextShotOk: true }) || (hasRanged && arrows > 0 && clear && d > 4);
       a.setBlocking(shield && d < 8);
       if (shield && d < 8) rec.shieldTicks += dt;
       a.body.move(-dx * 0.7 - dz * strafe * 0.7, -dz * 0.7 + dx * strafe * 0.7, 1);
-      if (canShoot && t >= nextShot) { if (chosen !== 'bow') { hold(sim, 'bow'); chosen = 'bow'; } a.setBlocking(false); rec.bowTicks += dt; if (await shootAt(a, tgt, { strafe: { x: -dz * strafe, z: dx * strafe }, stop: () => !live() })) rec.shots++; nextShot = system.currentTick + Math.round(D.bowGap); }
+      if (canShoot && t >= nextShot) { a.setBlocking(false); rec.bowTicks += dt; if (await shoot({ strafe: { x: -dz * strafe, z: dx * strafe }, stop: () => !live() })) rec.shots++; nextShot = system.currentTick + Math.round(D.bowGap); }
       continue;
     }
-    if (shootNow(D, { hasBow: f.load.bow, arrows, clear, dist: d, flying, creeper, nextShotOk: true })) {
-      if (chosen !== 'bow') { hold(sim, 'bow'); chosen = 'bow'; }
+    if (shootNow(D, { hasBow: hasRanged, arrows, clear, dist: d, flying, creeper, nextShotOk: true })) {
       a.setBlocking(false);
       rec.bowTicks += dt;
       const away = creeper && d < D.creeperAway ? -1 : 0;
       a.body.move(away ? -dx : -dz * strafe, away ? -dz : dx * strafe, away ? 1 : D.bowStrafe);
-      if (t >= nextShot) { if (await shootAt(a, tgt, { strafe: { x: -dz * strafe, z: dx * strafe }, stop: () => !live() })) rec.shots++; nextShot = system.currentTick + Math.round(D.bowGap); }
+      if (t >= nextShot) { if (await shoot({ strafe: { x: -dz * strafe, z: dx * strafe }, stop: () => !live() })) rec.shots++; nextShot = system.currentTick + Math.round(D.bowGap); }
       continue;
     }
-    const weapon = bestWeapon(f.melee.filter((id) => invCounts(sim)[id]).map((id) => ({ id }))) ?? f.melee.find((id) => invCounts(sim)[id]) ?? null;
+    // The weapon it thinks best for this fight: its damage a second, weighted by how the doctrine likes that kind, with the crowd and the fast enemy in mind.
+    const have = f.melee.filter((id) => invCounts(sim)[id]).map((id) => { const w = weaponReach(id); return { id, rate: w.damage * 10 / Math.max(10, w.cooldown) }; });
+    const weapon = pickWeapon(D, have, { foes: foes.length, fast: fspeed > D.kiteMaxSpeed, far: d > 4 });
     if (chosen !== (weapon ?? 'fist')) { hold(sim, weapon); chosen = weapon ?? 'fist'; }
     rec.weaponTicks[chosen] = (rec.weaponTicks[chosen] ?? 0) + dt;
     if (!rec.weapon || rec.weaponTicks[chosen] > (rec.weaponTicks[rec.weapon] ?? 0)) rec.weapon = chosen;
@@ -463,6 +479,47 @@ async function drive(f, show, round, S, p) {
     }
   }
   try { a.setBlocking(false); a.body.stop?.(); a.motor.setFocus(null); } catch { /* */ }
+}
+
+/** A mob of the show's kind at `at`: a baby if the scenario says (zombies), and with a rider or a mount (a skeleton on a spider, a baby zombie on a chicken). Returns the ones that count as enemies. */
+function spawnFoe(dim, p, at, show) {
+  const id = p.mob.id;
+  let e = null;
+  if (p.baby) { try { e = dim.spawnEntity(`minecraft:${id}<minecraft:as_baby>`, at); } catch { /* not a mob with a baby form */ } }
+  if (!e) e = dim.spawnEntity(`minecraft:${id}`, at);
+  const out = [e];
+  if (p.jockey) {
+    try {
+      const m = dim.spawnEntity(`minecraft:${p.jockey}`, at);
+      e.addTag('lab_r'); m.addTag('lab_m');
+      try { dim.runCommand('ride @e[tag=lab_r] start_riding @e[tag=lab_m] teleport_rider'); } finally { try { e.removeTag('lab_r'); m.removeTag('lab_m'); } catch { /* */ } }
+      if (p.jockey === 'spider') out.push(m); else show.mounts.push(m);
+    } catch (err) { console.warn(`[colosseum] jockey: ${err}`); }
+  }
+  return out;
+}
+
+/** Make every mob angry at the nearest living fighter (a hit of 0.1 from them: how the duels do it), so they all come at the bot instead of standing about. */
+function provoke(show, p) {
+  try {
+    const fs = show.fighters.filter((f) => !f.out && alive(f.w.sim));
+    if (!fs.length) return;
+    for (const m of show.foes) {
+      if (!alive(m)) continue;
+      const near = fs.sort((x, y) => d3(m.location, x.w.sim.location) - d3(m.location, y.w.sim.location))[0];
+      let tid = null; try { tid = m.target?.id; } catch { /* */ }
+      if (tid === near.w.sim.id) continue;
+      try { m.applyDamage(0.1, { cause: 'entityAttack', damagingEntity: near.w.sim }); } catch { /* */ }
+    }
+  } catch { /* */ }
+}
+
+/** How fast an enemy walks: the game's own movement value if it says, else the table (a baby is faster). */
+function speedNow(e) {
+  try { const m = e.getComponent('minecraft:movement')?.currentValue; if (Number.isFinite(m) && m > 0) return m; } catch { /* */ }
+  let baby = false;
+  try { baby = !!e.getComponent('minecraft:is_baby'); } catch { /* */ }
+  return speedOf(e.typeId, baby);
 }
 
 /** Is there nothing solid (a pillar, the glass wall) between the bot's eye and the target's chest? Arrows into a wall are wasted. */

@@ -33,6 +33,31 @@ class ScoreTest(unittest.TestCase):
         self.assertLess(L.score(ko), 0.5)
 
 
+class ScenarioTest(unittest.TestCase):
+    def test_every_kind_of_fight_gets_trained(self):
+        lab = L.Lab(Path(tempfile.mkdtemp()), random.Random(1))
+        seen = [lab._scenario() for _ in range(200)]
+        self.assertTrue(any(not s["weapons"] for s in seen), "weaponless")
+        self.assertTrue(any(s["weapons"] == ["spear"] for s in seen), "spear only")
+        self.assertEqual({s["ranged"] for s in seen}, {"none", "bow", "crossbow", "both"})
+        self.assertEqual({s["armor"] for s in seen}, set(L.ARMORS))
+        self.assertTrue(any(s["baby"] for s in seen) and any(s["jockey"] for s in seen))
+        n = {}
+        for s in seen:
+            n[s["ranged"]] = n.get(s["ranged"], 0) + 1
+        self.assertLess(max(n.values()) - min(n.values()), 3)  # balanced, not random
+
+    def test_damage_taken_costs_points(self):
+        base = {"outcome": "cleared", "foeHp0": 40, "foeHpEnd": 0, "hpEnd": 18, "ticks": 300, "limit": 1200}
+        self.assertGreater(L.score({**base, "takenMelee": 2}), L.score({**base, "takenMelee": 12}))
+
+    def test_compare_early_and_late(self):
+        a = [{"hpTL": [20, 20, 19, 19, 19, 19, 18, 18, 18, 18]}] * 3
+        b = [{"hpTL": [20, 16, 12, 9, 7, 6, 5, 4, 3, 2]}] * 3
+        t = " | ".join(L.compare(a, b))
+        self.assertIn("first 5 seconds", t)
+
+
 class LabTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -53,7 +78,7 @@ class LabTest(unittest.TestCase):
         a = self.lab.next(TABLE)["bout"]
         self.lab.result(a["id"], fake_bout(a["doctrine"], random.Random(1), a["mob"]))
         b = self.lab.next(TABLE)["bout"]
-        self.assertEqual((a["mob"], a["count"], a["gear"], a["pair"]), (b["mob"], b["count"], b["gear"], b["pair"]))
+        self.assertEqual([a[k] for k in L.SCN_KEYS] + [a["pair"]], [b[k] for k in L.SCN_KEYS] + [b["pair"]])
         self.assertNotEqual(a["role"], b["role"])
         self.lab.result(b["id"], fake_bout(b["doctrine"], random.Random(1), b["mob"]))
         c = self.lab.next(TABLE)["bout"]
@@ -85,10 +110,12 @@ class LabTest(unittest.TestCase):
     def test_effects_find_the_big_knob(self):
         rng = random.Random(3)
         rows = []
-        for _ in range(120):
-            d = {k: rng.uniform(v["min"], v["max"]) for k, v in TABLE.items()}
-            d["useHorse"] = float(rng.random() > 0.5)
-            rows.append({"doctrine": d, "score": 1.5 * d["useHorse"] + rng.gauss(0, 0.2), "scn": "x"})
+        for i in range(60):
+            hard = rng.uniform(-2, 2)  # the pair's own difficulty: cancels
+            for _ in range(2):
+                d = {k: rng.uniform(v["min"], v["max"]) for k, v in TABLE.items()}
+                d["useHorse"] = float(rng.random() > 0.5)
+                rows.append({"doctrine": d, "score": hard + 1.5 * d["useHorse"] + rng.gauss(0, 0.2), "scn": f"pair{i}"})
         e = L.effects(rows, TABLE)
         self.assertEqual(e[0]["k"], "useHorse")
         self.assertGreater(e[0]["effect"], 1.0)
