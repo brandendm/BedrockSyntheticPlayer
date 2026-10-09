@@ -191,4 +191,17 @@ export const PROBES = {
     },
   },
 };
+PROBES.probewater = {
+  // Water physics (u305): dropped from 3 blocks into a 9-deep pool with no input, so the trace shows the splash, the slow sink to the bottom (its speed settles at
+  // gravity * drag / (1 - drag): 0.08 a tick if water gravity is 0.02, 0.02 if it is 0.005 -- the one sim constant Java and ours disagree on), then jumping to rise.
+  ext: { w: 5, e: 5, r: 5 }, floor: floor(5, 5, 5), secs: 12,
+  cmds: (x, gy, z) => [`fill ${x - 4} ${gy - 10} ${z - 4} ${x + 4} ${gy} ${z + 4} stone`, `fill ${x - 3} ${gy - 9} ${z - 3} ${x + 3} ${gy} ${z + 3} water`],
+  async run(ctx) {
+    ctx.sim.teleport(at(ctx, 0, 3, 0)); await ctx.wait(5);
+    ctx.mark('drop and sink'); await ctx.wait(90);
+    ctx.mark('jumping up');
+    for (let k = 0; k < 20; k++) { ctx.sim.jump(); await ctx.wait(2); }
+    await ctx.wait(20);
+  },
+};
 export const PROBE_NAMES = Object.keys(PROBES);
