@@ -932,3 +932,7 @@ The bot dashboard no longer has the server-commands row or the command chains (t
 ## u319 — automatic backups, corruption warning
 
 After "Level corruption detected" (10:59, world `Agent u313`) there was no good backup to go back to. The admin service now takes a cold backup of the world after every **clean** stop (stop, restart, closing the service; `"auto_backup": true` in `admin/config.json`), and skips it while the server's `CORRUPTED.txt` is in the world folder so a damaged copy never pushes out good ones. The Overview shows a red "World flagged corrupted" card with the server's own note and a **Restore latest backup** button. Snapshots named `...corrupted-snapshot...` and `pre-restore` zips are never pruned.
+
+## u320 — the dashboard keeps the bot and the players when one status field breaks
+
+`agent.status()` computed everything in one object: if any field threw (goals, toggles, the where-list...), the game sent a bare `{online, error}` and the dashboard lost the bot and the player list ("no player online"). Each risky field is now computed on its own; a failure becomes an entry in `status.errors` (the rest still arrives) and is written once to the server log as `dashboard status problem: ...`. The bare fallback also carries the name and the player list.

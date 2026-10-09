@@ -1849,49 +1849,53 @@ export class Agent {
   }
 
   status() {
+    // (u320) One field that throws must not blank the whole dashboard (no player list, no bot): each risky field is computed on its own, the error is kept in `errors` and logged once.
+    const errors = [];
+    const T = (k, f, d = null) => { try { return f(); } catch (e) { errors.push(`${k}: ${e}`); return d; } };
     const p = this.sim.location;
     let hunger = 20, air = 1;
     try { hunger = this.homestead.hunger(); } catch {}
     try { air = this.body.airRatio(); } catch {}
-    const inv = Object.entries(invCounts(this.sim)).map(([id, n]) => ({ id, n })).sort((a, b) => b.n - a.n);
+    const inv = T('inventory', () => Object.entries(invCounts(this.sim)).map(([id, n]) => ({ id, n })).sort((a, b) => b.n - a.n), []);
     let held = null;
     try { held = container(this.sim)?.getItem(this.sim.selectedSlotIndex)?.typeId.replace('minecraft:', '') ?? null; } catch {}
     let underground = false;
     try { underground = this.skills.isUnderground(); } catch {}
-    const time = world.getTimeOfDay();
+    const time = T('time', () => world.getTimeOfDay(), 0);
     return {
       name: this.sim.name, online: this.sim.isValid,
-      tests: /** @type {any} */ (this).testProgress ?? null,
-      testOmit: this.memory.data.testOmit ?? [],
-      testRates: { ...passRates(this.memory.data.testRuns, this.memory.data.testOmit ?? []), avg: avgRates(this.memory.data.testStats, this.memory.data.testOmit ?? []) },
-      testStats: this.memory.data.testStats ?? {},
+      tests: T('tests', () => /** @type {any} */ (this).testProgress ?? null),
+      testOmit: T('testOmit', () => this.memory.data.testOmit ?? [], []),
+      testRates: T('testRates', () => ({ ...passRates(this.memory.data.testRuns, this.memory.data.testOmit ?? []), avg: avgRates(this.memory.data.testStats, this.memory.data.testOmit ?? []) }), {}),
+      testStats: T('testStats', () => this.memory.data.testStats ?? {}, {}),
       pos: { x: Math.floor(p.x), y: Math.floor(p.y), z: Math.floor(p.z) }, dim: this.dim.id.replace('minecraft:', ''),
-      health: Math.round(this.health()), hunger: Math.round(hunger), air: Math.round(air * 100),
+      health: T('health', () => Math.round(this.health()), 20), hunger: Math.round(hunger), air: Math.round(air * 100),
       inWater: (() => { try { return !!this.sim.isInWater; } catch { return false; } })(),
       underwater: (() => { try { return this.body.headUnderwater(); } catch { return false; } })(),
       mode: this.mode, task: this.task?.kind ?? 'idle', step: this.task?.kind === 'auto' ? this.autoStep ?? null : null,
       auto: this.autoEnabled, autoDone: this.autoDone, underground,
       ravine: (() => { try { const r = this.skills.rimClimb(); return !underground && r >= 4 ? r : 0; } catch { return 0; } })(),
       time, night: isNight(time), day: Math.floor(world.getDay?.() ?? 0),
-      held, inventory: inv, where: this.whereList().slice(0, 12),
-      house: this.homestead.house ? { ...this.homestead.house } : null,
-      project: this.homestead.project ? { ...this.homestead.project, ...this.homestead.projectProgress(), needs: this.homestead.shortfall ?? null } : null,
-      smelting: this.homestead.smeltJob ? { secondsLeft: Math.max(0, Math.round((this.homestead.smeltJob.readyAt - system.currentTick) / 20)) } : null,
-      players: world.getPlayers().filter((pl) => pl.id !== this.sim.id && !pl.name.startsWith(CONFIG.botName)).map((pl) => pl.name),
-      goals: this.goals(),
-      toggles: GOALS.map((g) => ({ ...g, on: this.toggles()[g.key] })),
-      order: orderOf(this.memory.data.settings),
+      held, inventory: inv, where: T('where', () => this.whereList().slice(0, 12), []),
+      house: T('house', () => (this.homestead.house ? { ...this.homestead.house } : null)),
+      project: T('project', () => (this.homestead.project ? { ...this.homestead.project, ...this.homestead.projectProgress(), needs: this.homestead.shortfall ?? null } : null)),
+      smelting: T('smelting', () => (this.homestead.smeltJob ? { secondsLeft: Math.max(0, Math.round((this.homestead.smeltJob.readyAt - system.currentTick) / 20)) } : null)),
+      players: T('players', () => world.getPlayers().filter((pl) => pl.id !== this.sim.id && !pl.name.startsWith(CONFIG.botName)).map((pl) => pl.name), []),
+      goals: T('goals', () => this.goals(), []),
+      toggles: T('toggles', () => GOALS.map((g) => ({ ...g, on: this.toggles()[g.key] })), []),
+      order: T('order', () => orderOf(this.memory.data.settings), []),
       biome: (() => { try { return this.lookout.hereName(); } catch { return null; } })(),
-      opportunity: this.task?.kind === 'auto' ? this.autoOpportunity : null,
-      stepLabel: this.task?.kind === 'auto' ? this.autoLabel ?? null : null,
-      setAside: [...this.deferred.values()].filter((d) => d.until > Date.now()).map((d) => d.step),
+      opportunity: T('opportunity', () => (this.task?.kind === 'auto' ? this.autoOpportunity : null)),
+      stepLabel: T('stepLabel', () => (this.task?.kind === 'auto' ? this.autoLabel ?? null : null)),
+      setAside: T('setAside', () => [...this.deferred.values()].filter((d) => d.until > Date.now()).map((d) => d.step), []),
       flight: (() => { try { return this.flight.summary(); } catch { return null; } })(),
       deaths: this.deathCount ?? 0,
-      learn: { recording: this.demo.on ? this.demo.name : null, status: this.demo.status(), params: this.profile.params, notes: this.profile.notes, using: CONFIG.useProfile !== false },
+      learn: T('learn', () => ({ recording: this.demo.on ? this.demo.name : null, status: this.demo.status(), params: this.profile.params, notes: this.profile.notes, using: CONFIG.useProfile !== false })),
       villages: (() => { try { return this.villages.status(); } catch { return []; } })(),
-      chat: this.chatOn(),
+      chat: T('chat', () => this.chatOn(), false),
       diag: (() => { try { return this.diag(); } catch { return null; } })(),
       build: CONFIG.build,
+      errors,
     };
   }
 

@@ -673,6 +673,7 @@ try {
 
 // Dashboard: status out, commands in, once a second.
 let polling = false;
+let lastStatusErr = '';
 system.runInterval(() => {
   if (polling) return;
   polling = true;
