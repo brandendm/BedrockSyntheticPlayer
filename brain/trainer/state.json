@@ -1,20 +1,20 @@
 {
  "counts": {
   "accepted": 0,
-  "rejected": 2,
-  "sim_none": 0,
+  "rejected": 3,
+  "sim_none": 1,
   "aborted": 5
  },
  "guard_baseline": [
   10,
   10
  ],
- "cycle_n": 7,
- "group_i": 7,
+ "cycle_n": 9,
+ "group_i": 9,
  "group_stats": {
   "tow": [
    0,
-   1
+   2
   ],
   "combat": [
    0,
@@ -22,7 +22,7 @@
   ],
   "cave": [
    0,
-   1
+   2
   ],
   "play": [
    0,
@@ -35,24 +35,24 @@
    1
   ],
   "hole": [
-   3,
-   3
+   7,
+   7
   ],
   "pit": [
-   3,
-   3
+   7,
+   7
   ],
   "ravine": [
-   3,
-   3
+   7,
+   7
   ],
   "ladder": [
-   3,
-   3
+   7,
+   7
   ],
   "bow": [
-   3,
-   3
+   7,
+   7
   ],
   "thicket": [
    4,
@@ -91,12 +91,40 @@
    4
   ],
   "caveascent": [
-   1,
-   1
+   5,
+   5
   ],
   "caveescape": [
-   0,
-   1
+   4,
+   5
+  ],
+  "cavewalk": [
+   4,
+   4
+  ],
+  "cavedeep": [
+   3,
+   4
+  ],
+  "oceandeep": [
+   4,
+   4
+  ],
+  "cavemobs": [
+   4,
+   4
+  ],
+  "oceandrop": [
+   4,
+   4
+  ],
+  "chasm": [
+   1,
+   4
+  ],
+  "minecollapse": [
+   4,
+   4
   ]
  }
 }

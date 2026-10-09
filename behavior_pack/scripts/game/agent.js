@@ -6,6 +6,7 @@ import { passRates, avgRates } from '../core/testrun.js';
 import { system, world, EntityComponentTypes, Direction, EquipmentSlot, ItemStack } from '@minecraft/server';
 import { MotorController, EYE_HEIGHT } from '../core/motor.js';
 import { Calibration } from './calibrate.js';
+import { Bandit } from '../core/bandit.js';
 import { searchJob, smoothPath, findPath, Cell, DEFAULT_COSTS } from '../core/pathfinder.js';
 import { dist3D, makeRng } from '../core/mathutil.js';
 import { decide, fleePoint, weaponDamage, MOBS, REACH_HIT, STOP_AT, BOW_MIN, crowdOf } from '../core/threat.js';
@@ -177,6 +178,7 @@ export class Agent {
     this.demo = new Demo(this); // (watching the player play, only when switched on: !bot learn on)
     this.profile = { params: { ...PROFILE_DEFAULTS }, notes: [], at: 0 }; // (what it has learned from them: core/profile.js)
     this.flight = new Flight(this); // (what it was doing, dumped when something goes wrong: game/flight.js)
+    this.bandit = new Bandit((this.memory.data.bandit ??= {})); // (which way up/out/through really works, scored per situation: core/bandit.js)
     this.calibration = new Calibration(this); // (the head height at once, the rest from the auto loop)
     const follow = this.motor.followPath.bind(this.motor);
     this.motor.followPath = async (wps, opts) => {

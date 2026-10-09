@@ -14,3 +14,6 @@
 {"t": "2026-10-09 06:07:16", "event": "switched on"}
 {"t": "2026-10-09 06:10:08", "event": "bench", "outcome": "ok", "pass": [], "champion": {}}
 {"t": "2026-10-09 06:10:10", "event": "cycle", "n": 7, "group": "tow", "outcome": "aborted", "candidate_diff": {}, "why": "sim/train.mjs exited with code 1 and wrote no result:     at processTicksAndRejections (node:internal/process/task_queues:96:5) |     at async scorePolicy (file:///C:/Users/brand/source/repos/bedrock-agent/sim/evals.mjs:76:15) |     at async file:///C:/Users/brand/source/repos/bedrock-agent/sim/train.mjs:40:19"}
+{"t": "2026-10-09 06:36:39", "event": "switched on"}
+{"t": "2026-10-09 06:46:34", "event": "cycle", "n": 8, "group": "tow", "outcome": "no simulator gain", "candidate_diff": {}, "why": "train 76.85->47.92, held 73.78->52.03"}
+{"t": "2026-10-09 06:53:45", "event": "cycle", "n": 9, "group": "cave", "outcome": "rejected", "candidate_diff": {"quarryTorchLight": 3.693}, "why": "no gain in the real game (no difference the runs can show)", "search": "random step (no simulator for this group)", "real": {"champion": [17, 18], "candidate": [15, 18], "guard_champion": [10, 10], "guard_candidate": [10, 10]}}

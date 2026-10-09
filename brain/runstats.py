@@ -126,3 +126,28 @@ def allocate(stats: dict, budget: int, *, cap_share: float = 0.5) -> dict:
 def runs_since(runs: Iterable, build: str) -> list:
     """The runs that happened on `build`."""
     return [r for r in runs if r.get("build") == build]
+
+
+def compare_scores(old: list, new: list, *, min_n: int = 6, alpha: float = 0.1, min_gain: float = 0.02) -> dict:
+    """(u301) Did `new` beat `old` on the continuous run scores (0..1, core/score.js)? Same verdicts as compare(). A score carries how fast, how hurt and how far a
+    failure got, so a few runs say what pass/fail needs dozens for. Mann-Whitney on the scores plus a minimum mean gain, so a real but trivial difference is 'same'."""
+    so = [float(r["score"]) for r in old if r.get("score") is not None]
+    sn = [float(r["score"]) for r in new if r.get("score") is not None]
+    out = {"n_old": len(so), "n_new": len(sn)}
+    if len(so) < 3 or len(sn) < 3:
+        out.update(verdict="need_more", why="too few scored runs")
+        return out
+    mo, mn = sum(so) / len(so), sum(sn) / len(sn)
+    p = mannwhitney_p(so, sn)
+    out.update(mean_old=round(mo, 3), mean_new=round(mn, 3), p_score=p)
+    if len(so) < min_n or len(sn) < min_n:
+        if p < alpha / 5 and abs(mn - mo) >= min_gain:
+            out.update(verdict="better" if mn > mo else "worse", why=f"score {mo:.2f} -> {mn:.2f} (p={p:.3f}) even at this size")
+        else:
+            out.update(verdict="need_more", why=f"{min(len(so), len(sn))} scored runs on the smaller side, need {min_n}")
+        return out
+    if p < alpha and abs(mn - mo) >= min_gain:
+        out.update(verdict="better" if mn > mo else "worse", why=f"score {mo:.2f} -> {mn:.2f} (p={p:.3f})")
+    else:
+        out.update(verdict="same", why=f"scores {mo:.2f} -> {mn:.2f}, no difference the runs can show")
+    return out

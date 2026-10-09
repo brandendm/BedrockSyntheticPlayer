@@ -918,11 +918,38 @@ def _setup_trainer() -> None:
         except (OSError, ValueError, subprocess.TimeoutExpired) as e:
             return {"error": str(e)[:200]}
 
+    def refit(alive):
+        """(u301) Fit the simulator to the real tow runs (sim/fit_outcomes.mjs --apply) once 12 or more new real runs have come in since the last fit. The sim is only
+        as good as its match to the game: a search in a sim that has drifted finds things that do not work. Returns a summary, {"skipped": why}, or {"error": why}."""
+        if not node or not (repo / "sim" / "fit_outcomes.mjs").exists():
+            return {"skipped": "no fitter"}
+        n = 0
+        try:
+            for f in LOG_DIR.glob("tests*.jsonl"):
+                for line in f.read_text(encoding="utf-8", errors="replace").splitlines():
+                    if '"type": "test_result"' in line and '"name": "lead' in line and '"who": "bot"' in line:
+                        n += 1
+        except OSError:
+            return {"skipped": "no logs"}
+        mark = ROOT / "trainer" / "refit.json"
+        try:
+            last = int(json.loads(mark.read_text(encoding="utf-8")).get("runs", 0))
+        except (OSError, ValueError):
+            last = 0
+        if n - last < 12:
+            return {"skipped": f"{n - last} new real tow runs since the last fit"}
+        try:
+            r = subprocess.run([node, "sim/fit_outcomes.mjs", "--gens", "8", "--apply"], cwd=str(repo), capture_output=True, text=True, timeout=1500)
+            mark.write_text(json.dumps({"runs": n, "t": time.strftime("%Y-%m-%d %H:%M:%S")}), encoding="utf-8")
+            return {"runs": n, "tail": " | ".join((r.stdout or r.stderr).strip().splitlines()[-3:])[:400]}
+        except (OSError, subprocess.TimeoutExpired) as e:
+            return {"error": str(e)[:200]}
+
     def status():
         with _lock:
             return _status["data"], time.time() - (_status["at"] or 0)
 
-    tr = Trainer(ROOT, run_batch=ar.run_batch, send=ar.queue, sim_search=sim_search, status=status, evolve=evolve)
+    tr = Trainer(ROOT, run_batch=ar.run_batch, send=ar.queue, sim_search=sim_search, status=status, evolve=evolve, refit=refit)
     _train["run"] = tr
     tr.start()
     if _switches_read().get("trainer"):

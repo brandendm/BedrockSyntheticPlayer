@@ -1,9 +1,15 @@
-file:///C:/Users/brand/source/repos/bedrock-agent/sim/pool.mjs:49
-  if (jobs.length && out.every((x) => x === null)) throw new Error(`eval workers keep dying (no job finished): ${errTail.trim().split('\n').slice(-3).join(' | ')}`);
-                                                         ^
-
-Error: eval workers keep dying (no job finished):     at async ESMLoader.import (node:internal/modules/esm/loader:530:24) |     at async loadESM (node:internal/process/esm_loader:91:5) |     at async handleMainPromise (node:internal/modules/run_main:65:12)
-    at runJobs (file:///C:/Users/brand/source/repos/bedrock-agent/sim/pool.mjs:49:58)
-    at processTicksAndRejections (node:internal/process/task_queues:96:5)
-    at async scorePolicy (file:///C:/Users/brand/source/repos/bedrock-agent/sim/evals.mjs:76:15)
-    at async file:///C:/Users/brand/source/repos/bedrock-agent/sim/train.mjs:40:19
+tow: start policy train 76.848 held 73.780 (8 parameters, 44+44 jobs)
+gen 1/12: best 53.448 mean 81.177 sigma 0.196 (15 evaluations, 63s)
+gen 2/12: best 43.030 mean 69.573 sigma 0.184 (30 evaluations, 110s)
+gen 3/12: best 43.445 mean 68.316 sigma 0.172 (45 evaluations, 153s)
+gen 4/12: best 48.645 mean 75.981 sigma 0.175 (60 evaluations, 195s)
+gen 5/12: best 53.964 mean 73.477 sigma 0.172 (75 evaluations, 248s)
+gen 6/12: best 45.916 mean 73.857 sigma 0.168 (90 evaluations, 303s)
+gen 7/12: best 51.618 mean 72.588 sigma 0.163 (105 evaluations, 353s)
+gen 8/12: best 51.993 mean 67.977 sigma 0.160 (120 evaluations, 405s)
+gen 9/12: best 44.295 mean 60.512 sigma 0.154 (135 evaluations, 451s)
+gen 10/12: best 42.593 mean 61.988 sigma 0.160 (150 evaluations, 495s)
+gen 11/12: best 45.166 mean 64.782 sigma 0.151 (165 evaluations, 539s)
+gen 12/12: best 42.959 mean 63.642 sigma 0.140 (180 evaluations, 581s)
+tow: train 76.848 -> 47.920, held-out 73.780 -> 52.030, 180 evaluations in 593s: not accepted (newly lost: L1:1008, L2:1006, L2:1008, L2:2001)
+changed: {"loFloor":6.024,"guardMax":8.807,"patienceMin":13.607,"patienceDef":10,"groundTarget":8.002,"yankMargin":1.777,"stretchFrac":0.578,"slingStep":0.769}

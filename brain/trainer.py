@@ -24,7 +24,7 @@ import time
 from pathlib import Path
 from typing import Callable, Optional
 
-from . import runstats
+from . import miner, runstats
 
 GROUPS = ["tow", "combat", "cave", "play"]
 # What each group's real-game confirmation runs, and the guards that must not get worse whatever the group. (Names: behavior_pack/scripts/game/scenarios.js.)
@@ -61,6 +61,12 @@ def judge(champ: list, cand: list, guard_champ: list, guard_cand: list, *, sim_o
     if guard_champ and guard_cand and runstats.wilson(kg_n, len(guard_cand))[1] < runstats.wilson(kg_c, len(guard_champ))[0]:
         return {"verdict": "reject", "why": f"guard tests clearly worse: {kg_c}/{len(guard_champ)} -> {kg_n}/{len(guard_cand)}"}
     cmp_ = runstats.compare(champ, cand)
+    # (u301) The continuous scores second opinion: a pass-rate tie that the scores separate decides, and either measure saying "worse" rejects.
+    sc = runstats.compare_scores(champ, cand)
+    if sc["verdict"] in ("better", "worse") and cmp_["verdict"] in ("same", "need_more"):
+        cmp_ = {**cmp_, "verdict": sc["verdict"], "why": sc["why"], "scores": sc}
+    elif sc["verdict"] == "worse" and cmp_["verdict"] == "better":
+        cmp_ = {**cmp_, "verdict": "same", "why": "pass rate up but scores down: " + sc["why"], "scores": sc}
     if cmp_["verdict"] == "better":
         return {"verdict": "accept", "why": cmp_["why"], "stats": cmp_}
     if cmp_["verdict"] == "worse":
@@ -88,12 +94,13 @@ def diff(policy: dict) -> dict:
 
 
 class Trainer:
-    def __init__(self, root: Path, *, run_batch: Callable, send: Callable[[str], None], sim_search: Callable, status: Callable[[], tuple], evolve: Optional[Callable] = None,
+    def __init__(self, root: Path, *, run_batch: Callable, send: Callable[[str], None], sim_search: Callable, status: Callable[[], tuple], evolve: Optional[Callable] = None, refit: Optional[Callable] = None,
                  clock: Callable[[], float] = time.time, sleep: Callable[[float], None] = time.sleep, seed: int = 1):
         self.dir = root / "trainer"
         self.dir.mkdir(parents=True, exist_ok=True)
         self.run_batch, self.send, self.sim_search, self.status = run_batch, send, sim_search, status
         self.evolve = evolve
+        self.refit = refit              # (u301) refits the simulator's physics to the real tow runs so far (sim/fit_outcomes.mjs); throttles itself
         self.bench_every = BENCH_EVERY
         self.clock, self.sleep = clock, sleep
         self.rng = random.Random(seed)
@@ -215,7 +222,7 @@ class Trainer:
         self.send("policy " + json.dumps(diff(policy)) if policy else "policy clear")
         self.sleep(2)
         outcome, events = self.run_batch(tests, workers, self._alive, **({"timeout": timeout} if timeout else {}))
-        res = [{"name": e.get("name"), "pass": bool(e.get("pass")), "secs": e.get("secs") or 0} for e in events if e.get("type") == "test_result" and e.get("who") != "human"]
+        res = [{"name": e.get("name"), "pass": bool(e.get("pass")), "secs": e.get("secs") or 0, "score": e.get("score")} for e in events if e.get("type") == "test_result" and e.get("who") != "human"]
         for r in res:
             c = self.cells.setdefault(r["name"], [0, 0])
             c[0] += 1 if r["pass"] else 0
@@ -274,6 +281,14 @@ class Trainer:
                 except Exception as e:  # noqa: BLE001 - a failed breed never stops training
                     ev = {"error": str(e)}
                 self.journal({"event": "evolve", "result": ev})
+            if group == "tow" and self.refit:
+                self.state = f"cycle {self.cycle_n}: checking the simulator against the real tow runs"
+                try:
+                    fit = self.refit(self._alive)
+                except Exception as e:  # noqa: BLE001 - a failed fit never stops training
+                    fit = {"error": str(e)}
+                if fit and not fit.get("skipped"):
+                    self.journal({"event": "refit", "result": fit})
             self.state = f"cycle {self.cycle_n}: {group}: searching in the simulator"
             res = self.sim_search(group, self.champion, self.rng.randrange(1, 10**6), self._alive)
             if res and res.get("error"):
@@ -298,7 +313,7 @@ class Trainer:
             self._finish(rec)
             return
         # 2. CONFIRM in the real game: champion and candidate in alternating order, a round at a time, until it is decided
-        tests = GROUP_TESTS[group] + GUARD_TESTS
+        tests = miner.hot_tests(self.cells, GROUP_TESTS[group]) + GUARD_TESTS   # (u301: the group's settled tests only keep two places: the runs go where the information is)
         champ_g, cand_g, champ_x, cand_x = [], [], [], []
         verdict = {"verdict": "need_more", "why": "no runs yet"}
         for rnd in range(ROUNDS_MAX):
@@ -388,6 +403,10 @@ class Trainer:
         self.journal(rec)
         self._save_state()
         self.write_digest()
+        try:
+            miner.write_report(self.dir.parent)
+        except Exception:   # a report never stops the loop
+            pass
         if self.enabled:
             self.state = "between cycles"
         self.sleep(1)

@@ -48,6 +48,7 @@
 //                 snapped. What it measures is kept in the world (leadCal) for the lead code to use.
 // The bot keeps whatever it's carrying; give it a pickaxe or sword first to test with one.
 
+import { runScore } from '../core/score.js';
 import { dist3D } from '../core/mathutil.js';
 import { castRay } from './world.js';
 import { sendEvent, trace } from './bridge.js';
@@ -3343,8 +3344,9 @@ async function runOne(agent, player, name, arg, human = false) {
 function report(agent, name, pass, detail, human = false) {
   agent.say(`Test ${name}: ${pass ? 'PASS' : 'FAIL'} - ${detail}.`);
   if (!pass) { try { agent.flight.dump(`test ${name} failed: ${String(detail).slice(0, 120)}`); } catch { /* */ } }
-  sendEvent({ type: 'test_result', name, pass, detail, who: human ? 'human' : 'bot', state: agent.snapshot() }).catch(() => {});
-  return { name, pass, detail };
+  let score; try { score = runScore({ pass, detail: String(detail), cap: capFor(name) }); } catch { /* a number is a bonus */ }
+  sendEvent({ type: 'test_result', name, pass, detail, score, who: human ? 'human' : 'bot', state: agent.snapshot() }).catch(() => {});
+  return { name, pass, detail, score };
 }
 
 

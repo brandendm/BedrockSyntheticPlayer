@@ -4406,9 +4406,15 @@ export class Skills {
       const cost = this.upCost(byHand);
       this.lastUpCost = `pillar ${cost.pillar.toFixed(1)}s/level vs stairs ${cost.stairs.toFixed(1)}s/level`;
       this.log(`way up: ${this.lastUpCost} (${need} to go)`);
-      if (cost.stairs < cost.pillar) {
+      // Stairs or a pillar: the cost model's choice, unless how each has really gone here says otherwise (core/bandit.js).
+      const modelStairs = cost.stairs < cost.pillar, banCtx = `up:${byHand ? 'hand' : 'tool'}:${openAbove ? 'open' : 'rock'}`;
+      const useStairs = this.a.bandit && Number.isFinite(cost.stairs) && Number.isFinite(cost.pillar) ? this.a.bandit.pick(banCtx, ['stairs', 'pillar'], modelStairs ? 'stairs' : 'pillar') === 'stairs' : modelStairs;
+      const y0 = this.feet().y;
+      if (useStairs) {
         if (openAbove && !this.nextToWall()) await this.walkToWall(gen);
-        if (await this.stairStep(gen, byHand)) {
+        const stepped = await this.stairStep(gen, byHand);
+        try { this.a.bandit?.report(banCtx, 'stairs', !!stepped && this.feet().y > y0); } catch { /* a score is a bonus */ }
+        if (stepped) {
           const y = this.feet().y;
           if (y > lastY) { lastY = y; stalls = 0; }
           continue;
@@ -4431,6 +4437,7 @@ export class Skills {
         }
       }
       const why = await this.pillarUp(gen, byHand);
+      if (!useStairs) { try { this.a.bandit?.report(banCtx, 'pillar', this.feet().y > y0 || why === 'climbed'); } catch { /* */ } }
       this.log(`pillar stopped: ${why}${why === 'blocked' && this.pillarDbg ? ` (${this.pillarDbg})` : ''}`);
       if (!(await this.needsEscape(gen))) break;
       if (why === 'falling' && (await this.drainSide(gen, byHand))) continue;

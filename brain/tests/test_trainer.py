@@ -145,6 +145,23 @@ class Cycle(unittest.TestCase):
         t.cells["caveescape"] = [1, 9]
         self.assertIn("caveescape", t.write_digest())
 
+    def test_refit_runs_before_a_tow_search_and_is_journaled_unless_skipped(self):
+        calls = []
+        w = World(lambda n, p: 0.9)
+        t = make(w, good_sim)
+        t.refit = lambda alive: calls.append(1) or {"runs": 14, "tail": "fitted"}
+        t.guard_baseline = [9, 10]
+        t.group_i = 0                      # tow
+        t.cycle()
+        self.assertEqual(len(calls), 1)
+        self.assertTrue(any(e.get("event") == "refit" for e in t.read_journal(20)))
+        t2 = make(World(lambda n, p: 0.9), good_sim)
+        t2.refit = lambda alive: {"skipped": "3 new real tow runs since the last fit"}
+        t2.guard_baseline = [9, 10]
+        t2.group_i = 0
+        t2.cycle()
+        self.assertFalse(any(e.get("event") == "refit" for e in t2.read_journal(20)))
+
     def test_a_candidate_that_does_nothing_in_the_real_game_is_dropped(self):
         w = World(lambda n, p: 0.5)
         t = make(w, lambda *a: {"accepted": True, "best": {"fightMargin": 0.7}, "train": [7, 5], "held": [6, 5], "evals": 3})

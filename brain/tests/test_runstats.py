@@ -1,7 +1,7 @@
 import sys, unittest
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from runstats import wilson, fisher_p, mannwhitney_p, compare, allocate
+from runstats import wilson, fisher_p, mannwhitney_p, compare, allocate, compare_scores
 
 
 def runs(passes, fails, secs=10.0):
@@ -60,3 +60,16 @@ class StatsTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ScoreCompareTests(unittest.TestCase):
+    def test_scores_separate_what_pass_fail_cannot(self):
+        # same pass counts, but the candidate fails further along and passes faster
+        old = [{"pass": i % 2 == 0, "score": 0.1 + 0.02 * (i % 3) if i % 2 else 0.65} for i in range(12)]
+        new = [{"pass": i % 2 == 0, "score": 0.3 + 0.02 * (i % 3) if i % 2 else 0.85} for i in range(12)]
+        self.assertEqual(compare(old, new)["verdict"], "same")
+        self.assertEqual(compare_scores(old, new)["verdict"], "better")
+        self.assertEqual(compare_scores(new, old)["verdict"], "worse")
+
+    def test_unscored_or_tiny_is_need_more(self):
+        self.assertEqual(compare_scores([{"pass": True}] * 8, [{"pass": True}] * 8)["verdict"], "need_more")
