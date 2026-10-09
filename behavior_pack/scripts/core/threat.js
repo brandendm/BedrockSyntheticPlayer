@@ -40,7 +40,7 @@ export const MOBS = {
   creeper: { hp: 20, dps: 20, kind: 'explode' },
   witch: { hp: 26, dps: 1.5, kind: 'ranged', potions: true }, // fought: rushed and hit (core/tactics.js fightMove), its potions dodged (a splash mostly lands wide: ~1.2 a second in the arena, and running only gives it more throws)
   pillager: { hp: 24, dps: 3, kind: 'ranged' },
-  vindicator: { hp: 24, dps: 10, kind: 'melee', never: true },
+  vindicator: { hp: 24, dps: 10, kind: 'melee', never: true, armoredFight: 10 }, // (armoredFight: in this many armor points it is a fight like any other, judged by the race below; bare, it is a run)
   evoker: { hp: 24, dps: 6, kind: 'ranged', never: true },
   evocation_illager: { hp: 24, dps: 6, kind: 'ranged', never: true }, // (the entity's real id: `evoker` above never matched; vex below are its fangs' cousins, summoned)
   vex: { hp: 14, dps: 3, kind: 'melee', never: true, flying: true }, // (flies through walls, 14 hp: not worth a duel)
@@ -180,7 +180,7 @@ export function decide({ health, damage = FIST_DAMAGE, isNight = false, prevMode
     if (!creeperBack) return { mode: 'flee', threats, reason: 'creeper' };
   }
   // (witches: the goal switched off, `!bot goal witches off`: run from them as before)
-  const never = threats.find((m) => (MOBS[m.type].never || (m.type === 'witch' && !witches)) && m.dist <= 16);
+  const never = threats.find((m) => (MOBS[m.type].never || (m.type === 'witch' && !witches)) && m.dist <= 16 && !(MOBS[m.type].armoredFight && armor >= MOBS[m.type].armoredFight));
   if (never) return { mode: 'flee', threats, reason: `won't fight ${never.type}` };
   // Low on health: run. Except already up close to an archer and nothing else on us: turning our
   // back on it in the open is how it gets the last few shots in; finish it.

@@ -198,3 +198,12 @@ test('with a bow and a shield and two creepers about: the crowd plan takes them,
   assert.equal(decide({ health: 20, damage: 6, bow: true, shield: false, mobs: far }).mode, 'fight', 'no shield: shoot them');
   assert.notEqual(decide({ health: 20, damage: 6, bow: true, shield: true, mobs: far }).reason, 'creeper: shoot it from afar', 'a shield: the crowd plan has them');
 });
+
+test('a vindicator: a run when bare, a fight in iron (armoredFight), never at low health', () => {
+  const d = weaponDamage('minecraft:iron_sword');
+  const v = [mob('vindicator', 6, { targetingMe: true })];
+  assert.equal(decide({ health: 20, damage: d, mobs: v }).mode, 'flee', 'bare');
+  assert.equal(decide({ health: 20, damage: d, armor: 15, toughness: 0, mobs: v }).mode, 'fight', 'in iron it is a race like any other');
+  assert.equal(decide({ health: 4, damage: d, armor: 15, mobs: v }).mode, 'flee', 'hurt: run');
+  assert.equal(decide({ health: 20, damage: d, armor: 15, mobs: [mob('ravager', 6, { targetingMe: true })] }).mode, 'flee', 'a ravager stays a run');
+});
