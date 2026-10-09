@@ -405,6 +405,7 @@ class Trainer:
         self.write_digest()
         try:
             miner.write_report(self.dir.parent)
+            miner.write_fixqueue(self.dir.parent)
         except Exception:   # a report never stops the loop
             pass
         if self.enabled:

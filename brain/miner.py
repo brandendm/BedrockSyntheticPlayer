@@ -104,3 +104,72 @@ def write_report(root: Path) -> dict:
     except OSError:
         pass
     return m
+
+
+# ---- the fix queue (u301) --------------------------------------------------------------------------------------------------------------
+# For each of the top failures a folder in brain/fixqueue/ with everything needed to fix it in one sitting: what failed and how often, the last runs'
+# detail text, the newest repro capsule for that test, and the code to start from. Whoever fixes things (a session with Claude, you) clears the queue top-down
+# instead of rediscovering each failure from the logs.
+import re as _re
+import shutil as _shutil
+
+# test family / failure signal -> where to look first
+CODE_HINTS = [
+    (_re.compile(r"^(thicket|jungle|swamp|ambush|siege|mobmaze|minecollapse|lavafield|raid|chasm)\b"), ["behavior_pack/scripts/core/terrain.js (the course)", "behavior_pack/scripts/game/scenarios.js (case 'thicket'... the test)", "behavior_pack/scripts/core/threat.js, core/tactics.js (fight or flee)"]),
+    (_re.compile(r"^(cave\w*|oceandrop|oceandeep)\b"), ["behavior_pack/scripts/core/caves.js, core/ocean.js (the course)", "behavior_pack/scripts/game/skills.js (toSurface, needsEscape, walkOut)", "behavior_pack/scripts/game/scenarios.js (case 'caveescape'...)"]),
+    (_re.compile(r"^lead|^villager|^boat"), ["behavior_pack/scripts/game/leadtow.js", "behavior_pack/scripts/core/towtune.js, core/towcourses.js", "sim/run_tow.mjs (reproduce offline)"]),
+    (_re.compile(r"^bench stall"), ["behavior_pack/scripts/game/agent.js (runAuto, planStep)", "behavior_pack/scripts/core/plan*.js", "behavior_pack/scripts/game/bench.js"]),
+    (_re.compile(r"^bench death"), ["behavior_pack/scripts/core/threat.js", "behavior_pack/scripts/game/agent.js (restNeeded, hurtNoFood)", "behavior_pack/scripts/core/rest.js"]),
+]
+
+
+def _slug(s: str) -> str:
+    return _re.sub(r"[^a-z0-9]+", "-", s.lower()).strip("-")[:60] or "failure"
+
+
+def _capsule_for(root: Path, name: str) -> str:
+    f = root / "logs" / "capsules.jsonl"
+    best = ""
+    try:
+        for line in f.read_text(encoding="utf-8", errors="replace").splitlines()[-300:]:
+            if f"test {name} failed" in line[:400]:
+                best = line
+    except OSError:
+        pass
+    return best[:7000]
+
+
+def write_fixqueue(root: Path, top: int = 8) -> list:
+    """Rewrite brain/fixqueue/: one folder per top failure cluster (README.md + last_runs.txt + capsule.json), plus INDEX.md. Returns the cluster keys written."""
+    m = mine(root)
+    tests = _read_jsonl(root / "logs" / "tests.jsonl", 4000)
+    q = root / "fixqueue"
+    keys = [k for k, _ in m["clusters"][:top]]
+    try:
+        q.mkdir(parents=True, exist_ok=True)
+        for old in q.iterdir():
+            if old.is_dir() and old.name not in {_slug(k) for k in keys}:
+                _shutil.rmtree(old, ignore_errors=True)
+        index = ["# Fix queue", "", "Top failures, worst first. Each folder has what is needed to fix it. Clear from the top; the list rewrites itself as training and tests run.", ""]
+        for rank, key in enumerate(keys, 1):
+            count = dict(m["clusters"])[key]
+            test = key.split(":")[0]
+            d = q / _slug(key)
+            d.mkdir(exist_ok=True)
+            runs = [e for e in tests if e.get("type") == "test_result" and e.get("who") != "human" and e.get("name") == test]
+            fails = [e for e in runs if not e.get("pass")]
+            hints = next((h for rx, h in CODE_HINTS if rx.match(key) or rx.match(test)), ["(no hint: grep the test's name in behavior_pack/scripts/game/scenarios.js)"])
+            rate = f"{len(runs) - len(fails)}/{len(runs)}" if runs else "n/a"
+            (d / "README.md").write_text(
+                f"# {key}\n\nRank {rank}, seen {count} times. Pass rate over the logged runs of `{test}`: {rate}.\n\n## Start here\n" + "\n".join(f"- {h}" for h in hints) +
+                "\n\n## To reproduce\n`!bot test " + test + "` in game, or queue it: `{\"tests\":[\"" + test + "\"],\"reload\":true,\"workers\":1}` in brain/inbox/run.json (Auto runs on).\n"
+                "\n## Then\nFix, add a unit test, bump the build, ship, and run the test 3+ times (a single pass proves little).\n", encoding="utf-8")
+            (d / "last_runs.txt").write_text("\n".join(f"{e.get('t', '')}  {'PASS' if e.get('pass') else 'FAIL'}  {str(e.get('detail', ''))[:300]}" for e in runs[-12:]) + "\n", encoding="utf-8")
+            cap = _capsule_for(root, test)
+            if cap:
+                (d / "capsule.json").write_text(cap, encoding="utf-8")
+            index.append(f"{rank}. **{key}** ({count}x) -> `{d.name}/`")
+        (q / "INDEX.md").write_text("\n".join(index) + "\n", encoding="utf-8")
+    except OSError:
+        pass
+    return keys

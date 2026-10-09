@@ -1,0 +1,6 @@
+2026-10-09 04:41:32  FAIL  alive after 300s; lowest health 20, tools 5, wood-ish 10, moved 0, step done, mode none
+2026-10-09 04:48:07  FAIL  alive after 300s; lowest health 20, tools 0, wood-ish 0, moved 0, step done, mode none
+2026-10-09 04:55:35  FAIL  alive after 300s; lowest health 20, tools 0, wood-ish 0, moved 0, step gather_logs, mode none
+2026-10-09 04:57:30  FAIL  alive after 5s; lowest health 17, tools 0, wood-ish 1, moved 0, step gather_logs, mode none
+2026-10-09 06:19:02  PASS  alive after 300s; lowest health 19, tools 5, wood-ish 6, moved 235, step seek_village, mode none
+2026-10-09 06:30:16  FAIL  alive after 300s; lowest health 18, tools 0, wood-ish 0, moved 0, step gather_logs, mode none

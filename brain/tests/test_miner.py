@@ -40,3 +40,26 @@ class MinerTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class FixQueueTests(unittest.TestCase):
+    def test_a_folder_per_top_failure_with_hints_runs_and_capsule(self):
+        import tempfile, json
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            (root / "logs").mkdir()
+            lines = [json.dumps({"type": "test_result", "name": "raid", "pass": False, "detail": "died in 36s; mode flee", "t": "x"}) for _ in range(3)]
+            lines.append(json.dumps({"type": "test_result", "name": "raid", "pass": True, "detail": "ok", "t": "y"}))
+            (root / "logs" / "tests.jsonl").write_text("\n".join(lines) + "\n", encoding="utf-8")
+            (root / "logs" / "capsules.jsonl").write_text(json.dumps({"capsule": {"why": "test raid failed: died"}}) + "\n", encoding="utf-8")
+            keys = miner.write_fixqueue(root)
+            self.assertEqual(keys, ["raid: died while fleeing"])
+            f = root / "fixqueue" / "raid-died-while-fleeing"
+            self.assertIn("terrain.js", (f / "README.md").read_text(encoding="utf-8"))
+            self.assertEqual(len((f / "last_runs.txt").read_text(encoding="utf-8").splitlines()), 4)
+            self.assertTrue((f / "capsule.json").exists())
+            self.assertIn("raid: died while fleeing", (root / "fixqueue" / "INDEX.md").read_text(encoding="utf-8"))
+            # a failure that stops happening drops out of the queue
+            (root / "logs" / "tests.jsonl").write_text("", encoding="utf-8")
+            miner.write_fixqueue(root)
+            self.assertFalse(f.exists())
