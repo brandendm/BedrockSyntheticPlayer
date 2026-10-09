@@ -13,7 +13,7 @@ import { hold, invCounts } from './inventory.js';
 import { Builder, kit, giveKit, topUp, tell } from './arena.js';
 import { shootAt } from './aim.js';
 import { weaponReach, bestWeapon } from '../core/tactics.js';
-import { MOB_LIST, AQUATIC, FLYERS, parseShow, roundWinner, KO_HP, personality } from '../core/colosseum.js';
+import { MOB_LIST, AQUATIC, FLYERS, parseShow, roundWinner, KO_HP, personality, loadoutKit, meleeIds, describeLoadout } from '../core/colosseum.js';
 
 const R = 12;               // inner half-size: the floor is 25 x 25
 const H = 10;               // wall height
@@ -21,11 +21,7 @@ const TIERS = 5;
 const AREA = 'bsp_colosseum';
 const SITE_KEY = 'colosseum:site';
 const NAMES = ['Brutus', 'Maximus', 'Spartacus', 'Flavia', 'Cassius', 'Octavia', 'Marcus', 'Livia'];
-const MELEE = ['diamond_sword', 'diamond_axe', 'diamond_spear'];
-const KIT = kit(
-  [[0, 'diamond_sword'], [1, 'bow'], [2, 'diamond_axe'], [3, 'diamond_spear'], [4, 'arrow', 64], [5, 'arrow', 64], [6, 'golden_apple', 4]],
-  { Head: ['diamond_helmet'], Chest: ['diamond_chestplate'], Legs: ['diamond_leggings'], Feet: ['diamond_boots'], Offhand: ['shield'] },
-);
+const STASH_KEY = 'colosseum:player';
 
 /** @type {any} */
 let SHOW = null;
@@ -42,11 +38,11 @@ export function colosseumCommand(agent, player, words) {
   const say = (m) => (player ? player.sendMessage(`§6[Colosseum]§r ${m}`) : tell(m));
   const p = parseShow(words);
   if (p.cmd === 'help') {
-    return say('`!bot colosseum <mob> [count] [team N] [rounds N]` (e.g. zombie 6, iron golem 2, wither, random), `!bot colosseum bots [team N] [rounds N]` (red vs blue), `list`, `stop`, `clear`. Bots wear full diamond with a bow and shield.');
+    return say('`!bot colosseum <mob> [count] [team N] [rounds N]` (e.g. zombie 6, iron golem 2, wither, random), `!bot colosseum bots [team N] [rounds N]` (red vs blue), `list`, `stop`, `clear`. Gear: armor=none|leather|chain|iron|gold|diamond|netherite weapon=wood|stone|iron|gold|diamond|netherite weapons=sword,axe,spear,mace,trident bow=on|off shield=on|off enchant=on|off (blue.armor=... for the blue team). Default: full diamond, sword/axe/spear, bow, shield.');
   }
   if (p.cmd === 'list') return say(`Mobs: ${MOB_LIST.join(', ')}. Any other id is tried as typed.`);
-  if (p.cmd === 'stop') { if (SHOW) { SHOW.abort = true; return say('Stopping the show.'); } return say('No show is running.'); }
-  if (p.cmd === 'clear') { clearArena(agent).then((n) => say(n ? 'The colosseum is taken down.' : 'There is none standing.')).catch((e) => say(`could not: ${e}`)); return; }
+  if (p.cmd === 'stop') { if (SHOW) { SHOW.abort = true; return say('Stopping the show.'); } return say(player && recoverPlayer(player) ? 'No show is running; put you back where you were.' : 'No show is running.'); }
+  if (p.cmd === 'clear') { if (player) recoverPlayer(player); clearArena(agent).then((n) => say(n ? 'The colosseum is taken down.' : 'There is none standing.')).catch((e) => say(`could not: ${e}`)); return; }
   if (SHOW) return say('A show is already on (`!bot colosseum stop`).');
   runShow(agent, player, p).catch((e) => { console.warn(`[colosseum] ${e}\n${e?.stack ?? ''}`); say(`The show failed: ${e}`); }).then(() => {});
 }
@@ -143,12 +139,22 @@ async function runShow(agent, player, p) {
     await build(dim, S, wet);
     if (show.abort) return;
     try { griefWas = world.gameRules?.mobGriefing ?? null; world.gameRules.mobGriefing = false; } catch { try { dim.runCommand('gamerule mobgriefing false'); griefWas = true; } catch { /* */ } }
+    // Against mobs it is night all through (undead burn in daylight, and the roof is glass): the time is stopped and put back after.
+    if (p.mode === 'mobs') {
+      try { show.time = world.getTimeOfDay(); show.cycle = world.gameRules?.doDaylightCycle ?? true; world.gameRules.doDaylightCycle = false; } catch { /* */ }
+      try { dim.runCommand('time set midnight'); } catch { try { dim.runCommand('time set 18000'); } catch { /* */ } }
+    }
     const G = S.G + 1; // (standing y)
     const seat = { x: S.cx + 0.5, y: S.G + TIERS + 1, z: S.cz + R + 1 + TIERS + 0.5 };
     // who watches
     if (player) {
-      show.saved = { pos: { ...player.location }, mode: String(player.getGameMode?.() ?? 'survival') };
+      let spawn = null;
+      try { const sp = player.getSpawnPoint?.(); if (sp) spawn = { x: sp.x, y: sp.y, z: sp.z, dim: sp.dimension?.id ?? sp.dimensionId ?? 'minecraft:overworld' }; } catch { /* */ }
+      show.saved = { name: player.name, pos: { ...player.location }, mode: String(player.getGameMode?.() ?? 'survival'), spawn };
+      try { world.setDynamicProperty(STASH_KEY, JSON.stringify(show.saved)); } catch { /* */ }
       try { player.setGameMode('creative'); } catch { /* */ }
+      // (the stands are home while the show is on: a death anywhere comes back here)
+      try { player.setSpawnPoint({ dimension: dim, x: Math.floor(seat.x), y: Math.floor(seat.y), z: Math.floor(seat.z) }); } catch (e) { console.warn(`[colosseum] spawn point: ${e}`); }
       player.teleport(seat, { facingLocation: { x: S.cx, y: S.G + 3, z: S.cz }, dimension: dim });
     }
     // the fighters
@@ -165,7 +171,8 @@ async function runShow(agent, player, p) {
         const style = personality();
         const label = NAMES[nm++ % NAMES.length];
         try { w.sim.nameTag = `${team === 'A' ? '§c' : '§9'}${label}`; } catch { /* */ }
-        const f = { w, team, name, label, style, out: false, kills: 0, dmg: 0, hits: 0, kos: 0, target: null };
+        const load = team === 'B' ? p.blueGear : p.gear;
+        const f = { w, team, name, label, style, load, kit: ((l) => kit(l.slots, l.worn))(loadoutKit(load)), melee: meleeIds(load), out: false, kills: 0, dmg: 0, hits: 0, kos: 0, target: null };
         show.fighters.push(f);
         show.stats.set(w.sim.id, f);
         await wait(5);
@@ -183,6 +190,8 @@ async function runShow(agent, player, p) {
     });
     subs.push(() => wa.entityHurt.unsubscribe(hs), () => wa.entityDie.unsubscribe(ds));
 
+    if (p.warn?.length) say(`§cIgnored: ${p.warn.join('; ')}`);
+    say(p.mode === 'bots' ? `§cRed§r: ${describeLoadout(p.gear)}. §9Blue§r: ${describeLoadout(p.blueGear)}.` : `The bots: ${describeLoadout(p.gear)}.`);
     const score = { A: 0, B: 0, draws: 0 };
     const teamName = (t) => (p.mode === 'bots' ? (t === 'A' ? '§cRed' : '§9Blue') : t === 'A' ? '§cThe bots' : `§2The ${pretty(p.mob.id)}${p.count > 1 ? 's' : ''}`);
     const needed = Math.floor(p.rounds / 2) + 1;
@@ -194,7 +203,7 @@ async function runShow(agent, player, p) {
       for (const f of show.fighters) {
         f.out = false; f.target = null;
         if (!f.w.sim.isValid) continue;
-        giveKit(f.w.sim, KIT); topUp(f.w.sim);
+        giveKit(f.w.sim, f.kit); topUp(f.w.sim);
         const i = show.fighters.filter((g) => g.team === f.team).indexOf(f), n = show.fighters.filter((g) => g.team === f.team).length;
         f.w.sim.teleport({ x: S.cx + (f.team === 'A' ? -R + 1 : R - 1) + 0.5, y: G, z: S.cz + (i - (n - 1) / 2) * 4 + 0.5 });
       }
@@ -262,10 +271,12 @@ async function runShow(agent, player, p) {
       const i = crew.members.indexOf(f.w); if (i >= 0) crew.members.splice(i, 1);
     }
     try { if (griefWas !== null) world.gameRules.mobGriefing = griefWas; else dim.runCommand('gamerule mobgriefing true'); } catch { try { dim.runCommand('gamerule mobgriefing true'); } catch { /* */ } }
-    if (player && show.saved && player.isValid) {
-      try { player.setGameMode(show.saved.mode); } catch { /* */ }
-      try { player.teleport(show.saved.pos, { dimension: dim }); } catch { /* */ }
+    if (show.time !== undefined) {
+      try { world.gameRules.doDaylightCycle = show.cycle; } catch { /* */ }
+      try { dim.runCommand(`time set ${Math.floor(show.time)}`); } catch { /* */ }
     }
+    if (player && show.saved && player.isValid) putBack(player, show.saved, dim);
+    try { world.setDynamicProperty(STASH_KEY, undefined); } catch { /* */ }
     try { dim.runCommand(`tickingarea remove ${AREA}`); } catch { /* */ }
     SHOW = null;
     bar('');
@@ -310,7 +321,8 @@ async function drive(f, show, round, S, p) {
     const flying = FLYERS.has(String(tgt.typeId).replace('minecraft:', '')) || dy > 2.5;
     const creeper = /creeper/.test(tgt.typeId);
     const arrows = invCounts(sim).arrow ?? 0;
-    const bowNow = arrows > 0 && ((d > f.style.bowFrom && !(f.style.name === 'brawler' && d < 10)) || (flying && d > 3) || (creeper && d < 9));
+    const clear = clearShot(a.dim, sim.getHeadLocation(), tgt);
+    const bowNow = f.load.bow && arrows > 0 && clear && ((d > f.style.bowFrom && !(f.style.name === 'brawler' && d < 10)) || (flying && d > 3) || (creeper && d < 9));
     if (bowNow) {
       if (chosen !== 'bow') { hold(sim, 'bow'); chosen = 'bow'; }
       a.setBlocking(false);
@@ -319,12 +331,13 @@ async function drive(f, show, round, S, p) {
       if (t >= nextShot) { await shootAt(a, tgt, { strafe: { x: -dz * strafe, z: dx * strafe }, stop: () => !live() }); nextShot = system.currentTick + 4; }
       continue;
     }
-    const weapon = bestWeapon(MELEE.filter((id) => invCounts(sim)[id]).map((id) => ({ id }))) ?? 'diamond_sword';
-    if (chosen !== weapon) { hold(sim, weapon); chosen = weapon; }
+    const weapon = bestWeapon(f.melee.filter((id) => invCounts(sim)[id]).map((id) => ({ id }))) ?? f.melee.find((id) => invCounts(sim)[id]) ?? null;
+    if (chosen !== (weapon ?? 'fist')) { hold(sim, weapon); chosen = weapon ?? 'fist'; }
     const wr = weaponReach(weapon), every = Math.max(10, wr.cooldown);
     const far = Math.max(2.4, wr.reach - 0.3), near = Math.max(f.style.close - 1, wr.minReach + 0.25);
     try { sim.lookAtEntity(tgt); } catch { /* */ }
-    if (d > far) a.body.move(dx, dz, 1);
+    // Behind a pillar or the glass: no shot, and the way round (a step to the side as it closes in) instead of walking into it.
+    if (d > far) a.body.move(clear ? dx : dx - dz * strafe * 0.9, clear ? dz : dz + dx * strafe * 0.9, 1);
     else if (d < near) a.body.move(-dx, -dz, 1);
     else a.body.move(-dz * strafe, dx * strafe, 0.8);
     // wedged against a pillar or a step: hop
@@ -335,3 +348,38 @@ async function drive(f, show, round, S, p) {
   }
   try { a.setBlocking(false); a.body.stop?.(); a.motor.setFocus(null); } catch { /* */ }
 }
+
+/** Is there nothing solid (a pillar, the glass wall) between the bot's eye and the target's chest? Arrows into a wall are wasted. */
+function clearShot(dim, from, tgt) {
+  try {
+    const to = tgt.getHeadLocation ? tgt.getHeadLocation() : { x: tgt.location.x, y: tgt.location.y + 1, z: tgt.location.z };
+    const dx = to.x - from.x, dy = (to.y - 0.4) - from.y, dz = to.z - from.z, len = Math.hypot(dx, dy, dz);
+    if (len < 1.5) return true;
+    const hit = dim.getBlockFromRay(from, { x: dx / len, y: dy / len, z: dz / len }, { maxDistance: len - 0.5, includeLiquidBlocks: false, includePassableBlocks: false });
+    return !hit;
+  } catch { return true; }
+}
+
+function putBack(player, saved, dim) {
+  try { player.setGameMode(saved.mode); } catch { /* */ }
+  try {
+    if (saved.spawn) player.setSpawnPoint({ dimension: world.getDimension(saved.spawn.dim), x: saved.spawn.x, y: saved.spawn.y, z: saved.spawn.z });
+    else player.setSpawnPoint(undefined);
+  } catch (e) { console.warn(`[colosseum] restoring the spawn point: ${e}`); }
+  try { player.teleport(saved.pos, { dimension: dim ?? world.getDimension('overworld') }); } catch { /* */ }
+}
+
+/** Put a player back from the stash a show that did not end properly left (a crash, a reload). */
+export function recoverPlayer(player) {
+  if (SHOW) return false;
+  let saved = null;
+  try { saved = JSON.parse(String(world.getDynamicProperty(STASH_KEY) ?? 'null')); } catch { /* */ }
+  if (!saved || saved.name !== player.name) return false;
+  putBack(player, saved, null);
+  try { world.setDynamicProperty(STASH_KEY, undefined); } catch { /* */ }
+  return true;
+}
+
+world.afterEvents.playerSpawn.subscribe((ev) => {
+  if (ev.initialSpawn) system.runTimeout(() => { try { recoverPlayer(ev.player); } catch { /* */ } }, 60);
+});

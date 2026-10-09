@@ -9,3 +9,5 @@
 {"t": "2026-10-09 08:58:27", "build": "u308", "ratio": 0.421, "margin": 0.6, "n": 1, "ranged": false, "hp0": 19.684999465942383, "lost": 3.5, "died": false, "secs": 41.6, "armor": 15, "shield": false, "night": false, "types": ["zombie"]}
 {"t": "2026-10-09 09:02:15", "build": "u308", "ratio": 0.495, "margin": 0.6, "n": 1, "ranged": false, "hp0": 20, "lost": 5, "died": false, "secs": 13.2, "armor": 0, "shield": false, "night": true, "types": ["drowned"]}
 {"t": "2026-10-09 09:02:20", "build": "u308", "ratio": 0.116, "margin": 0.6, "n": 1, "ranged": false, "hp0": 15.5, "lost": 0, "died": false, "secs": 3.8, "armor": 0, "shield": false, "night": true, "types": ["drowned"]}
+{"t": "2026-10-09 09:42:57", "build": "u311", "ratio": 0.455, "margin": 0.6, "n": 1, "ranged": true, "hp0": 20, "lost": 14, "died": false, "secs": 18.4, "armor": 0, "shield": false, "night": true, "types": ["skeleton"]}
+{"t": "2026-10-09 09:44:39", "build": "u311", "ratio": 0.48, "margin": 0.6, "n": 1, "ranged": false, "hp0": 20, "lost": 11, "died": false, "secs": 47.6, "armor": 0, "shield": false, "night": true, "types": ["spider"]}

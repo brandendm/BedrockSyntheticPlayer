@@ -38,3 +38,46 @@ test('roundWinner', () => {
 test('personality is one of the styles', () => {
   assert.ok(['archer', 'brawler', 'dancer'].includes(personality(() => 0.5).name));
 });
+
+import { gearFrom, loadoutKit, meleeIds, describeLoadout, LOADOUT_DEFAULT } from '../behavior_pack/scripts/core/colosseum.js';
+
+test('gear: default is full diamond, three weapons, bow, shield', () => {
+  const k = loadoutKit(LOADOUT_DEFAULT);
+  assert.deepEqual(k.slots.map((s) => s[1]), ['diamond_sword', 'diamond_axe', 'diamond_spear', 'bow', 'arrow', 'arrow', 'golden_apple']);
+  assert.deepEqual(Object.keys(k.worn), ['Head', 'Chest', 'Legs', 'Feet', 'Offhand']);
+  assert.equal(k.worn.Head[0], 'diamond_helmet');
+});
+
+test('gear: options parse, tiers and aliases, bad words warn and are ignored', () => {
+  const p = parseShow(['zombie', '4', 'armor=chain', 'weapon=gold', 'weapons=sword,mace', 'bow=off', 'shield=off', 'enchant=on']);
+  assert.equal(p.gear.armor, 'chain');
+  assert.deepEqual(meleeIds(p.gear), ['golden_sword', 'mace']);
+  assert.equal(p.gear.bow, false);
+  assert.equal(p.gear.shield, false);
+  assert.equal(loadoutKit(p.gear).worn.Head[0], 'chainmail_helmet');
+  assert.equal(loadoutKit(p.gear).worn.Offhand, undefined);
+  assert.equal(loadoutKit(p.gear).slots.some((s) => s[1] === 'arrow'), false);
+  assert.deepEqual(p.mob.id, 'zombie');
+  const bad = parseShow(['zombie', 'armor=cardboard', 'weapons=sword,laser']);
+  assert.equal(bad.gear.armor, 'diamond');
+  assert.deepEqual(bad.gear.weapons, ['sword']);
+  assert.equal(bad.warn.length, 2);
+  assert.equal(parseShow(['zombie', 'armor=none']).gear.armor, 'none');
+  assert.deepEqual(Object.keys(loadoutKit(parseShow(['zombie', 'armor=none', 'shield=off']).gear).worn), []);
+});
+
+test('gear: blue overrides the red loadout and inherits the rest', () => {
+  const p = parseShow(['bots', 'armor=netherite', 'blue.armor=leather', 'blue.weapon=stone']);
+  assert.equal(p.gear.armor, 'netherite');
+  assert.equal(p.blueGear.armor, 'leather');
+  assert.deepEqual(meleeIds(p.blueGear), ['stone_sword', 'stone_axe', 'stone_spear']);
+  assert.deepEqual(meleeIds(p.gear), ['diamond_sword', 'diamond_axe', 'diamond_spear']);
+  assert.match(describeLoadout(p.blueGear), /leather armor/);
+});
+
+test('gear: enchant puts enchantments on the pieces, the mace gets only unbreaking', () => {
+  const k = loadoutKit(parseShow(['zombie', 'enchant=on', 'weapons=sword,mace']).gear);
+  assert.deepEqual(k.slots[0][3], [['sharpness', 5], ['unbreaking', 3]]);
+  assert.deepEqual(k.slots[1][3], [['unbreaking', 3]]);
+  assert.equal(k.worn.Chest[1][0][0], 'protection');
+});
