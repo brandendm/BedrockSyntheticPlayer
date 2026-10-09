@@ -81,3 +81,29 @@ test('gear: enchant puts enchantments on the pieces, the mace gets only unbreaki
   assert.deepEqual(k.slots[1][3], [['unbreaking', 3]]);
   assert.equal(k.worn.Chest[1][0][0], 'protection');
 });
+
+import { parseEnch, fitEnch, ENCH_MELEE, ENCH_MACE } from '../behavior_pack/scripts/core/colosseum.js';
+
+test('enchantments: chosen lists parse, clamp, warn, and fit each item', () => {
+  const warn = [];
+  assert.deepEqual(parseEnch('sharpness,fire_aspect:9,knockback:1', { ...ENCH_MELEE, ...ENCH_MACE }, warn), [['sharpness', 5], ['fire_aspect', 2], ['knockback', 1]]);
+  parseEnch('sharpness,zzz', ENCH_MELEE, warn);
+  assert.equal(warn.length, 1);
+  assert.deepEqual(parseEnch('none', ENCH_MELEE), []);
+  assert.equal(parseEnch(undefined, ENCH_MELEE), null);
+  assert.deepEqual(fitEnch([['sharpness', 5], ['smite', 5], ['fire_aspect', 2]], ENCH_MELEE), [['sharpness', 5], ['fire_aspect', 2]]);
+  assert.deepEqual(fitEnch([['sharpness', 5], ['density', 5]], ENCH_MACE), [['density', 5]]);
+  assert.equal(fitEnch([['power', 5]], ENCH_MELEE), undefined);
+});
+
+test('enchantments in the kit: chosen ones replace the standard preset, per item', () => {
+  const p = parseShow(['zombie', 'weaponench=sharpness,fire_aspect,density', 'bowench=power,flame', 'armorench=protection:3,thorns', 'weapons=sword,mace', 'mount=on']);
+  const k = loadoutKit(p.gear);
+  assert.deepEqual(k.slots[0][3], [['sharpness', 5], ['fire_aspect', 2]]);
+  assert.deepEqual(k.slots[1][3], [['fire_aspect', 2], ['density', 5]]);
+  assert.deepEqual(k.slots.find((s) => s[1] === 'bow')[3], [['power', 5], ['flame', 1]]);
+  assert.deepEqual(k.worn.Chest[1], [['protection', 3], ['thorns', 3]]);
+  assert.equal(p.gear.mount, true);
+  assert.equal(loadoutKit(parseShow(['zombie', 'bowench=infinity']).gear).slots.filter((s) => s[1] === 'arrow').length, 1);
+  assert.equal(loadoutKit(parseShow(['zombie', 'enchant=on', 'armorench=none']).gear).worn.Chest[1], undefined);
+});

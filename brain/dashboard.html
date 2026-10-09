@@ -248,6 +248,7 @@
     <div class="row">
       <button data-cmd="spawn" id="spawnbtn">Spawn bot</button>
       <button class="danger" data-cmd="despawn">Despawn bot</button>
+      <button data-cmd="despawn others" title="Removes every other bot in the world (workers, leftovers, roaming ones); the main bot and any bots fighting in a colosseum show stay">Remove extra bots</button>
     </div>
     <div class="row">
       <input id="cmd" placeholder="Tell the bot anything: goto 120 64 -40, follow Steve, dig…">
@@ -302,8 +303,21 @@
       <label><input type="checkbox" data-aw="trident"> trident</label>
       <label><input type="checkbox" id="arbow" checked> bow</label>
       <label><input type="checkbox" id="arshield" checked> shield</label>
-      <label><input type="checkbox" id="arench"> enchanted</label>
+      <label><input type="checkbox" id="arench"> enchanted (standard)</label>
+      <label><input type="checkbox" id="armount"> on horseback</label>
     </div>
+    <details style="margin:0 0 10px"><summary class="muted">Choose enchantments (overrides "enchanted"; the highest level of each is used)</summary>
+      <div class="row"><span class="muted" style="min-width:64px">Weapons</span>
+        <label><input type="checkbox" data-e="w:sharpness"> Sharpness V</label><label><input type="checkbox" data-e="w:smite"> Smite V</label><label><input type="checkbox" data-e="w:bane_of_arthropods"> Bane V</label>
+        <label><input type="checkbox" data-e="w:fire_aspect"> Fire Aspect II</label><label><input type="checkbox" data-e="w:knockback"> Knockback II</label><label><input type="checkbox" data-e="w:looting"> Looting III</label>
+        <label><input type="checkbox" data-e="w:density"> Density V (mace)</label><label><input type="checkbox" data-e="w:breach"> Breach IV (mace)</label><label><input type="checkbox" data-e="w:impaling"> Impaling V (trident)</label>
+        <label><input type="checkbox" data-e="w:unbreaking"> Unbreaking III</label></div>
+      <div class="row"><span class="muted" style="min-width:64px">Bow</span>
+        <label><input type="checkbox" data-e="b:power"> Power V</label><label><input type="checkbox" data-e="b:punch"> Punch II</label><label><input type="checkbox" data-e="b:flame"> Flame</label><label><input type="checkbox" data-e="b:infinity"> Infinity</label><label><input type="checkbox" data-e="b:unbreaking"> Unbreaking III</label></div>
+      <div class="row"><span class="muted" style="min-width:64px">Armor</span>
+        <label><input type="checkbox" data-e="a:protection"> Protection IV</label><label><input type="checkbox" data-e="a:blast_protection"> Blast Prot. IV</label><label><input type="checkbox" data-e="a:projectile_protection"> Projectile Prot. IV</label><label><input type="checkbox" data-e="a:fire_protection"> Fire Prot. IV</label>
+        <label><input type="checkbox" data-e="a:thorns"> Thorns III</label><label><input type="checkbox" data-e="a:feather_falling"> Feather Falling IV</label><label><input type="checkbox" data-e="a:unbreaking"> Unbreaking III</label></div>
+    </details>
     <div class="row" id="arblue" hidden>
       <span class="muted">Blue team:</span>
       <label class="muted">Armor <select id="arbarmor"><option value="">same as red</option><option>diamond</option><option>netherite</option><option>iron</option><option>gold</option><option>chain</option><option>leather</option><option>none</option></select></label>
@@ -314,6 +328,7 @@
       <button class="danger" id="arstop">■ Stop (puts you back)</button>
       <button id="arclear" title="Removes the arena from the sky; it is otherwise kept for the next show">Take the arena down</button>
       <button id="arlist">Mob names</button>
+      <button data-cmd="despawn others" title="Removes bots roaming the world that are not in the show">Remove roaming bots</button>
     </div>
     <p class="note">Needs the bot spawned and a player picked under Control (you are moved to the stands and put back after; your respawn point is the stands while it runs). Against mobs it is night all through. Settings are remembered. <span class="muted" id="arpreview" style="font-family:var(--mono)"></span></p>
   </section>
@@ -447,17 +462,18 @@ $('admin').onkeydown = (e) => { if (e.key === 'Enter') $('runadmin').click(); };
 // ---- Colosseum (bots in gear against a mob or each other) ----
 const AR_MOBS = ['zombie','husk','drowned','zombie villager','skeleton','stray','bogged','wither skeleton','creeper','spider','cave spider','enderman','endermite','silverfish','witch','slime','magma cube','blaze','ghast','piglin','piglin brute','hoglin','zoglin','pillager','vindicator','evoker','vex','ravager','phantom','guardian','elder guardian','shulker','warden','breeze','creaking','wither','ender dragon','iron golem','snow golem','wolf','polar bear','panda','bee','goat','llama','fox','dolphin','cat','ocelot','cow','pig','sheep','chicken','rabbit','horse','donkey','mule','zombie horse','skeleton horse','camel','villager','wandering trader','squid','glow squid','cod','salmon','pufferfish','tropical fish','axolotl','turtle','frog','sniffer','armadillo','bat','parrot','strider','allay','random'];
 $('armoblist').innerHTML = AR_MOBS.map((m) => `<option value="${m}">`).join('');
-const AR_DEF = { mode: 'mobs', mob: 'zombie', count: 4, team: 2, rounds: 3, armor: 'diamond', weapon: 'diamond', weapons: ['sword', 'axe', 'spear'], bow: true, shield: true, ench: false, barmor: '', bweapon: '' };
+const AR_DEF = { mode: 'mobs', mob: 'zombie', count: 4, team: 2, rounds: 3, armor: 'diamond', weapon: 'diamond', weapons: ['sword', 'axe', 'spear'], bow: true, shield: true, ench: false, mount: false, es: [], barmor: '', bweapon: '' };
 function arRead() {
   return {
     mode: $('armode').value, mob: $('armob').value.trim().toLowerCase() || 'zombie', count: +$('arcount').value || 1, team: +$('arteam').value || 1, rounds: +$('arrounds').value || 1,
     armor: $('ararmor').value, weapon: $('arweapon').value, weapons: [...document.querySelectorAll('[data-aw]')].filter((c) => c.checked).map((c) => c.dataset.aw),
-    bow: $('arbow').checked, shield: $('arshield').checked, ench: $('arench').checked, barmor: $('arbarmor').value, bweapon: $('arbweapon').value,
+    bow: $('arbow').checked, shield: $('arshield').checked, ench: $('arench').checked, mount: $('armount').checked, es: [...document.querySelectorAll('[data-e]')].filter((c) => c.checked).map((c) => c.dataset.e), barmor: $('arbarmor').value, bweapon: $('arbweapon').value,
   };
 }
 function arWrite(c) {
   $('armode').value = c.mode; $('armob').value = c.mob; $('arcount').value = c.count; $('arteam').value = c.team; $('arrounds').value = c.rounds;
-  $('ararmor').value = c.armor; $('arweapon').value = c.weapon; $('arbow').checked = !!c.bow; $('arshield').checked = !!c.shield; $('arench').checked = !!c.ench;
+  $('ararmor').value = c.armor; $('arweapon').value = c.weapon; $('arbow').checked = !!c.bow; $('arshield').checked = !!c.shield; $('arench').checked = !!c.ench; $('armount').checked = !!c.mount;
+  document.querySelectorAll('[data-e]').forEach((x) => { x.checked = (c.es || []).includes(x.dataset.e); });
   document.querySelectorAll('[data-aw]').forEach((x) => { x.checked = c.weapons.includes(x.dataset.aw); });
   $('arbarmor').value = c.barmor; $('arbweapon').value = c.bweapon;
 }
@@ -471,6 +487,8 @@ function arCommand(c) {
   if (!c.bow) out.push('bow=off');
   if (!c.shield) out.push('shield=off');
   if (c.ench) out.push('enchant=on');
+  if (c.mount) out.push('mount=on');
+  for (const [g, key] of [['w', 'weaponench'], ['b', 'bowench'], ['a', 'armorench']]) { const l = c.es.filter((e) => e.startsWith(g + ':')).map((e) => e.slice(2)); if (l.length) out.push(`${key}=${l.join(',')}`); }
   if (c.mode === 'bots') { if (c.barmor) out.push(`blue.armor=${c.barmor}`); if (c.bweapon) out.push(`blue.weapon=${c.bweapon}`); }
   return out.join(' ');
 }
@@ -542,6 +560,14 @@ function render(d) {
     if (tp && tp.running) { $('testfill').style.width = `${Math.round((tp.done / Math.max(1, tp.total)) * 100)}%`; const left = tp.reading ? null : tp.deadline ? Math.max(0, Math.round((tp.deadline - Date.now()) / 1000)) : null; $('testbartxt').textContent = `${tp.done}/${tp.total} tests done${tp.current ? `, now ${tp.current}` : ''}${tp.human ? ' (you)' : ''}${tp.reading ? ' · reading the objective: your clock starts when you move' : ''}${left !== null ? ` · ${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')} left of ${tp.limitS}s` : ''}`; }
   } catch {}
   $('name').textContent = s.name || 'Scout';
+  // players (listed whether or not the bot is spawned)
+  const names = s.players || [];
+  if (names.join() !== players.join()) {
+    const cur = $('player').value;
+    players = names;
+    $('player').innerHTML = names.length ? names.map((n) => `<option>${n}</option>`).join('') : '<option value="">(none online)</option>';
+    if (names.includes(cur)) $('player').value = cur;
+  }
   if (!s.online) return;
   $('clock').textContent = `${clock(s.time, s.day)}${s.night ? ' · night' : ''}${d.jev?.enabled ? ` · Jev $${d.jev.usd_today.toFixed(4)} today` : ''}`;
   const doing = s.mode !== 'none' ? `${s.mode === 'fight' ? 'Fighting' : 'Running away'}` : s.stepLabel ? s.stepLabel[0].toUpperCase() + s.stepLabel.slice(1) : s.step ? pretty(s.step) : pretty(s.task);
@@ -558,14 +584,6 @@ function render(d) {
   $('under').textContent = (s.underground ? 'underground' : s.ravine ? `in a ravine (walls ${s.ravine})` : 'surface') + (s.underwater ? ' · underwater' : s.inWater ? ' · in water' : '') + (s.biome ? ` · ${s.biome}` : '');
   $('home').textContent = s.house ? `${s.house.x}, ${s.house.y}, ${s.house.z}${s.house.bed ? ' (bed)' : ''}`
     : s.project ? `building at ${s.project.x}, ${s.project.y}, ${s.project.z}: ${s.project.placed}/${s.project.total} blocks${s.project.needs && (s.project.needs.stone || s.project.needs.planks) ? ` (needs ${[s.project.needs.stone ? s.project.needs.stone + ' cobblestone' : '', s.project.needs.planks ? s.project.needs.planks + ' planks' : ''].filter(Boolean).join(', ')})` : ''}` : 'none yet';
-  // players
-  const names = s.players || [];
-  if (names.join() !== players.join()) {
-    const cur = $('player').value;
-    players = names;
-    $('player').innerHTML = names.length ? names.map((n) => `<option>${n}</option>`).join('') : '<option value="">(none online)</option>';
-    if (names.includes(cur)) $('player').value = cur;
-  }
   $('inv').innerHTML = (s.inventory || []).length
     ? s.inventory.map((it) => `<span class="chip${it.id === s.held ? ' held' : ''}">${pretty(it.id)} <b>${it.n}</b></span>`).join('')
     : '<span class="muted">empty</span>';

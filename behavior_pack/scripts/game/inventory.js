@@ -109,7 +109,9 @@ function itemFrom(d) {
   const it = new ItemStack(d.id, d.n);
   try { if (d.dmg) { const dur = it.getComponent('minecraft:durability'); if (dur) dur.damage = d.dmg; } } catch {}
   try {
-    if (d.en?.length) it.getComponent('minecraft:enchantable')?.addEnchantments(d.en.map(([id, level]) => ({ type: EnchantmentTypes.get(id), level })).filter((e) => e.type));
+    // (one at a time: a single enchantment the item will not take used to throw away the whole list)
+    const ench = it.getComponent('minecraft:enchantable');
+    for (const [id, level] of d.en ?? []) { try { const type = EnchantmentTypes.get(id); if (type) ench?.addEnchantment({ type, level }); } catch { /* not for this item */ } }
   } catch {}
   if (d.name) it.nameTag = d.name;
   return it;

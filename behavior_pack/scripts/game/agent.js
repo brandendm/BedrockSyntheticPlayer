@@ -1877,7 +1877,7 @@ export class Agent {
       house: this.homestead.house ? { ...this.homestead.house } : null,
       project: this.homestead.project ? { ...this.homestead.project, ...this.homestead.projectProgress(), needs: this.homestead.shortfall ?? null } : null,
       smelting: this.homestead.smeltJob ? { secondsLeft: Math.max(0, Math.round((this.homestead.smeltJob.readyAt - system.currentTick) / 20)) } : null,
-      players: world.getPlayers().filter((pl) => pl.id !== this.sim.id).map((pl) => pl.name),
+      players: world.getPlayers().filter((pl) => pl.id !== this.sim.id && !pl.name.startsWith(CONFIG.botName)).map((pl) => pl.name),
       goals: this.goals(),
       toggles: GOALS.map((g) => ({ ...g, on: this.toggles()[g.key] })),
       order: orderOf(this.memory.data.settings),

@@ -679,7 +679,7 @@ def make_handler(engine: DecisionEngine, key: str | None = None):
                 return self._admin_post()
             if self.path == "/api/command":
                 try:
-                    text = str(self._read_json().get("text", "")).strip()[:320]
+                    text = str(self._read_json().get("text", "")).strip()[:480]
                 except ValueError:
                     return self._send(400, {"error": "bad json"})
                 if not text:

@@ -96,7 +96,44 @@ const ARMOR_PREFIX = { leather: 'leather', chain: 'chainmail', iron: 'iron', gol
 const TIER_PREFIX = { wood: 'wooden', stone: 'stone', iron: 'iron', gold: 'golden', diamond: 'diamond', netherite: 'netherite' };
 const TIERED = new Set(['sword', 'axe', 'spear']);
 
-export const LOADOUT_DEFAULT = { armor: 'diamond', weapon: 'diamond', weapons: ['sword', 'axe', 'spear'], bow: true, shield: true, enchant: false, apples: 4 };
+export const LOADOUT_DEFAULT = { armor: 'diamond', weapon: 'diamond', weapons: ['sword', 'axe', 'spear'], bow: true, shield: true, enchant: false, apples: 4, mount: false, wench: null, bench: null, aench: null };
+
+// Enchantments: what each kind of item takes (id -> top level), and the ones that exclude each other.
+export const ENCH_MELEE = { sharpness: 5, smite: 5, bane_of_arthropods: 5, knockback: 2, fire_aspect: 2, looting: 3, unbreaking: 3, mending: 1 };
+export const ENCH_MACE = { density: 5, breach: 4, wind_burst: 3, fire_aspect: 2, unbreaking: 3, mending: 1 };
+export const ENCH_TRIDENT = { impaling: 5, loyalty: 3, channeling: 1, unbreaking: 3, mending: 1 };
+export const ENCH_BOW = { power: 5, punch: 2, flame: 1, infinity: 1, unbreaking: 3, mending: 1 };
+export const ENCH_ARMOR = { protection: 4, fire_protection: 4, blast_protection: 4, projectile_protection: 4, thorns: 3, feather_falling: 4, unbreaking: 3, mending: 1 };
+const EXCLUSIVE = [['sharpness', 'smite', 'bane_of_arthropods'], ['protection', 'fire_protection', 'blast_protection', 'projectile_protection'], ['infinity', 'mending'], ['density', 'breach']];
+const WEAPON_ANY = { ...ENCH_MELEE, ...ENCH_MACE, ...ENCH_TRIDENT };
+const maxOf = (m) => m;
+
+/** "sharpness:5,fire_aspect" -> [['sharpness', 5], ['fire_aspect', 2]] (level defaults to the top, is clamped to it); unknown names go to warn. */
+export function parseEnch(str, table, warn = [], label = 'enchantment') {
+  if (str === undefined) return null;
+  if (str === 'none' || str === '') return [];
+  const out = [];
+  for (const tok of str.split(',').map((t) => t.trim()).filter(Boolean)) {
+    const [id, lv] = tok.split(':');
+    const top = maxOf(table)[id];
+    if (!top) { warn.push(`${label} "${id}" (try ${Object.keys(table).join(', ')})`); continue; }
+    const level = Math.max(1, Math.min(top, Math.floor(Number(lv)) || top));
+    if (!out.some(([i]) => i === id)) out.push([id, level]);
+  }
+  return out;
+}
+
+/** A wanted list cut down to what this item takes, and to one of each exclusive group (the first named). */
+export function fitEnch(list, allowed) {
+  if (!list) return undefined;
+  const out = [];
+  for (const [id, lv] of list) {
+    if (!allowed[id]) continue;
+    if (EXCLUSIVE.some((g) => g.includes(id) && out.some(([o]) => g.includes(o)))) continue;
+    out.push([id, Math.min(lv, allowed[id])]);
+  }
+  return out.length ? out : undefined;
+}
 
 const ALIAS = { wooden: 'wood', golden: 'gold', chainmail: 'chain', nothing: 'none', off: 'none', no: 'none' };
 const truth = (v, d) => (v === undefined ? d : /^(on|yes|true|1)$/.test(v) ? true : /^(off|no|false|0)$/.test(v) ? false : d);
@@ -121,6 +158,10 @@ export function gearFrom(opts, team = 'red', base = null) {
   load.bow = truth(get('bow'), load.bow);
   load.shield = truth(get('shield'), load.shield);
   load.enchant = truth(get('enchant'), load.enchant);
+  load.mount = truth(get('mount'), load.mount);
+  const we = parseEnch(get('weaponench'), WEAPON_ANY, warn, 'weapon enchantment'); if (we) load.wench = we;
+  const be = parseEnch(get('bowench'), ENCH_BOW, warn, 'bow enchantment'); if (be) load.bench = be;
+  const ae = parseEnch(get('armorench'), ENCH_ARMOR, warn, 'armor enchantment'); if (ae) load.aench = ae;
   const ap = Number(get('apples'));
   if (Number.isFinite(ap) && get('apples') !== undefined) load.apples = Math.max(0, Math.min(16, Math.floor(ap)));
   return { load, warn };
@@ -134,18 +175,21 @@ export function meleeIds(load) {
 /** A loadout as the arena kit() arguments: { slots: [[slot, id, n, enchants?]], worn: { Head: [id, enchants?], ... } }. */
 export function loadoutKit(load) {
   const slots = [];
-  const wen = load.enchant ? [['sharpness', 5], ['unbreaking', 3]] : undefined;
+  const wlist = load.wench ?? (load.enchant ? [['sharpness', 5], ['unbreaking', 3]] : null);
+  const blist = load.bench ?? (load.enchant ? [['power', 5], ['unbreaking', 3]] : null);
+  const alist = load.aench ?? (load.enchant ? [['protection', 4], ['unbreaking', 3]] : null);
   let i = 0;
-  for (const id of meleeIds(load)) slots.push([i++, id, 1, (id === 'trident' || id === 'mace') ? (load.enchant ? [['unbreaking', 3]] : undefined) : wen]);
+  for (const id of meleeIds(load)) slots.push([i++, id, 1, fitEnch(wlist, id === 'mace' ? ENCH_MACE : id === 'trident' ? ENCH_TRIDENT : ENCH_MELEE)]);
   if (load.bow) {
-    slots.push([i++, 'bow', 1, load.enchant ? [['power', 5], ['unbreaking', 3]] : undefined]);
-    slots.push([i++, 'arrow', 64], [i++, 'arrow', 64]);
+    slots.push([i++, 'bow', 1, fitEnch(blist, ENCH_BOW)]);
+    if (!(blist ?? []).some(([id]) => id === 'infinity')) slots.push([i++, 'arrow', 64], [i++, 'arrow', 64]);
+    else slots.push([i++, 'arrow', 1]);
   }
   if (load.apples > 0) slots.push([i++, 'golden_apple', load.apples]);
   const worn = {};
   if (load.armor !== 'none') {
-    const pre = ARMOR_PREFIX[load.armor], pen = load.enchant ? [['protection', 4], ['unbreaking', 3]] : undefined;
-    for (const [slot, piece] of [['Head', 'helmet'], ['Chest', 'chestplate'], ['Legs', 'leggings'], ['Feet', 'boots']]) worn[slot] = [`${pre}_${piece}`, pen];
+    const pre = ARMOR_PREFIX[load.armor];
+    for (const [slot, piece] of [['Head', 'helmet'], ['Chest', 'chestplate'], ['Legs', 'leggings'], ['Feet', 'boots']]) worn[slot] = [`${pre}_${piece}`, fitEnch(alist, slot === 'Feet' ? ENCH_ARMOR : { ...ENCH_ARMOR, feather_falling: 0 })];
   }
   if (load.shield) worn.Offhand = ['shield'];
   return { slots, worn };
@@ -154,5 +198,7 @@ export function loadoutKit(load) {
 /** One line for chat. */
 export function describeLoadout(load) {
   const w = [...meleeIds(load).map((x) => x.replace(/_/g, ' ')), ...(load.bow ? ['bow'] : [])];
-  return `${load.armor === 'none' ? 'no armor' : `${load.armor} armor`}${load.shield ? ' + shield' : ''}, ${w.join(', ') || 'bare hands'}${load.enchant ? ', enchanted' : ''}`;
+  const nice = (l) => l.map(([id, lv]) => `${id.replace(/_/g, ' ')} ${lv}`).join(', ');
+  const ench = [load.wench ? `weapons: ${nice(load.wench) || 'plain'}` : '', load.bench ? `bow: ${nice(load.bench) || 'plain'}` : '', load.aench ? `armor: ${nice(load.aench) || 'plain'}` : ''].filter(Boolean);
+  return `${load.armor === 'none' ? 'no armor' : `${load.armor} armor`}${load.shield ? ' + shield' : ''}, ${w.join(', ') || 'bare hands'}${load.enchant && !ench.length ? ', enchanted' : ''}${ench.length ? `, enchanted (${ench.join('; ')})` : ''}${load.mount ? ', on horseback' : ''}`;
 }

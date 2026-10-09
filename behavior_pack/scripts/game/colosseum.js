@@ -5,7 +5,7 @@
 // team of bots. Best of N rounds. A bot that falls to 2 hearts is knocked out (healed and sat on the bench, not killed) and the round goes to the
 // last side standing. Everything is put back at the end: your position and game mode, mob griefing, the bots sent home. The arena stays up in the
 // sky for the next show (`!bot colosseum clear` takes it down).
-import { system, world } from '@minecraft/server';
+import { system, world, ItemStack } from '@minecraft/server';
 import { CONFIG } from '../config.js';
 import { crew } from './crew.js';
 import { WorldMemory } from './memory.js';
@@ -205,7 +205,9 @@ async function runShow(agent, player, p) {
         if (!f.w.sim.isValid) continue;
         giveKit(f.w.sim, f.kit); topUp(f.w.sim);
         const i = show.fighters.filter((g) => g.team === f.team).indexOf(f), n = show.fighters.filter((g) => g.team === f.team).length;
+        await dropHorse(f);
         f.w.sim.teleport({ x: S.cx + (f.team === 'A' ? -R + 1 : R - 1) + 0.5, y: G, z: S.cz + (i - (n - 1) / 2) * 4 + 0.5 });
+        if (f.load.mount) await mountUp(f);
       }
       if (p.mode === 'mobs') {
         for (let i = 0; i < p.count; i++) {
@@ -217,7 +219,7 @@ async function runShow(agent, player, p) {
         }
         if (show.abort) break;
       } else {
-        for (const f of show.fighters) { f.w.sim.teleport({ x: S.cx + (f.team === 'A' ? -R + 1 : R - 1) + 0.5, y: G, z: f.w.sim.location.z }); }
+        
       }
       title(`Round ${rd}`, `${teamName('A')}§r vs ${teamName('B')}`);
       for (let c = 3; c >= 1 && !show.abort; c--) { bar(`§e${c}...`); await wait(20); }
@@ -236,6 +238,7 @@ async function runShow(agent, player, p) {
             f.out = true; f.kos++;
             say(`§e${f.label}§r is knocked out!`);
             topUp(f.w.sim);
+            await dropHorse(f);
             f.w.sim.teleport({ x: S.cx + (f.team === 'A' ? -R - 3 : R + 3) + 0.5, y: S.G + 3, z: S.cz - R - 1 + 0.5 });
           }
         }
@@ -266,6 +269,7 @@ async function runShow(agent, player, p) {
     for (const e of show.foes) { try { e.remove(); } catch { /* */ } }
     try { for (const e of dim.getEntities({ location: { x: S.cx, y: S.G, z: S.cz }, maxDistance: 30, type: 'minecraft:arrow' })) e.remove(); } catch { /* */ }
     for (const f of show.fighters) {
+      try { f.horse?.remove(); } catch { /* */ }
       try { f.w.setBlocking(false); f.w.motor.setFocus(null); f.w.arenaHook = null; f.w.testHold = false; } catch { /* */ }
       try { f.w.sim.disconnect(); } catch { try { dim.runCommand(`kick "${f.w.sim.name}"`); } catch { /* */ } }
       const i = crew.members.indexOf(f.w); if (i >= 0) crew.members.splice(i, 1);
@@ -321,6 +325,8 @@ async function drive(f, show, round, S, p) {
     const flying = FLYERS.has(String(tgt.typeId).replace('minecraft:', '')) || dy > 2.5;
     const creeper = /creeper/.test(tgt.typeId);
     const arrows = invCounts(sim).arrow ?? 0;
+    // Eyes on the target the whole time (the motor's idle head drift turned them away between swings and shots): the view is set and held.
+    try { const aimAt = tgt.getHeadLocation ? tgt.getHeadLocation() : { x: you.x, y: you.y + 1.2, z: you.z }; a.motor.setFocus(aimAt); sim.lookAtLocation(aimAt); } catch { /* */ }
     const clear = clearShot(a.dim, sim.getHeadLocation(), tgt);
     const bowNow = f.load.bow && arrows > 0 && clear && ((d > f.style.bowFrom && !(f.style.name === 'brawler' && d < 10)) || (flying && d > 3) || (creeper && d < 9));
     if (bowNow) {
@@ -334,7 +340,8 @@ async function drive(f, show, round, S, p) {
     const weapon = bestWeapon(f.melee.filter((id) => invCounts(sim)[id]).map((id) => ({ id }))) ?? f.melee.find((id) => invCounts(sim)[id]) ?? null;
     if (chosen !== (weapon ?? 'fist')) { hold(sim, weapon); chosen = weapon ?? 'fist'; }
     const wr = weaponReach(weapon), every = Math.max(10, wr.cooldown);
-    const far = Math.max(2.4, wr.reach - 0.3), near = Math.max(f.style.close - 1, wr.minReach + 0.25);
+    const riding = !!f.horse && f.horse.isValid && !!a.horses.mounted();
+    const far = Math.max(2.4, wr.reach - 0.3), near = riding ? Math.max(1.2, wr.minReach + 0.2) : Math.max(f.style.close - 1, wr.minReach + 0.25);
     try { sim.lookAtEntity(tgt); } catch { /* */ }
     // Behind a pillar or the glass: no shot, and the way round (a step to the side as it closes in) instead of walking into it.
     if (d > far) a.body.move(clear ? dx : dx - dz * strafe * 0.9, clear ? dz : dz + dx * strafe * 0.9, 1);
@@ -383,3 +390,33 @@ export function recoverPlayer(player) {
 world.afterEvents.playerSpawn.subscribe((ev) => {
   if (ev.initialSpawn) system.runTimeout(() => { try { recoverPlayer(ev.player); } catch { /* */ } }, 60);
 });
+
+/** Ids of the bots in the show that is on now (so a clean-up of roaming bots leaves them alone). */
+export function colosseumKeepIds() { return SHOW ? SHOW.fighters.map((f) => f.w.sim?.id).filter(Boolean) : []; }
+
+/** A horse for this bot: spawned under it, tamed and saddled by command, and sat on. Without one it fights on foot. */
+async function mountUp(f) {
+  const a = f.w, sim = a.sim, dim = a.dim;
+  try {
+    const l = sim.location;
+    const h = dim.spawnEntity('minecraft:horse', { x: l.x, y: l.y, z: l.z });
+    f.horse = h;
+    try { h.getComponent('minecraft:tamemount')?.setTamed(false); } catch { /* */ }
+    try { h.getComponent('minecraft:inventory').container.setItem(0, new ItemStack('minecraft:saddle', 1)); } catch { /* */ }
+    await wait(6);
+    let ok = false;
+    try { ok = await a.horses.getOn(a.taskGen, h); } catch { /* */ }
+    if (!ok) {
+      const hl = h.location;
+      try { sim.runCommand(`ride @s start_riding @e[type=horse,x=${hl.x},y=${hl.y},z=${hl.z},c=1] teleport_rider`); } catch { /* */ }
+      await wait(6);
+      ok = !!a.horses.mounted();
+    }
+    f.mounted = ok;
+    if (!ok) console.warn(`[colosseum] ${f.name} could not get on its horse: fighting on foot`);
+  } catch (e) { console.warn(`[colosseum] horse for ${f.name}: ${e}`); }
+}
+
+async function dropHorse(f) {
+  try { if (f.horse) { try { await f.w.horses.getOff(f.w.taskGen); } catch { try { f.w.sim.runCommand('ride @s stop_riding'); } catch { /* */ } } try { f.horse.remove(); } catch { /* */ } f.horse = null; } } catch { /* */ }
+}

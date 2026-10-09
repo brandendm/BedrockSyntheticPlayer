@@ -10,7 +10,7 @@ import { spawnSimulatedPlayer } from '@minecraft/server-gametest';
 import { Agent } from './game/agent.js';
 import { runTests, setTestSeeds } from './game/scenarios.js';
 import { arenaCommand } from './game/arenas.js';
-import { colosseumCommand } from './game/colosseum.js';
+import { colosseumCommand, colosseumKeepIds } from './game/colosseum.js';
 import { ironFarmCommand } from './game/ironfarm.js';
 import { farmBuildCommand } from './game/farmbuild.js';
 import { poll, sendEvent } from './game/bridge.js';
@@ -528,6 +528,17 @@ function handle(text, player) {
     arenaCommand(agent, player, aw);
     return;
   }
+  if (lower === 'despawn others' || lower === 'despawn extras' || lower === 'cleanup bots') {
+    // Every simulated player that is not the main bot (nor fighting in a colosseum show now): hired workers, benchmark bots, orphans left by a script reload.
+    const keep = new Set([agent?.sim?.id, ...colosseumKeepIds()].filter(Boolean));
+    let n = 0;
+    for (const p of world.getPlayers()) {
+      if (keep.has(p.id) || !p.name.startsWith(CONFIG.botName)) continue;
+      try { p.dimension.runCommand(`kick "${p.name}"`); n++; } catch { try { p.kill(); n++; } catch { /* */ } }
+    }
+    for (let i = crew.members.length - 1; i >= 0; i--) if (!keep.has(crew.members[i].sim?.id)) { try { crew.members[i].newTask(null); } catch { /* */ } crew.members.splice(i, 1); }
+    return reply(player, n ? `Removed ${n} extra bot${n === 1 ? '' : 's'}.` : 'No extra bots found.');
+  }
   if (lower === 'despawn') {
     if (agent?.sim.isValid) { try { agent.saveKit(); } catch {} agent.sim.disconnect(); } // its things come back with it on the next spawn
     agent = null;
@@ -645,7 +656,7 @@ system.runInterval(() => {
   if (polling) return;
   polling = true;
   let status;
-  try { status = agent?.sim.isValid ? agent.status() : { online: false, name: CONFIG.botName, players: world.getPlayers().map((pl) => pl.name) }; } catch (e) { status = { online: !!agent, error: `${e}` }; }
+  try { status = agent?.sim.isValid ? agent.status() : { online: false, name: CONFIG.botName, players: world.getPlayers().map((pl) => pl.name).filter((n) => !n.startsWith(CONFIG.botName)) }; } catch (e) { status = { online: !!agent, error: `${e}` }; }
   // (u296) The hired bots too: who is out there and what each is doing (the dashboard and the benchmark read this).
   try {
     if (crew.members.length) status = { ...status, crew: crew.members.filter((w) => w.sim?.isValid).map((w) => { const l = w.sim.location; return { name: w.sim.name, hp: Math.round(w.health()), mode: w.mode, task: w.task?.kind ?? null, step: w.autoStep ?? null, pos: [Math.round(l.x), Math.round(l.y), Math.round(l.z)] }; }) };
