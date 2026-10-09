@@ -1,0 +1,11 @@
+synced 107 files, build u307
+queued probewater (expect u307)
+AUTO RUN RESULT  started 2026-10-09 08:36:04  game build u307
+asked: probewater  (reload: yes, expecting u307)
+why: ship u307
+outcome: ok
+  SUMMARY probewater: PASS
+  run probewater: 8.3 s, path 17.2, idle 8.3 s, jumps 0, placed 0
+  probewater: PASS - 155 ticks recorded, 2 marks, 0 entities watched
+
+SHIP: ALL PASS
