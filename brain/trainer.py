@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import Callable, Optional
 
 from . import curriculum, miner, runstats, tpe
+from .durable import append_line, atomic_write
 
 GROUPS = ["tow", "combat", "cave", "play"]
 # What each group's real-game confirmation runs, and the guards that must not get worse whatever the group. (Names: behavior_pack/scripts/game/scenarios.js.)
@@ -132,7 +133,7 @@ class Trainer:
 
     def _save(self, name: str, obj) -> None:
         try:
-            (self.dir / name).write_text(json.dumps(obj, indent=1), encoding="utf-8")
+            atomic_write(self.dir / name, json.dumps(obj, indent=1))
         except OSError:
             pass
 
@@ -141,8 +142,7 @@ class Trainer:
 
     def journal(self, rec: dict) -> None:
         try:
-            with (self.dir / "journal.jsonl").open("a", encoding="utf-8") as fh:
-                fh.write(json.dumps({"t": now(), **rec}) + "\n")
+            append_line(self.dir / "journal.jsonl", json.dumps({"t": now(), **rec}))
         except OSError:
             pass
 

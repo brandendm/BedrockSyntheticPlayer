@@ -296,6 +296,7 @@
           </div>
           <div class="row" id="armobrow">
             <label class="muted">Mob <input id="armob" list="armoblist" placeholder="any mob" size="16"></label>
+            <label class="muted">Their armor <select id="arfoearmor"><option value="none">none</option><option>leather</option><option>chain</option><option>iron</option><option>diamond</option><option>netherite</option></select></label>
             <label class="muted">How many <input id="arcount" type="number" min="1" max="12" value="4" style="width:60px"></label>
           </div>
           <div class="row">
@@ -341,6 +342,7 @@
         </div>
         <div class="box">
           <h3>3. The arena</h3>
+          <div class="row chips"><label title="The whole arena is water to the roof; everyone gets water breathing; horses are off"><input type="checkbox" id="arwater"> flood the arena (underwater fight)</label></div>
           <div class="row chips"><label><input type="checkbox" id="arpark" checked> clear roaming bots and hold the main bot still <span class="muted">(saves performance)</span></label></div>
           <p class="note">Built high above you. Spectators are fenced in, the stands are lit, mob griefing is off and mobs do not spawn while it runs, so nothing in it can be destroyed. You are put in the top row (creative) and back where you were after.</p>
         </div>
@@ -507,7 +509,7 @@ function arRead() {
   return {
     mode: $('armode').value, mob: $('armob').value.trim().toLowerCase() || 'zombie', count: +$('arcount').value || 1, team: +$('arteam').value || 1, rounds: +$('arrounds').value || 1,
     armor: $('ararmor').value, weapon: $('arweapon').value, weapons: [...document.querySelectorAll('[data-aw]')].filter((c) => c.checked).map((c) => c.dataset.aw),
-    bow: $('arbow').checked, xbow: $('arxbow').checked, shield: $('arshield').checked, ench: $('arench').checked, mount: $('armount').checked, es: [...document.querySelectorAll('[data-e]')].filter((c) => c.checked).map((c) => c.dataset.e), barmor: $('arbarmor').value, bweapon: $('arbweapon').value, park: $('arpark').checked, bouts: +$('arbouts').value || 200,
+    bow: $('arbow').checked, xbow: $('arxbow').checked, shield: $('arshield').checked, ench: $('arench').checked, mount: $('armount').checked, es: [...document.querySelectorAll('[data-e]')].filter((c) => c.checked).map((c) => c.dataset.e), barmor: $('arbarmor').value, bweapon: $('arbweapon').value, park: $('arpark').checked, water: $('arwater').checked, foearmor: $('arfoearmor').value, bouts: +$('arbouts').value || 200,
   };
 }
 function arWrite(c) {
@@ -515,7 +517,7 @@ function arWrite(c) {
   $('ararmor').value = c.armor; $('arweapon').value = c.weapon; $('arbow').checked = !!c.bow; $('arxbow').checked = !!c.xbow; $('arshield').checked = !!c.shield; $('arench').checked = !!c.ench; $('armount').checked = !!c.mount;
   document.querySelectorAll('[data-e]').forEach((x) => { x.checked = (c.es || []).includes(x.dataset.e); });
   document.querySelectorAll('[data-aw]').forEach((x) => { x.checked = c.weapons.includes(x.dataset.aw); });
-  $('arbarmor').value = c.barmor; $('arbweapon').value = c.bweapon; $('arpark').checked = c.park !== false; $('arbouts').value = c.bouts || 200;
+  $('arbarmor').value = c.barmor; $('arbweapon').value = c.bweapon; $('arpark').checked = c.park !== false; $('arwater').checked = !!c.water; $('arfoearmor').value = c.foearmor || 'none'; $('arbouts').value = c.bouts || 200;
 }
 function arCommand(c) {
   const out = ['colosseum'];
@@ -532,6 +534,8 @@ function arCommand(c) {
   if (c.mount) out.push('mount=on');
   for (const [g, key] of [['w', 'weaponench'], ['b', 'bowench'], ['a', 'armorench']]) { const l = c.es.filter((e) => e.startsWith(g + ':')).map((e) => e.slice(2)); if (l.length) out.push(`${key}=${l.join(',')}`); }
   if (!c.park) out.push('park=off');
+  if (c.water) out.push('water=on');
+  if (c.foearmor && c.foearmor !== 'none') out.push(`foearmor=${c.foearmor}`);
   if (c.mode === 'bots') { if (c.barmor) out.push(`blue.armor=${c.barmor}`); if (c.bweapon) out.push(`blue.weapon=${c.bweapon}`); }
   return out.join(' ');
 }

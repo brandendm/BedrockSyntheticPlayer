@@ -47,6 +47,20 @@ class ScenarioTest(unittest.TestCase):
             n[s["ranged"]] = n.get(s["ranged"], 0) + 1
         self.assertLess(max(n.values()) - min(n.values()), 3)  # balanced, not random
 
+    def test_water_and_enchants_are_trained_and_kept_apart(self):
+        lab = L.Lab(Path(tempfile.mkdtemp()), random.Random(2))
+        land = [lab._scenario("land") for _ in range(120)]
+        wet = [lab._scenario("water") for _ in range(60)]
+        self.assertTrue(all(s["env"] == "water" and not s["horse"] for s in wet))
+        self.assertTrue(any(s["mob"] == "guardian" for s in wet))
+        self.assertTrue(all(s["mob"] != "enderman" for s in wet))
+        for k in "wbxa":
+            self.assertEqual({s["ench"][k] for s in land}, set(L.ENCH[k]), k)
+        self.assertTrue(any(s["horse"] for s in land) and any(not s["horse"] for s in land))
+        self.assertTrue(any(s["foeArmor"] != "none" for s in land) and all(s["foeArmor"] == "none" for s in land if s["mob"] not in L.WEARERS))
+        self.assertEqual({s["apples"] for s in land}, {0, 2, 4})
+        self.assertEqual(wet[0]["enchLists"]["w"], L.ENCH["w"][wet[0]["ench"]["w"]])
+
     def test_damage_taken_costs_points(self):
         base = {"outcome": "cleared", "foeHp0": 40, "foeHpEnd": 0, "hpEnd": 18, "ticks": 300, "limit": 1200}
         self.assertGreater(L.score({**base, "takenMelee": 2}), L.score({**base, "takenMelee": 12}))
@@ -92,7 +106,7 @@ class LabTest(unittest.TestCase):
 
     def test_candidate_changes_one_to_three(self):
         self.lab.next(TABLE)
-        c = self.lab.state["cand"]
+        c = next(T["cand"] for T in self.lab.state["tracks"].values() if T.get("cand"))
         self.assertTrue(1 <= len(c["changed"]) <= 3)
         for k, d in TABLE.items():
             self.assertTrue(d["min"] <= c["doctrine"][k] <= d["max"])
@@ -100,9 +114,9 @@ class LabTest(unittest.TestCase):
     def test_it_learns_the_horse(self):
         rng = random.Random(9)
         self.play(400, rng)
-        champ = self.lab.state["champion"]
+        champ = self.lab.state["tracks"]["land"]["champion"]
         self.assertGreater(champ["useHorse"], 0.5, champ)
-        self.assertGreaterEqual(len(self.lab.state["promotions"]), 1)
+        self.assertGreaterEqual(len(self.lab.state["tracks"]["land"]["promotions"]), 1)
         rep = self.lab.build_report()
         self.assertIn("useHorse", rep)
         self.assertIn("The horse", rep)
@@ -129,12 +143,54 @@ class LabTest(unittest.TestCase):
         self.assertIn("horse", t)
         self.assertIn("arrows landed", t)
 
+    def test_tracks_have_their_own_champion_and_report(self):
+        rng = random.Random(4)
+        seen = set()
+        for _ in range(240):
+            b = self.lab.next(TABLE)["bout"]
+            seen.add(b["env"])
+            rec = fake_bout(b["doctrine"], rng, b["mob"])
+            rec.update(charges=3, chargeHits=2, chargeDealt=14, hitsMelee=5, dealtMelee=25)
+            self.lab.result(b["id"], rec)
+        self.assertEqual(seen, {"land", "water"})
+        rep = self.lab.build_report()
+        self.assertIn("Underwater", rep)
+        self.assertIn("On dry land", rep)
+        self.assertIn("Spear charges on horseback", rep)
+        self.assertIn("Enchanted against plain", rep)
+        info = self.lab.info()
+        self.assertEqual(set(info["champions"]), {"land", "water"})
+
+    def test_kill_between_the_bout_row_and_the_state_save(self):
+        d = Path(self.tmp.name) / "lab"
+        a = self.lab.next(TABLE)["bout"]
+        old = (d / "state.json").read_text()          # (the state as it was when the bout was given out)
+        self.lab.result(a["id"], fake_bout(a["doctrine"], random.Random(1), a["mob"]))
+        (d / "state.json").write_text(old)             # (killed before the new state was saved: the row is on disk, the queue still holds the bout)
+        again = L.Lab(Path(self.tmp.name))
+        self.assertEqual(again.state["bouts"], 1)
+        self.assertNotIn(a["id"], [b["id"] for b in again.state["queue"]])
+        nxt = again.next(TABLE)["bout"]
+        self.assertNotEqual(nxt["id"], a["id"])
+        self.assertEqual(nxt["pair"], a["pair"])      # the pair-mate is still to play
+
+    def test_writes_are_atomic(self):
+        from brain.durable import atomic_write, append_line
+        f = Path(self.tmp.name) / "x.json"
+        atomic_write(f, "one")
+        atomic_write(f, "two")
+        self.assertEqual(f.read_text(), "two")
+        self.assertFalse((Path(self.tmp.name) / "x.json.tmp").exists())
+        append_line(f, "a")
+        append_line(f, "b\n")
+        self.assertEqual(f.read_text(), "twoa\nb\n")
+
     def test_state_survives_restart(self):
         self.play(12, random.Random(2))
         n = self.lab.state["bouts"]
         again = L.Lab(Path(self.tmp.name))
         self.assertEqual(again.state["bouts"], n)
-        self.assertEqual(again.state["champion"], self.lab.state["champion"])
+        self.assertEqual(again.state["tracks"]["land"]["champion"], self.lab.state["tracks"]["land"]["champion"])
 
 
 if __name__ == "__main__":

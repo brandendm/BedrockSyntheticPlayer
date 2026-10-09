@@ -7,7 +7,7 @@ import { solvePitch } from '../core/ballistics.js';
 
 
 /** The aim step shared by the bow and the crossbow: the view set at the pitch the drop needs, ahead of a moving target. */
-function makeAim(agent, target, speed) {
+function makeAim(agent, target, speed, lead = 1) {
   const sim = agent.sim;
   return () => {
     const eye = sim.getHeadLocation();
@@ -15,7 +15,7 @@ function makeAim(agent, target, speed) {
     try {
       const head = target.getHeadLocation(), v = target.getVelocity();
       const flight = Math.hypot(head.x - eye.x, head.z - eye.z) / speed;
-      tgt = { x: head.x + v.x * flight, y: head.y - 0.3 + v.y * flight * 0.5, z: head.z + v.z * flight };
+      tgt = { x: head.x + v.x * flight * lead, y: head.y - 0.3 + v.y * flight * 0.5 * lead, z: head.z + v.z * flight * lead };
     } catch { tgt = { ...target.location, y: target.location.y + 1 }; }
     const dx = tgt.x - eye.x, dz = tgt.z - eye.z, d = Math.hypot(dx, dz) || 1;
     const th = solvePitch(d, tgt.y - eye.y);
@@ -62,19 +62,19 @@ export async function shootCrossbow(agent, target, { strafe = null, stop = () =>
  * @param {import('@minecraft/server').Entity} target
  * @param {{ strafe?: {x:number,z:number}|null, stop?: () => boolean, speed?: number }} [opts]
  */
-export async function shootAt(agent, target, { strafe = null, stop = () => false, speed = 2.8 } = {}) {
+export async function shootAt(agent, target, { strafe = null, stop = () => false, speed = 2.8, lead = 1, draw = 22 } = {}) {
   const sim = agent.sim;
   if (!invCounts(sim).arrow || !invCounts(sim).bow) return false;
   hold(sim, 'bow');
   try {
     // Aimed again every two ticks through the whole draw, not once at the start: a draw is 1.4 s, and a player who strafes is a metre or
     // more from where they were when the draw began (the duel: 40 s of arrows, none landed).
-    const aim = makeAim(agent, target, speed);
+    const aim = makeAim(agent, target, speed, lead);
     aim();
     await system.waitTicks(4);
     const item = container(sim)?.getItem(sim.selectedSlotIndex);
     try { /** @type {any} */ (sim).useItem(item); } catch { return false; }
-    for (let k = 0; k < 11 && !stop(); k++) {
+    for (let k = 0; k < Math.max(3, Math.round(draw / 2)) && !stop(); k++) {
       try { aim(); } catch { break; }
       if (strafe) agent.body.move(strafe.x, strafe.z, 0.5);
       await system.waitTicks(2);

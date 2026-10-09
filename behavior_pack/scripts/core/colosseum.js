@@ -55,7 +55,7 @@ export function parseShow(args) {
     if (['report', 'apply', 'reset', 'status'].includes(a[1])) return { cmd: 'lab', sub: a[1] };
     return { cmd: 'show', mode: 'mobs', mob: { id: 'zombie', known: true }, count: 1, team: 1, rounds: 9999, park: truth(opts.park, true), gear: gear.load, blueGear: blueGear.load, warn, lab: { bouts: Math.max(1, Math.min(9999, Math.floor(bouts ?? 9999))) } };
   }
-  const out = { cmd: 'show', mode: 'mobs', mob: null, count: 1, team: 2, rounds: Math.max(1, Math.min(9, Math.floor(rounds ?? 3))), park: truth(opts.park, true), gear: gear.load, blueGear: blueGear.load, warn };
+  const out = { cmd: 'show', mode: 'mobs', mob: null, count: 1, team: 2, rounds: Math.max(1, Math.min(9, Math.floor(rounds ?? 3))), park: truth(opts.park, true), water: truth(opts.water, false), foeArmor: ARMOR_TIERS.includes(opts.foearmor) ? opts.foearmor : 'none', gear: gear.load, blueGear: blueGear.load, warn };
   if (a[0] === 'bots' || a[0] === 'bot') {
     out.mode = 'bots'; out.team = Math.max(1, Math.min(3, Math.floor(team ?? Number(a[1]) ?? 1) || 1));
     return out;
@@ -107,6 +107,7 @@ export const LOADOUT_DEFAULT = { armor: 'diamond', weapon: 'diamond', weapons: [
 export const ENCH_MELEE = { sharpness: 5, smite: 5, bane_of_arthropods: 5, knockback: 2, fire_aspect: 2, looting: 3, unbreaking: 3, mending: 1 };
 export const ENCH_MACE = { density: 5, breach: 4, wind_burst: 3, fire_aspect: 2, unbreaking: 3, mending: 1 };
 export const ENCH_TRIDENT = { impaling: 5, loyalty: 3, channeling: 1, unbreaking: 3, mending: 1 };
+export const ENCH_XBOW = { quick_charge: 3, piercing: 4, multishot: 1, unbreaking: 3, mending: 1 };
 export const ENCH_BOW = { power: 5, punch: 2, flame: 1, infinity: 1, unbreaking: 3, mending: 1 };
 export const ENCH_ARMOR = { protection: 4, fire_protection: 4, blast_protection: 4, projectile_protection: 4, thorns: 3, feather_falling: 4, unbreaking: 3, mending: 1 };
 const EXCLUSIVE = [['sharpness', 'smite', 'bane_of_arthropods'], ['protection', 'fire_protection', 'blast_protection', 'projectile_protection'], ['infinity', 'mending'], ['density', 'breach']];
@@ -173,6 +174,14 @@ export function gearFrom(opts, team = 'red', base = null) {
   return { load, warn };
 }
 
+/** Mobs that put armor on (the rest ignore a helmet given to them). */
+export const ARMOR_WEARERS = new Set(['zombie', 'husk', 'drowned', 'zombie_villager', 'skeleton', 'stray', 'bogged', 'wither_skeleton', 'piglin', 'piglin_brute', 'zombie_pigman']);
+/** The four items of a tier for `replaceitem entity ... slot.armor.<slot>`: { head, chest, legs, feet } (null for 'none'). */
+export function armorItems(tier) {
+  const pre = ARMOR_PREFIX[tier];
+  return pre ? { head: `${pre}_helmet`, chest: `${pre}_chestplate`, legs: `${pre}_leggings`, feet: `${pre}_boots` } : null;
+}
+
 /** The item ids a loadout's melee weapons are (best first is the driver's choice). */
 export function meleeIds(load) {
   return load.weapons.map((k) => (TIERED.has(k) ? `${TIER_PREFIX[load.weapon]}_${k}` : k));
@@ -186,7 +195,7 @@ export function loadoutKit(load) {
   const alist = load.aench ?? (load.enchant ? [['protection', 4], ['unbreaking', 3]] : null);
   let i = 0;
   for (const id of meleeIds(load)) slots.push([i++, id, 1, fitEnch(wlist, id === 'mace' ? ENCH_MACE : id === 'trident' ? ENCH_TRIDENT : ENCH_MELEE)]);
-  if (load.crossbow) slots.push([i++, 'crossbow', 1]);
+  if (load.crossbow) slots.push([i++, 'crossbow', 1, fitEnch(load.xench ?? null, ENCH_XBOW)]);
   if (load.bow) slots.push([i++, 'bow', 1, fitEnch(blist, ENCH_BOW)]);
   if (load.bow || load.crossbow) {
     if (!load.bow || !(blist ?? []).some(([id]) => id === 'infinity')) slots.push([i++, 'arrow', 64], [i++, 'arrow', 64]);

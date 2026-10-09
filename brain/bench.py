@@ -10,6 +10,8 @@ import time
 from pathlib import Path
 from typing import Optional
 
+from .durable import append_line
+
 KEEP = 40
 
 
@@ -22,8 +24,7 @@ def store(root: Path, evt: dict) -> dict:
         "t": time.strftime("%Y-%m-%d %H:%M:%S"), "build": evt.get("build"), "minutes": evt.get("minutes"), "ran_s": evt.get("ran_s"), "bots": evt.get("bots"),
         "summary": summary, "runs": evt.get("runs") or [], "notes": evt.get("notes") or [], "policy": evt.get("policy"),
     }
-    with (d / "runs.jsonl").open("a", encoding="utf-8") as fh:
-        fh.write(json.dumps(rec) + "\n")
+    append_line(d / "runs.jsonl", json.dumps(rec))
     write_leaderboard(root)
     return rec
 

@@ -13,6 +13,8 @@ import math
 import time
 from pathlib import Path
 
+from .durable import append_line
+
 MIN_N = 150
 TARGET = 0.2           # the bad-outcome rate we accept at the margin
 LO, HI = 0.35, 1.0     # tunables.js fightMargin's range
@@ -27,8 +29,7 @@ def store(root: Path, evt: dict) -> None:
     d.mkdir(parents=True, exist_ok=True)
     keep = {k: evt.get(k) for k in ("t", "build", "ratio", "margin", "n", "ranged", "hp0", "lost", "died", "secs", "armor", "shield", "night", "types")}
     keep["t"] = time.strftime("%Y-%m-%d %H:%M:%S")
-    with (d / "episodes.jsonl").open("a", encoding="utf-8") as fh:
-        fh.write(json.dumps(keep) + "\n")
+    append_line(d / "episodes.jsonl", json.dumps(keep))
 
 
 def load(root: Path, last: int = 3000) -> list:

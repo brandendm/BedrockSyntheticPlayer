@@ -22,6 +22,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from .decisions import DecisionEngine
+from .durable import append_line
 from .jev_client import Budget, JevClient
 from .llm_client import LocalLLM
 
@@ -175,8 +176,7 @@ def store_house(evt: dict) -> None:
     keep["at"] = time.time()
     try:
         LOG_DIR.mkdir(parents=True, exist_ok=True)
-        with (LOG_DIR / "learned_house.jsonl").open("a", encoding="utf-8") as fh:
-            fh.write(json.dumps(keep) + "\n")
+        append_line(LOG_DIR / "learned_house.jsonl", json.dumps(keep))
     except OSError:
         pass
     with _lock:

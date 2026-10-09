@@ -9,12 +9,12 @@ import { system, world, ItemStack } from '@minecraft/server';
 import { CONFIG } from '../config.js';
 import { crew } from './crew.js';
 import { WorldMemory } from './memory.js';
-import { hold, invCounts } from './inventory.js';
+import { hold, invCounts, container } from './inventory.js';
 import { Builder, kit, giveKit, topUp, tell } from './arena.js';
 import { shootAt, shootCrossbow } from './aim.js';
 import { weaponReach, bestWeapon } from '../core/tactics.js';
-import { MOB_LIST, AQUATIC, FLYERS, parseShow, roundWinner, KO_HP, personality, loadoutKit, meleeIds, describeLoadout, LOADOUT_DEFAULT } from '../core/colosseum.js';
-import { norm, flag, fromStyle, spacing, shootNow, pickTarget, labLoad, pickWeapon, speedOf } from '../core/doctrine.js';
+import { MOB_LIST, AQUATIC, FLYERS, parseShow, roundWinner, KO_HP, personality, loadoutKit, meleeIds, describeLoadout, LOADOUT_DEFAULT, ARMOR_WEARERS, armorItems } from '../core/colosseum.js';
+import { norm, flag, fromStyle, spacing, shootNow, pickTarget, labLoad, pickWeapon, speedOf, kindOf, SHOOTERS } from '../core/doctrine.js';
 import { makeLab, labAdmin } from './lab.js';
 import { applyPolicy, diffFromDefaults } from '../core/tunables.js';
 
@@ -25,6 +25,7 @@ const AREA = 'bsp_colosseum';
 const SITE_KEY = 'colosseum:site';
 const NAMES = ['Brutus', 'Maximus', 'Spartacus', 'Flavia', 'Cassius', 'Octavia', 'Marcus', 'Livia'];
 const STASH_KEY = 'colosseum:player';
+const RULES_KEY = 'colosseum:rules';
 
 /** @type {any} */
 let SHOW = null;
@@ -41,7 +42,7 @@ export function colosseumCommand(agent, player, words) {
   const say = (m) => (player ? player.sendMessage(`§6[Colosseum]§r ${m}`) : tell(m));
   const p = parseShow(words);
   if (p.cmd === 'help') {
-    return say('`!bot colosseum <mob> [count] [team N] [rounds N]` (e.g. zombie 6, iron golem 2, wither, random), `!bot colosseum bots [team N] [rounds N]` (red vs blue), `list`, `stop`, `clear`. `lab [bouts N]` is the learning loop (one bot, bout after bout, the brain keeps the best doctrine; `lab report|apply|reset`). Gear: armor=none|leather|chain|iron|gold|diamond|netherite weapon=wood|stone|iron|gold|diamond|netherite weapons=sword,axe,spear,mace,trident bow=on|off shield=on|off enchant=on|off park=on|off (park: remove roaming bots and hold the main bot still during the show, default on) (blue.armor=... for the blue team). Default: full diamond, sword/axe/spear, bow, shield.');
+    return say('`!bot colosseum <mob> [count] [team N] [rounds N]` (e.g. zombie 6, iron golem 2, wither, random), `!bot colosseum bots [team N] [rounds N]` (red vs blue), `water=on` floods the whole arena (everyone breathes water). `foearmor=leather|chain|iron|diamond|netherite` puts armor on the mobs that can wear it. `list`, `stop`, `clear`. `lab [bouts N]` is the learning loop (one bot, bout after bout, the brain keeps the best doctrine; `lab report|apply|reset`). Gear: armor=none|leather|chain|iron|gold|diamond|netherite weapon=wood|stone|iron|gold|diamond|netherite weapons=sword,axe,spear,mace,trident bow=on|off shield=on|off enchant=on|off park=on|off (park: remove roaming bots and hold the main bot still during the show, default on) (blue.armor=... for the blue team). Default: full diamond, sword/axe/spear, bow, shield.');
   }
   if (p.cmd === 'lab') { labAdmin(p.sub, agent, applyPolicy, diffFromDefaults).then((ls) => ls.forEach(say)).catch((e) => say(`lab: ${e}`)); return; }
   if (p.cmd === 'list') return say(`Mobs: ${MOB_LIST.join(', ')}. Any other id is tried as typed.`);
@@ -122,14 +123,15 @@ async function build(dim, s, wet) {
   // The spectators cannot fall out: the whole outer square has a floor (the corners were open air), and a glass wall stands round it, four blocks above the top row.
   const w = R + TIERS + 2;
   B.fill(cx - w, G, cz - w, cx + w, G, cz + w, 'stone_bricks', 'keep');
-  for (const [x1, z1, x2, z2] of [[cx - w, cz - w, cx + w, cz - w], [cx - w, cz + w, cx + w, cz + w], [cx - w, cz - w, cx - w, cz + w], [cx + w, cz - w, cx + w, cz + w]]) B.fill(x1, G + 1, z1, x2, G + TIERS + 4, z2, 'glass');
+  for (const [x1, z1, x2, z2] of [[cx - w, cz - w, cx + w, cz - w], [cx - w, cz + w, cx + w, cz + w], [cx - w, cz - w, cx - w, cz + w], [cx + w, cz - w, cx + w, cz + w]]) B.fill(x1, G + 1, z1, x2, G + H + 1, z2, 'glass');
+  // ... and a roof over all of it, stands included (the arena's own roof is at the same height), so nothing can get in from the sky: phantoms.
+  B.fill(cx - w, G + H + 1, cz - w, cx + w, G + H + 1, cz + w, 'glass', 'keep');
   // Lit so nothing hostile can spawn there: a sea lantern in the steps every five blocks, and in the corners.
   for (let k = 1; k <= TIERS; k += 2) {
     const o = R + 1 + k;
     for (let i = -R; i <= R; i += 5) { B.set(cx + i, G + k, cz + o, 'sea_lantern'); B.set(cx + i, G + k, cz - o, 'sea_lantern'); B.set(cx + o, G + k, cz + i, 'sea_lantern'); B.set(cx - o, G + k, cz + i, 'sea_lantern'); }
   }
   for (const sx of [-1, 1]) for (const sz of [-1, 1]) for (const r of [R + 3, w - 1]) for (const q of [R + 3, w - 1]) B.set(cx + sx * r, G, cz + sz * q, 'sea_lantern');
-  if (wet) B.fill(cx - R, G + 1, cz - R, cx + R, G + 2, cz + R, 'water');
   const fails = await B.run(() => SHOW?.abort);
   if (fails) console.warn(`[colosseum] ${fails} build commands failed, first: ${B.failed.join(' | ')}`);
 }
@@ -150,9 +152,9 @@ export function removeExtraBots(keep) {
 async function runShow(agent, player, p) {
   const dim = agent.dim;
   if (dim.id !== 'minecraft:overworld') { tell('The colosseum is built in the overworld.'); return; }
-  const wet = p.mode === 'mobs' && AQUATIC.has(p.mob.id);
+  const wet = p.mode === 'mobs' && AQUATIC.has(p.mob.id) || !!p.water;
   const S = siteFor(agent, player);
-  const show = { abort: false, round: 0, over: true, fighters: [], foes: [], mounts: [], stats: new Map(), saved: null };
+  const show = { abort: false, round: 0, over: true, fighters: [], foes: [], mounts: [], flood: -1, stats: new Map(), saved: null };
   SHOW = show;
   const say = (m) => { tell(m); };
   const title = (t, sub = '') => { try { for (const pl of world.getPlayers()) pl.onScreenDisplay.setTitle(t, { subtitle: sub, fadeInDuration: 6, stayDuration: 50, fadeOutDuration: 10 }); } catch { /* */ } };
@@ -168,10 +170,11 @@ async function runShow(agent, player, p) {
     // Nothing else spawns while the show is on (the stands are dark and the night is long): the rule is put back after.
     try { show.spawnWas = world.gameRules?.doMobSpawning ?? true; world.gameRules.doMobSpawning = false; } catch { try { dim.runCommand('gamerule domobspawning false'); show.spawnWas = true; } catch { /* */ } }
     // Against mobs it is night all through (undead burn in daylight, and the roof is glass): the time is stopped and put back after.
-    if (p.mode === 'mobs') {
-      try { show.time = world.getTimeOfDay(); show.cycle = world.gameRules?.doDaylightCycle ?? true; world.gameRules.doDaylightCycle = false; } catch { /* */ }
-      try { dim.runCommand('time set midnight'); } catch { try { dim.runCommand('time set 18000'); } catch { /* */ } }
-    }
+    // Always night, in every kind of show and in the lab (the glass roof lets the sun through, and undead burn in it): the time is stopped at midnight and put back after.
+    try { show.time = world.getTimeOfDay(); show.cycle = world.gameRules?.doDaylightCycle ?? true; world.gameRules.doDaylightCycle = false; } catch { /* */ }
+    try { dim.runCommand('time set midnight'); } catch { try { dim.runCommand('time set 18000'); } catch { /* */ } }
+    // What the world was before, written down NOW: if the server is killed mid-show these rules would otherwise stay changed for good; they are put back when the world next loads.
+    try { world.setDynamicProperty(RULES_KEY, JSON.stringify({ grief: griefWas, spawn: show.spawnWas, cycle: show.cycle, time: show.time })); } catch { /* */ }
     const G = S.G + 1; // (standing y)
     const seat = { x: S.cx + 0.5, y: S.G + TIERS + 1, z: S.cz + R + 1 + TIERS + 0.5 };
     // who watches
@@ -201,7 +204,7 @@ async function runShow(agent, player, p) {
         const w = crew.factory(name, where, agent, { memory: new WorldMemory(null) });
         crew.members.push(w);
         w.autoEnabled = false; w.testHold = true; w.newTask(null);
-        w.arenaHook = { onDeath() {}, onRespawn() {}, mobTypes: [], swims: wet, fightId: () => null };
+        w.arenaHook = { onDeath() {}, onRespawn() {}, mobTypes: [], get swims() { return show.flood > 0 || wet; }, fightId: () => null };
         const style = personality();
         const label = NAMES[nm++ % NAMES.length];
         try { w.sim.nameTag = `${team === 'A' ? '§c' : '§9'}${label}`; } catch { /* */ }
@@ -220,7 +223,7 @@ async function runShow(agent, player, p) {
         if (ev.damage < 0.2 && ev.damage > 0) return; // (the nudge that makes a mob angry at a fighter, see provoke)
         const cause = String(ev.damageSource?.cause ?? '');
         const f = show.stats.get(ev.damageSource?.damagingEntity?.id);
-        if (f) { f.hits++; f.dmg += ev.damage; if (cause === 'projectile') { f.rec.hitsArrow++; f.rec.dealtArrow += ev.damage; } else { f.rec.hitsMelee++; f.rec.dealtMelee += ev.damage; } }
+        if (f) { f.hits++; f.dmg += ev.damage; if (cause === 'projectile') { f.rec.hitsArrow++; f.rec.dealtArrow += ev.damage; } else { f.rec.hitsMelee++; f.rec.dealtMelee += ev.damage; if (f.charging) { f.rec.chargeHits++; f.rec.chargeDealt += ev.damage; } } }
         const g = show.stats.get(ev.hurtEntity?.id);
         if (g) {
           const k = cause === 'projectile' ? 'takenArrow' : /explosion/i.test(cause) ? 'takenBlast' : cause === 'entityAttack' ? 'takenMelee' : 'takenOther';
@@ -253,13 +256,16 @@ async function runShow(agent, player, p) {
         const f0 = show.fighters[0];
         if (!b || show.abort) { show.abort = true; break; }
         if (!f0 || !f0.w.sim.isValid) { say('§cLab: the fighter is gone; stopping.'); show.abort = true; break; }
-        p.mob = { id: b.mob, known: true }; p.count = b.count; p.baby = !!b.baby; p.jockey = b.jockey || null;
+        p.mob = { id: b.mob, known: true }; p.count = b.count; p.baby = !!b.baby; p.jockey = b.jockey || null; p.foeArmor = b.foeArmor || 'none'; p.water = b.env === 'water';
         f0.doctrine = norm(b.doctrine);
         f0.load = labLoad(b, f0.doctrine);
         const lk = loadoutKit(f0.load);
         f0.kit = kit(lk.slots, lk.worn); f0.melee = meleeIds(f0.load);
         f0.rec = newRec(); f0.mounted = false; f0.boutLimit = b.limit;
       } else for (const f of show.fighters) f.rec = newRec();
+      // the water: none, the shallows for a mob that needs water, or the whole arena to the roof (water=on / a lab bout under water)
+      const depth = p.water ? H : p.mode === 'mobs' && AQUATIC.has(p.mob.id) ? 2 : 0;
+      if (show.flood !== depth) { await setFlood(dim, S, depth); show.flood = depth; }
       // reset the field
       for (const e of dim.getEntities({ location: { x: S.cx, y: S.G, z: S.cz }, maxDistance: 30 })) { if (/arrow|item|xp_orb/.test(e.typeId) || show.foes.includes(e) || show.mounts.includes(e)) { try { e.remove(); } catch { /* */ } } }
       show.foes = []; show.mounts = [];
@@ -268,10 +274,11 @@ async function runShow(agent, player, p) {
         f.out = false; f.target = null;
         if (!f.w.sim.isValid) continue;
         giveKit(f.w.sim, f.kit); topUp(f.w.sim);
+        if (show.flood > 0) breathe(f.w.sim);
         const i = show.fighters.filter((g) => g.team === f.team).indexOf(f), n = show.fighters.filter((g) => g.team === f.team).length;
         await dropHorse(f);
         f.w.sim.teleport({ x: S.cx + (f.team === 'A' ? -R + 1 : R - 1) + 0.5, y: G, z: S.cz + (i - (n - 1) / 2) * 4 + 0.5 });
-        if (f.load.mount) await mountUp(f);
+        if (f.load.mount && show.flood < 3) await mountUp(f);
       }
       if (p.mode === 'mobs') {
         for (let i = 0; i < p.count; i++) {
@@ -285,6 +292,7 @@ async function runShow(agent, player, p) {
       } else {
         
       }
+      if (show.flood > 0) for (const m of show.foes) breathe(m);
       if (!lab) title(`Round ${rd}`, `${teamName('A')}§r vs ${teamName('B')}`);
       for (let c = lab ? 1 : 3; c >= 1 && !show.abort; c--) { bar(`§e${c}...`); await wait(20); }
       if (show.abort) break;
@@ -309,6 +317,7 @@ async function runShow(agent, player, p) {
           }
         }
         if (system.currentTick % 40 === 0) provoke(show, p);
+        if (system.currentTick % 100 === 0) { try { const td = world.getTimeOfDay(); if (td < 13500 || td > 22500) dim.runCommand('time set midnight'); } catch { /* */ } }
         if (system.currentTick % 6 === 0) { show.foes = foesNow(dim, S, p, show); strays(dim, S, p, show); }
         else show.foes = show.foes.filter((m) => { try { return m.isValid; } catch { return false; } });
         const a = show.fighters.filter((f) => f.team === 'A' && !f.out).length;
@@ -360,7 +369,7 @@ async function runShow(agent, player, p) {
       try { dim.runCommand(`time set ${Math.floor(show.time)}`); } catch { /* */ }
     }
     if (player && show.saved && player.isValid) putBack(player, show.saved, dim);
-    try { world.setDynamicProperty(STASH_KEY, undefined); } catch { /* */ }
+    try { world.setDynamicProperty(STASH_KEY, undefined); world.setDynamicProperty(RULES_KEY, undefined); } catch { /* */ }
     try { dim.runCommand(`tickingarea remove ${AREA}`); } catch { /* */ }
     SHOW = null;
     bar('');
@@ -385,7 +394,7 @@ function enemiesOf(f, show, p) {
 
 /** What a bout is measured by (sent to the lab with the outcome): how the damage went both ways, what was used and how far off the fight was. */
 function newRec() {
-  return { swings: 0, shots: 0, hitsMelee: 0, hitsArrow: 0, dealtMelee: 0, dealtArrow: 0, takenMelee: 0, takenArrow: 0, takenBlast: 0, takenOther: 0, takenFrom: {}, mountedTicks: 0, shieldTicks: 0, bowTicks: 0, retreatTicks: 0, retreats: 0, jumps: 0, distSum: 0, distN: 0, hpMin: 20, weapon: '', weaponTicks: {}, hpTL: [], foeTL: [], rangedTicks: {}, foeSpeed: 0, lastTL: -99 };
+  return { swings: 0, shots: 0, hitsMelee: 0, hitsArrow: 0, dealtMelee: 0, dealtArrow: 0, takenMelee: 0, takenArrow: 0, takenBlast: 0, takenOther: 0, takenFrom: {}, mountedTicks: 0, shieldTicks: 0, bowTicks: 0, retreatTicks: 0, retreats: 0, jumps: 0, distSum: 0, distN: 0, hpMin: 20, weapon: '', weaponTicks: {}, hpTL: [], foeTL: [], charges: 0, chargeHits: 0, chargeDealt: 0, eats: 0, cornerTicks: 0, hitRuns: 0, rangedTicks: {}, foeSpeed: 0, lastTL: -99 };
 }
 
 // One bot's fight. Every number it is decided by is in f.doctrine (core/doctrine.js); f.rec is what gets measured.
@@ -393,6 +402,8 @@ async function drive(f, show, round, S, p) {
   const a = f.w, sim = a.sim, D = f.doctrine, rec = f.rec;
   let lastSwing = -99, strafe = 1, nextStrafe = 0, nextShot = 0, chosen = '', lastPos = null, lastPosT = 0, lastT = system.currentTick;
   let retreatUntil = 0, noRetreatUntil = 0, jumpAt = -99;
+  const cs = { mode: 'run', since: system.currentTick };
+  let backUntil = 0, eatCool = 0;
   const live = () => !show.over && show.round === round && !f.out && alive(sim) && a.sim === sim;
   while (live()) {
     await wait(2);
@@ -402,7 +413,7 @@ async function drive(f, show, round, S, p) {
     if (!foes.length) { a.setBlocking(false); continue; }
     const me = sim.location, myHp = hpOf(sim);
     rec.hpMin = Math.min(rec.hpMin, myHp);
-    const info = foes.map((e) => ({ id: e.id, e, dist: d3(me, e.location), hp: hpOf(e) }));
+    const info = foes.map((e) => ({ id: e.id, e, dist: d3(me, e.location), hp: hpOf(e), type: String(e.typeId).replace('minecraft:', '') }));
     const pick = pickTarget(D, info, f.target?.id);
     const tgt = (info.find((x) => x.id === pick) ?? info[0]).e;
     f.target = tgt;
@@ -429,8 +440,23 @@ async function drive(f, show, round, S, p) {
     const shoot = async (opts) => {
       if (chosen !== ranged) { hold(sim, ranged); chosen = ranged; }
       rec.rangedTicks[ranged] = (rec.rangedTicks[ranged] ?? 0) + 1;
-      return ranged === 'crossbow' ? shootCrossbow(a, tgt, opts) : shootAt(a, tgt, opts);
+      return ranged === 'crossbow' ? shootCrossbow(a, tgt, { ...opts, lead: D.aimLead }) : shootAt(a, tgt, { ...opts, lead: D.aimLead, draw: Math.round(D.drawTicks) });
     };
+    const nearest = info.reduce((m, x) => Math.min(m, x.dist), 99);
+    // Hurt and carrying a golden apple: eat it (when nothing is on it, or when it is nearly dead anyway).
+    if (f.load.apples > 0 && (invCounts(sim).golden_apple ?? 0) > 0 && t >= eatCool && myHp <= D.eatHp && (nearest >= D.eatSafe || myHp <= D.eatHp - 3)) {
+      eatCool = t + 80; rec.eats++;
+      try { hold(sim, 'golden_apple'); chosen = 'golden_apple'; a.setBlocking(false); sim.useItem(container(sim)?.getItem(sim.selectedSlotIndex)); } catch { /* */ }
+      for (let k = 0; k < 18 && live(); k++) { if (nearest < 5) a.body.move(-dx, -dz, 0.7); await wait(2); }
+      try { sim.stopUsingItem(); } catch { /* */ }
+      continue;
+    }
+    // A crowd: back into the nearest corner so only a few can reach at once.
+    if (flag(D.cornerUp) && foes.length >= Math.round(D.cornerFoes) && !riding && nearest > 3.5) {
+      const cx = S.cx + (me.x >= S.cx ? 1 : -1) * (R - 1.5), cz = S.cz + (me.z >= S.cz ? 1 : -1) * (R - 1.5);
+      const dc = Math.hypot(cx - me.x, cz - me.z);
+      if (dc > 2) { a.setBlocking(false); a.body.move((cx - me.x) / dc, (cz - me.z) / dc, 1); rec.cornerTicks += dt; continue; }
+    }
     // Hurt: break off and keep away (behind the shield, shooting if there is a bow) for a while, then go back in.
     if (t >= retreatUntil && t >= noRetreatUntil && myHp <= D.retreatHp && d < 9 && fspeed <= D.kiteMaxSpeed) { retreatUntil = t + Math.round(D.retreatTicks); noRetreatUntil = retreatUntil + Math.round(D.retreatTicks); rec.retreats++; }
     const retreating = t < retreatUntil;
@@ -453,7 +479,7 @@ async function drive(f, show, round, S, p) {
     }
     // The weapon it thinks best for this fight: its damage a second, weighted by how the doctrine likes that kind, with the crowd and the fast enemy in mind.
     const have = f.melee.filter((id) => invCounts(sim)[id]).map((id) => { const w = weaponReach(id); return { id, rate: w.damage * 10 / Math.max(10, w.cooldown) }; });
-    const weapon = pickWeapon(D, have, { foes: foes.length, fast: fspeed > D.kiteMaxSpeed, far: d > 4 });
+    const weapon = pickWeapon(D, have, { foes: foes.length, fast: fspeed > D.kiteMaxSpeed, far: d > 4, mounted: riding });
     if (chosen !== (weapon ?? 'fist')) { hold(sim, weapon); chosen = weapon ?? 'fist'; }
     rec.weaponTicks[chosen] = (rec.weaponTicks[chosen] ?? 0) + dt;
     if (!rec.weapon || rec.weaponTicks[chosen] > (rec.weaponTicks[rec.weapon] ?? 0)) rec.weapon = chosen;
@@ -462,23 +488,53 @@ async function drive(f, show, round, S, p) {
     try { sim.lookAtEntity(tgt); } catch { /* */ }
     // Behind a pillar or the glass: no shot, and the way round (a step to the side as it closes in) instead of walking into it.
     const lat = (clear ? 0.25 : 1) * D.weave;
-    if (d > far) a.body.move(dx - dz * strafe * lat, dz + dx * strafe * lat, 1);
+    const isShooter = SHOOTERS.has(String(tgt.typeId).replace('minecraft:', ''));
+    // A spear from a galloping horse: run up from `chargeFrom` blocks, ride straight through the enemy jabbing as it passes (the hit grows with the speed), then turn and run up again.
+    const lance = riding && kindOf(weapon) === 'spear' && flag(D.chargeSpear);
+    f.charging = false;
+    if (lance) {
+      const wall = Math.abs(me.x - S.cx) > R - 2 || Math.abs(me.z - S.cz) > R - 2;
+      if (cs.mode === 'run' && (d >= D.chargeFrom || (wall && d > 5) || t - cs.since > 60)) { cs.mode = 'go'; cs.since = t; rec.charges++; }
+      else if (cs.mode === 'go' && (d < 1.5 || t - cs.since > 50)) { cs.mode = 'run'; cs.since = t; }
+      if (cs.mode === 'go') { f.charging = true; a.body.move(dx, dz, 1); }
+      else a.body.move(-dx * 0.75 - dz * strafe * 0.6, -dz * 0.75 + dx * strafe * 0.6, 1);
+    } else if (t < backUntil) a.body.move(-dx, -dz, 1);
+    else if (d > far) a.body.move(dx - dz * strafe * (isShooter ? D.rangedWeave * (clear ? 0.25 : 1) : lat), dz + dx * strafe * (isShooter ? D.rangedWeave * (clear ? 0.25 : 1) : lat), 1);
     else if (d < near) a.body.move(-dx, -dz, 1);
     else a.body.move(-dz * strafe, dx * strafe, D.strafeSpeed);
+    if (show.flood > 2 && dy > 1.2) { try { sim.jump(); } catch { /* */ } }   // (under water the way up is a jump)
     // wedged against a pillar or a step: hop
     if (t - lastPosT >= 10) { if (lastPos && d > far && Math.hypot(me.x - lastPos.x, me.z - lastPos.z) < 0.25) { try { sim.jump(); } catch { /* */ } nextStrafe = 0; } lastPos = { ...me }; lastPosT = t; }
     const ready = t - lastSwing >= every;
-    const block = shield && !ready && d < D.shieldRange;
+    const block = shield && !lance && ((!ready && d < D.shieldRange) || (isShooter && d > 5 && D.shieldArrows > 0.5));
     a.setBlocking(block);
     if (block) rec.shieldTicks += dt;
     const inReach = d3(me, you) <= wr.reach + D.swingSlack && d >= wr.minReach && a.facing({ x: you.x, y: me.y, z: you.z }, 24);
     if (ready && inReach) {
       // a hit while falling is a critical: some of the time it jumps first and swings on the way down
-      if (jumpAt < 0 && !riding && Math.random() < D.critJump) { try { sim.jump(); rec.jumps++; jumpAt = t; } catch { /* */ } }
-      if (jumpAt < 0 || t - jumpAt >= 7) { try { sim.attackEntity(tgt); rec.swings++; } catch { /* */ } lastSwing = t; jumpAt = -99; }
+      if (jumpAt < 0 && !riding && Math.random() < (kindOf(weapon) === 'mace' ? D.maceJump : D.critJump)) { try { sim.jump(); rec.jumps++; jumpAt = t; } catch { /* */ } }
+      if (jumpAt < 0 || t - jumpAt >= 7) { try { sim.attackEntity(tgt); rec.swings++; } catch { /* */ } lastSwing = t; jumpAt = -99; if (Math.random() < D.hitRun) { backUntil = t + Math.round(D.hitRunTicks); rec.hitRuns++; } }
     }
   }
   try { a.setBlocking(false); a.body.stop?.(); a.motor.setFocus(null); } catch { /* */ }
+}
+
+/** Armor on an enemy that can wear it, with `replaceitem entity @s slot.armor.<slot>` run as the enemy itself. */
+function armFoe(e, tier) {
+  const items = armorItems(tier);
+  if (!items || !ARMOR_WEARERS.has(String(e.typeId).replace('minecraft:', ''))) return;
+  for (const slot of ['head', 'chest', 'legs', 'feet']) { try { e.runCommand(`replaceitem entity @s slot.armor.${slot} 0 ${items[slot]}`); } catch (err) { console.warn(`[colosseum] armor ${slot}: ${err}`); break; } }
+}
+
+/** Water breathing for as long as a bout lasts (nothing drowns: not the bots, not the land mobs thrown in with them). */
+function breathe(e) { try { e.addEffect('water_breathing', 20 * 600, { amplifier: 0, showParticles: false }); } catch { /* */ } }
+
+/** The arena's water: everything out, then `depth` layers from the floor up (H = flooded to the roof). Sealed by the glass, so source blocks stay put. */
+async function setFlood(dim, S, depth) {
+  const x1 = S.cx - R, x2 = S.cx + R, z1 = S.cz - R, z2 = S.cz + R, y0 = S.G + 1;
+  for (const old of ['water', 'flowing_water']) { try { dim.runCommand(`fill ${x1} ${y0} ${z1} ${x2} ${S.G + H} ${z2} air replace ${old}`); } catch { /* none to remove */ } }
+  if (depth > 0) { try { dim.runCommand(`fill ${x1} ${y0} ${z1} ${x2} ${y0 + depth - 1} ${z2} water replace air`); } catch (e) { console.warn(`[colosseum] flooding: ${e}`); } }
+  await wait(10);
 }
 
 /** A mob of the show's kind at `at`: a baby if the scenario says (zombies), and with a rider or a mount (a skeleton on a spider, a baby zombie on a chicken). Returns the ones that count as enemies. */
@@ -488,6 +544,7 @@ function spawnFoe(dim, p, at, show) {
   if (p.baby) { try { e = dim.spawnEntity(`minecraft:${id}<minecraft:as_baby>`, at); } catch { /* not a mob with a baby form */ } }
   if (!e) e = dim.spawnEntity(`minecraft:${id}`, at);
   const out = [e];
+  armFoe(e, p.foeArmor);
   if (p.jockey) {
     try {
       const m = dim.spawnEntity(`minecraft:${p.jockey}`, at);
@@ -541,6 +598,24 @@ function putBack(player, saved, dim) {
   } catch (e) { console.warn(`[colosseum] restoring the spawn point: ${e}`); }
   try { player.teleport(saved.pos, { dimension: dim ?? world.getDimension('overworld') }); } catch { /* */ }
 }
+
+/** Put the game rules and the time back from the note a show that did not end properly left (the server was killed during it). */
+export function restoreRules() {
+  if (SHOW) return false;
+  let r = null;
+  try { r = JSON.parse(String(world.getDynamicProperty(RULES_KEY) ?? 'null')); } catch { /* */ }
+  if (!r) return false;
+  try {
+    if (typeof r.grief === 'boolean') world.gameRules.mobGriefing = r.grief;
+    if (typeof r.spawn === 'boolean') world.gameRules.doMobSpawning = r.spawn;
+    if (typeof r.cycle === 'boolean') world.gameRules.doDaylightCycle = r.cycle;
+    if (Number.isFinite(r.time)) world.getDimension('overworld').runCommand(`time set ${Math.floor(r.time)}`);
+    world.setDynamicProperty(RULES_KEY, undefined);
+    console.warn('[colosseum] a show was cut short: game rules and time put back');
+  } catch (e) { console.warn(`[colosseum] restoring the rules: ${e}`); return false; }
+  return true;
+}
+system.runTimeout(() => { try { restoreRules(); } catch { /* */ } }, 100);
 
 /** Put a player back from the stash a show that did not end properly left (a crash, a reload). */
 export function recoverPlayer(player) {

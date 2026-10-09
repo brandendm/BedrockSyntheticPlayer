@@ -32,8 +32,8 @@ export function makeLab(bouts, say) {
       if (!r?.ok) { say(`§cLab: ${r?.say ?? 'the record was not taken'}`); return; }
       const ev = r.event;
       const who = last.role === 'cand' ? 'candidate' : 'champion';
-      say(`Bout ${played} (${last.mob} x${last.count}, ${who}): ${rec.outcome}, score ${r.score >= 0 ? '+' : ''}${r.score}.`);
-      if (ev?.type === 'promoted') say(`§aNew champion! ${Object.entries(ev.note.changed).map(([k, [a, b]]) => `${k} ${+a.toFixed(2)} -> ${+b.toFixed(2)}`).join(', ')} (+${ev.note.mean} over ${ev.note.pairs} paired bouts). ${ev.note.why.slice(0, 2).join('; ')}`);
+      say(`Bout ${played} (${last.env === 'water' ? 'underwater, ' : ''}${last.mob} x${last.count}, ${who}): ${rec.outcome}, score ${r.score >= 0 ? '+' : ''}${r.score}.`);
+      if (ev?.type === 'promoted') say(`§aNew ${ev.env === 'water' ? 'underwater ' : ''}champion! ${Object.entries(ev.note.changed).map(([k, [a, b]]) => `${k} ${+a.toFixed(2)} -> ${+b.toFixed(2)}`).join(', ')} (+${ev.note.mean} over ${ev.note.pairs} paired bouts). ${ev.note.why.slice(0, 2).join('; ')}`);
       else if (ev?.type === 'dropped') say(`Candidate dropped (${ev.changed.join(', ')}: ${ev.mean >= 0 ? '+' : ''}${ev.mean}).`);
     },
   };

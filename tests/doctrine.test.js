@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { pickWeapon, kindOf, speedOf, DOCTRINE, KEYS, defaults, norm, flag, realPolicy, spacing, shootNow, pickTarget, describeChange, labLoad, table, fromStyle } from '../behavior_pack/scripts/core/doctrine.js';
+import { SHOOTERS, pickWeapon, kindOf, speedOf, DOCTRINE, KEYS, defaults, norm, flag, realPolicy, spacing, shootNow, pickTarget, describeChange, labLoad, table, fromStyle } from '../behavior_pack/scripts/core/doctrine.js';
 import { parseShow } from '../behavior_pack/scripts/core/colosseum.js';
 import { applyPolicy, TUNABLES } from '../behavior_pack/scripts/core/tunables.js';
 import { fightMove } from '../behavior_pack/scripts/core/tactics.js';
@@ -73,6 +73,9 @@ test('the switches decide the gear; the table is what the lab gets', () => {
   assert.deepEqual([l.mount, l.bow, l.crossbow, l.shield, l.weapons], [true, false, false, true, ['sword', 'axe']]);
   const m = labLoad({ ...scn, weapons: [], shield: false, horse: false, ranged: 'crossbow' }, norm({ useHorse: 1 }));
   assert.deepEqual([m.mount, m.bow, m.crossbow, m.shield, m.weapons], [false, false, true, false, []]);
+  const w = labLoad({ ...scn, env: 'water', enchLists: { w: [['sharpness', 5]], b: null, x: [['piercing', 4]], a: [['protection', 4]] } }, norm({ useHorse: 1 }));
+  assert.equal(w.mount, false, 'no horse under water');
+  assert.deepEqual([w.wench, w.bench, w.xench, w.aench], [[['sharpness', 5]], null, [['piercing', 4]], [['protection', 4]]]);
   assert.equal(Object.keys(table()).length, KEYS.length);
   assert.ok(flag(1) && !flag(0.5));
   assert.ok(fromStyle({ bowFrom: 6, strafe: 22, close: 3.4 }).bowFrom === 6);
@@ -106,4 +109,39 @@ test('crowds make an axe likelier; babies are faster', () => {
   assert.equal(pickWeapon(norm({ crowdAxe: 1.5 }), items, { foes: 4 }), 'iron_axe');
   assert.ok(speedOf('zombie', true) > speedOf('zombie', false));
   assert.ok(speedOf('zombie', true) > defaults().kiteMaxSpeed);
+});
+
+test('a mounted spear is liked more; the lance and water knobs exist', () => {
+  const items = [{ id: 'iron_sword', rate: 7 }, { id: 'iron_spear', rate: 2.1 }];
+  assert.equal(pickWeapon(norm({ wSpear: 2 }), items, { mounted: false }), 'iron_sword');
+  assert.equal(pickWeapon(norm({ wSpear: 2, rideSpear: 1 }), items, { mounted: true }), 'iron_spear');
+  assert.equal(defaults().chargeSpear, 1);
+  assert.ok(DOCTRINE.chargeFrom.min >= 5);
+});
+
+test('water=on and crossbow enchantments reach the kit', async () => {
+  assert.equal(parseShow(['zombie', '3', 'water=on']).water, true);
+  assert.equal(parseShow(['zombie', '3']).water, false);
+  const { loadoutKit, LOADOUT_DEFAULT } = await import('../behavior_pack/scripts/core/colosseum.js');
+  const k = loadoutKit({ ...LOADOUT_DEFAULT, weapons: [], bow: false, crossbow: true, xench: [['piercing', 4], ['sharpness', 5]] });
+  const x = k.slots.find((s) => s[1] === 'crossbow');
+  assert.deepEqual(x[3], [['piercing', 4]]);
+  assert.ok(k.slots.some((s) => s[1] === 'arrow'));
+});
+
+test('more behaviours: target priority for shooters and creepers, eating, armor for mobs', async () => {
+  const foes = [{ id: 'z', dist: 3, hp: 20, type: 'zombie' }, { id: 's', dist: 8, hp: 20, type: 'skeleton' }, { id: 'c', dist: 6, hp: 20, type: 'creeper' }];
+  assert.equal(pickTarget(norm({ switchMargin: 0, focusLow: 0 }), foes, null), 'z');
+  assert.equal(pickTarget(norm({ switchMargin: 0, focusLow: 0, shooterFirst: 2 }), foes, null), 's');
+  assert.equal(pickTarget(norm({ switchMargin: 0, focusLow: 0, creeperFirst: 2 }), foes, null), 'c');
+  assert.ok(SHOOTERS.has('witch') && !SHOOTERS.has('zombie'));
+  assert.equal(labLoad({ armor: 'iron', weapons: ['sword'], ranged: 'none', apples: 4 }, defaults()).apples, 4);
+  assert.ok(defaults().hitRun === 0 && defaults().cornerUp === 0 && DOCTRINE.drawTicks.min >= 8);
+  const { armorItems, ARMOR_WEARERS } = await import('../behavior_pack/scripts/core/colosseum.js');
+  assert.deepEqual(armorItems('iron'), { head: 'iron_helmet', chest: 'iron_chestplate', legs: 'iron_leggings', feet: 'iron_boots' });
+  assert.equal(armorItems('chain').chest, 'chainmail_chestplate');
+  assert.equal(armorItems('none'), null);
+  assert.ok(ARMOR_WEARERS.has('skeleton') && !ARMOR_WEARERS.has('creeper'));
+  assert.equal(parseShow(['zombie', 'foearmor=diamond']).foeArmor, 'diamond');
+  assert.equal(parseShow(['zombie']).foeArmor, 'none');
 });

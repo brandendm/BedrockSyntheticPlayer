@@ -33,6 +33,20 @@ export const DOCTRINE = {
   // --- choosing who to hit
   switchMargin: { v: 4, min: 0, max: 10, group: 'targeting', about: 'a nearer target must be this much nearer (blocks) before it changes target' },
   focusLow:     { v: 0.3, min: 0, max: 1, group: 'targeting', about: 'how much it prefers a hurt target over a near one' },
+  // --- more behaviour
+  hitRun:       { v: 0, min: 0, max: 1, group: 'melee', about: 'chance that after a swing it steps back out of reach instead of standing to trade blows' },
+  hitRunTicks:  { v: 8, min: 3, max: 24, group: 'melee', about: 'how long that step back lasts (ticks)' },
+  maceJump:     { v: 0.3, min: 0, max: 1, group: 'melee', about: 'chance it jumps before a swing when holding a mace (a mace hits far harder on the way down)' },
+  rangedWeave:  { v: 0.9, min: 0, max: 1.8, group: 'spacing', about: 'how hard it zigzags when walking in on an archer, a witch or any other shooter' },
+  shieldArrows: { v: 0, min: 0, max: 1, group: 'shield', about: 'above 0.5: shield up while walking in on a shooter (slower, but the arrows hit the shield)' },
+  shooterFirst: { v: 0, min: 0, max: 2, group: 'targeting', about: 'how much it prefers a shooter to a nearer melee enemy (blocks of distance per point)' },
+  creeperFirst: { v: 0, min: 0, max: 2, group: 'targeting', about: 'how much it prefers a creeper to other enemies' },
+  aimLead:      { v: 1, min: 0.5, max: 1.5, group: 'bow', about: 'how far ahead of a moving target it aims (1 = the arrow flight time exactly)' },
+  drawTicks:    { v: 22, min: 8, max: 26, group: 'bow', about: 'how long it draws the bow (a short draw is quicker and weaker)' },
+  eatHp:        { v: 7, min: 3, max: 12, group: 'health', about: 'eat a golden apple (if it has one) at or below this many hit points' },
+  eatSafe:      { v: 6, min: 2, max: 12, group: 'health', about: 'it only eats when no enemy is nearer than this (blocks), unless it is nearly dead' },
+  cornerUp:     { v: 0, min: 0, max: 1, group: 'spacing', about: 'above 0.5: against a crowd, back into a corner so fewer can reach it at once' },
+  cornerFoes:   { v: 3, min: 2, max: 6, group: 'spacing', about: 'how many enemies make it back into a corner' },
   // --- which weapon (each is a weight on the weapon's damage per second; 1 = as the damage numbers say)
   wSword:       { v: 1, min: 0.2, max: 4, group: 'weapon', about: 'how much it likes a sword (its damage a second is multiplied by this)' },
   wAxe:         { v: 1, min: 0.2, max: 4, group: 'weapon', about: 'how much it likes an axe' },
@@ -43,6 +57,10 @@ export const DOCTRINE = {
   reachSpear:   { v: 0, min: 0, max: 2, group: 'weapon', about: 'extra liking for a spear against fast or far enemies (it hits from 4 blocks)' },
   xbowPref:     { v: 0.5, min: 0, max: 1, group: 'bow', about: 'with both a bow and a crossbow: above 0.5 it shoots the crossbow' },
   kiteMaxSpeed: { v: 0.3, min: 0.1, max: 0.45, group: 'health', about: 'it only backs away from enemies no faster than this (a baby zombie or a spider outruns it)' },
+  // --- the lance: a spear from a galloping horse hits harder the faster you are going
+  chargeSpear:  { v: 1, min: 0, max: 1, group: 'horse', about: 'on a horse with a spear: gallop at the enemy and jab as it passes (damage grows with speed), then turn and run up again' },
+  chargeFrom:   { v: 9, min: 5, max: 14, group: 'horse', about: 'how far back (blocks) it takes the run-up before each charge' },
+  rideSpear:    { v: 1, min: 0, max: 2, group: 'weapon', about: 'extra liking for a spear while on a horse' },
   // --- the horse
   useHorse:     { v: 0, min: 0, max: 1, group: 'horse', about: 'fight from a saddled horse (it must be ridden in; a hit knocks you off nothing, but the horse moves you)' },
 };
@@ -98,7 +116,7 @@ export function shootNow(d, { hasBow, arrows, clear, dist, flying, creeper, next
 /** The target to hit: the current one unless another is clearly better. foes: [{ id, dist, hp }] (any order). Returns an id. */
 export function pickTarget(d, foes, currentId) {
   if (!foes.length) return null;
-  const score = (f) => f.dist + d.focusLow * (f.hp ?? 10) / 2;
+  const score = (f) => f.dist + d.focusLow * (f.hp ?? 10) / 2 - (f.type && SHOOTERS.has(f.type) ? d.shooterFirst * 3 : 0) - (f.type === 'creeper' ? d.creeperFirst * 3 : 0);
   const best = [...foes].sort((a, b) => score(a) - score(b))[0];
   const cur = foes.find((f) => f.id === currentId);
   if (!cur) return best.id;
@@ -118,6 +136,8 @@ export function describeChange(d, base = defaults()) {
 const DPS = { sword: 1, axe: 1, spear: 1, mace: 1, trident: 1 };
 export const kindOf = (id) => { const k = String(id ?? '').replace('minecraft:', ''); return /sword/.test(k) ? 'sword' : /axe/.test(k) ? 'axe' : /spear/.test(k) ? 'spear' : k === 'mace' ? 'mace' : k === 'trident' ? 'trident' : null; };
 
+export const SHOOTERS = new Set(['skeleton', 'stray', 'bogged', 'pillager', 'witch', 'blaze', 'ghast', 'parched', 'evoker', 'drowned']);
+
 /**
  * The weapon to hold. items: [{ id, rate }] where rate is its damage a second (from the game's own numbers); ctx: { foes, fast, far }.
  * Score = rate x the doctrine's weight for its kind, with the situation's extra liking (axe in a crowd, spear against fast or far enemies). Returns an id or null (bare hands).
@@ -130,6 +150,7 @@ export function pickWeapon(d, items, ctx = {}) {
     let w = d[`w${k[0].toUpperCase()}${k.slice(1)}`] ?? DPS[k];
     if (k === 'axe') w *= 1 + d.crowdAxe * Math.max(0, (ctx.foes ?? 1) - 1) / 3;
     if (k === 'spear' && (ctx.fast || ctx.far)) w *= 1 + d.reachSpear;
+    if (k === 'spear' && ctx.mounted) w *= 1 + d.rideSpear;
     const sc = it.rate * w;
     if (sc > bs) { bs = sc; best = it.id; }
   }
@@ -146,8 +167,10 @@ export function pickWeapon(d, items, ctx = {}) {
 export function labLoad(scn, d) {
   const r = scn.ranged ?? 'none', willing = flag(d.useBow);
   return {
-    armor: scn.armor ?? 'iron', weapon: scn.weapon ?? 'iron', weapons: [...(scn.weapons ?? ['sword'])], apples: 0, enchant: false, wench: null, bench: null, aench: null,
+    armor: scn.armor ?? 'iron', weapon: scn.weapon ?? 'iron', weapons: [...(scn.weapons ?? ['sword'])], enchant: false,
+    apples: scn.apples ?? 0,
     bow: willing && (r === 'bow' || r === 'both'), crossbow: willing && (r === 'crossbow' || r === 'both'),
-    shield: !!scn.shield && flag(d.useShield), mount: !!scn.horse && flag(d.useHorse),
+    shield: !!scn.shield && flag(d.useShield), mount: !!scn.horse && flag(d.useHorse) && scn.env !== 'water',
+    wench: scn.enchLists?.w ?? null, bench: scn.enchLists?.b ?? null, xench: scn.enchLists?.x ?? null, aench: scn.enchLists?.a ?? null,
   };
 }
